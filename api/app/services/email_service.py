@@ -1281,30 +1281,59 @@ def send_transcript_email(
 
 def send_visitor_confirmation_email(
     to_email: str,
-    bot_name: str,
+    company_name: str,
     visitor_name: str,
     *,
     reply_to: str | None = None,
 ):
-    """Send a confirmation email to the visitor after they submit an offline message (Brevo template #59).
+    """Send a confirmation email to the visitor after they submit an offline message.
 
     Args:
         to_email: Visitor's email address.
-        bot_name: Display name of the bot / brand.
+        company_name: The customer's business name — appears in the body and
+            subject as "Thank you for contacting {company_name}". Callers should
+            pass ``Bot.company_name`` (the brand behind the website the widget
+            is embedded on) and fall back to ``Bot.name`` only if it's unset.
         visitor_name: Visitor's name for personalization.
         reply_to: Optional Reply-To address (brand email) so visitor can reply directly.
     """
-    params: dict = {
-        "bot_name": _esc(bot_name),
-        "visitor_name": _esc(visitor_name),
-        "visitor_email": _esc(to_email),
-    }
+    safe_visitor = _esc(visitor_name) or "there"
+    safe_company = _esc(company_name) or _esc(BRAND_NAME)
 
-    sender = _branded_sender_name(bot_name)
-    send_template_async(
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<p style="margin:0 0 18px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Hi {safe_visitor},"
+        f"</p>"
+        f'<p style="margin:0 0 18px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Thank you for contacting {safe_company}. We&rsquo;ve received your "
+        f"message, and our team has been notified. We&rsquo;ll get back to you "
+        f"as soon as possible."
+        f"</p>"
+        f'<p style="margin:0 0 4px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Thank you,"
+        f"</p>"
+        f'<p style="margin:0 0 24px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_900};line-height:1.55;font-weight:600;">'
+        f"Team {safe_company}"
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=f"Thank you for contacting {safe_company}. We'll be in touch soon.",
+        body_inner=body_inner,
+        visitor=True,
+    )
+
+    sender = _branded_sender_name(company_name or BRAND_NAME)
+    send_email_async(
         to_email,
-        TEMPLATE_VISITOR_CONFIRMATION,
-        params,
+        f"Thank you for contacting {company_name or BRAND_NAME}",
+        html_body,
         reply_to=reply_to,
         sender_name=sender,
     )

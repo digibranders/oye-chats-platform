@@ -556,6 +556,33 @@ async def task_expire_old_topups(ctx: dict) -> int:
     return total
 
 
+async def task_prune_stale_events(ctx: dict) -> int:
+    """Cron task: delete Event rows whose source page hasn't mentioned them
+    within the retention window, or whose start date is more than that same
+    window in the past.
+
+    Runs daily. Idempotent — a subsequent run over the same DB state deletes
+    zero rows. Retention is controlled by ``config.EVENT_RETENTION_DAYS``.
+    """
+    import asyncio
+
+    from app import config
+    from app.db import repository
+    from app.db.session import get_session
+
+    def _prune() -> int:
+        with get_session() as session:
+            deleted = repository.prune_stale_events(session, retention_days=config.EVENT_RETENTION_DAYS)
+            session.commit()
+            return deleted
+
+    loop = asyncio.get_running_loop()
+    total = await loop.run_in_executor(None, _prune)
+    if total:
+        logger.info("task_prune_stale_events: deleted %d event(s)", total)
+    return total
+
+
 # ── Worker Heartbeat ────────────────────────────────────────────────────────
 
 WORKER_HEARTBEAT_KEY = "oyechats:worker:heartbeat"

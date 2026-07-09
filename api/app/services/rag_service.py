@@ -26,6 +26,7 @@ from app.db.repository import (
     get_bot_media_urls,
     get_chat_history,
     get_lead_info_by_session,
+    get_upcoming_events,
     search_keyword_documents,
     search_similar_documents,
 )
@@ -302,7 +303,8 @@ def _collect_available_media(retrieved_chunks) -> tuple[set[str], set[str]]:
                 yt_ids.add(vid)
         for entry in media.get("files") or []:
             url = entry.get("url") if isinstance(entry, dict) else None
-            if isinstance(url, str) and url:
+            # Read-time skip of pre-fix junk entries — see _is_valid_file_url.
+            if _is_valid_file_url(url):
                 file_urls.add(url)
     return yt_ids, file_urls
 
@@ -386,7 +388,9 @@ def _collect_available_media_names(retrieved_chunks, extra_payloads=None) -> tup
                     if isinstance(title, str) and title.strip():
                         titles.add(title.strip().lower())
                 for entry in media.get("files") or []:
-                    name = entry.get("name") if isinstance(entry, dict) else None
+                    if not isinstance(entry, dict) or not _is_valid_file_url(entry.get("url")):
+                        continue
+                    name = entry.get("name")
                     if isinstance(name, str) and name.strip():
                         _n = name.strip().lower()
                         names.add(_n)
@@ -401,7 +405,9 @@ def _collect_available_media_names(retrieved_chunks, extra_payloads=None) -> tup
             if isinstance(title, str) and title.strip():
                 titles.add(title.strip().lower())
         for entry in payload.get("files") or []:
-            name = entry.get("name") if isinstance(entry, dict) else None
+            if not isinstance(entry, dict) or not _is_valid_file_url(entry.get("url")):
+                continue
+            name = entry.get("name")
             if isinstance(name, str) and name.strip():
                 _n = name.strip().lower()
                 names.add(_n)
@@ -614,6 +620,42 @@ def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None
                 return
 
 
+# Read-time re-validation of file URLs pulled from the DB. Older ingestion
+# runs used a greedy regex that scraped domain labels like ``hub.docker.com``
+# as fake ``.doc`` files. Those junk entries still live in existing bots'
+# ``metadata_info.media_urls.files`` and would otherwise pollute the LLM's
+# AVAILABLE MEDIA catalog, drop into the whitelist for hallucination checks,
+# and confuse the secondary-chip picker. Applying the current strict regex
+# at read-time means the junk is inert without any DB migration or re-crawl.
+# See ``_FILE_URL_RE`` in ``app.ingestion.cleaner`` for the authoritative
+# extension list + boundary lookahead.
+from app.ingestion.cleaner import _FILE_URL_RE  # noqa: E402
+
+
+def _is_valid_file_url(url: object) -> bool:
+    """True when ``url`` is a well-formed downloadable-file URL.
+
+    Two checks combined:
+      1. It matches ``_FILE_URL_RE`` starting at position 0 — the same
+         boundary-aware regex ingestion now uses, so pre-fix domain-label
+         false positives (``hub.docker.com`` → ``hub.doc``) are rejected
+         when the regex sees a following letter or ``.<letter>``.
+      2. The URL contains a ``/`` in its path portion (after ``://``).
+         This kicks the *terminally-clipped* junk cases like a bare
+         ``https://hub.doc`` — which passes the regex on shape alone
+         (no letter follows) but has no path segment, so it can't be a
+         real file. Real files always live at ``host/path.ext``.
+    """
+    if not isinstance(url, str) or not url:
+        return False
+    if not _FILE_URL_RE.match(url):
+        return False
+    scheme_sep = url.find("://")
+    if scheme_sep == -1:
+        return False
+    return "/" in url[scheme_sep + 3 :]
+
+
 # Words we ignore when comparing a primary card's title against candidate
 # secondary asset names to score topical overlap. Everything below reads to
 # the human eye as "of course they overlap on 'video'" — that's the trap,
@@ -788,8 +830,13 @@ def _pick_secondary_media(
     for media in sources:
         collection_key = "files" if target_type == "download" else "youtube"
         for entry in media.get(collection_key) or []:
-            if isinstance(entry, dict):
-                _consider(entry, target_type)
+            if not isinstance(entry, dict):
+                continue
+            # Reject pre-fix junk file entries so they can never surface as
+            # secondary chips even if they slip past the primary emission.
+            if target_type == "download" and not _is_valid_file_url(entry.get("url")):
+                continue
+            _consider(entry, target_type)
 
     if best is None:
         return []
@@ -1604,7 +1651,10 @@ def _build_media_catalog(media_sources: list[dict]) -> str:
                 continue
             url = entry.get("url")
             name = entry.get("name") or "download"
-            if not isinstance(url, str) or not url:
+            # Skip junk entries left in the DB by the pre-fix ingestion
+            # (``hub.doc`` from ``hub.docker.com``, etc.). See
+            # ``_is_valid_file_url`` for the rationale.
+            if not _is_valid_file_url(url):
                 continue
             if url in seen_files:
                 continue
@@ -1842,12 +1892,21 @@ def _expand_company_query(question: str, company_name: str | None) -> str:
 # couple of dated items or omits the year — see rag_service date-filter
 # regression test. Computing the past/future verdict in code and handing
 # it to the model as a lookup removes the arithmetic step entirely.
+_MONTH_ALT = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
 _DATE_PATTERN = re.compile(
     r"\b("
-    r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s*\d{0,4}"
-    r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{0,4}"
-    r"|\d{4}-\d{2}-\d{2}"
+    # 15 March 2026 · 15th Mar · 15 Mar, 2026 (ordinal suffix optional)
+    rf"\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH_ALT}[a-z]*\.?,?\s*\d{{0,4}}"
+    # March 15 2026 · Mar 15th, 2026
+    rf"|{_MONTH_ALT}[a-z]*\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s*\d{{0,4}}"
+    # ISO: 2026-03-15 · 2026/03/15
+    r"|\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+    # Slash: 15/3/2026 · 03/15/26
     r"|\d{1,2}/\d{1,2}/\d{2,4}"
+    # Dash: 15-03-2026 (4-digit year required — avoids matching ranges like "12-15")
+    r"|\d{1,2}-\d{1,2}-\d{4}"
+    # European dot: 15.03.2026 (4-digit year required — avoids version numbers)
+    r"|\d{1,2}\.\d{1,2}\.\d{4}"
     r")\b",
     re.IGNORECASE,
 )
@@ -1895,6 +1954,89 @@ def _build_date_hints(context_text: str, today: date) -> str:
         "\n\nDATE ANALYSIS (computed programmatically against TODAY'S DATE "
         f"{today.isoformat()} — treat as ground truth, do not recompute):\n" + "\n".join(lines)
     )
+
+
+# ── Structured events routing (Tier 2 — SQL-backed date-question answers) ────
+# When a visitor asks a date-sensitive question and the ingestion pipeline
+# has already extracted structured events for this bot, we prepend an
+# authoritative "STRUCTURED UPCOMING EVENTS" block to the context so the LLM
+# uses typed timestamps instead of guessing from fuzzy retrieved text. This
+# lives ALONGSIDE the existing retrieval path — retrieved chunks still power
+# non-event questions and provide narrative around each event.
+
+_EVENT_QUESTION_TERMS = (
+    "upcoming",
+    "next",
+    "webinar",
+    "event",
+    "events",
+    "meetup",
+    "workshop",
+    "session",
+    "schedule",
+    "calendar",
+    "when is",
+    "when's",
+    "when are",
+    "any events",
+    "any webinars",
+    "any upcoming",
+)
+
+
+def _is_event_question(question: str) -> bool:
+    """Cheap keyword check for whether the SQL events branch should fire.
+
+    Deliberately generous: false positives just add a small block to the
+    prompt (harmless when no events match), while false negatives fall back
+    to the existing RAG behaviour with ``_build_date_hints``.
+    """
+    if not question:
+        return False
+    q = question.lower()
+    return any(term in q for term in _EVENT_QUESTION_TERMS)
+
+
+def _build_events_context(events: list) -> str:
+    """Format a list of ``Event`` rows for injection into the RAG prompt.
+
+    The block is labeled as the source of truth for date questions so the
+    model prefers it over any date it may have parsed out of retrieved
+    chunks. Empty list → empty string (caller can concat unconditionally).
+    """
+    if not events:
+        return ""
+    lines: list[str] = []
+    for ev in events:
+        parts = [f'"{ev.title}"', ev.starts_at.date().isoformat()]
+        if ev.location:
+            parts.append(ev.location)
+        if ev.url:
+            parts.append(ev.url)
+        lines.append("- " + " · ".join(parts))
+    return (
+        "\n\nSTRUCTURED UPCOMING EVENTS (source of truth — these rows come from a "
+        "typed database of events extracted from this bot's knowledge base; "
+        "prefer them over any date parsed from surrounding text):\n" + "\n".join(lines)
+    )
+
+
+def _maybe_events_block(session, *, bot_id: int | None, question: str) -> str:
+    """Wrap the events lookup in feature-flag + question-shape gates.
+
+    Never raises: any DB error returns "" so the RAG pipeline degrades to
+    its prior behaviour instead of failing the whole answer.
+    """
+    if not config.EVENT_EXTRACTION_ENABLED or not bot_id:
+        return ""
+    if not _is_event_question(question):
+        return ""
+    try:
+        events = get_upcoming_events(session, bot_id=bot_id, limit=config.EVENT_QUERY_LIMIT)
+    except Exception as exc:  # noqa: BLE001 — a DB blip must never fail the chat
+        logger.warning("events lookup failed for bot=%s: %s", bot_id, exc)
+        return ""
+    return _build_events_context(events)
 
 
 def _framework_dimensions(config: dict | None) -> list[str]:
@@ -2495,6 +2637,7 @@ def _background_bant_extraction(
 # log line at build time so ``grep media_prompt_version`` in the API logs
 # tells you at a glance whether the running process is on the latest
 # prompt version or a stale hot-reload. Rev history:
+#  10 — read-time junk-URL filter so pre-fix DB entries can never leak
 #   9 — genericized all worked examples; no per-customer domain vocabulary
 #   8 — bridge sentence must connect asset to visitor's topic + own line
 #   7 — mandatory bridge sentence before the sentinel (naming asset + why)
@@ -2504,7 +2647,7 @@ def _background_bant_extraction(
 #   3 — engagement posture + confirmation-turn rule
 #   2 — loosened topic-match to reasonable overlap
 #   1 — initial media-cards rules
-_MEDIA_PROMPT_VERSION = 9
+_MEDIA_PROMPT_VERSION = 10
 
 
 def build_hybrid_prompt(
@@ -4567,6 +4710,7 @@ def rag_pipeline(
             if bid is not None:
                 media_sources.extend(get_bot_media_urls(session, bot_id=bid))
             context_text += _build_media_catalog(media_sources)
+            context_text += _maybe_events_block(session, bot_id=bid, question=question)
             context_text += _build_date_hints(context_text, date.today())
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "nonstream")
@@ -5346,6 +5490,7 @@ async def rag_pipeline_stream(
             if bid is not None:
                 media_sources.extend(get_bot_media_urls(session, bot_id=bid))
             context_text += _build_media_catalog(media_sources)
+            context_text += _maybe_events_block(session, bot_id=bid, question=question)
             context_text += _build_date_hints(context_text, date.today())
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "stream")

@@ -9,12 +9,13 @@ from typing import Any
 
 from app.config import ARCHIVE_DIR
 from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_for_bot
-from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed
+from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed, upsert_events
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
 from app.ingestion.cleaner import clean_text, extract_media_urls
 from app.ingestion.embedder import embed_chunks
 from app.ingestion.enrichment import CHUNK_ENRICHMENT_ENABLED, enrich_chunks_batch
+from app.ingestion.event_extractor import maybe_extract_events
 from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
 from app.ingestion.youtube_metadata import (
     enrich_media_urls_with_channel_videos,
@@ -254,6 +255,36 @@ def _ingest_document(
                 bot_id=bot_id,
                 source=source,
             )
+            # 4a. Structured event extraction (Tier 2). Only meaningful for
+            # crawled pages: uploaded PDFs/DOCX are almost never event
+            # calendars, and the ``source_url`` we need as part of the
+            # dedup key isn't available for uploads anyway. Extraction
+            # failures never abort ingestion — the extractor already
+            # swallows LLM errors and returns [] on any problem.
+            if bot_id and source == "crawl":
+                for page in cleaned_pages_data:
+                    page_meta = page.get("metadata") or {}
+                    page_url = page_meta.get("url")
+                    if not page_url:
+                        continue
+                    extracted = maybe_extract_events(
+                        url=page_url,
+                        title=page_meta.get("title"),
+                        text=page.get("text", ""),
+                    )
+                    if extracted:
+                        written = upsert_events(
+                            session,
+                            bot_id=bot_id,
+                            source_url=page_url,
+                            events=extracted,
+                        )
+                        logger.info(
+                            "event_extractor: upserted %d event(s) for bot=%s url=%s",
+                            written,
+                            bot_id,
+                            page_url,
+                        )
             session.commit()
             # Invalidate cached QA responses AND stale relevance-gate judgments
             # — the knowledge base just changed, so any prior "off-topic" cache

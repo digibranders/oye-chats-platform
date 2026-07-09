@@ -391,6 +391,19 @@ INVOICING_V2_ENABLED = _env_flag("INVOICING_V2_ENABLED", default=True)
 INVOICE_EMAILS_ENABLED = _env_flag("INVOICE_EMAILS_ENABLED", default=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Structured event extraction (Tier 2 fix for the "upcoming events" bug)
+# ─────────────────────────────────────────────────────────────────────────────
+# Kill switch for the event-extractor pass during ingestion + the SQL-backed
+# router in ``rag_service``. Off by default so this ships behind a flag; flip
+# to ``true`` after the events table has been migrated and back-crawled.
+EVENT_EXTRACTION_ENABLED = _env_flag("EVENT_EXTRACTION_ENABLED", default=False)
+# How many days into the past an ``Event`` row can go before the pruning
+# task deletes it. Keeps the query cheap and the answers clean.
+EVENT_RETENTION_DAYS = int(_env("EVENT_RETENTION_DAYS", "180"))
+# How many upcoming events the chat pipeline returns per bot per question.
+EVENT_QUERY_LIMIT = int(_env("EVENT_QUERY_LIMIT", "10"))
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler
 # ─────────────────────────────────────────────────────────────────────────────
 DOCUMENTS_DIR = "documents"

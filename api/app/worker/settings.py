@@ -37,6 +37,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_invoice_reconciliation_alert,
     task_process_webhook_retries,
     task_promote_scheduled_downgrades,
+    task_prune_stale_events,
     task_reembed_document,
     task_render_invoice_pdfs,
     task_renew_due_subscriptions,
@@ -139,6 +140,7 @@ class WorkerSettings:
         task_invoice_reconciliation_alert,
         task_auto_recrawl_sweep,
         task_auto_recrawl_bot,
+        task_prune_stale_events,
     ]
 
     # Cron jobs:
@@ -179,6 +181,11 @@ class WorkerSettings:
         # the :00/:30 webhook / heartbeat crons and the :01/… invoice-PDF
         # sweep so the minute boundary isn't concurrency-starved.
         cron(task_auto_recrawl_sweep, minute=5),
+        # Stale-event pruning — once a day at 00:35 UTC, after the midnight
+        # billing crons have settled. Removes Event rows whose source page
+        # no longer mentions them (customer took the event down) or whose
+        # start date has aged past the retention window.
+        cron(task_prune_stale_events, hour=0, minute=35),
     ]
 
     # Redis connection

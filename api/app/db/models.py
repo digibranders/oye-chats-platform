@@ -403,6 +403,7 @@ class Bot(Base):
     growth_events = relationship("BotGrowthEvent", back_populates="bot", cascade="all, delete-orphan")
     webhooks = relationship("Webhook", back_populates="bot", cascade="all, delete-orphan")
     meeting_bookings = relationship("MeetingBooking", back_populates="bot", cascade="all, delete-orphan")
+    events = relationship("Event", back_populates="bot", cascade="all, delete-orphan")
     plan = relationship("Plan", foreign_keys=[plan_id])
     subscription = relationship("Subscription", foreign_keys=[subscription_id], post_update=True)
 
@@ -1854,3 +1855,67 @@ class Notification(Base):
 
     client = relationship("Client", foreign_keys=[client_id])
     operator = relationship("Operator", foreign_keys=[operator_id])
+
+
+class Event(Base):
+    """A structured upcoming/past event or webinar extracted from a bot's
+    knowledge base.
+
+    Populated by ``ingestion.event_extractor`` when a crawled page looks like
+    an events/webinars listing. The chat pipeline routes date-sensitive
+    questions ("any upcoming webinars?") to a plain SQL query against this
+    table instead of the RAG vector search, which eliminates the class of
+    bug where the LLM would either miss upcoming events or label past dates
+    as upcoming — see rag_service ``_build_date_hints`` regression history.
+
+    ``(bot_id, source_url, title)`` is the natural identity used for
+    idempotent upserts across re-crawls: the same event on the same page
+    updates ``last_seen_at`` instead of creating a duplicate.
+    ``last_seen_at`` doubles as the pruning signal — an event whose source
+    page stopped mentioning it for more than the retention window is
+    assumed removed by the customer and is deleted by
+    ``task_prune_stale_events``.
+    """
+
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(
+        Integer,
+        ForeignKey("bots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title = Column(String, nullable=False)
+    # Absolute event start; timezone-aware so PAST/UPCOMING comparisons
+    # against ``now(UTC)`` are unambiguous no matter which timezone the
+    # customer's page or the server runs in.
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    ends_at = Column(DateTime(timezone=True), nullable=True)
+    url = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    # Which crawled page this event was extracted from — used both as part
+    # of the dedup key and to give the LLM a link when answering.
+    source_url = Column(String, nullable=False)
+    # Optional link back to the exact Document row the extractor read; kept
+    # for traceability / debugging, not required for correctness. Set to
+    # NULL on delete of the source document so pruning the events survives
+    # cascade-delete ordering surprises.
+    source_chunk_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    extracted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        # Natural identity for idempotent re-crawl upserts.
+        UniqueConstraint("bot_id", "source_url", "title", name="uq_events_bot_source_title"),
+        # Hot-path index for the "upcoming events for this bot" query.
+        Index("ix_events_bot_starts_at", "bot_id", "starts_at"),
+        # Pruning sweep query.
+        Index("ix_events_bot_last_seen_at", "bot_id", "last_seen_at"),
+    )
+
+    bot = relationship("Bot", back_populates="events")
