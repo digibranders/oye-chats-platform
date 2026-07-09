@@ -3,6 +3,12 @@
 > Audit of every transactional/lifecycle email the platform sends.
 > Source of truth: `api/app/services/email_service.py` + all call-sites across `api/app`.
 > Provider: **Brevo (Sendinblue)** transactional API — `https://api.brevo.com/v3/smtp/email`.
+>
+> **Kept accurate automatically.** `tests/test_email_inventory_accuracy.py` fails CI if
+> this doc drifts from the real `send_*` functions in `email_service.py` — a new email
+> that isn't documented here, a documented email that was removed, or a wrong headline
+> count all break the build. So this file cannot silently go stale: update it whenever
+> you add, rename, or remove an email sender.
 
 ---
 
