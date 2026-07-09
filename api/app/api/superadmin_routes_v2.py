@@ -1202,7 +1202,7 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
             "category": "lead",
             "description": "Notifies the customer when a chat conversation crosses the BANT/MEDDIC qualification threshold.",
             "trigger": "qualification_service tier transition",
-            "metered": True,
+            "metered": False,
             "sender_fn": "send_qualified_lead_email",
         },
         {
@@ -1224,7 +1224,7 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
             "category": "live_chat",
             "description": "Apology + reschedule link sent when no operator picked up before the queue timeout.",
             "trigger": "live_chat_service queue timeout",
-            "metered": True,
+            "metered": False,
             "sender_fn": "send_unavailable_callback_email",
         },
         {
@@ -1235,7 +1235,7 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
             "category": "live_chat",
             "description": "Delivers a visitor's contact-form submission when the team is offline.",
             "trigger": "POST /offline-messages",
-            "metered": True,
+            "metered": False,
             "sender_fn": "send_offline_message_email",
         },
         {
