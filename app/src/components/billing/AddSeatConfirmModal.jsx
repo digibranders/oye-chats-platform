@@ -63,7 +63,7 @@ export default function AddSeatConfirmModal({
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.96, y: 8 }}
                         transition={{ type: 'spring', stiffness: 280, damping: 28 }}
-                        className="relative w-full max-w-md bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800"
+                        className="relative w-full max-w-md bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800"
                     >
                         <button
                             type="button"

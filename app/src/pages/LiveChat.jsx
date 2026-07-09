@@ -1476,7 +1476,7 @@ export default function LiveChat({ embedded = false }) {
                 <div className="flex gap-3 flex-1 min-h-0">
 
                     {/* ── Left: Queue + Active Chats ── */}
-                    <div className="w-64 flex-shrink-0 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
+                    <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
                         {/* Waiting queue */}
                         {queue.length > 0 && (
                             <div className="border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
@@ -1750,7 +1750,7 @@ export default function LiveChat({ embedded = false }) {
                     </div>
 
                     {/* ── Center: Chat Panel ── */}
-                    <div className="flex-1 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col min-w-0">
+                    <div className="flex-1 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col min-w-0">
                         {previewSession && !selectedChat ? (
                             <>
                                 {/* Preview header */}
@@ -2010,7 +2010,7 @@ export default function LiveChat({ embedded = false }) {
                                 {/* Message input */}
                                 <div className="border-t border-surface-200 dark:border-surface-700 px-4 py-3 relative flex-shrink-0">
                                     {showCannedDropdown && filteredCanned.length > 0 && (
-                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
+                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
                                             {filteredCanned.slice(0, 8).map((r, idx) => (
                                                 <button
                                                     key={r.id}
@@ -2110,7 +2110,7 @@ export default function LiveChat({ embedded = false }) {
 
                     {/* ── Right: Session Info + Team Roster ── */}
                     {showRightPanel && (
-                        <div className="w-64 flex-shrink-0 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
+                        <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
                             {/* Tabs — only show tab bar when both tabs are relevant */}
                             {selectedChat ? (
                                 <div className="flex border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
@@ -2262,7 +2262,7 @@ export default function LiveChat({ embedded = false }) {
             {/* Transfer Modal */}
             {showTransferModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Transfer chat">
-                    <div className="bg-white dark:bg-surface-900 rounded-xl shadow-xl w-full max-w-md">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-xl shadow-xl w-full max-w-md">
                         <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-700">
                             <h2 className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-2">
                                 <ArrowRightLeft className="w-4 h-4" />
@@ -2356,7 +2356,7 @@ export default function LiveChat({ embedded = false }) {
             {/* ── Pre-send file preview modal ── */}
             {pendingFile && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col">
                         {/* Header */}
                         <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-700">
                             <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Send file</h3>
@@ -2428,7 +2428,7 @@ export default function LiveChat({ embedded = false }) {
                 403 the toggle either way, so this is purely UX. */}
             {showUpgradeModal && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title">
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
                         <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center mx-auto mb-3">
                             <Lock className="w-6 h-6 text-amber-600 dark:text-amber-400" />
                         </div>
@@ -2465,7 +2465,7 @@ export default function LiveChat({ embedded = false }) {
             {/* ── Confirm modal (replaces window.confirm) ── */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true">
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
                         <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">{confirmModal.title}</h3>
                         <p className="text-sm text-surface-600 dark:text-surface-400 mb-5">{confirmModal.message}</p>
                         <div className="flex gap-3">

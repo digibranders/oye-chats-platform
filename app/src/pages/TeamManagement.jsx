@@ -301,7 +301,7 @@ export default function TeamManagement() {
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -8 }}
-                                className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-5"
+                                className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-5"
                             >
                                 <div className="flex items-center justify-between mb-4">
                                     <h3 className="font-bold text-surface-900 dark:text-surface-50">New Operator</h3>
@@ -361,7 +361,7 @@ export default function TeamManagement() {
                     </AnimatePresence>
 
                     {/* Operators Table */}
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden">
                         <table className="w-full">
                             <thead>
                                 <tr className="border-b border-surface-100 dark:border-surface-800">
@@ -553,7 +553,7 @@ export default function TeamManagement() {
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -8 }}
-                                className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-5"
+                                className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-5"
                             >
                                 <div className="flex items-center justify-between mb-4">
                                     <h3 className="font-bold text-surface-900 dark:text-surface-50">New Department</h3>
@@ -579,7 +579,7 @@ export default function TeamManagement() {
                             const deptOperators = operators.filter(a => a.department_id === dept.id);
                             const isEditing = editingDept?.id === dept.id;
                             return (
-                                <div key={dept.id} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden">
+                                <div key={dept.id} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden">
                                     <div className="p-4 flex items-center justify-between">
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-xl bg-sky-50 dark:bg-sky-900/30 flex items-center justify-center shrink-0">
@@ -637,7 +637,7 @@ export default function TeamManagement() {
                                                     {/* Per-department business hours — replaces the workspace-wide
                                                         Settings → Business Hours section so Sales (9-6) and Support
                                                         (24/7) can coexist. Saves on form submit alongside name+desc. */}
-                                                    <div className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-4 mb-4">
+                                                    <div className="rounded-xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 p-4 mb-4">
                                                         <BusinessHoursEditor
                                                             value={editDeptForm.business_hours}
                                                             onChange={(next) => setEditDeptForm(p => ({ ...p, business_hours: next }))}

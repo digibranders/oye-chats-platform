@@ -116,7 +116,7 @@ export default function Users({ embedded = false }) {
                     <input
                         type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search visitors..."
-                        className="w-full pl-10 pr-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                        className="w-full pl-10 pr-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                     />
                 </div>
             </div>
@@ -137,7 +137,7 @@ export default function Users({ embedded = false }) {
                     ))}
                 </div>
             ) : filtered.length === 0 ? (
-                <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm py-14 text-center">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm py-14 text-center">
                     <MessageCircle className="w-8 h-8 mx-auto mb-3 text-surface-300 dark:text-surface-600" />
                     <p className="text-sm text-surface-500 dark:text-surface-400">No visitors found</p>
                 </div>
@@ -149,7 +149,7 @@ export default function Users({ embedded = false }) {
                             onClick={() => handleViewChat(visitor.session_id)}
                             className={cn(
                                 'group w-full flex items-center gap-4 px-4 py-3 rounded-xl',
-                                'bg-white dark:bg-surface-900',
+                                'bg-[var(--bg-card)] dark:bg-surface-900',
                                 'border border-surface-200 dark:border-surface-800',
                                 'hover:border-primary-300 dark:hover:border-primary-500/40',
                                 'hover:shadow-sm transition-all text-left',
@@ -194,7 +194,7 @@ export default function Users({ embedded = false }) {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                            className="relative ml-auto h-full w-full max-w-lg bg-white dark:bg-surface-900 shadow-2xl flex flex-col border-l border-surface-200 dark:border-surface-800"
+                            className="relative ml-auto h-full w-full max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl flex flex-col border-l border-surface-200 dark:border-surface-800"
                         >
                             {/* Drawer Header */}
                             <div className="px-5 py-4 border-b border-surface-100 dark:border-surface-800 shrink-0">

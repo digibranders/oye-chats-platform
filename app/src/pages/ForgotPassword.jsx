@@ -129,7 +129,7 @@ export default function ForgotPassword() {
             <span className="text-xl font-bold text-surface-900 dark:text-white tracking-tight">OyeChats</span>
           </div>
 
-          <div className="bg-white dark:bg-surface-900 p-8 sm:p-10 rounded-2xl shadow-xl border border-surface-200 dark:border-surface-800">
+          <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-8 sm:p-10 rounded-2xl shadow-xl border border-surface-200 dark:border-surface-800">
             {/* Step indicator */}
             <div className="flex items-center gap-2 mb-6">
               {[1, 2, 3].map((s) => (
@@ -202,7 +202,7 @@ export default function ForgotPassword() {
                       <input
                         type="email" required tabIndex={1}
                         className={cn(
-                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
+                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
                           'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
                           'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                         )}
@@ -245,7 +245,7 @@ export default function ForgotPassword() {
                       <input
                         type="text" required tabIndex={1}
                         className={cn(
-                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
+                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
                           'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
                           'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500 font-mono tracking-widest'
                         )}
@@ -273,7 +273,7 @@ export default function ForgotPassword() {
                       <input
                         type={showPassword ? 'text' : 'password'} required tabIndex={2}
                         className={cn(
-                          'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
+                          'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
                           'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
                           'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                         )}

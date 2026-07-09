@@ -734,7 +734,7 @@ export default function Dashboard() {
         </div>
 
         {/* Recent Activity Feed */}
-        <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-9 h-9 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
               <Activity size={18} className="text-primary-600 dark:text-primary-400" />
@@ -789,7 +789,7 @@ export default function Dashboard() {
       </motion.div>
 
       {/* Top Questions */}
-      <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
+      <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
         <div className="p-6 pb-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
             <TrendingUp size={20} className="text-primary-600 dark:text-primary-400" />

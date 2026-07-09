@@ -23,7 +23,7 @@ export default function LiveChatTab({ draft, set }) {
                     Allow visitors to request a live operator during a chat session.
                 </p>
             </div>
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
                 <div>
                     <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable Live Chat</h4>
                     <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">Show &quot;Talk to a human&quot; button in the widget.</p>
@@ -44,7 +44,7 @@ export default function LiveChatTab({ draft, set }) {
                     Customize the text visitors see when they open the chat.
                 </p>
             </div>
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                 <div className="space-y-2">
                     <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Welcome Title</label>
                     <input
@@ -53,7 +53,7 @@ export default function LiveChatTab({ draft, set }) {
                         onChange={(e) => set('welcome_title', e.target.value)}
                         maxLength={80}
                         placeholder="Hi there 👋"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">Main heading shown on the welcome screen.</p>
                 </div>
@@ -65,7 +65,7 @@ export default function LiveChatTab({ draft, set }) {
                         onChange={(e) => set('welcome_subtitle', e.target.value)}
                         maxLength={120}
                         placeholder="How can we help you today?"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">Subtitle shown below the welcome title.</p>
                 </div>
@@ -83,7 +83,7 @@ export default function LiveChatTab({ draft, set }) {
             </div>
 
             {/* Waiting state */}
-            <div className="bg-white dark:bg-surface-900 p-6 rounded-xl border border-surface-200 dark:border-white/[0.06] shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] space-y-5">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-xl border border-surface-200 dark:border-white/[0.06] shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] space-y-5">
                 <div>
                     <h4 className="text-[13px] font-semibold tracking-[-0.01em] text-surface-900 dark:text-white">Visitor requests live chat</h4>
                     <p className="text-[12.5px] leading-relaxed text-surface-500 dark:text-surface-400 mt-1">Shown while the visitor waits for an operator to accept.</p>
@@ -119,7 +119,7 @@ export default function LiveChatTab({ draft, set }) {
             </div>
 
             {/* Offline / unavailable state */}
-            <div className="bg-white dark:bg-surface-900 p-6 rounded-xl border border-surface-200 dark:border-white/[0.06] shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] space-y-5">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-xl border border-surface-200 dark:border-white/[0.06] shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] space-y-5">
                 <div>
                     <h4 className="text-[13px] font-semibold tracking-[-0.01em] text-surface-900 dark:text-white">No operators are available</h4>
                     <p className="text-[12.5px] leading-relaxed text-surface-500 dark:text-surface-400 mt-1">Shown when live chat is off or all operators are offline.</p>
@@ -147,7 +147,7 @@ export default function LiveChatTab({ draft, set }) {
                     Control how visitors are queued when all operators are busy.
                 </p>
             </div>
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                 <div className="space-y-2">
                     <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Queue Timeout (seconds)</label>
                     <input
@@ -158,7 +158,7 @@ export default function LiveChatTab({ draft, set }) {
                         value={draft.live_chat_queue_timeout_seconds}
                         onChange={(e) => set('live_chat_queue_timeout_seconds', Number(e.target.value))}
                         placeholder="20"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">How long a visitor waits for an operator before timing out (20 seconds default).</p>
                 </div>
@@ -172,7 +172,7 @@ export default function LiveChatTab({ draft, set }) {
                         value={draft.live_chat_max_queue_size}
                         onChange={(e) => set('live_chat_max_queue_size', Number(e.target.value))}
                         placeholder="10"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">Maximum number of visitors that can wait in the live-chat queue at once (10 default).</p>
                 </div>

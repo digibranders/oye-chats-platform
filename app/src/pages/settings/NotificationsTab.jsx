@@ -65,7 +65,7 @@ export default function NotificationsTab() {
     }
 
     return (
-        <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
             <div className="flex items-start justify-between gap-4 mb-1">
                 <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                     <Bell size={16} className="text-primary-600 dark:text-primary-400" />

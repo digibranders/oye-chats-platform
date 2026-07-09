@@ -175,7 +175,7 @@ export default function Subscription() {
       />
 
       {/* Current Plan Card */}
-      <motion.div {...fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+      <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className={cn(
@@ -243,7 +243,7 @@ export default function Subscription() {
 
       {/* Usage Meters */}
       {usage && (
-        <motion.div {...fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
           <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-1">Usage This Period</h3>
           <p className="text-[12px] text-surface-500 dark:text-surface-400 mb-5">
             {formatDate(usage.period?.start)} — {formatDate(usage.period?.end)}
@@ -299,7 +299,7 @@ export default function Subscription() {
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
-          className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6"
+          className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6"
         >
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-[15px] font-bold text-surface-900 dark:text-white">Choose a Plan</h3>
@@ -400,7 +400,7 @@ export default function Subscription() {
 
       {/* Features */}
       {plan?.features && (
-        <motion.div {...fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
           <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Plan Features</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {[
@@ -446,7 +446,7 @@ export default function Subscription() {
 
       {/* Invoices */}
       {invoices.length > 0 && (
-        <motion.div {...fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
           <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Invoices</h3>
           <div className="space-y-2">
             {invoices.slice(0, 10).map(inv => {

@@ -541,7 +541,7 @@ export default function BotSettings({ embedded = false }) {
 
             {/* Live website preview panel */}
             {websitePreviewOpen && (
-                <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-4 shadow-sm animate-fade-in">
+                <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 p-4 shadow-sm animate-fade-in">
                     <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                         <div className="flex-1">
                             <label className="block text-[12px] font-semibold text-surface-600 dark:text-surface-300 mb-1">
@@ -552,7 +552,7 @@ export default function BotSettings({ embedded = false }) {
                                 value={previewUrlInput}
                                 onChange={(e) => setPreviewUrlInput(e.target.value)}
                                 placeholder="https://yourcompany.com"
-                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
                             />
                         </div>
                         <button
@@ -876,7 +876,7 @@ export default function BotSettings({ embedded = false }) {
             {/* Crop Modal */}
             {showCropModal && cropImage && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-surface-900/70 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden">
                         {/* Header */}
                         <div className="px-5 py-4 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between">
                             <div>

@@ -26,7 +26,7 @@ export default function StatCard({
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-5">
+      <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-5">
         <div className="space-y-3">
           <Skeleton className="h-4 w-24" />
           <Skeleton className="h-8 w-20" />
@@ -42,7 +42,7 @@ export default function StatCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
-        'rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-5 hover:shadow-md dark:hover:shadow-surface-950/50 transition-all duration-200 group relative overflow-hidden',
+        'rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-5 hover:shadow-md dark:hover:shadow-surface-950/50 transition-all duration-200 group relative overflow-hidden',
         className
       )}
     >

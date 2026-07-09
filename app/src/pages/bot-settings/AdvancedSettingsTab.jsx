@@ -3,9 +3,9 @@ import { Shield, Wand2, Timer, AlertTriangle, Wifi, ArrowRightLeft } from 'lucid
 
 const SECTION_HEADER_BASE = "text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2";
 const SECTION_SUBTITLE = "text-[13px] text-surface-500 dark:text-surface-400 mt-0.5";
-const CARD = "bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4";
+const CARD = "bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4";
 const FIELD_LABEL = "text-[13px] font-bold text-surface-700 dark:text-surface-300";
-const FIELD_INPUT = "w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500";
+const FIELD_INPUT = "w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500";
 const FIELD_HELP = "text-[11px] text-surface-400";
 
 const AdvancedSettingsTab = ({ settings, onSettingsChange }) => {

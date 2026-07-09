@@ -301,7 +301,7 @@ export default function Webhooks({ embedded = false }) {
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
             {activeTab === 'webhooks' && (
-                <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5">
                     {loadingWebhooks ? (
                         <div className="flex items-center gap-2 text-surface-500 dark:text-surface-400">
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -363,7 +363,7 @@ export default function Webhooks({ embedded = false }) {
             )}
 
             {activeTab === 'delivery-log' && (
-                <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 space-y-4">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                         <select
                             value={selectedWebhookId || ''}
@@ -477,7 +477,7 @@ export default function Webhooks({ embedded = false }) {
 
             {activeTab === 'crm-integration' && (
                 <div className="space-y-4">
-                    <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5">
                         <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">Connect to Your CRM</h2>
                         <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                             Use webhooks to push qualified leads to HubSpot, Salesforce, or any CRM via Zapier/Make
@@ -493,7 +493,7 @@ export default function Webhooks({ embedded = false }) {
                         the other two. */}
                     <div className="grid md:grid-cols-3 gap-4 items-stretch">
                         {CRM_TEMPLATES.map((template) => (
-                            <div key={template.id} className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 flex flex-col gap-3">
+                            <div key={template.id} className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 flex flex-col gap-3">
                                 <h3 className="text-sm font-bold text-surface-900 dark:text-surface-100">{template.title}</h3>
                                 <p className="text-sm text-surface-500 dark:text-surface-400 min-h-[2.75rem]">{template.description}</p>
 
@@ -524,7 +524,7 @@ export default function Webhooks({ embedded = false }) {
                                         {openSchema[template.id] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                     </button>
                                     {openSchema[template.id] && (
-                                        <pre className="p-3 text-[11px] leading-relaxed text-surface-700 dark:text-surface-300 overflow-x-auto bg-white dark:bg-surface-900">
+                                        <pre className="p-3 text-[11px] leading-relaxed text-surface-700 dark:text-surface-300 overflow-x-auto bg-[var(--bg-card)] dark:bg-surface-900">
                                             {PAYLOAD_SCHEMA}
                                         </pre>
                                     )}
@@ -551,7 +551,7 @@ export default function Webhooks({ embedded = false }) {
             {showModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
                     <div className="absolute inset-0 bg-black/30 dark:bg-black/60" onClick={closeModal} />
-                    <div className="relative w-full max-w-xl rounded-2xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 shadow-2xl p-6 space-y-4">
+                    <div className="relative w-full max-w-xl rounded-2xl bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 shadow-2xl p-6 space-y-4">
                         <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">
                             {editingWebhook ? 'Edit Webhook' : 'Add Webhook'}
                         </h2>

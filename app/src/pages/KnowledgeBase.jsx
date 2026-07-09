@@ -673,7 +673,7 @@ export default function KnowledgeBase() {
       <PageHeader title="Sources" subtitle="Train your chatbot with documents and websites" />
       <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
 
-      <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm max-w-4xl min-h-[400px]">
+      <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm max-w-4xl min-h-[400px]">
 
         {/* FILE UPLOAD */}
         {activeTab === 'files' && (
@@ -1407,7 +1407,7 @@ export default function KnowledgeBase() {
                                   );
                                   setCrawlCount(n);
                                 }}
-                                className="w-20 text-right rounded-md border border-amber-300 dark:border-amber-500/30 bg-white dark:bg-surface-900 px-2 py-1 text-xs tabular-nums"
+                                className="w-20 text-right rounded-md border border-amber-300 dark:border-amber-500/30 bg-[var(--bg-card)] dark:bg-surface-900 px-2 py-1 text-xs tabular-nums"
                               />
                             </div>
                             <input

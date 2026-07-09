@@ -909,7 +909,7 @@ function OverviewTab({
                     className={cn(
                       'absolute right-0 top-5 z-10 w-64 rounded-xl border p-3 shadow-lg',
                       'border-surface-200 dark:border-surface-700',
-                      'bg-white dark:bg-surface-900',
+                      'bg-[var(--bg-card)] dark:bg-surface-900',
                       'text-xs text-surface-600 dark:text-surface-300 leading-relaxed',
                       'opacity-0 invisible group-hover:opacity-100 group-hover:visible',
                       'transition-all duration-150',

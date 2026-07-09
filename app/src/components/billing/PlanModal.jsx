@@ -446,7 +446,7 @@ export default function PlanModal({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 16, scale: 0.97 }}
                         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative w-full max-w-5xl max-h-[90vh] bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 flex flex-col overflow-hidden"
+                        className="relative w-full max-w-5xl max-h-[90vh] bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 flex flex-col overflow-hidden"
                     >
                         {/* Header */}
                         <div className="flex items-start justify-between px-6 py-4 border-b border-surface-200 dark:border-surface-800 shrink-0">
@@ -610,7 +610,7 @@ function CycleToggle({ value, onChange, disabled }) {
                     className={cn(
                         'px-3 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5',
                         value === o.value
-                            ? 'bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-50 shadow-sm'
+                            ? 'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-50 shadow-sm'
                             : 'text-surface-600 dark:text-surface-400 hover:text-surface-900 dark:hover:text-surface-200',
                     )}
                 >
@@ -644,7 +644,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
                 'relative w-full text-left rounded-xl border px-4 py-3.5 min-h-[88px]',
                 'transition-colors duration-200 group',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
-                isSelected ? accent.railActive : accent.rail + ' bg-white dark:bg-surface-900',
+                isSelected ? accent.railActive : accent.rail + ' bg-[var(--bg-card)] dark:bg-surface-900',
             )}
         >
             {isMostPopular && (
@@ -925,7 +925,7 @@ function ReferralBlock({ referral }) {
                             maxLength={20}
                             className={cn(
                                 'flex-1 rounded-lg border px-3 py-1.5 text-sm font-mono tracking-widest uppercase',
-                                'bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-50',
+                                'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-50',
                                 'placeholder:text-surface-400 dark:placeholder:text-surface-500 placeholder:font-sans placeholder:tracking-normal',
                                 'focus:outline-none focus:ring-2 focus:ring-primary-500/40',
                                 'disabled:opacity-60 disabled:cursor-not-allowed',

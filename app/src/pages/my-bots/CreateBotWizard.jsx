@@ -206,7 +206,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
             aria-labelledby="create-bot-title"
             onMouseDown={(e) => { if (e.target === e.currentTarget) resetAndClose(); }}
         >
-            <div ref={panelRef} className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden animate-scale-in">
+            <div ref={panelRef} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden animate-scale-in">
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-5">
                         <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">

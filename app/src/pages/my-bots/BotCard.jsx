@@ -143,7 +143,7 @@ export default function BotCard({
             onClick={() => onManage(bot)}
             onKeyDown={handleCardKeyDown}
             className={cn(
-                'group bg-white dark:bg-surface-900 rounded-2xl border shadow-sm transition-all cursor-pointer',
+                'group bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border shadow-sm transition-all cursor-pointer',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-surface-950',
                 isActive
                     ? 'border-primary-300 dark:border-primary-500/50 ring-1 ring-primary-200/50 dark:ring-primary-500/20'
@@ -222,7 +222,7 @@ export default function BotCard({
                                 aria-label={`Actions for ${bot.name}`}
                                 onClick={stop}
                                 onKeyDown={handleMenuKeyDown}
-                                className="absolute right-0 top-full mt-1.5 z-20 w-48 py-1.5 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 shadow-lg animate-scale-in origin-top-right"
+                                className="absolute right-0 top-full mt-1.5 z-20 w-48 py-1.5 rounded-xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 shadow-lg animate-scale-in origin-top-right"
                             >
                                 <a
                                     role="menuitem"

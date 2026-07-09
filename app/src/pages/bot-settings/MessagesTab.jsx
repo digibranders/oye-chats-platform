@@ -5,9 +5,9 @@ const DEFAULT_SUGGESTIONS = ['Our Services', 'About us', 'Contact us'];
 
 const SECTION_HEADER_BASE = "text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2";
 const SECTION_SUBTITLE = "text-[13px] text-surface-500 dark:text-surface-400 mt-0.5";
-const CARD = "bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4";
+const CARD = "bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4";
 const FIELD_LABEL = "text-[13px] font-bold text-surface-700 dark:text-surface-300";
-const FIELD_INPUT = "w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500";
+const FIELD_INPUT = "w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500";
 const FIELD_HELP = "text-[11px] text-surface-400";
 
 /**
@@ -194,7 +194,7 @@ const MessagesTab = ({ draft, set }) => {
                                         className={`flex items-center gap-1.5 px-2.5 h-8 text-[12px] font-medium transition-colors cursor-pointer ${
                                             active
                                                 ? 'bg-primary-500 text-white'
-                                                : 'bg-white dark:bg-surface-900 text-surface-600 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800'
+                                                : 'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-600 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800'
                                         }`}
                                     >
                                         <LayoutIcon className="w-3.5 h-3.5" />

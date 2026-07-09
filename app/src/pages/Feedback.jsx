@@ -161,7 +161,7 @@ export default function Feedback({ embedded = false }) {
                         {feedback.length > 0 && (
                             <button
                                 onClick={() => exportFeedbackCsv(filtered)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                             >
                                 <Download size={13} /> Export CSV
                             </button>
@@ -177,7 +177,7 @@ export default function Feedback({ embedded = false }) {
             )}
 
             {isLoading ? (
-                <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-12 flex flex-col items-center justify-center min-h-[400px]">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-12 flex flex-col items-center justify-center min-h-[400px]">
                     <div className="w-10 h-10 border-3 border-primary-500/20 border-t-primary-500 rounded-full animate-spin" />
                     <p className="mt-4 text-surface-500 dark:text-surface-400 text-sm font-medium">Loading feedback...</p>
                 </div>
@@ -191,7 +191,7 @@ export default function Feedback({ embedded = false }) {
             ) : (
                 <>
                     {/* Summary Bar */}
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
                         <div className="flex items-center gap-6 flex-1">
                             <div>
                                 <p className="text-2xl font-bold text-surface-900 dark:text-white">{stats.total}</p>
@@ -218,7 +218,7 @@ export default function Feedback({ embedded = false }) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* CSAT Trend Line */}
                         {trendData.length > 1 && (
-                            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
+                            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
                                 <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200 mb-4">Satisfaction Trend</h3>
                                 <ResponsiveContainer width="100%" height={160}>
                                     <LineChart data={trendData} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
@@ -241,7 +241,7 @@ export default function Feedback({ embedded = false }) {
                             a row jumps into the detailed card below by matching the
                             question to any one negative feedback entry. */}
                         {topDownvoted.length > 0 && (
-                            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
+                            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
                                 <div className="flex items-center justify-between mb-4">
                                     <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200">Top downvoted questions</h3>
                                     <span className="text-[10px] font-medium uppercase tracking-wider text-surface-400 dark:text-surface-500">Fix these first</span>
@@ -303,7 +303,7 @@ export default function Feedback({ embedded = false }) {
                                 <div
                                     key={item.message_id}
                                     data-feedback-id={item.message_id}
-                                    className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 overflow-hidden hover:shadow-sm dark:hover:shadow-surface-950/30 transition-all"
+                                    className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 overflow-hidden hover:shadow-sm dark:hover:shadow-surface-950/30 transition-all"
                                 >
                                     <button
                                         onClick={() => setExpandedId(isExpanded ? null : item.message_id)}

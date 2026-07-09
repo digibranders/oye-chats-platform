@@ -370,7 +370,7 @@ export default function Leads() {
                     <button
                         onClick={handleMarkAllRead}
                         disabled={!hasUnreadLeads}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
                     >
                         <CheckCheck className="w-4 h-4" />
@@ -379,7 +379,7 @@ export default function Leads() {
                     <button
                         onClick={handleExport}
                         disabled={isExporting || leads.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
                     >
                         {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                         Export CSV
@@ -404,7 +404,7 @@ export default function Leads() {
                                 'p-4 rounded-xl border transition-all',
                                 (statusFilter === s.label.toLowerCase() || (!statusFilter && s.label === 'Total'))
                                     ? 'border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10 ring-1 ring-primary-200 dark:ring-primary-500/30'
-                                    : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600'
+                                    : 'border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600'
                             )}
                         >
                             <p className="text-[12px] font-medium text-surface-500 dark:text-surface-400">{s.label}</p>
@@ -425,7 +425,7 @@ export default function Leads() {
                         placeholder="Search by name, email, or location..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
                 </div>
                 <div className="relative sm:w-56">
@@ -433,7 +433,7 @@ export default function Leads() {
                         value={contactFilter}
                         onChange={(e) => setContactFilter(e.target.value)}
                         aria-label="Filter by contact type"
-                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
+                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
                     >
                         {CONTACT_FILTERS.map((opt) => {
                             const count = contactCounts[opt.value] ?? 0;
@@ -460,7 +460,7 @@ export default function Leads() {
                         <span className="text-sm font-medium text-primary-700 dark:text-primary-300">{selectedIds.size} selected</span>
                         <button
                             onClick={exportSelected}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--bg-card)] dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
                         >
                             <Download size={13} /> Export selected
                         </button>
@@ -475,7 +475,7 @@ export default function Leads() {
             </AnimatePresence>
 
             {/* Leads Table */}
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                 {isLoading ? (
                     <SkeletonTable rows={8} cols={6} />
                 ) : filtered.length === 0 ? (
@@ -639,11 +639,11 @@ export default function Leads() {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                            className="relative w-full max-w-lg bg-white dark:bg-surface-900 shadow-2xl overflow-y-auto"
+                            className="relative w-full max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl overflow-y-auto"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Drawer Header */}
-                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between">
+                            <div className="sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between">
                                 <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">Lead Detail</h2>
                                 <button onClick={() => { setSelectedLead(null); setLeadDetail(null); }} className="text-surface-400 hover:text-surface-600 dark:text-surface-500 dark:hover:text-surface-300">
                                     <X className="w-5 h-5" />
@@ -767,7 +767,7 @@ export default function Leads() {
                                                 <h4 className="text-[12px] font-bold text-surface-500 dark:text-surface-400 mb-2">Evidence Trail</h4>
                                                 <div className="space-y-2 max-h-48 overflow-y-auto">
                                                     {leadDetail.signals.map((s, i) => (
-                                                        <div key={i} className="bg-white dark:bg-surface-900 border border-surface-100 dark:border-surface-700 rounded-lg px-3 py-2">
+                                                        <div key={i} className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-100 dark:border-surface-700 rounded-lg px-3 py-2">
                                                             <div className="flex items-center gap-2 mb-1">
                                                                 <span className="text-[10px] font-bold uppercase text-surface-400 dark:text-surface-500">{s.dimension}</span>
                                                                 <span className={cn(
@@ -834,7 +834,7 @@ export default function Leads() {
                                                         <span className="text-surface-400 dark:text-surface-500">UTM:</span>
                                                         <div className="flex flex-wrap gap-1 mt-1">
                                                             {Object.entries(leadDetail.behavioral.utm_params).map(([k, v]) => (
-                                                                <span key={k} className="px-2 py-0.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded text-[10px] text-surface-600 dark:text-surface-400">
+                                                                <span key={k} className="px-2 py-0.5 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded text-[10px] text-surface-600 dark:text-surface-400">
                                                                     {k}: {v}
                                                                 </span>
                                                             ))}
@@ -889,13 +889,13 @@ export default function Leads() {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 32, stiffness: 320 }}
-                            className="relative w-full max-w-md bg-white dark:bg-surface-900 shadow-2xl flex flex-col"
+                            className="relative w-full max-w-md bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl flex flex-col"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header: contact + meta + close. Mirrors the
                                 live-chat header so the two views feel like
                                 one product. */}
-                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
+                            <div className="sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
                                 <div className="flex items-start gap-3">
                                     <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center shrink-0">
                                         <MessageCircle className="w-4 h-4 text-primary-600 dark:text-primary-400" />

@@ -118,7 +118,7 @@ export default function AutoRecrawlCard({ botId }) {
 
     if (loading) {
         return (
-            <div className="rounded-2xl border border-surface-200 dark:border-surface-800 p-6 bg-white dark:bg-surface-900">
+            <div className="rounded-2xl border border-surface-200 dark:border-surface-800 p-6 bg-[var(--bg-card)] dark:bg-surface-900">
                 <div className="flex items-center gap-3">
                     <Loader2 className="animate-spin text-primary-500" size={18} />
                     <span className="text-sm text-surface-500">Loading auto-recrawl status…</span>
@@ -137,7 +137,7 @@ export default function AutoRecrawlCard({ botId }) {
     } = status || {};
 
     return (
-        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 overflow-hidden">
+        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 overflow-hidden">
             <div className="p-6 space-y-5">
                 <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
@@ -281,7 +281,7 @@ function ConfirmDisableDialog({ onCancel, onConfirm }) {
             role="dialog"
             aria-modal="true"
         >
-            <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-surface-900 p-5 shadow-2xl border border-surface-200 dark:border-surface-800">
+            <div className="w-full max-w-sm rounded-2xl bg-[var(--bg-card)] dark:bg-surface-900 p-5 shadow-2xl border border-surface-200 dark:border-surface-800">
                 <h4 className="text-base font-semibold text-surface-900 dark:text-white">
                     Turn off auto-recrawl?
                 </h4>

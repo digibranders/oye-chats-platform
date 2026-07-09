@@ -105,7 +105,7 @@ export default function ReferralsModal({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 14, scale: 0.98 }}
                         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative w-full max-w-2xl max-h-[88vh] bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 flex flex-col"
+                        className="relative w-full max-w-2xl max-h-[88vh] bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 flex flex-col"
                     >
                         {/* Header */}
                         <div className="flex items-start justify-between p-5 border-b border-surface-200 dark:border-surface-800 shrink-0">
@@ -311,7 +311,7 @@ export default function ReferralsModal({
                                         {referrals.map((r) => (
                                             <li
                                                 key={r.client_id}
-                                                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 bg-white dark:bg-surface-900"
+                                                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 bg-[var(--bg-card)] dark:bg-surface-900"
                                             >
                                                 <div className="flex items-center gap-3 min-w-0 flex-1">
                                                     <Avatar name={r.name || r.email} />

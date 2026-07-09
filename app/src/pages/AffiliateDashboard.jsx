@@ -36,7 +36,7 @@ const STAT_TINTS = {
 // props, AND keeps the StatCard reusable for any icon library / inline SVG.
 function StatCard({ icon, label, value, hint, tint = 'primary' }) {
     return (
-        <div className="bg-white dark:bg-surface-900 p-4 rounded-2xl border border-surface-200 dark:border-surface-800">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-4 rounded-2xl border border-surface-200 dark:border-surface-800">
             <div className="flex items-center gap-2 mb-2">
                 <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', STAT_TINTS[tint])}>
                     {icon}
@@ -282,7 +282,7 @@ export default function AffiliateDashboard() {
             )}
 
             {/* Codes table */}
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                 {isLoading ? (
                     <SkeletonTable rows={5} cols={7} />
                 ) : codes.length === 0 ? (

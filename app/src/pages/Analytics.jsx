@@ -212,7 +212,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Messages Tab — BarChart */}
             {activeTab === 'messages' && (
-                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                         <div>
                             <h2 className="text-lg font-bold text-surface-900 dark:text-white flex items-center gap-2">
@@ -255,7 +255,7 @@ export default function Analytics({ embedded = false }) {
             {/* Leads Tab — Funnel + BANT distribution */}
             {activeTab === 'leads' && (
                 <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
                             <Target size={16} className="text-emerald-500" /> Lead Stage Distribution
                         </h2>
@@ -279,7 +279,7 @@ export default function Analytics({ embedded = false }) {
                             </ResponsiveContainer>
                         ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No lead data</div>}
                     </div>
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
                             <CheckCircle2 size={16} className="text-primary-500" /> Conversion Funnel
                         </h2>
@@ -310,7 +310,7 @@ export default function Analytics({ embedded = false }) {
             {/* Satisfaction Tab — Radial rings */}
             {activeTab === 'satisfaction' && (
                 <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-1 flex items-center gap-2">
                             <Star size={16} className="text-amber-500" /> Rating Distribution
                         </h2>
@@ -343,7 +343,7 @@ export default function Analytics({ embedded = false }) {
                             </div>
                         ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No ratings yet</div>}
                     </div>
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-1 flex items-center gap-2">
                             <CheckCircle2 size={16} className="text-emerald-500" /> Resolution Rate
                         </h2>
@@ -384,7 +384,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Overview Tab — Original charts */}
             {(embedded || activeTab === 'overview') && (<>
-            <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+            <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <div>
                         <h2 className="text-lg font-bold text-surface-900 dark:text-white flex items-center gap-2">
@@ -441,7 +441,7 @@ export default function Analytics({ embedded = false }) {
             </motion.div>
 
             {/* Top Questions */}
-            <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+            <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                 <div className="flex items-center gap-2 mb-5">
                     <div className="w-9 h-9 rounded-lg bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
                         <MessageSquare size={18} className="text-primary-600 dark:text-primary-400" />
@@ -499,7 +499,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Customer Satisfaction (post-chat ratings) */}
             {(isLoading || (ratingsSummary && ratingsSummary.total > 0)) && (
-                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                     <div className="flex items-center gap-2 mb-5">
                         <div className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
                             <Star size={18} className="text-amber-500 dark:text-amber-400" />
@@ -561,7 +561,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Resolution Rate (post-chat survey) */}
             {(isLoading || (resolutionSummary && resolutionSummary.total > 0)) && (
-                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                     <div className="flex items-center gap-2 mb-5">
                         <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
                             <CheckCircle2 size={18} className="text-emerald-500 dark:text-emerald-400" />

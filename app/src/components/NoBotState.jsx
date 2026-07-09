@@ -9,7 +9,7 @@ export default function NoBotState({ title, subtitle }) {
 
   return (
     <div className="flex flex-col items-center justify-center py-20">
-      <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-12 flex flex-col items-center text-center max-w-md w-full">
+      <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-12 flex flex-col items-center text-center max-w-md w-full">
         <div className="w-20 h-20 rounded-2xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-6">
           <Bot size={36} className="text-primary-500" />
         </div>

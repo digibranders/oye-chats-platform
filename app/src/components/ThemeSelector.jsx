@@ -68,7 +68,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                         </div>
 
                         {/* Card Footer */}
-                        <div className="p-4 bg-white dark:bg-surface-900 flex items-center justify-between border-t border-surface-200 dark:border-surface-700">
+                        <div className="p-4 bg-[var(--bg-card)] dark:bg-surface-900 flex items-center justify-between border-t border-surface-200 dark:border-surface-700">
                             <div>
                                 <h3 className="font-semibold text-sm text-surface-900 dark:text-surface-100">{theme.name}</h3>
                                 {isSelected && (

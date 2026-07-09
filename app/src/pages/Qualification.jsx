@@ -207,7 +207,7 @@ function KpiInfoButton({ text, label }) {
             >
                 <Info className="w-3.5 h-3.5" />
             </button>
-            <div className="pointer-events-none absolute z-20 right-0 top-full mt-2 w-64 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 px-3 py-2 text-[11px] font-medium text-surface-600 dark:text-surface-300 shadow-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+            <div className="pointer-events-none absolute z-20 right-0 top-full mt-2 w-64 rounded-lg border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 px-3 py-2 text-[11px] font-medium text-surface-600 dark:text-surface-300 shadow-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                 {text}
             </div>
         </div>
@@ -308,7 +308,7 @@ function TierCard({ tierKey, count, total, delay = 0 }) {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay, ease: [0.16, 1, 0.3, 1] }}
-            className="relative rounded-xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-5 transition-colors hover:border-surface-300 dark:hover:border-surface-700"
+            className="relative rounded-xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-5 transition-colors hover:border-surface-300 dark:hover:border-surface-700"
         >
             <div className="flex items-start justify-between mb-4">
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${meta.chip}`}>
@@ -395,7 +395,7 @@ function ConversionFlow({ counts }) {
 
 function HeroStat({ label, value, sub, icon: Icon, accent = 'text-primary-400', tooltip }) {
     return (
-        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-4">
+        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-4">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     {Icon && <Icon size={14} className={accent} />}
@@ -464,7 +464,7 @@ function ScorecardTab() {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                className="rounded-xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-6"
+                className="rounded-xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-6"
             >
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 items-center">
                     <div className="space-y-4">
@@ -694,7 +694,7 @@ function ConfigurationTab() {
 
     return (
         <div className="space-y-6">
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-[11px] font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400 mb-2">Select Bot</label>
@@ -761,7 +761,7 @@ function ConfigurationTab() {
                         if (!d) return null;
                         const label = d.label || toLabel(dim);
                         return (
-                            <div key={dim} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+                            <div key={dim} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                                 {/* ── Card header ─────────────────────────────── */}
                                 <div className="flex items-center gap-4 px-5 py-4 border-b border-surface-100 dark:border-surface-800 bg-surface-50/60 dark:bg-surface-800/40">
                                     {/* Title */}
@@ -771,7 +771,7 @@ function ConfigurationTab() {
                                                 type="text"
                                                 value={label}
                                                 onChange={(e) => updateDimensionName(dim, e.target.value)}
-                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                             />
                                         ) : (
                                             <h3 className="text-base font-bold text-surface-900 dark:text-surface-50 truncate">{label}</h3>
@@ -787,7 +787,7 @@ function ConfigurationTab() {
                                             max={100}
                                             value={d.weight ?? 0}
                                             onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
-                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                         />
                                         <span className="text-[11px] text-surface-400 dark:text-surface-500">/100</span>
                                     </div>
@@ -899,7 +899,7 @@ function ConfigurationTab() {
                         );
                     })}
 
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
                         <h3 className="text-base font-bold text-surface-900 dark:text-surface-50">Thresholds</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             {[
@@ -922,7 +922,7 @@ function ConfigurationTab() {
                         </div>
                     </div>
 
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
                         <div className="flex items-center justify-between">
                             <h3 className="text-base font-bold text-surface-900 dark:text-surface-50">Score Decay</h3>
                             <button
@@ -1179,7 +1179,7 @@ function FunnelTab() {
                         initial={{ opacity: 0, y: 12 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative overflow-hidden rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-6"
+                        className="relative overflow-hidden rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-6"
                     >
                         <div className="mb-5">
                             <p className="text-sm font-semibold text-surface-900 dark:text-surface-50">Visitor → Meeting funnel</p>
