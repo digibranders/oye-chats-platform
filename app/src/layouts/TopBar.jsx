@@ -102,7 +102,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   }, [showUserMenu]);
 
   return (
-    <header className="h-14 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
+    <header className="h-14 bg-surface-50/75 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
       {/* Left */}
       <div className="flex items-center gap-2 md:gap-3 min-w-0">
         <button
@@ -179,7 +179,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                           {profile.role}
                         </span>
                       )}
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#2E2A72] text-white border border-indigo-500/20 shadow-sm shrink-0">
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-700 text-white border border-primary-500/20 shadow-sm shrink-0">
                         {entitlements?.planName || 'Free'} Plan
                       </span>
                     </div>

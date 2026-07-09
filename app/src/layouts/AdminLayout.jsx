@@ -214,7 +214,7 @@ function AdminLayoutInner() {
         }}
         aria-label="Send feedback"
         title="Send feedback"
-        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#6d6bfa] to-[#3b32b3] shadow-[-6px_0_30px_rgba(99,102,241,0.5)] z-40 cursor-pointer"
+        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#3d66ff] to-[#1e3aa8] shadow-[-6px_0_30px_rgba(47,92,255,0.5)] z-40 cursor-pointer"
       >
         <MessageCircle size={20} className="text-white flex-shrink-0" />
         <span
