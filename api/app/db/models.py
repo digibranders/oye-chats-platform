@@ -221,6 +221,11 @@ class Bot(Base):
     name = Column(String, default="AI Assistant", server_default="AI Assistant")
     system_prompt = Column(Text, nullable=True)
     brand_tone = Column(Text, nullable=True)  # Auto-extracted or manually set brand voice/tone description
+    # Which brand-tone preset chip is active: a key from brand_tone.PRESET_KEYS,
+    # "custom" (text hand-edited away from any preset), or NULL (empty/never set).
+    # Descriptive metadata for the UI only — never fed to the prompt; rides along
+    # with brand_tone on crawl/detect writes. See app/services/brand_tone.py.
+    brand_tone_preset = Column(String, nullable=True)
     company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
     company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
     # Names of auto-fillable fields the customer has edited by hand
