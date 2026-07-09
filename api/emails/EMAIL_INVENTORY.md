@@ -26,26 +26,22 @@
 | Dashboard links | `APP_URL` (default `https://app.oyechats.com`) |
 | Invoice-email gate | `INVOICE_EMAILS_ENABLED` (default `true`) |
 
-### Two send paths
-1. **Raw HTML** — `_send_brevo_email()` → built in-code via the design-token template helpers (`_html_doc`, `_base_template`, etc.). Supports **attachments** (used by invoices).
-2. **Brevo saved template** — `_send_brevo_template()` → uses a template ID managed in the Brevo dashboard; only dynamic `params` are passed.
+### Rendering — all in code (one design system)
+**Every email now renders raw HTML in Python** from the shared design system in
+`app/services/email_design.py` (monochrome + single-indigo-accent, dark-mode hardened
+for Outlook). There are **no Brevo saved templates in the send path** — all 19 senders
+build HTML and dispatch through `_send_brevo_email()` (which supports attachments, used
+by invoices). The gallery in `emails/gallery/` is generated from these same senders, so
+what you review is what customers receive.
 
-### Delivery model (`send_email_async` / `send_template_async`)
+The legacy `_send_brevo_template()` transport and the `TEMPLATE_*` IDs (57–63) still
+exist for backward-compat and the super-admin catalogue, but nothing sends through them.
+
+### Delivery model (`send_email_async`)
 - Fire-and-forget, non-blocking.
-- If `WORKER_ENABLED=true` → enqueued to **ARQ** (durable, retryable) via `task_send_email` / `task_send_template_email`.
+- If `WORKER_ENABLED=true` → enqueued to **ARQ** (durable, retryable) via `task_send_email`.
 - Otherwise → thread-pool / daemon-thread fallback.
 - Failures captured to **Sentry** with `email.*` tags (`_capture_email_failure`); Brevo error body is parsed for the real reason (`_extract_brevo_error`).
-
-### Brevo template IDs (`emails/brevo_template_ids.json`, created 2026-04-09)
-| Constant | ID | JSON key |
-|----------|----|----------|
-| `TEMPLATE_PASSWORD_RESET` | 57 | oyechats_password_reset |
-| `TEMPLATE_OFFLINE_MESSAGE` | 58 | oyechats_offline_message |
-| `TEMPLATE_VISITOR_CONFIRMATION` | 59 | oyechats_visitor_confirmation |
-| `TEMPLATE_QUALIFIED_LEAD` | 60 | oyechats_qualified_lead |
-| `TEMPLATE_HANDOFF_REQUEST` | 61 | oyechats_handoff_request |
-| `TEMPLATE_MISSED_CALLBACK` | 62 | oyechats_missed_callback |
-| `TEMPLATE_CHAT_TRANSCRIPT` | 63 | oyechats_chat_transcript *(referenced but transcript actually sends raw HTML)* |
 
 ### Credit metering — none
 **No email deducts credits.** A `meter_customer_email()` helper used to exist as an unwired stub (never called from any send site); it was removed as dead code, and the super-admin template registry now reports `metered: false` for every template. The `credit_cost.email_send` pricing key and its usage-reporting surface remain in place (they read 0), so per-email metering can be wired up later if the product decides to charge for sends.
@@ -54,7 +50,7 @@
 
 ## 2. Email Catalogue (19 distinct emails)
 
-Grouped by category. "Rendering" = raw HTML built in-code vs. Brevo template ID.
+Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
 ### A. Authentication & Account (raw HTML unless noted — always free)
 
@@ -69,11 +65,11 @@ Grouped by category. "Rendering" = raw HTML built in-code vs. Brevo template ID.
 | Triggers | `auth_routes.py:619` resend-verification endpoint; `auth_routes.py:813` on register (new client) |
 | Metered | No |
 
-#### A2. Password reset OTP — Brevo template #57
+#### A2. Password reset OTP
 | | |
 |---|---|
 | Function | `send_password_reset_email(to_email, otp)` |
-| Rendering | Brevo template `#57` |
+| Rendering | Raw HTML (Linear-style code box) — legacy Brevo ID #57 unused |
 | Audience | Customer |
 | Params | `{otp}` |
 | Triggers | `auth_routes.py:860` — `POST /auth/forgot-password`; `superadmin_routes_v2.py:369` — super-admin triggers reset for a target user |
@@ -169,20 +165,20 @@ Grouped by category. "Rendering" = raw HTML built in-code vs. Brevo template ID.
 | Metered | No |
 | Context | See Razorpay UPI update constraint — plan change = cancel + recreate + re-auth |
 
-### D. Lead / Qualification / Live Chat (Brevo templates)
+### D. Lead / Qualification / Live Chat
 
-#### D1. Qualified lead alert — Brevo template #60
+#### D1. Qualified lead alert
 | | |
 |---|---|
 | Function | `send_qualified_lead_email(notification_email, bot_name, bant, contact, tier, reply_to)` |
-| Rendering | Brevo template `#60` (tier-aware: SQL=green, MQL=amber) |
+| Rendering | Raw HTML (tier chip: SQL=green, MQL=amber) — legacy Brevo ID #60 unused |
 | Audience | Customer (bot's `notification_emails`) |
 | Params | bot_name, tier/tier_label, BANT (need/budget/authority/timeline), contact (name/email/phone/company), accent palette |
 | Sender | `"{BotName} via OyeChats"`, optional `reply_to` = bot's `reply_to_email` |
 | Trigger | `rag_service.py:2570` — BANT/MEDDIC **tier transition** after chat stream closes (background) |
 | Metered | No |
 
-#### D2. Handoff request — Brevo template #61
+#### D2. Handoff request
 | | |
 |---|---|
 | Function | `send_handoff_request_email(notification_email, bot_name, reason, contact, reply_to)` |
@@ -191,7 +187,7 @@ Grouped by category. "Rendering" = raw HTML built in-code vs. Brevo template ID.
 | Triggers | ARQ `task_send_visitor_message_email` (`tasks.py:1294`), enqueued from `ws_routes.py:344` when a visitor messages in a still-`waiting` (unaccepted) session and the per-process debounce allows it. **This template is reused as the "visitor sent a message while waiting" notification.** |
 | Metered | No |
 
-#### D3. Missed callback — Brevo template #62
+#### D3. Missed callback
 | | |
 |---|---|
 | Function | `send_unavailable_callback_email(notification_email, bot_name, contact, reply_to)` |
@@ -200,7 +196,7 @@ Grouped by category. "Rendering" = raw HTML built in-code vs. Brevo template ID.
 | Triggers | `offline_message_routes.py:101`; `ws_routes.py:480` (queue timeout / no operator) |
 | Metered | No |
 
-#### D4. Offline message — Brevo template #58
+#### D4. Offline message
 | | |
 |---|---|
 | Function | `send_offline_message_email(notification_email, bot_name, visitor_name, visitor_email, message_preview, reply_to)` |
@@ -209,11 +205,11 @@ Grouped by category. "Rendering" = raw HTML built in-code vs. Brevo template ID.
 | Triggers | `offline_message_routes.py:112` (`POST /offline-messages`); `ws_routes.py:487` |
 | Metered | No |
 
-#### D5. Visitor confirmation — Brevo template #59
+#### D5. Visitor confirmation
 | | |
 |---|---|
 | Function | `send_visitor_confirmation_email(to_email, company_name, visitor_name, reply_to)` |
-| Rendering | Raw HTML via `_html_doc` (visitor footer) |
+| Rendering | Raw HTML (visitor footer) |
 | Subject | `Thank you for contacting {company_name}` |
 | Audience | **Visitor** (auto-reply) |
 | Body | "We've received your message, our team has been notified" |
@@ -274,14 +270,15 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 ## 4. Summary
 
 - **19 distinct emails** across 5 categories: Auth (4), Trial lifecycle (5), Billing (2), Lead/Live-chat (6), Affiliate (2).
-- **7 use Brevo saved templates** (IDs 57–63); the rest are raw HTML built in-code from a shared design system (`_html_doc` / `_base_template`).
+- **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF).
 - **All sends require `BREVO_API_KEY`** — otherwise skipped with a WARN log.
 - **No credit metering** — emails do not deduct credits (the unwired `meter_customer_email()` stub was removed; registry reports `metered: false`).
 - **Reply-To:** lead/live-chat emails forward the bot's `reply_to_email` and use a `"{BotName} via OyeChats"` sender so customers can reply directly.
 
-> ⚠️ Item worth flagging to product/eng:
-> - **Transcript template mismatch** — `TEMPLATE_CHAT_TRANSCRIPT` (#63) exists in Brevo but `send_transcript_email` sends raw HTML; the Brevo template is described in-code as "visual reference only."
+> ✅ Resolved:
+> - **Metering** — the unwired `meter_customer_email()` stub was removed; registry reports `metered: false`.
+> - **One rendering path** — all 19 emails now render in code from `email_design.py`; the old Brevo-template split (and the transcript template mismatch) is gone. The `emails/gallery/` set is generated from these senders, so review == production.
 >
-> ✅ Resolved in this cleanup: the unwired `meter_customer_email()` stub was removed and the super-admin template registry no longer claims emails are metered.
+> Follow-up (optional): the super-admin `email_templates` catalogue still describes the legacy Brevo templates; it could be repointed at the in-code design or removed since nothing sends through Brevo templates now.

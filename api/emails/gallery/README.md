@@ -38,12 +38,13 @@ cd platform/api
 uv run python scripts/build_email_gallery.py
 ```
 
-## Status
+## Status — wired to production
 
-This is a **design deliverable** for review. It is decoupled from the runtime
-`app.services.email_service`. Once approved, the tokens and components here get
-ported back into the runtime helpers so the actually-sent emails match (the
-"wire-up" step). Until then, production still sends the current templates.
+These files are **generated from the real senders** in `app/services/email_service.py`
+(the generator monkeypatches the dispatcher and captures each email's HTML), so the
+gallery is exactly what customers receive — it cannot drift. The shared design system
+lives in `app/services/email_design.py`. All 19 emails render in code; there are no
+Brevo saved templates in the send path anymore.
 
 ## The 19 templates
 
