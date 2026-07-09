@@ -267,33 +267,27 @@ export default function Dashboard() {
       label: 'Upload documents',
       desc: 'Add to your knowledge base',
       to: '/knowledge',
-      gradient: 'from-violet-50 via-violet-50/60 to-indigo-50/40 dark:from-violet-500/20 dark:via-violet-500/10 dark:to-indigo-500/10',
-      ring: 'hover:border-violet-300 dark:hover:border-violet-500/50',
-      iconBg: 'bg-violet-100 dark:bg-violet-500/20',
-      iconColor: 'text-violet-600 dark:text-violet-300',
-      arrowColor: 'group-hover:text-violet-500 dark:group-hover:text-violet-300',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
+      iconColor: 'text-primary-600 dark:text-primary-400',
+      arrowColor: 'group-hover:text-primary-500 dark:group-hover:text-primary-400',
     },
     {
       icon: Palette,
       label: 'Customize appearance',
       desc: 'Brand your chatbot',
       to: '/chatbot?tab=appearance',
-      gradient: 'from-amber-50 via-amber-50/60 to-orange-50/40 dark:from-amber-500/20 dark:via-orange-500/10 dark:to-rose-500/10',
-      ring: 'hover:border-amber-300 dark:hover:border-amber-500/50',
-      iconBg: 'bg-amber-100 dark:bg-amber-500/20',
-      iconColor: 'text-amber-600 dark:text-amber-300',
-      arrowColor: 'group-hover:text-amber-500 dark:group-hover:text-amber-300',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
+      iconColor: 'text-primary-600 dark:text-primary-400',
+      arrowColor: 'group-hover:text-primary-500 dark:group-hover:text-primary-400',
     },
     {
       icon: Code2,
       label: 'Get embed code',
       desc: 'Add to your website',
       to: '/chatbot',
-      gradient: 'from-emerald-50 via-teal-50/60 to-sky-50/40 dark:from-emerald-500/20 dark:via-teal-500/10 dark:to-sky-500/10',
-      ring: 'hover:border-emerald-300 dark:hover:border-emerald-500/50',
-      iconBg: 'bg-emerald-100 dark:bg-emerald-500/20',
-      iconColor: 'text-emerald-600 dark:text-emerald-300',
-      arrowColor: 'group-hover:text-emerald-500 dark:group-hover:text-emerald-300',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
+      iconColor: 'text-primary-600 dark:text-primary-400',
+      arrowColor: 'group-hover:text-primary-500 dark:group-hover:text-primary-400',
     },
   ];
   const demoOpens = stats?.demo_opens ?? 0;
@@ -388,10 +382,8 @@ export default function Dashboard() {
             onClick={() => navigate(action.to)}
             className={cn(
               'relative flex items-center gap-3 p-4 rounded-xl border transition-all text-left group overflow-hidden',
-              'bg-gradient-to-br border-surface-200/80 dark:border-surface-800',
-              'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30',
-              action.gradient,
-              action.ring,
+              'bg-[var(--bg-card)] border-surface-200 dark:border-surface-800',
+              'hover:-translate-y-0.5 hover:shadow-md hover:border-primary-300 dark:hover:border-surface-700 dark:hover:shadow-black/30',
             )}
           >
             <div className={cn(
@@ -415,9 +407,9 @@ export default function Dashboard() {
           disabled={!selectedBot?.id}
           className={cn(
             'relative flex items-center gap-3 p-4 rounded-xl border transition-all text-left group overflow-hidden',
-            'bg-gradient-to-br from-fuchsia-50 via-fuchsia-50/60 to-primary-50/40 dark:from-fuchsia-500/20 dark:via-primary-500/10 dark:to-violet-500/10',
-            'border-surface-200/80 dark:border-surface-800',
-            'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30 hover:border-fuchsia-300 dark:hover:border-fuchsia-500/50',
+            'bg-[var(--bg-card)] dark:bg-surface-900',
+            'border-surface-200 dark:border-surface-800',
+            'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30 hover:border-primary-300 dark:hover:border-surface-700',
             !selectedBot?.id && 'opacity-60 cursor-not-allowed hover:translate-y-0 hover:border-surface-200 dark:hover:border-surface-800 hover:shadow-none',
           )}
         >
@@ -425,12 +417,12 @@ export default function Dashboard() {
             'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110 group-hover:rotate-3',
             copiedDemo
               ? 'bg-emerald-100 dark:bg-emerald-500/20'
-              : 'bg-fuchsia-100 dark:bg-fuchsia-500/20',
+              : 'bg-primary-50 dark:bg-primary-500/10',
           )}>
             {copiedDemo ? (
               <Check size={18} className="text-emerald-600 dark:text-emerald-300" />
             ) : (
-              <Link2 size={18} className="text-fuchsia-600 dark:text-fuchsia-300" />
+              <Link2 size={18} className="text-primary-600 dark:text-primary-400" />
             )}
           </div>
           <div className="flex-1 min-w-0">
@@ -442,7 +434,7 @@ export default function Dashboard() {
                 ? 'Loading demo traction...'
                 : `${demoOpens} opens from ${demoShares} shares`}
             </p>
-            <p className="mt-1 text-[11px] font-semibold text-fuchsia-600 dark:text-fuchsia-300">
+            <p className="mt-1 text-[11px] font-semibold text-primary-600 dark:text-primary-400">
               {demoOpenRateLabel}
             </p>
           </div>
@@ -450,7 +442,7 @@ export default function Dashboard() {
             'text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full shrink-0 transition-colors border',
             copiedDemo
               ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/15 dark:text-emerald-300 border-emerald-500/20 dark:border-emerald-400/30'
-              : 'bg-white/70 dark:bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-200/60 dark:border-fuchsia-400/30',
+              : 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-200/60 dark:border-primary-400/30',
           )}>
             {copiedDemo ? 'Copied' : 'Copy link'}
           </span>
