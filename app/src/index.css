@@ -1,34 +1,38 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 /* Switch dark mode to class strategy so ThemeContext controls it via .dark on <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* ── Primary — Indigo (richer, more premium than flat blue) ── */
-  --color-primary-50: #eef2ff;
-  --color-primary-100: #e0e7ff;
-  --color-primary-200: #c7d2fe;
-  --color-primary-300: #a5b4fc;
-  --color-primary-400: #818cf8;
-  --color-primary-500: #6366f1;
-  --color-primary-600: #4f46e5;
-  --color-primary-700: #4338ca;
-  --color-primary-800: #3730a3;
-  --color-primary-900: #312e81;
+  /* ── Primary — Cobalt (upgraded from indigo: confident, premium) ──
+     Ramp centered so 600 = the brand cobalt #2F5CFF. */
+  --color-primary-50: #eef3ff;
+  --color-primary-100: #dce5ff;
+  --color-primary-200: #bfd0ff;
+  --color-primary-300: #97b0ff;
+  --color-primary-400: #6084ff;
+  --color-primary-500: #3d66ff;
+  --color-primary-600: #2f5cff;
+  --color-primary-700: #2348d6;
+  --color-primary-800: #1e3aa8;
+  --color-primary-900: #1c3382;
 
-  /* ── Surface — Warm Stone (not cold slate) ── */
-  --color-surface-50: #fafaf9;
-  --color-surface-100: #f5f5f4;
-  --color-surface-200: #e7e5e4;
-  --color-surface-300: #d6d3d1;
-  --color-surface-400: #a8a29e;
-  --color-surface-500: #78716c;
-  --color-surface-600: #57534e;
-  --color-surface-700: #44403c;
-  --color-surface-800: #292524;
-  --color-surface-900: #1c1917;
-  --color-surface-950: #0c0a09;
+  /* ── Surface — Warm Ivory / greige (soothing, never pure white) ──
+     50 = canvas #F8F6F0 · 100 = ivory rail #F1EDE3 · 200 = border.
+     Dark end (800–950) is a warm espresso so dark mode stays in the
+     same temperature family. */
+  --color-surface-50: #f8f6f0;
+  --color-surface-100: #f1ede3;
+  --color-surface-200: #e7e1d3;
+  --color-surface-300: #d8d0be;
+  --color-surface-400: #b0a894;
+  --color-surface-500: #847c6a;
+  --color-surface-600: #5f594c;
+  --color-surface-700: #453f35;
+  --color-surface-800: #2a2620;
+  --color-surface-900: #1c1915;
+  --color-surface-950: #12100c;
 
   /* ── Accent Colors (muted, sophisticated) ── */
   --color-emerald-50: #ecfdf5;
@@ -131,8 +135,8 @@
 
 /* ── Base ── */
 :root {
-  --bg: var(--color-surface-50);
-  --bg-card: #ffffff;
+  --bg: var(--color-surface-50);          /* warm ivory canvas #F8F6F0 */
+  --bg-card: #fffdf9;                      /* warm near-white card */
   --bg-card-hover: var(--color-surface-50);
   --bg-muted: var(--color-surface-100);
   --border: var(--color-surface-200);
@@ -140,9 +144,9 @@
   --text: var(--color-surface-900);
   --text-secondary: var(--color-surface-500);
   --text-muted: var(--color-surface-400);
-  --ring: var(--color-primary-500);
-  --sidebar-bg: var(--color-surface-950);
-  --sidebar-border: var(--color-surface-800);
+  --ring: var(--color-primary-600);
+  --sidebar-bg: var(--color-surface-100);   /* light ivory rail #F1EDE3 */
+  --sidebar-border: var(--color-surface-200);
 }
 
 .dark {
@@ -164,10 +168,10 @@ body {
   background-color: var(--bg);
   color: var(--text);
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Manrope', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  font-feature-settings: 'ss01';
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
