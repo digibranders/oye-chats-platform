@@ -41,6 +41,7 @@ from app.services.crawler_service import (
     CrawlCancelled,
     CrawlerError,
     crawl_heartbeat,
+    is_cancellation_requested,
     release_crawl_lock,
     set_crawl_progress,
 )
@@ -269,6 +270,12 @@ async def run_full_crawl(
             done = page is None
             if not done:
                 buffer.append(page)
+            # Stop embedding further waves the moment a cancel lands — the main
+            # flow raises CrawlCancelled at its next checkpoint; here we just
+            # avoid spending the embed budget on a crawl that's being cancelled.
+            if not billing_aborted and not done and is_cancellation_requested(client_id):
+                logger.info("Ingest consumer halting embeds (cancel requested) client=%s", client_id)
+                billing_aborted = True
             if billing_aborted:
                 # Set either by a wave that couldn't bill or by the cancel
                 # path — drop everything buffered, including pages that were
@@ -343,6 +350,12 @@ async def run_full_crawl(
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
+
+        # A cancel that landed just as the scrape finished (so the provider
+        # returned normally instead of raising) still stops here — before we
+        # spend the embed budget on the final sweep.
+        if is_cancellation_requested(client_id):
+            raise CrawlCancelled({"results": results or [], "recommended_colors": recommended_colors})
         # Coverage diagnostics from the crawler subprocess. ``discovered_total``
         # is every URL the crawler ever enqueued (visited + still-queued +
         # robots-blocked); ``queue_remaining`` is what was still pending when
@@ -379,6 +392,11 @@ async def run_full_crawl(
             async with crawl_heartbeat(client_id):
                 await _finish_consumer(consumer_task)
             consumer_task = None
+
+        # A cancel that landed during the streamed embed above stops here rather
+        # than running the (potentially multi-minute) final sweep.
+        if is_cancellation_requested(client_id):
+            raise CrawlCancelled({"results": valid_pages, "recommended_colors": recommended_colors})
 
         sweep_offset = ingest_totals["chunks"]
 
