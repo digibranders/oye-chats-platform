@@ -80,7 +80,7 @@ function isForeignCountry(raw) {
 
 const INPUT_CLASSES = cn(
   'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-600 text-sm',
-  'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+  'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-100',
   'placeholder:text-surface-400 dark:placeholder:text-surface-500',
   'focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all',
   'disabled:opacity-60 disabled:cursor-not-allowed',

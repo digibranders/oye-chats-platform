@@ -100,7 +100,7 @@ export default function AddSeatConfirmModal({
                                             <span className="text-sm text-surface-600 dark:text-surface-300">
                                                 Per-seat price
                                             </span>
-                                            <span className="text-sm font-medium text-surface-900 dark:text-white">
+                                            <span className="text-sm font-medium text-surface-900 dark:text-white tabular-nums">
                                                 {seatPriceDisplay} / month
                                             </span>
                                         </div>
@@ -108,7 +108,7 @@ export default function AddSeatConfirmModal({
                                             <span className="text-sm text-surface-600 dark:text-surface-300">
                                                 {isAdd ? 'New billable extras' : 'Remaining billable extras'}
                                             </span>
-                                            <span className="text-sm font-medium text-surface-900 dark:text-white">
+                                            <span className="text-sm font-medium text-surface-900 dark:text-white tabular-nums">
                                                 {Math.max(newTotal - includedSeats, 0)} seat
                                                 {Math.max(newTotal - includedSeats, 0) === 1 ? '' : 's'}
                                             </span>
@@ -117,7 +117,7 @@ export default function AddSeatConfirmModal({
                                             <span className="text-sm text-surface-600 dark:text-surface-300">
                                                 Charged via
                                             </span>
-                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
+                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-500/30">
                                                 <Smartphone className="w-3 h-3" />
                                                 Razorpay
                                             </span>
