@@ -161,13 +161,13 @@ export default function OAuthCallback() {
 
     if (classified.kind === 'error') {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-[#030D1F] p-6">
+            <div className="min-h-screen flex items-center justify-center bg-surface-50 p-6">
                 <div className="max-w-md w-full text-center">
-                    <div className="mx-auto w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mb-4">
-                        <AlertCircle size={22} className="text-rose-400" />
+                    <div className="mx-auto w-12 h-12 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center mb-4">
+                        <AlertCircle size={22} className="text-rose-600" />
                     </div>
-                    <h1 className="text-xl font-semibold text-white mb-2">Sign-in failed</h1>
-                    <p className="text-white/60 text-sm mb-6">{classified.message}</p>
+                    <h1 className="text-xl font-semibold text-surface-900 mb-2">Sign-in failed</h1>
+                    <p className="text-surface-500 text-sm mb-6">{classified.message}</p>
                     <button
                         type="button"
                         onClick={() => navigate('/login', { replace: true })}
@@ -181,10 +181,10 @@ export default function OAuthCallback() {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-[#030D1F]">
+        <div className="min-h-screen flex items-center justify-center bg-surface-50">
             <div className="text-center">
-                <Loader2 size={28} className="animate-spin text-primary-400 mx-auto mb-4" />
-                <p className="text-white/60 text-sm">Signing you in…</p>
+                <Loader2 size={28} className="animate-spin text-primary-600 mx-auto mb-4" />
+                <p className="text-surface-500 text-sm">Signing you in…</p>
             </div>
         </div>
     );

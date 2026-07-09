@@ -73,14 +73,17 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen flex bg-white dark:bg-surface-950">
+    <div className="min-h-screen flex bg-surface-50">
       {/* Left Panel */}
-      <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden">
-        <div className="absolute inset-0 gradient-mesh" />
-        <div className="absolute inset-0 noise-overlay" />
+      <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800 text-white">
+        {/* Grid pattern like website hero */}
+        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
 
-        <div className="absolute top-20 -left-20 w-96 h-96 bg-primary-500/20 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
-        <div className="absolute bottom-20 right-10 w-80 h-80 bg-primary-400/15 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
+        {/* Radial glow like website hero */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(37,99,235,0.18) 0%, rgba(37,99,235,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
+
+        <div className="absolute top-20 -left-20 w-96 h-96 bg-primary-600/15 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
+        <div className="absolute bottom-20 right-10 w-80 h-80 bg-primary-400/10 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
 
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -109,7 +112,7 @@ export default function ForgotPassword() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-surface-400 text-lg leading-relaxed"
+            className="text-white/45 text-lg leading-relaxed"
           >
             Don&apos;t let a forgotten password slow you down. Reclaim your access and continue engaging with your customers.
           </motion.p>
@@ -119,17 +122,17 @@ export default function ForgotPassword() {
       </div>
 
       {/* Right Panel */}
-      <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-16 xl:px-24 bg-white dark:bg-surface-950 relative">
+      <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-16 xl:px-24 bg-surface-50 relative">
         <div className="w-full max-w-md mx-auto relative z-10">
           {/* Mobile Logo */}
           <div className="lg:hidden flex items-center gap-3 mb-10 justify-center">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center shadow-lg shadow-primary-500/20">
               <Sparkles size={20} />
             </div>
-            <span className="text-xl font-bold text-surface-900 dark:text-white tracking-tight">OyeChats</span>
+            <span className="text-xl font-bold text-surface-900 tracking-tight">OyeChats</span>
           </div>
 
-          <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-8 sm:p-10 rounded-2xl shadow-xl border border-surface-200 dark:border-surface-800">
+          <div className="bg-[var(--bg-card)] p-8 sm:p-10 rounded-2xl shadow-sm border border-surface-200">
             {/* Step indicator */}
             <div className="flex items-center gap-2 mb-6">
               {[1, 2, 3].map((s) => (
@@ -137,7 +140,7 @@ export default function ForgotPassword() {
                   key={s}
                   className={cn(
                     'h-1 flex-1 rounded-full transition-all duration-500',
-                    s <= step ? 'bg-primary-500' : 'bg-surface-200 dark:bg-surface-800'
+                    s <= step ? 'bg-primary-500' : 'bg-surface-200'
                   )}
                 />
               ))}
@@ -146,11 +149,11 @@ export default function ForgotPassword() {
             <div className="mb-6">
               <Link
                 to="/login"
-                className="inline-flex items-center text-sm font-medium text-surface-500 hover:text-surface-700 dark:hover:text-surface-300 mb-4 transition-colors"
+                className="inline-flex items-center text-sm font-medium text-surface-500 hover:text-surface-700 mb-4 transition-colors"
               >
                 <ArrowLeft className="w-4 h-4 mr-1.5" /> Back to login
               </Link>
-              <h2 className="text-2xl font-bold text-surface-900 dark:text-white tracking-tight mb-1">
+              <h2 className="text-2xl font-bold text-surface-900 tracking-tight mb-1">
                 {step === 1 ? 'Reset password' : step === 2 ? 'Enter recovery code' : 'All set!'}
               </h2>
               <p className="text-sm text-surface-500">
@@ -165,7 +168,7 @@ export default function ForgotPassword() {
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 role="alert"
-                className="mb-5 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-sm text-rose-600 dark:text-rose-400 font-medium"
+                className="mb-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-600 font-medium"
               >
                 {error}
               </motion.div>
@@ -175,7 +178,7 @@ export default function ForgotPassword() {
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 role="alert"
-                className="mb-5 p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-sm text-emerald-600 dark:text-emerald-400 font-medium"
+                className="mb-5 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-600 font-medium"
               >
                 {success}
               </motion.div>
@@ -194,7 +197,7 @@ export default function ForgotPassword() {
                   className="space-y-5"
                 >
                   <div>
-                    <label className="block text-[13px] font-medium text-surface-700 dark:text-surface-300 mb-1.5">
+                    <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
                       Email Address
                     </label>
                     <div className="relative group">
@@ -202,9 +205,9 @@ export default function ForgotPassword() {
                       <input
                         type="email" required tabIndex={1}
                         className={cn(
-                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
-                          'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                          'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
+                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
+                          'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                          'outline-none transition-all text-sm placeholder:text-surface-400'
                         )}
                         placeholder="you@company.com"
                         value={email}
@@ -237,7 +240,7 @@ export default function ForgotPassword() {
                   className="space-y-5"
                 >
                   <div>
-                    <label className="block text-[13px] font-medium text-surface-700 dark:text-surface-300 mb-1.5">
+                    <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
                       Recovery Code
                     </label>
                     <div className="relative group">
@@ -245,9 +248,9 @@ export default function ForgotPassword() {
                       <input
                         type="text" required tabIndex={1}
                         className={cn(
-                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
-                          'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                          'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500 font-mono tracking-widest'
+                          'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
+                          'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                          'outline-none transition-all text-sm placeholder:text-surface-400 font-mono tracking-widest'
                         )}
                         placeholder="000000"
                         value={otp}
@@ -258,14 +261,14 @@ export default function ForgotPassword() {
                       type="button"
                       onClick={handleRequestReset}
                       disabled={isLoading}
-                      className="mt-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="mt-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Didn&apos;t receive a code? Resend
                     </button>
                   </div>
 
                   <div>
-                    <label className="block text-[13px] font-medium text-surface-700 dark:text-surface-300 mb-1.5">
+                    <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
                       New Password
                     </label>
                     <div className="relative group">
@@ -273,9 +276,9 @@ export default function ForgotPassword() {
                       <input
                         type={showPassword ? 'text' : 'password'} required tabIndex={2}
                         className={cn(
-                          'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
-                          'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                          'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
+                          'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white text-surface-900',
+                          'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                          'outline-none transition-all text-sm placeholder:text-surface-400'
                         )}
                         placeholder="New password"
                         value={newPassword}
@@ -283,7 +286,7 @@ export default function ForgotPassword() {
                       />
                       <button
                         type="button" tabIndex={-1}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 transition-colors"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 transition-colors"
                         onClick={() => setShowPassword(!showPassword)}
                       >
                         {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -316,11 +319,11 @@ export default function ForgotPassword() {
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-                    className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-500/20 flex items-center justify-center mx-auto mb-4"
+                    className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4"
                   >
-                    <CheckCircle2 size={32} className="text-emerald-600 dark:text-emerald-400" />
+                    <CheckCircle2 size={32} className="text-emerald-600" />
                   </motion.div>
-                  <h3 className="text-lg font-bold text-surface-900 dark:text-white mb-1">Password Reset!</h3>
+                  <h3 className="text-lg font-bold text-surface-900 mb-1">Password Reset!</h3>
                   <p className="text-sm text-surface-500">Redirecting you to login...</p>
                 </motion.div>
               )}
