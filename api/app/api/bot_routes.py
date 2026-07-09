@@ -260,6 +260,10 @@ class BotResponse(BaseModel):
     brand_tone: str | None = None
     company_name: str | None = None
     company_description: str | None = None
+    # Auto-fillable fields the customer has locked by hand-editing them; the
+    # crawl won't overwrite these. Drives the "auto-filled vs manual" hint in
+    # the AI & Personality tab.
+    manual_field_overrides: list[str] = []
     bot_logo: str | None
     launcher_name: str
     launcher_logo: str | None
@@ -1025,6 +1029,7 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     brand_tone=b.brand_tone,
                     company_name=b.company_name,
                     company_description=b.company_description,
+                    manual_field_overrides=b.manual_field_overrides or [],
                     bot_logo=bl,
                     launcher_name=b.launcher_name or "Have Questions?",
                     launcher_logo=ll,
@@ -1390,6 +1395,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             brand_tone=bot.brand_tone,
             company_name=bot.company_name,
             company_description=bot.company_description,
+            manual_field_overrides=bot.manual_field_overrides or [],
             bot_logo=bl,
             launcher_name=bot.launcher_name or "Have Questions?",
             launcher_logo=ll,
@@ -1439,6 +1445,40 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
+
+
+# Auto-fillable fields the website crawl may populate. Edits to these are
+# tracked in ``Bot.manual_field_overrides`` so a re-crawl leaves a hand-edited
+# value alone while still refreshing untouched ones.
+_AUTO_FILL_FIELDS = ("company_name", "company_description", "brand_tone")
+
+
+def _reconcile_manual_overrides(bot: Bot, update_data: dict) -> None:
+    """Update ``bot.manual_field_overrides`` from an incoming settings patch.
+
+    Must run BEFORE the patch values are written onto ``bot`` (it compares the
+    submitted value against the currently stored one). For each auto-fillable
+    field present in the patch:
+      * changed to a non-empty value -> lock   (crawl won't overwrite it)
+      * cleared to empty/None        -> unlock (crawl re-fills on next crawl)
+      * unchanged                    -> leave the flag untouched
+    Fields absent from the patch are left as-is.
+    """
+    overrides = set(bot.manual_field_overrides or [])
+    original = set(overrides)
+    for field in _AUTO_FILL_FIELDS:
+        if field not in update_data:
+            continue
+        incoming = (update_data.get(field) or "").strip()
+        stored = (getattr(bot, field) or "").strip()
+        if incoming == stored:
+            continue
+        if incoming:
+            overrides.add(field)
+        else:
+            overrides.discard(field)
+    if overrides != original:
+        bot.manual_field_overrides = sorted(overrides)
 
 
 @router.patch("/{bot_id}")
@@ -1495,6 +1535,10 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             # rows so the prompt never sees empty service names.
             if "services" in update_data:
                 update_data["services"] = _normalize_services(update_data["services"])
+
+            # Lock/unlock crawl auto-fill based on what the customer submitted.
+            # Runs before the setattr loop so it can diff against stored values.
+            _reconcile_manual_overrides(bot, update_data)
 
             for key, value in update_data.items():
                 setattr(bot, key, value)

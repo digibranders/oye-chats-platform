@@ -1,4 +1,4 @@
-import { Sparkles, MessageSquareText, Building2 } from 'lucide-react';
+import { Sparkles, MessageSquareText, Building2, Wand2, PencilLine } from 'lucide-react';
 
 const SECTION_HEADER_BASE = 'text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2';
 const SECTION_SUBTITLE = 'text-[13px] text-surface-500 dark:text-surface-400 mt-0.5';
@@ -16,6 +16,42 @@ const MAX_COMPANY_NAME = 100;
 const MAX_COMPANY_DESCRIPTION = 1000;
 
 /**
+ * AutoFillHint — explains the crawl auto-fill state of a field so the customer
+ * understands when a website re-crawl will change it. Three states:
+ *   • locked  — the field is in `manual_field_overrides` (user hand-edited it);
+ *               a re-crawl leaves it alone until they clear + save.
+ *   • auto    — non-empty but not locked; came from (or refreshes with) the crawl.
+ *   • empty   — nothing yet; the next crawl fills it in.
+ *
+ * @param {{ field: string, value: string, overrides: string[] }} props
+ */
+function AutoFillHint({ field, value, overrides }) {
+    const locked = overrides.includes(field);
+    const hasValue = (value || '').trim().length > 0;
+
+    let Icon = Wand2;
+    let text = 'Auto-fills from your website content the next time it’s crawled.';
+    let cls = 'text-primary-500 dark:text-primary-400';
+
+    if (locked) {
+        Icon = PencilLine;
+        text = 'Manually set — kept as-is when your website is re-crawled. Clear this field and save to re-enable auto-fill.';
+        cls = 'text-amber-600 dark:text-amber-400';
+    } else if (hasValue) {
+        Icon = Wand2;
+        text = 'Auto-filled from your website. Edit it to keep your version on future crawls.';
+        cls = 'text-primary-500 dark:text-primary-400';
+    }
+
+    return (
+        <p className={`flex items-start gap-1.5 text-[11px] ${cls}`}>
+            <Icon className="w-3 h-3 mt-[1px] shrink-0" />
+            <span>{text}</span>
+        </p>
+    );
+}
+
+/**
  * PersonalityTab — AI personality + company identity.
  *
  * Absorbs the configs orphaned from the old Settings "Tone & Personality"
@@ -26,6 +62,7 @@ const MAX_COMPANY_DESCRIPTION = 1000;
  * @param {{ draft: object, set: (field: string, value: unknown) => void }} props
  */
 export default function PersonalityTab({ draft, set }) {
+    const overrides = Array.isArray(draft.manual_field_overrides) ? draft.manual_field_overrides : [];
     return (
         <div className="space-y-6 animate-fade-in">
             {/* System Prompt */}
@@ -85,6 +122,7 @@ export default function PersonalityTab({ draft, set }) {
                             {(draft.brand_tone || '').length}/{MAX_BRAND_TONE}
                         </span>
                     </div>
+                    <AutoFillHint field="brand_tone" value={draft.brand_tone} overrides={overrides} />
                 </div>
             </div>
 
@@ -110,6 +148,7 @@ export default function PersonalityTab({ draft, set }) {
                         className={FIELD_INPUT}
                     />
                     <p className={FIELD_HELP}>The name of your business or brand.</p>
+                    <AutoFillHint field="company_name" value={draft.company_name} overrides={overrides} />
                 </div>
 
                 <div className="space-y-2">
@@ -128,6 +167,7 @@ export default function PersonalityTab({ draft, set }) {
                             {(draft.company_description || '').length}/{MAX_COMPANY_DESCRIPTION}
                         </span>
                     </div>
+                    <AutoFillHint field="company_description" value={draft.company_description} overrides={overrides} />
                 </div>
             </div>
         </div>

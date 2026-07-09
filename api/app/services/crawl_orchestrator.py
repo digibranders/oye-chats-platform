@@ -91,6 +91,46 @@ def _pick_services_url(valid_pages: list[dict]) -> str | None:
     return best[2] if best else None
 
 
+def _apply_crawl_metadata_to_bot(
+    bot_db: Bot,
+    *,
+    recommended_colors: list | None,
+    brand_tone: str | None,
+    company_context: dict | None,
+    services_url_suggestion: str | None,
+) -> list[str]:
+    """Write crawl-extracted metadata onto a loaded ``Bot``, honoring locks.
+
+    Fields the customer edited by hand are recorded in
+    ``bot_db.manual_field_overrides`` (see
+    ``bot_routes._reconcile_manual_overrides``); the crawl must refresh only the
+    fields they haven't claimed. ``recommended_colors`` is always refreshed and
+    ``services_url`` is only ever auto-filled when empty (an explicit choice is
+    never overwritten). Mutates ``bot_db`` in place; the caller owns the commit.
+
+    Returns the list of field names actually written (for logging / assertions).
+    """
+    overrides = set(bot_db.manual_field_overrides or [])
+    written: list[str] = []
+    if recommended_colors:
+        bot_db.recommended_colors = recommended_colors
+        written.append("recommended_colors")
+    if brand_tone and "brand_tone" not in overrides:
+        bot_db.brand_tone = brand_tone
+        written.append("brand_tone")
+    if company_context:
+        if company_context.get("name") and "company_name" not in overrides:
+            bot_db.company_name = company_context["name"]
+            written.append("company_name")
+        if company_context.get("description") and "company_description" not in overrides:
+            bot_db.company_description = company_context["description"]
+            written.append("company_description")
+    if services_url_suggestion and not bot_db.services_url:
+        bot_db.services_url = services_url_suggestion
+        written.append("services_url")
+    return written
+
+
 async def run_full_crawl(
     *,
     client_id: int,
@@ -477,26 +517,15 @@ async def run_full_crawl(
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)
                     if bot_db and bot_db.client_id == client_id:
-                        if recommended_colors:
-                            bot_db.recommended_colors = recommended_colors
-                        if brand_tone:
-                            bot_db.brand_tone = brand_tone
-                        if company_context:
-                            if company_context.get("name"):
-                                bot_db.company_name = company_context["name"]
-                            if company_context.get("description"):
-                                bot_db.company_description = company_context["description"]
-                        if services_url_suggestion and not bot_db.services_url:
-                            bot_db.services_url = services_url_suggestion
-                            logger.info("Auto-suggested services_url for bot %s: %s", bot_id, services_url_suggestion)
-                        session.commit()
-                        logger.info(
-                            "Saved crawl metadata for bot %s: colors=%d, tone=%s, company_name=%s",
-                            bot_id,
-                            len(recommended_colors) if recommended_colors else 0,
-                            "yes" if brand_tone else "no",
-                            company_context.get("name") if company_context else "no",
+                        written = _apply_crawl_metadata_to_bot(
+                            bot_db,
+                            recommended_colors=recommended_colors,
+                            brand_tone=brand_tone,
+                            company_context=company_context,
+                            services_url_suggestion=services_url_suggestion,
                         )
+                        session.commit()
+                        logger.info("Saved crawl metadata for bot %s: wrote %s", bot_id, written or "nothing")
                 elif recommended_colors:
                     client_db = session.get(Client, client_id)
                     if client_db:

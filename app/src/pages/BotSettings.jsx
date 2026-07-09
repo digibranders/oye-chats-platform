@@ -63,6 +63,9 @@ const DEFAULT_DRAFT = {
     brand_tone: '',
     company_name: '',
     company_description: '',
+    // Server-managed: names of auto-fillable fields the user locked by editing
+    // them (see PersonalityTab hints). Read-only in the draft — never sent on save.
+    manual_field_overrides: [],
     feature_flags: {},
     live_chat_queue_timeout_seconds: 20,
     live_chat_max_queue_size: 10,
@@ -137,8 +140,7 @@ export default function BotSettings({ embedded = false }) {
     }, []);
 
     // ── Load bot settings into the draft ──
-    useEffect(() => {
-        const fetchSettings = async () => {
+    const fetchSettings = useCallback(async () => {
             try {
                 const settings = await getClientSettings(selectedBot?.id);
                 // Load emails: prefer notification_emails.default (multi), fallback to legacy notification_email
@@ -178,13 +180,16 @@ export default function BotSettings({ embedded = false }) {
                     branding_url: settings.branding_url || 'https://oyechats.com',
                     services: Array.isArray(settings.services) ? settings.services : [],
                     services_url: settings.services_url || '',
-                    // Absorbed configs — `company_name` / `company_description`
-                    // are write-supported by the bot PATCH but not yet returned
-                    // by the bot GET, so they fall back to '' on reload.
+                    // Absorbed configs — the bot GET returns these; company info
+                    // + brand tone auto-fill from the website crawl unless locked
+                    // (see manual_field_overrides).
                     system_prompt: settings.system_prompt || '',
                     brand_tone: settings.brand_tone || '',
                     company_name: settings.company_name || '',
                     company_description: settings.company_description || '',
+                    manual_field_overrides: Array.isArray(settings.manual_field_overrides)
+                        ? settings.manual_field_overrides
+                        : [],
                     feature_flags: settings.feature_flags || {},
                     live_chat_queue_timeout_seconds: settings.live_chat_queue_timeout_seconds ?? 20,
                     live_chat_max_queue_size: settings.live_chat_max_queue_size ?? 10,
@@ -193,9 +198,11 @@ export default function BotSettings({ embedded = false }) {
                 console.error('Error fetching settings:', error);
                 showToast('error', error.message || 'Failed to load widget settings');
             }
-        };
-        fetchSettings();
     }, [selectedBot?.id, showToast]);
+
+    useEffect(() => {
+        fetchSettings();
+    }, [fetchSettings]);
 
     // Prefill the preview URL with the bot's configured website.
     useEffect(() => {
@@ -404,6 +411,9 @@ export default function BotSettings({ embedded = false }) {
                 live_chat_max_queue_size: draft.live_chat_max_queue_size,
             };
             await updateClientSettings(payload, selectedBot?.id);
+            // Re-pull so the crawl auto-fill lock state (manual_field_overrides)
+            // and any crawl-written values reflect the just-saved reality.
+            await fetchSettings();
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
         } catch (error) {
