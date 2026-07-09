@@ -52,6 +52,15 @@ const orderCrawlUrls = (urls, order) => {
 
 const sliceForCrawl = (urls, order, count) => orderCrawlUrls(urls, order).slice(0, count);
 
+// Accept a bare domain ("example.com") — prepend https:// when the user omits
+// the scheme so discovery/crawl always receive an absolute URL. Leaves an
+// existing http(s):// scheme untouched.
+const normalizeWebsiteUrl = (raw) => {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+};
+
 // Format a crawl duration (seconds) as "45s" / "2m 2s" / "1h 3m". "—" when unknown
 // (uploads, or crawls ingested before timing was tracked).
 const formatDuration = (seconds) => {
@@ -522,10 +531,15 @@ export default function KnowledgeBase() {
     e.preventDefault();
     if (!url.trim() || isDiscovering) return;
 
+    // Normalize a bare domain to an absolute https:// URL and reflect it back in
+    // the field so discovery, the confirm step, and startCrawl all use it.
+    const normalizedUrl = normalizeWebsiteUrl(url);
+    if (normalizedUrl !== url) setUrl(normalizedUrl);
+
     // If this domain is already ingested, route through the diff flow so a
     // re-scan only fetches + charges NEW pages instead of re-crawling (and
     // re-billing) the whole site.
-    const enteredHost = url.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+    const enteredHost = normalizedUrl.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
     const alreadyIngested = documents.find((d) => {
       if (!(d.name.startsWith('http://') || d.name.startsWith('https://'))) return false;
       const dHost = d.name.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
@@ -541,7 +555,7 @@ export default function KnowledgeBase() {
     setCrawlEstimate(null);
     setIsDiscovering(true);
     try {
-      const result = await discoverCrawlUrls(url, selectedBot?.id);
+      const result = await discoverCrawlUrls(normalizedUrl, selectedBot?.id);
       // Preserve 0 as a meaningful value: "sitemap found but empty / no sitemap"
       // so the dialog can show a helpful note rather than the generic fallback.
       setDiscoveredTotal(typeof result.total_found === 'number' ? result.total_found : null);
@@ -841,8 +855,8 @@ export default function KnowledgeBase() {
                 <div className="relative group">
                   <LinkIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
                   <input
-                    type="url" value={url} onChange={(e) => { setUrl(e.target.value); resetDiscovery(); }} required
-                    placeholder="https://example.com"
+                    type="text" inputMode="url" value={url} onChange={(e) => { setUrl(e.target.value); resetDiscovery(); }} required
+                    placeholder="example.com"
                     className={cn(
                       'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-800 text-surface-900 dark:text-white',
                       'border-surface-200 dark:border-surface-700 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
