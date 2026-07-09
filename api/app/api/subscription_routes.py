@@ -1282,6 +1282,30 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
             logger.exception("Provider cancel failed for sub %s: %s", sub.id, exc)
             raise HTTPException(status_code=502, detail="Could not cancel with payment provider.") from exc
 
+        # The operator-seat add-on is a SEPARATE Razorpay subscription (P0-3) —
+        # cancelling the main plan does not touch it at the gateway. Left alone,
+        # it keeps billing ₹499/seat/month indefinitely after the customer has
+        # already churned off the plan it was attached to. Its lifecycle has no
+        # webhook feedback (seat add-on events are acknowledged and dropped —
+        # see handle_webhook_event), so cancellation here is always immediate,
+        # matching the existing N-seats→0 behaviour in edit_seat_addon_quantity.
+        # A failure here must not block the plan cancellation that already
+        # succeeded above — log loudly for reconciliation instead.
+        if provider == "razorpay" and sub.seat_addon_subscription_id:
+            from app.services import razorpay_service
+
+            try:
+                razorpay_service.cancel_seat_addon(session, sub)
+            except Exception:
+                logger.error(
+                    "Seat add-on cancel FAILED for subscription %s (client %s) during plan "
+                    "cancellation — the seat add-on mandate is STILL LIVE at Razorpay and will "
+                    "keep debiting the customer after their plan cancels. Needs manual reconciliation.",
+                    sub.id,
+                    client.id,
+                    exc_info=True,
+                )
+
         from datetime import UTC, datetime
 
         sub.cancel_at_period_end = True

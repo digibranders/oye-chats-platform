@@ -1341,6 +1341,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 .scalars()
                 .all()
             )
+            carried_extra_seats = 0
             for old in existing:
                 # Retire the predecessor's UPI mandate AT THE GATEWAY, not just
                 # locally. The re-auth model keeps the old mandate live until the
@@ -1388,6 +1389,33 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                             client_id,
                             exc_info=True,
                         )
+
+                # The operator-seat add-on is a SEPARATE Razorpay subscription
+                # (P0-3) that ``cancel_subscription`` above never touches. Left
+                # alone it becomes an orphan: still billing the old (now
+                # superseded) mandate forever, with the local pointer to it
+                # gone the moment ``local`` below overwrites the client's
+                # active subscription. Cancel it here and carry the seat count
+                # onto the new subscription (below) so the customer's paid
+                # seats survive the cutover instead of silently vanishing.
+                if old.seat_addon_subscription_id:
+                    carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_quantity or 0))
+                    try:
+                        cancel_seat_addon(session, old)
+                    except Exception:
+                        logger.error(
+                            "Seat add-on cancel FAILED for superseded subscription %s "
+                            "(seat add-on %s, client %s) at activation of %s — the old "
+                            "seat add-on mandate is STILL LIVE at Razorpay and will keep "
+                            "debiting the customer on top of the new subscription. Needs "
+                            "manual reconciliation.",
+                            old.razorpay_subscription_id,
+                            old.seat_addon_subscription_id,
+                            client_id,
+                            razorpay_sub_id,
+                            exc_info=True,
+                        )
+
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
                 if not gateway_cancel_ok:
@@ -1424,6 +1452,30 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         )
         session.add(local)
         session.flush()
+
+        if not is_per_bot:
+            # Carry the operator-seat add-on across the cutover. ``carried_extra_seats``
+            # comes from the sibling-cancel loop above (immediate-upgrade / resume
+            # path, where the old row is still in ``existing``); ``carried_seat_count``
+            # in notes comes from the scheduled-downgrade promotion path
+            # (``promote_scheduled_change``), where the old row was already flipped
+            # out of the active set before this webhook fires, so it never appears
+            # in ``existing`` — the count has to travel via the Razorpay notes
+            # instead. At most one of the two is ever non-zero for a given cutover.
+            total_carried_seats = max(carried_extra_seats, int(notes.get("carried_seat_count") or 0))
+            if total_carried_seats > 0:
+                try:
+                    edit_seat_addon_quantity(session, local, total_carried_seats)
+                except Exception:
+                    logger.error(
+                        "Failed to re-create seat add-on (%d seats) on new subscription "
+                        "%s (client %s) after a plan cutover — the customer's purchased "
+                        "seats were not carried over. Needs manual reconciliation.",
+                        total_carried_seats,
+                        razorpay_sub_id,
+                        client_id,
+                        exc_info=True,
+                    )
 
         if is_per_bot and new_bot is not None:
             # Now back-link the bot to the freshly inserted subscription so
