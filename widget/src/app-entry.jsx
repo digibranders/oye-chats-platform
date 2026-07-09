@@ -43,6 +43,13 @@ const ensureContainer = () => {
     container.id = CONTAINER_ID
     document.body.appendChild(container)
   }
+  // Opt this subtree out of Lenis smooth-scroll hijacking. When a wheel event
+  // crosses the Shadow DOM boundary it is retargeted to this host element, so
+  // Lenis's ancestor check sees the attribute here and lets native scrolling
+  // through — covering the case (capture-phase listeners) that plain
+  // stopPropagation inside the widget can't. Complements the wheel-propagation
+  // guard in ChatWindow, which defeats bubble-phase hijackers generically.
+  container.setAttribute('data-lenis-prevent', '')
   return container
 }
 
