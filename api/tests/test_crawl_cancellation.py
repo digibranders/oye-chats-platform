@@ -12,7 +12,26 @@ import asyncio
 import pytest
 
 from app.services import crawl_provider, jina_service, spider_service
-from app.services.crawler_service import CrawlCancelled
+from app.services.crawler_service import (
+    CrawlCancelled,
+    clear_cancellation,
+    is_cancellation_requested,
+    request_cancellation,
+)
+
+
+def test_cancel_flag_lifecycle_clears():
+    """A cancel flag must be clearable — otherwise it persists (TTL ~27min) and
+    every subsequent crawl self-aborts at the provider pre-flight check. The
+    crawl-start endpoint calls clear_cancellation for exactly this reason.
+    """
+    cid = 987654  # unlikely-to-collide client id
+    clear_cancellation(cid)  # clean slate
+    assert is_cancellation_requested(cid) is False
+    request_cancellation(cid)
+    assert is_cancellation_requested(cid) is True
+    clear_cancellation(cid)
+    assert is_cancellation_requested(cid) is False  # a fresh crawl is no longer poisoned
 
 
 def _counter_cancel():
