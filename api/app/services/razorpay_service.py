@@ -1519,6 +1519,26 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
         return f"Subscription activated for client {client_id}"
 
+    # A subscription already flipped canceled/expired (by us or by Razorpay)
+    # must never be silently resurrected by a stray/out-of-order/redelivered
+    # activated event — this branch is also reached via the ``subscription.
+    # resumed`` alias, and Razorpay-native pause/resume only ever moves a LOCAL
+    # row through "past_due" (see subscription.paused -> _handle_subscription_
+    # halted), never through "canceled"/"expired". A customer who explicitly
+    # cancelled must stay cancelled; the only path back to active is a fresh
+    # subscription via /resume (a new razorpay_subscription_id, handled above
+    # as a "local is None" activation, not this branch).
+    if local.status in ("canceled", "expired"):
+        logger.warning(
+            "subscription.activated/resumed for %s ignored — local subscription %s "
+            "(client %s) is already %s; refusing to resurrect it",
+            razorpay_sub_id,
+            local.id,
+            local.client_id,
+            local.status,
+        )
+        return f"Subscription {razorpay_sub_id} is {local.status} — activation ignored"
+
     # Existing local row — update fields and ensure first-month credits exist.
     # Card rescued out of dunning: drop the past_due anchor so a future
     # failure starts a fresh grace window instead of inheriting this one.
@@ -1673,6 +1693,26 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             razorpay_invoice_id=pay_entity.get("invoice_id"),
         )
         period_invoice_id = period_invoice.id if period_invoice else None
+
+    # A subscription already canceled/expired locally must not be silently
+    # resurrected by a charged event for it — out-of-order/redelivered
+    # webhooks, or a charge that was already in flight at Razorpay the moment
+    # the customer cancelled, can land here after the fact. Razorpay still
+    # captured real money (the invoice above records it for reconciliation
+    # and, if needed, a refund), but the customer explicitly does not want
+    # this subscription running: no fresh credits, no un-cancelling.
+    if local.status in ("canceled", "expired"):
+        logger.warning(
+            "subscription.charged for %s (client %s) arrived after local subscription "
+            "%s was already %s — invoice recorded for reconciliation, but NOT granting "
+            "credits or reactivating.",
+            razorpay_sub_id,
+            local.client_id,
+            local.id,
+            local.status,
+        )
+        session.flush()
+        return f"Subscription {razorpay_sub_id} charged after cancellation — invoice recorded, not reactivated"
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation
