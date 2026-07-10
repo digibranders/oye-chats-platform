@@ -267,6 +267,57 @@ def test_activation_without_old_seat_addon_does_not_create_one(db):
     assert new.seat_addon_quantity == 0
 
 
+def test_downstream_failure_does_not_mint_orphan_addon(db):
+    """Create-then-rollback orphan window (review finding): the seat add-on
+    re-create must run AFTER every fail-prone activation DB write, so a later
+    failure can't strand a freshly-minted add-on live at the gateway with no
+    local owner. Here proration raises; the new add-on must never have been
+    created. Before the reorder the add-on was minted first, so this same
+    proration failure would have left a live orphan."""
+    from app.services import razorpay_service as rzp
+
+    client = _make_client(db, email="reorder-orphan@e.com")
+    std = _make_plan(db, slug="std-reorder")
+    pro = _make_plan(db, slug="pro-reorder")
+    _make_sub(
+        db,
+        client,
+        std,
+        razorpay_subscription_id="sub_old_reorder",
+        status="active",
+        seat_addon_subscription_id="sub_addon_reorder_old",
+        seat_addon_quantity=3,
+    )
+    db.commit()
+
+    fake = MagicMock()
+    fake.subscription.create.return_value = {"id": "sub_addon_reorder_new"}
+    payload = _activation_payload(
+        razorpay_sub_id="sub_new_reorder",
+        client_id=client.id,
+        plan_id=pro.id,
+        prev_sub_id="sub_old_reorder",
+    )
+
+    with (
+        patch.object(rzp, "_get_razorpay", return_value=fake),
+        patch(
+            "app.services.transition_service.apply_pending_proration",
+            side_effect=RuntimeError("proration boom"),
+        ),
+        pytest.raises(RuntimeError, match="proration boom"),
+    ):
+        rzp._handle_subscription_activated(db, payload)
+    db.rollback()
+
+    addon_create_calls = [
+        c
+        for c in fake.subscription.create.call_args_list
+        if c.kwargs.get("data", {}).get("notes", {}).get("purpose") == "seat_addon"
+    ]
+    assert addon_create_calls == [], fake.subscription.create.call_args_list
+
+
 # ── 3. Scheduled-downgrade cutover carries the seat add-on forward ─────────────
 
 

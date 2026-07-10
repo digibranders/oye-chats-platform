@@ -1650,3 +1650,41 @@ async def task_invoice_reconciliation_alert(ctx: dict) -> int:
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)
+
+
+async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
+    """Daily cron: cancel operator-seat add-ons whose parent subscription is gone.
+
+    The seat add-on (P0-3) is a separate Razorpay subscription. The cancel,
+    plan-cutover, and scheduled-downgrade paths all cancel it best-effort and
+    only log on failure, and the cutover re-create is an external call a
+    rolled-back activation can strand — any of which leaves an orphan billing
+    a churned/plan-changed customer ₹499/seat/month forever. This sweep
+    reconciles the gateway against local state, auto-cancels each orphan, and
+    surfaces the outcome loudly (error → Sentry). Returns the number cancelled.
+    """
+    import asyncio
+
+    from app import config
+    from app.db.session import get_session
+    from app.services import seat_addon_reports
+
+    if not config.RAZORPAY_ENABLED:
+        return 0
+
+    def _run() -> int:
+        with get_session() as session:
+            result = seat_addon_reports.reconcile_orphaned_seat_addons(session)
+            session.commit()
+        cancelled = result["cancelled"]
+        failed = result["failed"]
+        if cancelled or failed:
+            logger.error(
+                "orphaned seat add-on reconciliation: cancelled=%s failed=%s",
+                cancelled,
+                failed,
+            )
+        return len(cancelled)
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)

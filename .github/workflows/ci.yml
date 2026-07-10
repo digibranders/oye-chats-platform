@@ -3,8 +3,11 @@ name: CI Checks
 on:
   push:
     branches: [development]
+  # Gate PRs into BOTH long-lived branches. ``development`` is included so a
+  # feature PR (e.g. billing regression fixes) runs the full backend suite
+  # before merge, not only on the post-merge push to ``development``.
   pull_request:
-    branches: [main]
+    branches: [main, development]
   # Reusable entry point: the deploy workflows call this so production deploys
   # carry an in-repo dependency on CI passing (audit F20) — merges to main
   # cannot reach the droplet/CDN without these jobs going green first.
