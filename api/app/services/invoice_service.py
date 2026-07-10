@@ -270,6 +270,19 @@ def create_credit_note(
     if existing is not None:
         return existing
 
+    # Serialize reversals against the SAME original invoice with a row lock.
+    # Without this, two independent reversal events for the same invoice —
+    # e.g. a partial refund and a dispute-lost chargeback delivered by
+    # separate, overlapping webhook transactions — can each read
+    # ``already_reversed`` before either commits, both see 0 already
+    # reversed, and both issue a full-amount credit note: over-reversing the
+    # document's tax beyond what it ever collected. The second caller blocks
+    # here until the first's transaction commits, then correctly observes
+    # its credit note in the sum below. ``provider_ref`` idempotency (the
+    # ``existing`` check above) only covers exact-replay of the SAME event;
+    # it does not protect against two DISTINCT events racing each other.
+    session.execute(select(Invoice.id).where(Invoice.id == original.id).with_for_update())
+
     # Reversals can never exceed the invoiced consideration CUMULATIVELY —
     # Razorpay caps refunds at the captured amount, but a partial refund
     # followed by a full-amount chargeback (distinct provider_refs) would

@@ -306,6 +306,34 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     # customer notification below.
     old_plan_name = sub.plan.name if sub.plan else "your previous plan"
 
+    # The operator-seat add-on is a SEPARATE Razorpay subscription (P0-3).
+    # Nothing else in the scheduled-downgrade path (``schedule_paid_downgrade``,
+    # the cancelled-webhook path, or the cron backstop that calls this function)
+    # ever cancels it, so left alone it survives the cutover as an orphan —
+    # still billing the now-defunct old mandate forever. Cancel it here and
+    # carry the seat count forward via the new subscription's Razorpay notes;
+    # ``_handle_subscription_activated`` re-creates it on the new subscription
+    # once that activation webhook lands, so the customer's paid seats aren't
+    # silently dropped by the plan change.
+    carried_seats = int(sub.seat_addon_quantity or 0) if sub.seat_addon_subscription_id else 0
+    if sub.seat_addon_subscription_id:
+        try:
+            razorpay_service.cancel_seat_addon(session, sub)
+        except Exception:
+            logger.error(
+                "Seat add-on cancel FAILED for subscription %s (seat add-on %s, client %s) "
+                "during scheduled-downgrade promotion — the old seat add-on mandate is "
+                "STILL LIVE at Razorpay and will keep debiting the customer on top of the "
+                "new subscription. Needs manual reconciliation.",
+                sub.id,
+                sub.seat_addon_subscription_id,
+                client.id if client else None,
+                exc_info=True,
+            )
+            carried_seats = (
+                0  # unknown gateway state — don't compound it by re-creating a seat count we can't confirm was cleared
+            )
+
     # Mark the old sub finalized first so the partial-unique index on
     # (client_id, status in active|trialing|past_due) doesn't trip when
     # ``_handle_subscription_activated`` later inserts the new row. This
@@ -325,7 +353,10 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
         client,
         new_plan,
         billing_cycle,
-        extra_notes={"prev_razorpay_subscription_id": sub.razorpay_subscription_id or ""},
+        extra_notes={
+            "prev_razorpay_subscription_id": sub.razorpay_subscription_id or "",
+            "carried_seat_count": str(carried_seats),
+        },
     )
     payload["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id
     payload["status"] = "scheduled_change_promoted"
