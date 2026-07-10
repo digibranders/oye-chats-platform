@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -629,6 +630,68 @@ def cancel_seat_addon(session: Session, sub: Subscription) -> None:
     sub.seat_addon_subscription_id = None
     sub.seat_addon_quantity = 0
     session.flush()
+
+
+def cancel_seat_addon_by_id(seat_addon_subscription_id: str) -> None:
+    """Cancel a seat add-on subscription at the gateway by its raw id.
+
+    Unlike :func:`cancel_seat_addon`, this takes no local ``Subscription`` and
+    touches no local row — it exists for the reconciliation sweep
+    (:func:`seat_addon_reports.reconcile_orphaned_seat_addons`), which cancels
+    orphans that may have NO local owner at all (e.g. an add-on minted by an
+    activation whose transaction later rolled back). The caller is responsible
+    for clearing any stale local pointer separately.
+    """
+    if not seat_addon_subscription_id:
+        return
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.cancel(
+            seat_addon_subscription_id,
+            data={"cancel_at_cycle_end": 0},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay seat add-on cancel (by id) failed for %s: %s",
+            seat_addon_subscription_id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not cancel the seat add-on with Razorpay.") from exc
+
+
+def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
+    """Yield every operator-seat add-on subscription known to Razorpay.
+
+    Pages through the Razorpay subscriptions list and filters to add-on rows —
+    identified by ``notes.purpose == "seat_addon"`` and, defensively, the
+    Extra-Seat ``plan_id``. Used by the reconciliation sweep to find add-ons
+    whose local owner is gone. ``max_pages`` bounds the scan; if it is hit the
+    shortfall is logged loudly so a silently-partial sweep can't masquerade as
+    a clean one.
+    """
+    rzp = _get_razorpay()
+    skip = 0
+    for _ in range(max_pages):
+        resp = rzp.subscription.all({"count": page_size, "skip": skip})
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        if not items:
+            return
+        for item in items:
+            item_notes = item.get("notes") or {}
+            if (item_notes.get("purpose") or "").lower() != "seat_addon":
+                continue
+            item_plan_id = item.get("plan_id")
+            if item_plan_id and item_plan_id != RAZORPAY_SEAT_PLAN_ID:
+                continue
+            yield item
+        if len(items) < page_size:
+            return
+        skip += page_size
+    logger.error(
+        "iter_seat_addon_subscriptions hit the max_pages=%d cap — some subscriptions were "
+        "NOT scanned for orphan reconciliation. Increase the cap or investigate volume.",
+        max_pages,
+    )
 
 
 def create_per_bot_subscription(
@@ -1341,6 +1404,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 .scalars()
                 .all()
             )
+            carried_extra_seats = 0
             for old in existing:
                 # Retire the predecessor's UPI mandate AT THE GATEWAY, not just
                 # locally. The re-auth model keeps the old mandate live until the
@@ -1388,6 +1452,33 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                             client_id,
                             exc_info=True,
                         )
+
+                # The operator-seat add-on is a SEPARATE Razorpay subscription
+                # (P0-3) that ``cancel_subscription`` above never touches. Left
+                # alone it becomes an orphan: still billing the old (now
+                # superseded) mandate forever, with the local pointer to it
+                # gone the moment ``local`` below overwrites the client's
+                # active subscription. Cancel it here and carry the seat count
+                # onto the new subscription (below) so the customer's paid
+                # seats survive the cutover instead of silently vanishing.
+                if old.seat_addon_subscription_id:
+                    carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_quantity or 0))
+                    try:
+                        cancel_seat_addon(session, old)
+                    except Exception:
+                        logger.error(
+                            "Seat add-on cancel FAILED for superseded subscription %s "
+                            "(seat add-on %s, client %s) at activation of %s — the old "
+                            "seat add-on mandate is STILL LIVE at Razorpay and will keep "
+                            "debiting the customer on top of the new subscription. Needs "
+                            "manual reconciliation.",
+                            old.razorpay_subscription_id,
+                            old.seat_addon_subscription_id,
+                            client_id,
+                            razorpay_sub_id,
+                            exc_info=True,
+                        )
+
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
                 if not gateway_cancel_ok:
@@ -1458,6 +1549,38 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         from app.services import transition_service
 
         transition_service.apply_pending_proration(session, local, prev_rzp_sub_id)
+
+        # Carry the operator-seat add-on across the cutover — done LAST, after
+        # every fail-prone DB write above, because ``edit_seat_addon_quantity``
+        # mints a REAL Razorpay subscription. If it ran earlier (before the
+        # grant/proration writes) and a later write raised, the transaction
+        # would roll back the local pointer while leaving the add-on live at
+        # the gateway — a fresh orphan of exactly the kind this cutover exists
+        # to prevent. Placed here, the only thing after it is the best-effort
+        # notification (which never raises), so a rollback can no longer strand
+        # a just-minted add-on. ``carried_extra_seats`` comes from the
+        # sibling-cancel loop above (immediate-upgrade / resume path, where the
+        # old row is still in ``existing``); ``carried_seat_count`` in notes
+        # comes from the scheduled-downgrade promotion path
+        # (``promote_scheduled_change``), where the old row was already flipped
+        # out of the active set before this webhook fires. At most one of the
+        # two is ever non-zero for a given cutover. Any residual orphan (e.g. a
+        # commit-time failure) is swept by ``task_reconcile_orphaned_seat_addons``.
+        total_carried_seats = max(carried_extra_seats, int(notes.get("carried_seat_count") or 0))
+        if total_carried_seats > 0:
+            try:
+                edit_seat_addon_quantity(session, local, total_carried_seats)
+            except Exception:
+                logger.error(
+                    "Failed to re-create seat add-on (%d seats) on new subscription "
+                    "%s (client %s) after a plan cutover — the customer's purchased "
+                    "seats were not carried over. Needs manual reconciliation.",
+                    total_carried_seats,
+                    razorpay_sub_id,
+                    client_id,
+                    exc_info=True,
+                )
+
         logger.info(
             "Activated Razorpay subscription %s → local %s (client %s)",
             razorpay_sub_id,
@@ -1466,6 +1589,26 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         )
         _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
         return f"Subscription activated for client {client_id}"
+
+    # A subscription already flipped canceled/expired (by us or by Razorpay)
+    # must never be silently resurrected by a stray/out-of-order/redelivered
+    # activated event — this branch is also reached via the ``subscription.
+    # resumed`` alias, and Razorpay-native pause/resume only ever moves a LOCAL
+    # row through "past_due" (see subscription.paused -> _handle_subscription_
+    # halted), never through "canceled"/"expired". A customer who explicitly
+    # cancelled must stay cancelled; the only path back to active is a fresh
+    # subscription via /resume (a new razorpay_subscription_id, handled above
+    # as a "local is None" activation, not this branch).
+    if local.status in ("canceled", "expired"):
+        logger.warning(
+            "subscription.activated/resumed for %s ignored — local subscription %s "
+            "(client %s) is already %s; refusing to resurrect it",
+            razorpay_sub_id,
+            local.id,
+            local.client_id,
+            local.status,
+        )
+        return f"Subscription {razorpay_sub_id} is {local.status} — activation ignored"
 
     # Existing local row — update fields and ensure first-month credits exist.
     # Card rescued out of dunning: drop the past_due anchor so a future
@@ -1621,6 +1764,26 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             razorpay_invoice_id=pay_entity.get("invoice_id"),
         )
         period_invoice_id = period_invoice.id if period_invoice else None
+
+    # A subscription already canceled/expired locally must not be silently
+    # resurrected by a charged event for it — out-of-order/redelivered
+    # webhooks, or a charge that was already in flight at Razorpay the moment
+    # the customer cancelled, can land here after the fact. Razorpay still
+    # captured real money (the invoice above records it for reconciliation
+    # and, if needed, a refund), but the customer explicitly does not want
+    # this subscription running: no fresh credits, no un-cancelling.
+    if local.status in ("canceled", "expired"):
+        logger.warning(
+            "subscription.charged for %s (client %s) arrived after local subscription "
+            "%s was already %s — invoice recorded for reconciliation, but NOT granting "
+            "credits or reactivating.",
+            razorpay_sub_id,
+            local.client_id,
+            local.id,
+            local.status,
+        )
+        session.flush()
+        return f"Subscription {razorpay_sub_id} charged after cancellation — invoice recorded, not reactivated"
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation

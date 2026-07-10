@@ -659,6 +659,35 @@ def grant_for_subscription(
     )
 
 
+def _backfill_plan_grant_reference(session: Session, subscription: Subscription, invoice_id: int) -> None:
+    """Link the most recent un-referenced plan_grant in scope to ``invoice_id``.
+
+    Only ever touches a row whose ``reference_id`` is still NULL, so it can
+    never clobber a real, already-correct link — at most it fills in the one
+    gap left by an activation-time grant that predates its invoice (see the
+    caller). Scoped by client + bot exactly like every other grant/clawback
+    lookup so a per-bot subscription's backfill can't reach the account pool
+    (or vice versa).
+    """
+    grant = (
+        session.execute(
+            select(CreditLedger)
+            .where(
+                *_scope_clause(subscription.client_id, subscription.bot_id),
+                CreditLedger.reason == "plan_grant",
+                CreditLedger.reference_id.is_(None),
+            )
+            .order_by(CreditLedger.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if grant is not None:
+        grant.reference_id = invoice_id
+        session.flush()
+
+
 def grant_subscription_period_once(
     session: Session,
     subscription: Subscription,
@@ -725,8 +754,41 @@ def grant_subscription_period_once(
     if (
         period_end is not None
         and subscription.last_granted_period_end is not None
-        and subscription.last_granted_period_end == period_end
+        and period_end <= subscription.last_granted_period_end
     ):
+        # Monotonic, not exact-equality: any period at or before the marker is
+        # already granted. A strict ``==`` check is exploitable — the
+        # superadmin dead-letter "replay failed webhook" tool re-dispatches an
+        # event by its original (never-committed) id, so an OLDER period's
+        # charged event that failed and got dead-lettered can be replayed
+        # AFTER a newer period's grant already advanced the marker past it.
+        # ``==`` would treat that stale replay as a fresh, ungranted period —
+        # granting a second time for a period the customer already burned
+        # credits against, and regressing the marker backward so the very
+        # next legitimate replay (or the real event, if it also redelivers)
+        # can trigger yet another grant. ``<=`` makes the marker monotonic:
+        # the old event now correctly no-ops instead of regressing anything.
+        #
+        # The grant for this period already happened — almost always at
+        # ``subscription.activated``, which runs before any Invoice exists and
+        # so calls ``grant_for_subscription`` with no ``reference_id`` (see
+        # ``_handle_subscription_activated``). The invoice for that same charge
+        # only shows up later via ``subscription.charged``, by which point this
+        # no-op branch is all that runs — the reference never gets attached.
+        # Without it, ``clawback_refund`` on that invoice can't find its exact
+        # grant and falls back to "most recent grant in scope", which on a
+        # multi-period-old chargeback claws back a LATER period's still-in-use
+        # credits instead of the (already fully consumed / long expired) grant
+        # the refund actually paid for. Backfill it here, the first time an
+        # invoice_id becomes available for an already-granted period.
+        #
+        # Only backfill on an EXACT period match. ``_backfill_plan_grant_reference``
+        # links whatever the most recent un-referenced plan_grant is — correct when
+        # this event's period is the same one that grant belongs to, but a stale
+        # replay of an OLDER period (period_end < marker, the new ``<=`` case above)
+        # could otherwise misattribute ITS invoice onto a newer, unrelated grant.
+        if invoice_id is not None and period_end == subscription.last_granted_period_end:
+            _backfill_plan_grant_reference(session, subscription, invoice_id)
         return False
 
     reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)

@@ -106,7 +106,7 @@
   <div class="inner">
     <h1>OyeChats — Billing &amp; Payments System</h1>
     <p>The complete reference: subscriptions, top-ups, bots, seats, affiliates, discounts — how it all works on Razorpay.</p>
-    <div class="meta">Updated 25 June 2026 · OyeChats is a brand of Digibranders Pvt Ltd · Primary gateway: Razorpay (INR) · Fallback: Stripe · Reference FX ₹94.67/$1</div>
+    <div class="meta">Updated 25 June 2026 · Verified against code 9 July 2026 (see callouts) · OyeChats is a brand of Digibranders Pvt Ltd · Primary &amp; only gateway: Razorpay (INR) · Reference FX ₹94.67/$1</div>
   </div>
 </header>
 
@@ -125,7 +125,7 @@
       <li><a href="#engine">The discount engine (discounted plans)</a></li>
       <li><a href="#codes">Coupon codes &amp; affiliate rules</a></li>
       <li><a href="#flows">Payment flows</a></li>
-      <li><a href="#international">International payments (Stripe)</a></li>
+      <li><a href="#international">International payments (contact-sales; Stripe plan abandoned)</a></li>
       <li><a href="#data">Data model</a></li>
       <li><a href="#state">Current state</a></li>
       <li><a href="#action">Action plan</a></li>
@@ -234,17 +234,19 @@
   required</b> — it reuses Plans 1–4.</p>
 
   <!-- 6 -->
-  <h2 id="seats">6. Operator seats <span class="badge b-fix">needs fix</span></h2>
+  <h2 id="seats">6. Operator seats <span class="badge b-done">fixed</span></h2>
   <p>Each tier includes operator seats (Starter 1, Standard 2). Extra seats cost <b>₹499/mo</b> each.</p>
-  <div class="callout c-bug">
-    <span class="t">Current bug: seat charges are wrong.</span>
-    The existing code edits the <em>main</em> subscription's <code>quantity</code>, which multiplies the
-    <em>whole plan amount</em> — so adding one seat to Standard would bill ₹4,599 × 2 = <b>₹9,198</b>, not ₹4,599 + ₹499.
-    The <code>extra_seat_price_cents</code> (₹499) shown in the UI is never actually charged.
+  <div class="callout c-ok">
+    <span class="t">Fixed (P0-3, shipped 2026-07-08).</span>
+    The base subscription is now hard-pinned to <code>quantity = 1</code> (<span class="mono">razorpay_service.py</span> —
+    <code>create_subscription</code>) — the flat plan price already covers the bundled seats. Extra seats are billed on a
+    <b>separate add-on subscription</b> against the Extra Seat plan (<span class="mono">plan_T5rNFpt3vSkl4R</span>, ₹499) via
+    <code>create_seat_addon_subscription</code> / <code>edit_seat_addon_quantity</code>, with
+    <code>quantity = number of extra seats</code>. The old whole-plan-multiplying path
+    (<code>update_subscription_quantity</code>) is no longer called from any route. A regression test
+    (<code>test_subscription_seats.py::test_seat_delta_never_edits_main_plan_quantity</code>) booby-traps that old path to
+    fail the build if anything ever calls it again for a seat delta.
   </div>
-  <p><b>The fix:</b> base subscription stays at <code>quantity = 1</code> (flat plan price); extra seats become a
-  <b>separate add-on subscription</b> on the Extra Seat plan (<span class="mono">plan_T5rNFpt3vSkl4R</span>, ₹499) with
-  <code>quantity = number of extra seats</code>. ₹499 × N is correct because that plan's amount <em>is</em> the per-seat price.</p>
 
   <!-- 7 -->
   <h2 id="affiliates">7. Affiliates &amp; discounts — overview</h2>
@@ -255,9 +257,11 @@
   This is pure internal accounting in our DB — <b>the payment gateway never needs to know about it</b>, and it can be
   <em>any</em> percentage. Already working.</p>
 
-  <h3>Layer B — Customer-facing discount <span class="badge b-fix">to build / broken on Razorpay</span></h3>
-  <p>The discount the <em>customer</em> actually pays. Today it's only wired for Stripe; on the Razorpay path it is
-  silently dropped — the affiliate gets credited but the customer pays full price. This is what §8 fixes.</p>
+  <h3>Layer B — Customer-facing discount <span class="badge b-done">built</span></h3>
+  <p>The discount the <em>customer</em> actually pays. §8's discounted-plan engine is live: <code>resolve_customer_discount_bps</code>
+  (<span class="mono">discount_service.py</span>) resolves the client's attached referral code, and
+  <code>razorpay_service.create_subscription</code> swaps in the cached discounted plan automatically — including on
+  upgrade/downgrade/per-bot checkouts, not just first signup. Nothing is silently dropped anymore.</p>
 
   <div class="callout c-key">
     <span class="t">The pool split.</span>
@@ -421,98 +425,50 @@
   </div>
 
   <!-- 14 (placed before data model so the flow → intl → data reads well) -->
-  <h2 id="international">14. International payments (Stripe)</h2>
-  <p class="lede">How a USA (or any non-Indian) customer checks out — and why Razorpay cannot do it.</p>
+  <h2 id="international">14. International payments <span class="badge b-done">shipped — Stripe abandoned by design</span></h2>
+  <p class="lede">How a USA (or any non-Indian) customer checks out today, and why the plan below (dual-provider
+  Razorpay+Stripe) is <b>historical</b>, not current.</p>
 
-  <div class="callout c-key">
-    <span class="t">Committed architecture: dual-provider, both fully implemented.</span>
-    <b>Razorpay = primary</b> (India, INR) · <b>Stripe = secondary</b> (international, USD). Both rails are built and wired
-    now. Stripe API keys are added <em>later</em> — the system must run cleanly without them and light up the moment they
-    are set, no code change. Razorpay subscriptions are live today; international goes live when Stripe keys land.
-  </div>
-
-  <h3>The rule</h3>
-  <div class="callout c-key">
-    <span class="t">Geo-route the gateway AND the currency. A non-Indian customer must never see INR.</span>
-    Indian visitor → <b>Razorpay → INR → ₹1,799</b>. Non-Indian visitor → <b>Stripe → USD → $19</b>.
-    Each sees their own currency on a gateway that handles it natively.
-  </div>
-
-  <h3>Non-negotiable: Indian users never see Stripe — no errors, no warnings, no references</h3>
   <div class="callout c-warn">
-    <span class="t">Stripe being unconfigured must be invisible on the Indian / Razorpay path.</span>
-    An Indian customer's entire journey runs on Razorpay and must never touch, mention, or fail because of Stripe —
-    whether Stripe keys are present or not.
+    <span class="t">Architecture changed 2026-07-02 — read this before the rest of §14.</span>
+    Everything below the next callout was the <em>original plan</em>: build a full Stripe rail, dormant until keys
+    land. That plan was executed, then <b>deliberately reversed</b>. Migration
+    <span class="mono">d7b3f9e2c5a8_remove_stripe_vestiges.py</span> dropped every <code>stripe_*</code> column from
+    <code>plans</code>/<code>subscriptions</code>/<code>invoices</code>/<code>payment_methods</code>; there is no
+    <code>stripe_service.py</code>, no <code>import stripe</code>, and no <code>stripe</code> dependency anywhere in
+    <span class="mono">api/</span> as of today. The docstring on that migration: <i>"Razorpay is the only payment
+    provider. The Stripe integration code was removed earlier."</i> Treat the rest of this section as design history —
+    useful if a USD rail is rebuilt later — not as an open action item.
   </div>
-  <p>Concrete guarantees the implementation must hold:</p>
-  <ul>
-    <li><b>Geo decides the provider first.</b> Country resolves <em>before</em> any gateway code runs. <code>IN → Razorpay</code> only — the Indian flow never imports, calls, or awaits Stripe.</li>
-    <li><b>No boot / runtime coupling.</b> The API already boots fine with no Stripe keys (<code>STRIPE_ENABLED = bool(STRIPE_SECRET_KEY)</code>, lazy import). A missing Stripe key must never raise on the Razorpay path or in Razorpay webhooks.</li>
-    <li><b>Graceful dormancy for international.</b> While Stripe keys are unset, non-Indian visitors get the existing clean <b>"contact sales"</b> fallback — never a 500, never a raw "Stripe not configured" error.</li>
-    <li><b>Zero Stripe in the Indian UI.</b> No "Powered by Stripe", no Stripe logo, no Stripe redirect, no Stripe string in any error shown to an Indian user. Stripe branding/redirect appears only on the USD path.</li>
-    <li><b>No console noise.</b> No Stripe-related console errors or network calls on the Indian checkout.</li>
-    <li><b>Independent webhooks.</b> Razorpay and Stripe webhook handlers are separate; a missing <code>STRIPE_WEBHOOK_SECRET</code> cannot break Razorpay webhook processing.</li>
-  </ul>
-  <p class="small">Net effect: turning Stripe on is purely additive. Until the keys exist, the product behaves exactly as a
-  Razorpay-only, India-only platform — with the international path sitting dormant behind the contact-sales gate.</p>
 
-  <h3>Research: can Razorpay do USD? (verified against official docs, Jun 2026)</h3>
+  <div class="callout c-ok">
+    <span class="t">Current, live behaviour.</span>
+    <b>Razorpay is the only payment provider.</b> Geo-detection (CF / Vercel / CloudFront headers, with a
+    <code>?country=</code> override that also powers a manual currency picker in Billing Details) still runs and still
+    decides display currency: <code>country == "IN" → INR</code>, else <code>→ USD</code> (<code>/subscriptions/geo</code>,
+    <code>/subscriptions/checkout/quote</code>). But routing is binary, not dual-gateway: Indian visitors get a live
+    Razorpay checkout; everyone else gets a clean <b>409 <span class="mono">intl_usd_pending</span></b> response with a
+    <code>contact_sales</code> CTA (<span class="mono">developer@oyechats.com</span>) — never a mis-route to a ₹ page,
+    never a 500, never a reference to a gateway that doesn't exist. This satisfies the original "Indian users must never
+    see Stripe" requirement trivially, because there is no second gateway to leak.
+  </div>
+
+  <h3>Why Razorpay can't serve international customers natively (still true, kept for reference)</h3>
   <table>
     <tr><th>Capability</th><th>Razorpay</th><th>Evidence</th></tr>
     <tr><td><b>One-time</b> payments in USD (Orders / Links / Pages)</td><td>✅ Yes — 160+ currencies; set <code>currency:"USD"</code></td><td>Currency Conversion docs ($20 example)</td></tr>
     <tr><td><b>Subscription</b> support for international payments</td><td>❌ No — Subscriptions is <em>absent</em> from the international-products list</td><td>International Payments Support docs</td></tr>
     <tr><td>Create a <b>plan in USD</b></td><td>❌ No — API returns <code>"Currency provided is not supported"</code> (INR only)</td><td>razorpay-python issue #148</td></tr>
-    <tr><td>Settlement</td><td>INR (bank rate on txn date), or EEFC in USD/EUR/GBP/AED/SGD</td><td>International Payments docs</td></tr>
-    <tr><td>Activation</td><td>Requires explicit approval/activation</td><td>International Payments docs</td></tr>
   </table>
-  <div class="callout c-warn">
-    <span class="t">Why the marketing pages mislead.</span>
-    Some Razorpay pages claim "Subscriptions support ~100 currencies." That refers to global businesses collecting
-    recurring payments <em>from Indian customers</em> (UPI Autopay / tokenized cards) — <b>not</b> charging a US customer
-    in USD on a recurring basis. The authoritative signals all agree: Subscriptions are not in the international-products
-    list, and the Create Plan API rejects USD. <b>Do not architect around an unconfirmed capability.</b>
-  </div>
+  <p class="small">This is why international subscriptions remain gated behind "contact sales" rather than charged
+  directly on Razorpay in USD — the constraint that originally motivated the Stripe plan hasn't changed. What changed is
+  the decision to defer building a second gateway rather than keep one dormant.</p>
 
-  <h3>Verdict</h3>
-  <table>
-    <tr><th>Use case</th><th>Gateway</th><th>Verdict</th></tr>
-    <tr><td>Indian recurring subscriptions (INR)</td><td>Razorpay</td><td>✅ Native — as built</td></tr>
-    <tr><td>International recurring subscriptions (USD)</td><td>Razorpay</td><td>❌ Impossible (no USD plans) → <b>use Stripe</b></td></tr>
-    <tr><td>International one-time top-ups (USD)</td><td>Razorpay Intl</td><td>⚠️ Possible if activated, but use Stripe for consistency</td></tr>
-  </table>
-  <p>Stripe charges in USD natively with real subscriptions, so <b>all international traffic (subscriptions + top-ups)
-  routes to Stripe</b>. Razorpay stays India/INR only.</p>
-
-  <h3>What a non-Indian customer sees today</h3>
-  <p>Currently they are <b>blocked</b>, not mis-charged: <code>resolve_country()</code> returns e.g. <code>US</code> →
-  checkout returns <b>402</b> with a "contact sales" CTA (<code>INTL_PAYMENTS_ENABLED = false</code> gate). They see
-  <code>$19</code> on the pricing page, then a sales CTA — they cannot pay yet. The gate exists precisely so nobody is
-  routed to a ₹ page.</p>
-
-  <h3>Codebase audit — what's built vs. the gaps</h3>
-  <p><b>Already built (✅):</b> geo detection (CF / Vercel / CloudFront headers + <code>?country=</code> override);
-  a near-complete Stripe service (checkout, portal, create/cancel/resume/change, webhooks, refunds);
-  Stripe webhook endpoint with signature verification; <code>sync_plan_to_stripe()</code> + super-admin trigger;
-  Stripe price columns on <code>Plan</code>; a Stripe referral-coupon helper; frontend handling for both rails.</p>
-
-  <table>
-    <tr><th>#</th><th>Gap</th><th>Severity</th></tr>
-    <tr><td>1</td><td><b>Provider routing ignores geo</b> — <code>create_checkout</code> hardcodes <code>provider="razorpay"</code> for all new sign-ups; no <code>country!="IN" → stripe</code> branch</td><td>🔴 Critical</td></tr>
-    <tr><td>2</td><td><b>/checkout/quote mis-routes intl</b> — returns <code>provider:"razorpay"</code> with USD for non-Indian; Razorpay can't charge USD</td><td>🔴 Critical</td></tr>
-    <tr><td>3</td><td><b>Stripe price IDs are NULL</b> — <code>sync_plan_to_stripe</code> never run</td><td>🔴 Critical</td></tr>
-    <tr><td>4</td><td><b>Stripe not enabled in prod</b> — <code>STRIPE_SECRET_KEY</code> unset</td><td>🟠 High</td></tr>
-    <tr><td>5</td><td><b>/geo ignores Stripe</b> — <code>checkout_available</code> only checks <code>RAZORPAY_ENABLED</code></td><td>🟠 High</td></tr>
-    <tr><td>6</td><td><b>Discount engine split-brain</b> — discounted-plans is Razorpay-only; Stripe needs its coupon branch (helper exists)</td><td>🟠 High</td></tr>
-    <tr><td>7</td><td><b>Display currency inconsistent</b> — <code>/geo</code> says USD always; <code>/quote</code> says INR for Indians</td><td>🟡 Med</td></tr>
-    <tr><td>8</td><td><b>Seat add-on on Stripe</b> — needs Stripe line-item equivalent of the seat fix</td><td>🟡 Med</td></tr>
-    <tr><td>9</td><td><b>No manual currency switcher (UI)</b> — backend supports <code>?country=</code>; frontend toggle missing</td><td>🟢 Low</td></tr>
-  </table>
-
-  <div class="callout c-key">
-    <span class="t">Bottom line.</span>
-    Geo <em>detection</em> works; geo <em>routing</em> does not. The headers correctly identify the country, but the
-    checkout logic never branches to Stripe by geo. Building that geo→gateway routing is the heart of Phase 4.
-  </div>
+  <h3>If a USD rail is rebuilt later</h3>
+  <p class="small">Should international self-serve checkout become a priority again, the original design doc's
+  geo-routing principle still applies (decide provider/currency from geo <em>before</em> any gateway code runs, and never
+  let the international path touch the Indian one). That would be new engineering work, not a matter of "turning Stripe
+  back on" — the integration was fully removed, not just unconfigured.</p>
 
   <!-- 11 -->
   <h2 id="data">11. Data model (key tables)</h2>
@@ -520,10 +476,10 @@
     <tr><th>Table</th><th>Holds</th></tr>
     <tr><td><code>Plan</code></td><td>Tier definition: prices, credits, limits, features, <code>razorpay_plan_id_monthly/annual</code>; (new) fixed USD columns</td></tr>
     <tr><td><code>Subscription</code></td><td>Client ↔ Plan link: status, cycle, seat qty, provider IDs, period dates. <code>plan_id</code> = base plan (entitlements); discounted razorpay plan id stored for billing only</td></tr>
-    <tr><td><code>discounted_plan_cache</code> <span class="badge b-todo">new</span></td><td><code>(base_plan_id, cycle, discount_bps) → razorpay_plan_id</code> with UNIQUE — this <em>is</em> the dedup</td></tr>
+    <tr><td><code>discounted_plan_cache</code> <span class="badge b-done">built</span></td><td><code>(base_plan_id, cycle, discount_bps) → razorpay_plan_id</code> with UNIQUE — this <em>is</em> the dedup</td></tr>
     <tr><td><code>CreditLedger</code></td><td>Append-only credit events (plan grants, top-ups, deductions); FIFO expiry</td></tr>
     <tr><td><code>Affiliate</code> / <code>ReferralCode</code></td><td>Pool %, per-code commission &amp; discount bps, attribution; code = <code>CITEXT UNIQUE</code></td></tr>
-    <tr><td>Conversion record <span class="badge b-todo">new</span></td><td>Snapshots commission &amp; discount bps at subscribe time so code edits don't disturb live payouts</td></tr>
+    <tr><td><code>ReferralConversion</code> <span class="badge b-done">built</span></td><td>Snapshots commission &amp; discount bps at subscribe time so code edits don't disturb live payouts</td></tr>
     <tr><td><code>Coupon</code></td><td>Promo codes (percent/amount off) — wired to the discount engine</td></tr>
     <tr><td><code>PricingConfig</code></td><td>Super-admin tunables: credit costs, <code>topup_packs</code>, <code>seat_price_cents</code></td></tr>
     <tr><td><code>ProcessedWebhook</code></td><td>Idempotency guard for inbound provider webhooks</td></tr>
@@ -539,67 +495,62 @@
     <tr><td>checkout_quote INR/USD fix</td><td><span class="badge b-done">written</span></td><td>Removes the ₹19 display bug</td></tr>
     <tr><td><code>DISPLAY_USD_TO_INR = 94.67</code></td><td><span class="badge b-done">written</span></td><td>Verified rate</td></tr>
     <tr><td>TopupModal currency fallback fix</td><td><span class="badge b-done">done</span></td><td>'USD' → 'INR'</td></tr>
-    <tr><td>Dual-currency USD columns</td><td><span class="badge b-todo">to build</span></td><td>Fixed $ headline, no live conversion</td></tr>
-    <tr><td>Seat-billing fix</td><td><span class="badge b-fix">to build</span></td><td>Use Extra Seat plan as add-on</td></tr>
-    <tr><td>Top-up USD re-anchor</td><td><span class="badge b-todo">to build</span></td><td>₹ amounts → match USD at ₹94.67</td></tr>
-    <tr><td>Discount engine (discounted plans)</td><td><span class="badge b-todo">to build</span></td><td>Cache + resolve + subscription decoupling</td></tr>
-    <tr><td>Commission snapshot at conversion</td><td><span class="badge b-todo">to build</span></td><td>So code edits don't change live payouts</td></tr>
-    <tr><td>Code guards (reserved / no-stack / self-referral)</td><td><span class="badge b-todo">to build</span></td><td>Abuse hardening</td></tr>
-    <tr><td>Geo-routing to Stripe (international)</td><td><span class="badge b-fix">to build</span></td><td>Provider routing ignores geo (gaps 1–2)</td></tr>
-    <tr><td>Stripe service / webhooks</td><td><span class="badge b-done">built</span></td><td>Exists but dormant (no keys, prices NULL)</td></tr>
-    <tr><td>Stripe-invisibility for Indian users</td><td><span class="badge b-todo">to verify</span></td><td>No errors/warnings/refs on Razorpay path while keys unset (§14 guarantees)</td></tr>
+    <tr><td>Dual-currency USD columns</td><td><span class="badge b-done">done</span></td><td>Fixed <code>usd_price_cents</code> on <code>Plan</code>; display reads it directly, no live conversion</td></tr>
+    <tr><td>Seat-billing fix</td><td><span class="badge b-done">done</span></td><td>Extra Seat plan as add-on subscription (P0-3, §6)</td></tr>
+    <tr><td>Top-up USD re-anchor</td><td><span class="badge b-done">done</span></td><td>₹ amounts match USD at ₹94.67 (§4)</td></tr>
+    <tr><td>Discount engine (discounted plans)</td><td><span class="badge b-done">done</span></td><td><code>discounted_plan_cache</code> + <code>resolve_discounted_plan</code> + <code>Subscription.razorpay_billing_plan_id</code> decoupling — all live (§8)</td></tr>
+    <tr><td>Commission snapshot at conversion</td><td><span class="badge b-done">done</span></td><td><code>ReferralConversion</code> row written at checkout; later code edits don't touch past payouts</td></tr>
+    <tr><td>Code guards (reserved / no-stack / self-referral)</td><td><span class="badge b-done">done</span></td><td>All three enforced in <code>affiliate_service.py</code> / <code>subscription_routes.py</code>; audit trail added 2026-07-09</td></tr>
+    <tr><td>International payments</td><td><span class="badge b-done">done (contact-sales)</span></td><td>Architecture changed — see §14. Stripe was built, then removed 2026-07-02; non-Indian visitors are geo-gated to a "contact sales" flow, never mischarged</td></tr>
     <tr><td>Top-ups / additional bots</td><td><span class="badge b-done">done</span></td><td>No dashboard objects needed</td></tr>
   </table>
+  <p class="small">Row-by-row re-verified against the codebase on 2026-07-09 — see the invoicing/tax plan
+  (<a href="2026-07-02-invoicing-implementation-plan-v2.md">2026-07-02-invoicing-implementation-plan-v2.md</a>) for the
+  separate GST tax-invoice system, which is a different project from the pricing/discount/seat work tracked on this page
+  and is independently marked implemented.</p>
 
   <!-- 13 -->
-  <h2 id="action">13. Action plan</h2>
+  <h2 id="action">13. Action plan <span class="badge b-done">phases 0–3 shipped 2026-07-08/09</span></h2>
+  <p class="small">Phases 0–3 below are complete and verified against the live codebase. Phase 4 (international / Stripe)
+  was executed and then reversed — see §14 — so it is kept as historical record, not an open item.</p>
 
-  <h3>Phase 0 — Wire the plan IDs <span class="small">(needs a DB; prod requires explicit OK)</span></h3>
+  <h3>Phase 0 — Wire the plan IDs <span class="badge b-done">done</span></h3>
   <ol>
     <li>Run the INR-paise migration: <code>alembic upgrade head</code></li>
     <li>Store the 6 plan IDs: <code>set_razorpay_plan_ids.py --apply</code></li>
     <li>Set <code>RAZORPAY_TEST_PLAN_ID=plan_T5rNgByd3zStZx</code> in env</li>
   </ol>
 
-  <h3>Phase 1 — Pricing foundation <span class="small">(pure code, no IDs needed)</span></h3>
+  <h3>Phase 1 — Pricing foundation <span class="badge b-done">done</span></h3>
   <ol>
     <li>Add fixed USD columns to <code>Plan</code> ($19/$49); display reads the matching currency directly</li>
     <li>Remove live <code>DISPLAY_USD_TO_INR</code> from the display path (keep as fallback only)</li>
-    <li>Fix seat billing: base sub <code>quantity = 1</code>, extra seats via the Extra Seat add-on subscription</li>
+    <li>Fix seat billing: base sub <code>quantity = 1</code>, extra seats via the Extra Seat add-on subscription (§6)</li>
     <li>Re-anchor top-up packs to USD ($19=₹1,799, $49=₹4,599, $99=₹8,999, $249=₹22,999)</li>
     <li>Write the re-pricing runbook (<code>docs/billing/repricing-runbook.md</code>)</li>
   </ol>
 
-  <h3>Phase 2 — Discounts &amp; affiliates</h3>
+  <h3>Phase 2 — Discounts &amp; affiliates <span class="badge b-done">done</span></h3>
   <ol>
     <li>Add <code>discounted_plan_cache</code> table: <code>(base_plan_id, cycle, discount_bps) → razorpay_plan_id</code> (UNIQUE = dedup)</li>
     <li><code>resolve_discounted_plan()</code> helper: look up → reuse, or create-via-API → cache</li>
-    <li>Decouple <code>Subscription</code>: <code>plan_id</code> = base plan (entitlements); discounted razorpay plan id = billing only</li>
-    <li>Wire affiliate code + marketing coupon → discount % → cached discounted plan at checkout (fixes the silent-drop bug)</li>
-    <li>Snapshot commission &amp; discount bps onto a conversion record at subscribe time</li>
-    <li>Add guards: reserved-code blocklist, no discount stacking, self-referral block, audit log</li>
+    <li>Decouple <code>Subscription</code>: <code>plan_id</code> = base plan (entitlements); discounted razorpay plan id (<code>razorpay_billing_plan_id</code>) = billing only</li>
+    <li>Wire affiliate code + marketing coupon → discount % → cached discounted plan at checkout (fixes the silent-drop bug, §7)</li>
+    <li>Snapshot commission &amp; discount bps onto a <code>ReferralConversion</code> record at subscribe time</li>
+    <li>Guards: reserved-code blocklist, no discount stacking, self-referral block — all enforced; audit log for commission/discount edits added 2026-07-09 (<code>affiliate.code.create</code> / <code>affiliate.code.update</code> / <code>affiliate.update</code> / <code>affiliate.delete</code> actions on <code>audit_logs</code>)</li>
   </ol>
 
-  <h3>Phase 3 — Verify</h3>
+  <h3>Phase 3 — Verify <span class="badge b-done">done</span></h3>
   <ol>
     <li>End-to-end test with the ₹1 Test Plan + the test client override</li>
-    <li>Confirm: subscription activates, credits granted, discount applied via discounted plan, seat add-on charges ₹499, commission snapshotted, webhook idempotency holds</li>
+    <li>Confirmed: subscription activates, credits granted, discount applied via discounted plan, seat add-on charges ₹499, commission snapshotted, webhook idempotency holds</li>
   </ol>
 
-  <h3>Phase 4 — International / Stripe <span class="small">(build fully now; keys added later)</span></h3>
-  <p class="small">Goal: implement the Stripe rail end-to-end and dormant. Everything works the instant keys are set,
-  with <b>zero Stripe exposure to Indian users</b> in the meantime (see §14 guarantees).</p>
-  <ol>
-    <li><b>Geo-route the provider</b> in <code>create_checkout</code> + <code>checkout/quote</code>: <code>country=="IN" → Razorpay/INR</code>, else <code>→ Stripe/USD</code> (gaps 1, 2 — the core fix). Provider chosen before any gateway code runs.</li>
-    <li><b>Dormancy guard</b>: when <code>STRIPE_ENABLED</code> is false, non-Indian visitors keep the clean "contact sales" fallback — never an error. Indian path never references Stripe regardless.</li>
-    <li><b>Wire Stripe prices</b>: <code>sync_plan_to_stripe</code> ready to create USD products ($19/$49 + annual) and store price IDs — run it once keys exist (gap 3).</li>
-    <li><b>Fix /geo</b>: report <code>checkout_available</code> for the Stripe path once enabled; currency per geo (Indian→INR, else→USD) (gaps 5, 7).</li>
-    <li><b>Stripe discount branch</b>: affiliate/coupon discount → Stripe coupon via the existing <code>_ensure_referral_coupon</code> (gap 6).</li>
-    <li><b>Stripe seat line-item</b> for the seat add-on; optional manual currency switcher UI (gaps 8, 9).</li>
-    <li><b>Go-live (later)</b>: set <code>STRIPE_SECRET_KEY</code> / <code>STRIPE_WEBHOOK_SECRET</code>, register <code>/webhooks/stripe</code>, run the price sync. No code change — purely additive.</li>
-  </ol>
-  <p class="small">Razorpay cannot do USD subscriptions (verified — see §14), so international recurring billing must go
-  through Stripe. Detection already works; this phase makes the router act on it while keeping Stripe invisible to Indian users until keys land.</p>
+  <h3>Phase 4 — International / Stripe <span class="badge b-done">superseded — see §14</span></h3>
+  <p class="small">This phase was built as originally scoped (dual-provider, Stripe dormant behind a feature check), then
+  the Stripe integration was removed wholesale (migration <span class="mono">d7b3f9e2c5a8</span>, 2026-07-02) in favour of
+  a simpler Razorpay-only + contact-sales architecture. The steps that follow are kept for historical reference only —
+  do not treat them as a build queue. See §14 for current, live behaviour.</p>
 
   <footer>
     OyeChats Billing &amp; Payments System · Internal engineering documentation · OyeChats is a brand of Digibranders Pvt Ltd.<br>
