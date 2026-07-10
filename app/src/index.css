@@ -18,21 +18,23 @@
   --color-primary-800: #1e3aa8;
   --color-primary-900: #1c3382;
 
-  /* ── Surface — Warm Ivory / greige (soothing, never pure white) ──
-     50 = canvas #F8F6F0 · 100 = ivory rail #F1EDE3 · 200 = border.
-     Dark end (800–950) is a warm espresso so dark mode stays in the
-     same temperature family. */
-  --color-surface-50: #f8f6f0;
-  --color-surface-100: #f1ede3;
-  --color-surface-200: #e7e1d3;
-  --color-surface-300: #d8d0be;
-  --color-surface-400: #b0a894;
-  --color-surface-500: #847c6a;
-  --color-surface-600: #5f594c;
-  --color-surface-700: #453f35;
-  --color-surface-800: #2a2620;
-  --color-surface-900: #1c1915;
-  --color-surface-950: #12100c;
+  /* ── Surface — Cool slate / blue-grey (Minecloud: airy, white cards) ──
+     50 = canvas #EEF1F7 (soft cool grey, cards sit white on top) ·
+     100 = subtle rail/muted #E7ECF4 · 200 = hairline border #E2E8F1 ·
+     400/500 = muted + secondary text · 900 = cool navy heading #171C28.
+     Cool blue-grey undertone throughout so the palette reads crisp and
+     "cloud-light", never warm. Dark end kept for the dormant dark variant. */
+  --color-surface-50: #eef1f7;
+  --color-surface-100: #e7ecf4;
+  --color-surface-200: #e2e8f1;
+  --color-surface-300: #cfd6e4;
+  --color-surface-400: #9aa3b8;
+  --color-surface-500: #6b7488;
+  --color-surface-600: #495267;
+  --color-surface-700: #363d4e;
+  --color-surface-800: #232838;
+  --color-surface-900: #171c28;
+  --color-surface-950: #0e121b;
 
   /* ── Accent Colors (muted, sophisticated) ── */
   --color-emerald-50: #ecfdf5;
@@ -135,8 +137,8 @@
 
 /* ── Base ── */
 :root {
-  --bg: var(--color-surface-50);          /* warm ivory canvas #F8F6F0 */
-  --bg-card: #fffdf9;                      /* warm near-white card */
+  --bg: var(--color-surface-50);          /* cool canvas #EEF1F7 — white cards sit on top */
+  --bg-card: #ffffff;                      /* pure white card (Minecloud) */
   --bg-card-hover: var(--color-surface-50);
   --bg-muted: var(--color-surface-100);
   --border: var(--color-surface-200);
@@ -145,7 +147,7 @@
   --text-secondary: var(--color-surface-500);
   --text-muted: var(--color-surface-400);
   --ring: var(--color-primary-600);
-  --sidebar-bg: var(--color-surface-100);   /* light ivory rail #F1EDE3 */
+  --sidebar-bg: #ffffff;                   /* white sidebar rail (Minecloud) */
   --sidebar-border: var(--color-surface-200);
 }
 

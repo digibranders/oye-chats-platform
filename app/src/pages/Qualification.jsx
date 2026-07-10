@@ -59,7 +59,7 @@ const TIER_META = {
         icon: Snowflake,
         accent: 'text-surface-500 dark:text-surface-400',
         chip: 'bg-surface-400/10 text-surface-600 dark:text-surface-300',
-        dot: '#b0a894',
+        dot: '#94a3b8',
     },
     mql: {
         label: 'MQL',
@@ -75,7 +75,7 @@ const TIER_META = {
         icon: Target,
         accent: 'text-amber-600 dark:text-amber-400',
         chip: 'bg-amber-500/10 text-amber-600 dark:text-amber-300',
-        dot: '#c99a3f',
+        dot: '#f59e0b',
     },
     sql: {
         label: 'SQL',
@@ -110,10 +110,10 @@ const FRAMEWORK_OPTIONS = [
 const META_KEYS = new Set(['framework', 'thresholds', 'conversation_order', 'decay', 'behavioral_config']);
 
 const FUNNEL_STAGES = [
-    { key: 'total_visitors', label: 'Visitors', sublabel: 'Site visits', icon: Users, color: '#b0a894' },
+    { key: 'total_visitors', label: 'Visitors', sublabel: 'Site visits', icon: Users, color: '#94a3b8' },
     { key: 'engaged', label: 'Engaged', sublabel: 'Started conversation', icon: Activity, color: '#97b0ff' },
     { key: 'mql', label: 'MQL', sublabel: 'Marketing qualified', icon: Flame, color: '#2f5cff' },
-    { key: 'sal', label: 'SAL', sublabel: 'Sales accepted', icon: Target, color: '#c99a3f' },
+    { key: 'sal', label: 'SAL', sublabel: 'Sales accepted', icon: Target, color: '#f59e0b' },
     { key: 'sql', label: 'SQL', sublabel: 'Sales qualified', icon: Trophy, color: '#10b981' },
     { key: 'meetings_booked', label: 'Meetings', sublabel: 'Calendar booked', icon: Calendar, color: '#2348d6' },
 ];
@@ -255,7 +255,7 @@ function ScoreGauge({ score }) {
     const circ = Math.PI * radius;
     const offset = circ - (clamped / 100) * circ;
 
-    const color = clamped >= 75 ? '#10b981' : clamped >= 55 ? '#c99a3f' : clamped >= 30 ? '#3d66ff' : '#b0a894';
+    const color = clamped >= 75 ? '#10b981' : clamped >= 55 ? '#f59e0b' : clamped >= 30 ? '#3d66ff' : '#94a3b8';
     const tier = clamped >= 75 ? 'SQL' : clamped >= 55 ? 'SAL' : clamped >= 30 ? 'MQL' : 'Cold';
 
     return (
@@ -263,9 +263,9 @@ function ScoreGauge({ score }) {
             <svg viewBox="0 0 200 120" className="w-full h-full">
                 <defs>
                     <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="#b0a894" />
+                        <stop offset="0%" stopColor="#94a3b8" />
                         <stop offset="33%" stopColor="#3d66ff" />
-                        <stop offset="66%" stopColor="#c99a3f" />
+                        <stop offset="66%" stopColor="#f59e0b" />
                         <stop offset="100%" stopColor="#10b981" />
                     </linearGradient>
                 </defs>

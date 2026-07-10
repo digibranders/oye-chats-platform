@@ -258,7 +258,7 @@ export default function Analytics({ embedded = false }) {
                         {leadStats ? (
                             <ResponsiveContainer width="100%" height={220}>
                                 <BarChart layout="vertical" data={[
-                                    { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, fill: '#b0a894' },
+                                    { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, fill: '#94a3b8' },
                                     { name: 'MQL', value: leadStats.warm || leadStats.mql || 0, fill: CHART_COLORS.primary },
                                     { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, fill: CHART_COLORS.amber },
                                     { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0, fill: CHART_COLORS.emerald },
@@ -267,7 +267,7 @@ export default function Analytics({ embedded = false }) {
                                     <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} width={70} />
                                     <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px' }} />
                                     <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={24}>
-                                        {[{ fill: '#b0a894' }, { fill: CHART_COLORS.primary }, { fill: CHART_COLORS.amber }, { fill: CHART_COLORS.emerald }].map((e, i) => (
+                                        {[{ fill: '#94a3b8' }, { fill: CHART_COLORS.primary }, { fill: CHART_COLORS.amber }, { fill: CHART_COLORS.emerald }].map((e, i) => (
                                             <Cell key={i} fill={e.fill} />
                                         ))}
                                     </Bar>

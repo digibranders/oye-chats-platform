@@ -102,7 +102,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   }, [showUserMenu]);
 
   return (
-    <header className="h-14 bg-surface-50/75 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
+    <header className="h-14 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
       {/* Left */}
       <div className="flex items-center gap-2 md:gap-3 min-w-0">
         <button

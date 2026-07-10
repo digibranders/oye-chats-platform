@@ -23,11 +23,11 @@ export const CHART_COLORS = {
   primary: '#2f5cff',
   primarySoft: '#97b0ff',
   emerald: '#10b981',
-  amber: '#c99a3f',
+  amber: '#f59e0b',
   rose: '#f43f5e',
   grid: 'rgba(16,24,40,0.06)',
   axis: '#a79f8c',
-  series: ['#2f5cff', '#10b981', '#c99a3f', '#97b0ff', '#f43f5e'],
+  series: ['#2f5cff', '#10b981', '#f59e0b', '#97b0ff', '#f43f5e'],
 };
 
 const AXIS_TICK = { fontSize: 11, fill: CHART_COLORS.axis, fontWeight: 500 };

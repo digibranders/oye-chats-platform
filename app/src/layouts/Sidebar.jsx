@@ -368,7 +368,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
       );
 
   return (
-    <aside className={cn(sidebarClasses, 'bg-surface-100 dark:bg-surface-950 border-r border-surface-200 dark:border-surface-800/50')}>
+    <aside className={cn(sidebarClasses, 'bg-[var(--sidebar-bg)] dark:bg-surface-950 border-r border-surface-200 dark:border-surface-800/50')}>
       {/* Logo */}
       <div className="flex items-center h-16 px-4 shrink-0">
         <div className="flex items-center gap-3">

@@ -251,7 +251,7 @@ export default function Users({ embedded = false }) {
                                             <BarChart data={timelineData} barSize={6}>
                                                 <XAxis dataKey="date" tick={{ fontSize: 8, fill: CHART_COLORS.axis }} axisLine={false} tickLine={false} />
                                                 <ReTooltip
-                                                    contentStyle={{ background: 'var(--color-surface-900, #1c1915)', border: '1px solid rgba(167,159,140,0.2)', borderRadius: 8, fontSize: 11 }}
+                                                    contentStyle={{ background: 'var(--color-surface-900, #171c28)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 8, fontSize: 11 }}
                                                     labelStyle={{ color: CHART_COLORS.axis }}
                                                     itemStyle={{ color: CHART_COLORS.primary }}
                                                 />

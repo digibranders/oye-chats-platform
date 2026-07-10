@@ -94,9 +94,9 @@ export default function Dashboard() {
   const pieData = useMemo(() => {
     if (!leadStats) return [];
     return [
-      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'url(#gray-gradient)', fallbackColor: '#b0a894' },
+      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'url(#gray-gradient)', fallbackColor: '#94a3b8' },
       { name: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'url(#blue-gradient)', fallbackColor: '#3d66ff' },
-      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'url(#orange-gradient)', fallbackColor: '#c99a3f' },
+      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'url(#orange-gradient)', fallbackColor: '#f59e0b' },
     ].filter(d => d.value > 0);
   }, [leadStats]);
 
@@ -454,7 +454,7 @@ export default function Dashboard() {
         {/* Lead Funnel Mini — locked on Free; renders the real chart on
             paid plans. The card chrome (icon, title) is reused so a plan
             upgrade visually swaps the body without a layout shift. */}
-        <div className="bg-white dark:bg-[#1c1915] rounded-2xl border border-surface-200 dark:border-white/10 shadow-sm p-6">
+        <div className="bg-white dark:bg-[#171c28] rounded-2xl border border-surface-200 dark:border-white/10 shadow-sm p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className={cn(
               'w-9 h-9 rounded-xl flex items-center justify-center',
@@ -540,12 +540,12 @@ export default function Dashboard() {
                         <stop offset="100%" stopColor="#2348d6" />
                       </radialGradient>
                       <radialGradient id="orange-gradient" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#c99a3f" />
-                        <stop offset="100%" stopColor="#a97a1e" />
+                        <stop offset="0%" stopColor="#f59e0b" />
+                        <stop offset="100%" stopColor="#d97706" />
                       </radialGradient>
                       <radialGradient id="gray-gradient" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#b0a894" />
-                        <stop offset="100%" stopColor="#857c68" />
+                        <stop offset="0%" stopColor="#94a3b8" />
+                        <stop offset="100%" stopColor="#64748b" />
                       </radialGradient>
                     </defs>
                     <Pie
@@ -602,7 +602,7 @@ export default function Dashboard() {
                     >
                       {activeTooltip.cos < 0 && (
                         <div
-                          className="rounded-xl border border-white/10 bg-[#1c1915]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
+                          className="rounded-xl border border-white/10 bg-[#171c28]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
                           style={{
                             boxShadow: '0 8px 20px rgba(0, 0, 0, 0.5)',
                           }}
@@ -645,19 +645,19 @@ export default function Dashboard() {
                         /* Arrow on the Left pointing Left */
                         <div 
                           className="w-0 h-0 border-t-[5px] border-t-transparent border-b-[5px] border-b-transparent border-r-[6px] shrink-0"
-                          style={{ borderRightColor: '#1c1915' }}
+                          style={{ borderRightColor: '#171c28' }}
                         />
                       ) : (
                         /* Arrow on the Bottom pointing Down */
                         <div 
                           className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[6px] shrink-0"
-                          style={{ borderTopColor: '#1c1915' }}
+                          style={{ borderTopColor: '#171c28' }}
                         />
                       )}
 
                       {activeTooltip.cos >= 0 && (
                         <div
-                          className="rounded-xl border border-white/10 bg-[#1c1915]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
+                          className="rounded-xl border border-white/10 bg-[#171c28]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
                           style={{
                             boxShadow: '0 8px 20px rgba(0, 0, 0, 0.5)',
                           }}
@@ -700,9 +700,9 @@ export default function Dashboard() {
               </div>
               <div className="space-y-2 flex-1">
                 {[
-                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-[#b0a894]' },
+                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-[#94a3b8]' },
                   { label: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'bg-[#3d66ff]' },
-                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-[#c99a3f]' },
+                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-[#f59e0b]' },
                 ].map(item => (
                   <div key={item.label} className="flex items-center gap-2">
                     <div className={cn('w-2 h-2 rounded-full shrink-0', item.color)} />
