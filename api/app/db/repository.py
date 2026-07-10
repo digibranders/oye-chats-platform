@@ -240,8 +240,22 @@ def create_or_update_lead_info(
     email: str | None = None,
     phone: str | None = None,
     company: str | None = None,
+    utm_params: dict | None = None,
+    visitor_journey: list | None = None,
 ) -> LeadInfo:
-    """Create or update lead info for a session."""
+    """Create or update lead info for a session.
+
+    ``utm_params`` and ``visitor_journey`` are optional snapshots of the
+    parent chat_session's attribution data. Caller is responsible for
+    only passing them when the owning client's plan includes the Lead
+    Source Attribution feature — this function does not re-check the
+    entitlement, it only persists what it's given.
+
+    The snapshots follow "first non-empty wins": once attribution is
+    written on a lead, subsequent lead-form submissions on the same
+    session don't overwrite it. This preserves first-touch attribution
+    for a returning visitor who fills out the form multiple times.
+    """
     existing = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)).scalar_one_or_none()
 
     if existing:
@@ -253,6 +267,12 @@ def create_or_update_lead_info(
             existing.phone = phone
         if company is not None:
             existing.company = company
+        # Only backfill attribution — never overwrite an existing snapshot
+        # so a later capture doesn't clobber first-touch data.
+        if utm_params and not existing.utm_params:
+            existing.utm_params = utm_params
+        if visitor_journey and not existing.visitor_journey:
+            existing.visitor_journey = visitor_journey
         session.flush()
         return existing
 
@@ -263,6 +283,8 @@ def create_or_update_lead_info(
         email=email,
         phone=phone,
         company=company,
+        utm_params=utm_params or None,
+        visitor_journey=visitor_journey or None,
     )
     session.add(lead)
     session.flush()

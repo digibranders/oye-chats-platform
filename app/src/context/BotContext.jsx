@@ -60,6 +60,28 @@ export function BotProvider({ children }) {
         }
     }, [refreshBots]);
 
+    // Refetch the bot list whenever the workspace switcher changes context.
+    // Bots are workspace-scoped (``Bot.client_id`` = the workspace owner id),
+    // so a switch from workspace A to workspace B needs to pull B's bots or
+    // the sidebar bot dropdown, ``selectedBot``, and every downstream page
+    // stay pointed at A's data. The switcher already fires the abort
+    // controller to cancel any A-scoped requests in flight; this listener
+    // fires the fresh fetch under B.
+    //
+    // Listens for the ``oyechats:workspace-switched`` window event dispatched
+    // by ``WorkspaceContext.switchWorkspace``. Guarded so it only fires when
+    // there's still a valid token — if the switch was actually a logout
+    // (rare edge case) the response interceptor will handle the auth clear.
+    useEffect(() => {
+        function onWorkspaceSwitched() {
+            if (getAuthItem('admin_token')) {
+                refreshBots();
+            }
+        }
+        window.addEventListener('oyechats:workspace-switched', onWorkspaceSwitched);
+        return () => window.removeEventListener('oyechats:workspace-switched', onWorkspaceSwitched);
+    }, [refreshBots]);
+
     const selectBot = useCallback((bot) => {
         setSelectedBot(bot);
         if (bot?.id) {

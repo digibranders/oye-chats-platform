@@ -226,14 +226,26 @@ def build_lead_response(
     lead_info: LeadInfo | None,
     message_count: int = 0,
     bot: Bot | None = None,
+    *,
+    include_attribution: bool = False,
 ) -> dict:
     """Build a standardized lead payload using decayed display scores.
 
-    BR-01: ``config`` now reflects the bot's ACTUAL selected framework (via
-    the fixed ``get_bant_config``), and the ``bant`` breakdown below emits
-    that framework's real dimensions — for a BANT bot this is unchanged
-    (need/budget/authority/timeline); for MEDDIC/CHAMP/GPCTBA+C&I it now
-    surfaces their real dimensions instead of four permanently-empty ones.
+    ``include_attribution`` gates the Lead Source Attribution fields
+    (``page_url``, ``referrer``, ``utm_params`` on ``behavioral``, and the
+    top-level ``source`` block that pins the lead's UTM + journey snapshot
+    from ``lead_info``). Callers pass ``True`` only when the caller's client
+    is on a plan that includes the feature — the gate is enforced at the
+    route boundary via ``is_lead_source_attribution_enabled``. On lower
+    tiers the fields are stripped from the response entirely so a curl
+    against the API cannot bypass the frontend paywall.
+
+    BR-01: ``config`` reflects the bot's ACTUAL selected framework (via
+    the fixed ``get_bant_config``), and the ``bant`` breakdown below
+    emits that framework's real dimensions — for a BANT bot this is
+    unchanged (need/budget/authority/timeline); for MEDDIC/CHAMP/
+    GPCTBA+C&I it surfaces their real dimensions instead of four
+    permanently-empty ones.
     """
     config = get_bant_config(bot)
     dimensions = framework_dimension_keys(config) or list(_LEGACY_DIMENSION_TEXT_ATTR)
@@ -263,7 +275,18 @@ def build_lead_response(
             value = getattr(session, _LEGACY_DIMENSION_TEXT_ATTR[dim], None)
         bant_breakdown[dim] = {"value": value, "score": adjusted_scores["dimensions"].get(dim, 0)}
 
-    return {
+    # Behavioral block — engagement score is always exposed; page_url /
+    # referrer / utm_params live behind ``include_attribution`` so lower
+    # tiers can still see the engagement bar without leaking source data.
+    behavioral_block: dict = {
+        "visit_count": getattr(session, "visit_count", 1),
+    }
+    if include_attribution:
+        behavioral_block["page_url"] = getattr(session, "page_url", None)
+        behavioral_block["referrer"] = getattr(session, "referrer", None)
+        behavioral_block["utm_params"] = getattr(session, "utm_params", None)
+
+    payload: dict = {
         "session_id": session.id,
         "score": score,
         "bant_score": bant_score,
@@ -272,12 +295,7 @@ def build_lead_response(
         "status": tier,  # backward-compat alias for frontend
         "dimensions_assessed": count_dimensions_assessed(session),
         "bant": bant_breakdown,
-        "behavioral": {
-            "page_url": getattr(session, "page_url", None),
-            "referrer": getattr(session, "referrer", None),
-            "utm_params": getattr(session, "utm_params", None),
-            "visit_count": getattr(session, "visit_count", 1),
-        },
+        "behavioral": behavioral_block,
         "contact": contact,
         "location": session.location or "Unknown",
         "device": session.device or "Unknown",
@@ -287,3 +305,25 @@ def build_lead_response(
         "unread": lead_viewed_at is None,
         "lead_viewed_at": _isoformat_or_none(lead_viewed_at),
     }
+
+    if include_attribution:
+        # Prefer the durable snapshot on lead_info (survives session pruning);
+        # fall back to the live session copy so leads captured before the
+        # feature shipped still light up on the Leads page.
+        source_utm = None
+        source_journey = None
+        if lead_info is not None:
+            source_utm = getattr(lead_info, "utm_params", None)
+            source_journey = getattr(lead_info, "visitor_journey", None)
+        if source_utm is None:
+            source_utm = getattr(session, "utm_params", None)
+        if source_journey is None:
+            source_journey = getattr(session, "visitor_journey", None)
+        payload["source"] = {
+            "utm_params": source_utm,
+            "referrer": getattr(session, "referrer", None),
+            "landing_page": getattr(session, "page_url", None),
+            "journey": source_journey,
+        }
+
+    return payload

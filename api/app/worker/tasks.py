@@ -1083,8 +1083,12 @@ async def task_dispatch_handoff_push(
 
     from app.db.models import Bot, Operator
     from app.db.session import SessionLocal
-    from app.services.live_chat_service import manager
-    from app.services.push_service import send_push_to_client, send_push_to_operator
+    from app.services.operator_presence_service import get_online_operator_ids
+    from app.services.push_service import (
+        filter_operators_by_push_prefs,
+        send_push_to_client,
+        send_push_to_operator,
+    )
 
     logger.info(
         "task_dispatch_handoff_push: session=%s bot=%d dept=%s",
@@ -1096,11 +1100,18 @@ async def task_dispatch_handoff_push(
     def _run() -> int:
         if SessionLocal is None:
             return 0
-        connected = set(manager.operator_connections.keys())
         with SessionLocal() as db:
             bot = db.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
             if bot is None:
                 return 0
+
+            # "Currently on WS" must be read from Redis presence, not
+            # ``manager.operator_connections``. The ARQ worker runs in a
+            # different process than the API, so its ``manager`` singleton
+            # is a fresh instance whose ``operator_connections`` map is
+            # always empty — which used to make this filter a no-op and
+            # every online operator got both a WS toast AND a push.
+            connected = get_online_operator_ids(bot.client_id)
 
             q = select(Operator).where(
                 Operator.client_id == bot.client_id,
@@ -1115,7 +1126,9 @@ async def task_dispatch_handoff_push(
 
             # Skip operators actively watching the dashboard — they got the
             # in-dashboard toast already. Push is the *fallback* channel.
-            operator_targets = [op for op in operators if op.id not in connected]
+            candidates = [op.id for op in operators if op.id not in connected]
+            allowed = set(filter_operators_by_push_prefs(db, candidates, "handoff_request"))
+            operator_targets = [op for op in operators if op.id in allowed]
 
             payload = {
                 "type": "handoff_request",
@@ -1187,7 +1200,11 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
 
     from app.db.models import ChatSession, OfflineMessage, Operator
     from app.db.session import SessionLocal
-    from app.services.push_service import send_push_to_client, send_push_to_operators
+    from app.services.push_service import (
+        filter_operators_by_push_prefs,
+        send_push_to_client,
+        send_push_to_operators,
+    )
 
     def _run() -> bool:
         if SessionLocal is None:
@@ -1235,7 +1252,8 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
             tag = f"handoff:{session_id}"
             if cs.bot is not None:
                 operators = db.execute(select(Operator).where(Operator.client_id == cs.bot.client_id)).scalars().all()
-                send_push_to_operators(db, [op.id for op in operators], payload, tag=tag)
+                allowed = filter_operators_by_push_prefs(db, [op.id for op in operators], payload["type"])
+                send_push_to_operators(db, allowed, payload, tag=tag)
                 send_push_to_client(db, cs.bot.client_id, payload, tag=tag)
             db.commit()
             return True
@@ -1302,6 +1320,168 @@ async def task_send_visitor_message_email(
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)
+
+
+async def task_dispatch_transfer_push(
+    ctx: dict,
+    session_id: str,
+    new_operator_id: int,
+    new_operator_name: str,
+    visitor_name: str | None,
+) -> int:
+    """Push notify an operator who just had a chat transferred to them.
+
+    Only fires when the target operator is NOT reachable via WebSocket per
+    Redis presence — otherwise the ``chat_accepted`` WS frame emitted inline by
+    ``live_chat_service.transfer_chat`` already handled the alert. Presence
+    lookup is cross-process, so this works whether the transfer originated in
+    the same gunicorn worker as the target's WS or a different one.
+
+    Payload uses ``type=chat_transferred`` and ``tag=transfer:<session_id>`` so
+    a re-transfer (rare) replaces the previous notification on the device.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.models import Operator
+    from app.db.session import SessionLocal
+    from app.services.operator_presence_service import get_online_operator_ids
+    from app.services.push_service import filter_operators_by_push_prefs, send_push_to_operator
+
+    def _run() -> int:
+        if SessionLocal is None:
+            return 0
+        with SessionLocal() as db:
+            operator = db.execute(select(Operator).where(Operator.id == new_operator_id)).scalar_one_or_none()
+            if operator is None:
+                return 0
+            if new_operator_id in get_online_operator_ids(operator.client_id):
+                # WS already carried the transfer — don't double-notify.
+                return 0
+            if not filter_operators_by_push_prefs(db, [new_operator_id], "chat_transferred"):
+                return 0
+
+            payload = {
+                "type": "chat_transferred",
+                "title": "Chat transferred to you",
+                "body": f"You now own the chat with {visitor_name or 'a visitor'}.",
+                "session_id": session_id,
+                "click_url": f"/support?session={session_id}",
+            }
+            tag = f"transfer:{session_id}"
+            delivered = send_push_to_operator(db, new_operator_id, payload, tag=tag)
+            db.commit()
+            return delivered
+
+    loop = asyncio.get_running_loop()
+    delivered = await loop.run_in_executor(None, _run)
+    logger.info(
+        "task_dispatch_transfer_push: delivered=%d session=%s operator=%d",
+        delivered,
+        session_id,
+        new_operator_id,
+    )
+    return delivered
+
+
+async def task_dispatch_offline_message_push(
+    ctx: dict,
+    offline_message_id: int,
+) -> int:
+    """Fan out a Web Push when a visitor submits the offline form.
+
+    Complements the existing email fan-out in ``offline_message_routes.submit``
+    so operators get a real-time OS notification too — otherwise an out-of-hours
+    lead sits silently in the inbox until someone thinks to look. Push routes
+    the operator to ``/support?tab=messages&message_id=<id>`` on tap.
+
+    Skips operators currently reachable via WebSocket (they already got the in-
+    dashboard ``offline_message_received`` frame from ``submit_offline_message``).
+    Always fires to the workspace owner: their ``client_id`` isn't in the
+    presence roster, and the small-team case (client login IS the primary chat-
+    taker) needs coverage.
+
+    Returns the number of successful push deliveries; zero is a valid outcome
+    for a workspace with no push subscribers.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.models import Bot, OfflineMessage, Operator
+    from app.db.session import SessionLocal
+    from app.services.operator_presence_service import get_online_operator_ids
+    from app.services.push_service import (
+        filter_operators_by_push_prefs,
+        send_push_to_client,
+        send_push_to_operator,
+    )
+
+    logger.info("task_dispatch_offline_message_push: message=%d", offline_message_id)
+
+    def _run() -> int:
+        if SessionLocal is None:
+            return 0
+        with SessionLocal() as db:
+            msg = db.execute(select(OfflineMessage).where(OfflineMessage.id == offline_message_id)).scalar_one_or_none()
+            if msg is None:
+                return 0
+            bot = db.execute(select(Bot).where(Bot.id == msg.bot_id)).scalar_one_or_none()
+            if bot is None:
+                return 0
+
+            # Same cross-process presence lookup as task_dispatch_handoff_push.
+            connected = get_online_operator_ids(bot.client_id)
+
+            q = select(Operator).where(
+                Operator.client_id == bot.client_id,
+                Operator.is_accepting_chats.is_(True),
+            )
+            if msg.department_id is not None:
+                # Department-scoped: operators in that department plus those
+                # with no department (fallback pool). Matches the routing rule
+                # used by handoff push above.
+                q = q.where((Operator.department_id == msg.department_id) | (Operator.department_id.is_(None)))
+            operators = db.execute(q).scalars().all()
+            candidates = [op.id for op in operators if op.id not in connected]
+            allowed = set(filter_operators_by_push_prefs(db, candidates, "offline_message_received"))
+            operator_targets = [op for op in operators if op.id in allowed]
+
+            preview = (msg.message_body or "").strip()[:140]
+            payload = {
+                "type": "offline_message_received",
+                "title": f"Offline message from {msg.visitor_name}",
+                "body": preview or "Visitor left a message.",
+                "bot_id": bot.id,
+                "bot_name": bot.name,
+                "offline_message_id": msg.id,
+                # SW opens this deep-link on tap and postMessages the target
+                # to the live tab if one is focused.
+                "click_url": f"/support?tab=messages&message_id={msg.id}",
+            }
+            tag = f"offline:{msg.id}"
+
+            total = 0
+            for op in operator_targets:
+                total += send_push_to_operator(db, op.id, payload, tag=tag)
+            total += send_push_to_client(db, bot.client_id, payload, tag=tag)
+            db.commit()
+            if total == 0:
+                logger.info(
+                    "Offline-message push delivered nothing for message=%d — no subscribers off-WS",
+                    offline_message_id,
+                )
+            return total
+
+    loop = asyncio.get_running_loop()
+    delivered = await loop.run_in_executor(None, _run)
+    logger.info(
+        "task_dispatch_offline_message_push: delivered=%d message=%d",
+        delivered,
+        offline_message_id,
+    )
+    return delivered
 
 
 # ── Invoicing v2: PDF rendering sweep (Phase 4) ──────────────────────────────

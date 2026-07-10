@@ -385,20 +385,14 @@ def _branded_sender_name(bot_name: str) -> str:
 
 
 def _brand_wordmark(*, color: str = "#0f0f1a") -> str:
-    """Render the configured brand name with a CamelCase color split.
+    """Render the configured brand name as a single-color wordmark.
 
-    For 'OyeChats': renders 'Oye' in `color` and 'Chats' in brand primary.
-    For brands without a CamelCase split (e.g. 'Acme'), the whole name
-    renders in brand primary for consistent emphasis. Brand name is HTML-
-    escaped so custom values can't break the markup.
+    Uses the caller-supplied ink color for the entire name so the
+    wordmark reads as one word (matches the brand's visual identity —
+    the logo mark carries the color accent, the wordmark stays neutral).
+    Brand name is HTML-escaped so custom values can't break markup.
     """
-    name = BRAND_NAME
-    match = re.search(r"(?<=[a-z])(?=[A-Z])", name)
-    if match:
-        first = html.escape(name[: match.start()])
-        second = html.escape(name[match.start() :])
-        return f'<span style="color:{color};">{first}<span style="color:{_BRAND_PRIMARY};">{second}</span></span>'
-    return f'<span style="color:{_BRAND_PRIMARY};">{html.escape(name)}</span>'
+    return f'<span style="color:{color};">{html.escape(BRAND_NAME)}</span>'
 
 
 def _copyright_year() -> int:
@@ -460,27 +454,45 @@ _INK_300 = "#9ca3af"  # Muted / footer
 # Surfaces
 _SURFACE_PAGE = "#f3f4fb"
 _SURFACE_CARD = "#ffffff"
-_SURFACE_FOOTER = "#f8f8fc"
+_SURFACE_FOOTER = "#ffffff"
 _RULE = "#e8e8f0"
 
 
-def _email_header() -> str:
-    """Branded header row — centered wordmark only.
+_BRAND_LOGO_URL = f"{MARKETING_URL}/logo.png"
 
-    Renders the top of every email as a single centered wordmark, no
-    brand-mark tile and no tagline. Pure HTML/CSS so it works in
-    image-blocked inboxes and offline. The marketing URL wraps the
-    wordmark so the brand is still clickable.
+
+def _email_header() -> str:
+    """Branded header row — real favicon logo + wordmark lockup, centered.
+
+    Loads the marketing site's official favicon (the same mark used on
+    ``oyechats.com``) as an ``<img>`` and pairs it with the CamelCase
+    wordmark. Renders inside a centered table so both cells sit on the
+    same baseline in every client (Gmail, Outlook, Apple Mail). If the
+    recipient blocks images the wordmark still carries the brand.
     """
     return (
         f"<tr>"
         f'<td style="background-color:{_SURFACE_CARD};border-radius:20px 20px 0 0;'
         f'padding:30px 40px 26px 40px;text-align:center;">'
         f'<a href="{MARKETING_URL}" style="text-decoration:none;display:inline-block;line-height:1;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
+        f' style="margin:0 auto;">'
+        f"<tr>"
+        f'<td valign="middle" style="vertical-align:middle;line-height:0;">'
+        f'<img src="{_BRAND_LOGO_URL}" width="32" height="32"'
+        f' alt="{html.escape(BRAND_NAME)} logo"'
+        f' style="display:block;width:32px;height:32px;border:0;outline:none;'
+        f'text-decoration:none;border-radius:7px;" />'
+        f"</td>"
+        f'<td width="10" style="width:10px;font-size:0;line-height:0;">&nbsp;</td>'
+        f'<td valign="middle" style="vertical-align:middle;">'
         f'<span style="font-family:{_FONT_STACK};font-size:24px;font-weight:800;'
         f'letter-spacing:-0.5px;line-height:1;">'
         f"{_brand_wordmark(color=_INK_900)}"
         f"</span>"
+        f"</td>"
+        f"</tr>"
+        f"</table>"
         f"</a>"
         f"</td>"
         f"</tr>"
@@ -499,7 +511,6 @@ def _email_footer(*, visitor: bool) -> str:
     ``APP_URL``, ``SUPPORT_EMAIL``, ``BRAND_NAME``). Copyright year is
     computed at render time so long-running processes never go stale.
     """
-    brand_initial = html.escape(BRAND_NAME[:1].upper()) if BRAND_NAME else "O"
     safe_brand = html.escape(BRAND_NAME)
 
     if visitor:
@@ -533,11 +544,11 @@ def _email_footer(*, visitor: bool) -> str:
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
         f' style="margin:0 auto 6px auto;">'
         f"<tr>"
-        f'<td width="22" height="22" align="center" valign="middle"'
-        f' style="width:22px;height:22px;background-color:{_BRAND_PRIMARY};'
-        f'border-radius:6px;text-align:center;vertical-align:middle;">'
-        f'<span style="font-family:{_FONT_STACK};font-size:11px;font-weight:800;'
-        f'color:#ffffff;letter-spacing:-0.3px;line-height:22px;">{brand_initial}</span>'
+        f'<td valign="middle" style="vertical-align:middle;line-height:0;">'
+        f'<img src="{_BRAND_LOGO_URL}" width="22" height="22"'
+        f' alt="{safe_brand} logo"'
+        f' style="display:block;width:22px;height:22px;border:0;outline:none;'
+        f'text-decoration:none;border-radius:5px;" />'
         f"</td>"
         f'<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>'
         f'<td valign="middle" style="vertical-align:middle;">'
@@ -1351,10 +1362,19 @@ def send_visitor_confirmation_email(
 
 
 def _affiliate_cta_button(href: str, label: str) -> str:
-    """Pill-shaped CTA button matching the brand palette."""
+    """Pill-shaped CTA button matching the brand palette.
+
+    Wrapped in a full-width outer table so it behaves as a block-level
+    element in email clients — prevents the ``align="left"`` inner table
+    from floating and letting following paragraph text wrap next to it.
+    """
     safe_href = html.escape(href, quote=True)
     return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+        f' width="100%" style="width:100%;border-collapse:collapse;">'
+        f"<tr>"
+        f'<td align="left" style="padding:0;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
         f"<tr>"
         f'<td align="center" style="border-radius:10px;background-color:{_BRAND_PRIMARY};">'
         f'<a href="{safe_href}"'
@@ -1363,6 +1383,9 @@ def _affiliate_cta_button(href: str, label: str) -> str:
         f'border-radius:10px;letter-spacing:0.01em;">'
         f"{html.escape(label)}"
         f"</a>"
+        f"</td>"
+        f"</tr>"
+        f"</table>"
         f"</td>"
         f"</tr>"
         f"</table>"
@@ -1994,4 +2017,68 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
         f"{doc_label} {invoice.invoice_number} from {seller_name}",
         html,
         attachments=attachments,
+    )
+
+
+# ── Operator invite ─────────────────────────────────────────────────────────
+# Magic-link invite to join a workspace as an operator. Composed as raw HTML
+# through the same ``_html_doc`` wrapper as the affiliate invite — same
+# rationale (low volume, self-contained, no Brevo template needed).
+
+
+def send_operator_invite_email(
+    to_email: str,
+    accept_url: str,
+    *,
+    workspace_name: str,
+    inviter_name: str | None,
+    expires_in_days: int = 7,
+) -> None:
+    """Email a magic link inviting the recipient to join ``workspace_name`` as an operator.
+
+    ``accept_url`` must include the plaintext invite token in its path or
+    query string — the airlock page uses it to resolve the invite. The link
+    is single-use in effect (once accepted the token no longer resolves to a
+    ``pending`` invite).
+    """
+    safe_workspace = _esc(workspace_name)
+    inviter_snippet = f"{_esc(inviter_name)} has invited you" if inviter_name else "You&rsquo;ve been invited"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"You&rsquo;ve been invited to {safe_workspace}"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"{inviter_snippet} to join <strong>{safe_workspace}</strong> on "
+        f"{BRAND_NAME} as an operator. Once you accept, you&rsquo;ll be able "
+        f"to take live chats and help their visitors from your dashboard."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Click below to accept &mdash; the link is valid for "
+        f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}."
+        f"</p>"
+        f"{_affiliate_cta_button(accept_url, 'Accept invitation')}"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"If you didn&rsquo;t expect this invite, you can safely ignore this email. "
+        f"Questions? Reply here or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=f"Accept your invite to join {workspace_name} on {BRAND_NAME}.",
+        body_inner=body_inner,
+        visitor=False,
+    )
+    send_email_async(
+        to_email,
+        f"You’ve been invited to join {workspace_name} on {BRAND_NAME}",
+        html_body,
     )

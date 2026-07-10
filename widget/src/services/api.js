@@ -442,8 +442,90 @@ export const sendTranscriptEmail = async (sessionId, recipientEmail) => {
 };
 
 /**
- * Collect page context from the host page (URL, referrer, UTM params).
- * Called once on widget load — reads from window.location and document.referrer.
+ * Journey capture — records the ordered list of page paths the visitor
+ * touches on the host site before opening chat. Powers the "before chat"
+ * timeline on the admin Leads page for Standard-plan clients.
+ *
+ * Stored in sessionStorage (namespaced per bot) so it clears when the tab
+ * closes — matches GDPR expectations and mirrors how UTM capture works.
+ * Uses a small in-memory dedupe against the last entry so a SPA that
+ * fires history.pushState multiple times for the same route doesn't
+ * balloon the array.
+ */
+const JOURNEY_MAX_ENTRIES = 50;
+const JOURNEY_PATH_MAX_LEN = 500;
+
+const _journeyKey = () => {
+    const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
+    return `oyechats_journey_${botKey}`;
+};
+
+const _readJourney = () => {
+    try {
+        const raw = sessionStorage.getItem(_journeyKey());
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
+const _writeJourney = (entries) => {
+    try {
+        sessionStorage.setItem(_journeyKey(), JSON.stringify(entries));
+    } catch {
+        /* quota / private mode — safe to swallow */
+    }
+};
+
+const _appendJourneyEntry = (path) => {
+    if (typeof path !== 'string' || !path) return;
+    const trimmed = path.slice(0, JOURNEY_PATH_MAX_LEN);
+    const entries = _readJourney();
+    const last = entries[entries.length - 1];
+    if (last && last.path === trimmed) return; // dedupe same-path bursts
+    entries.push({ path: trimmed, ts: new Date().toISOString() });
+    if (entries.length > JOURNEY_MAX_ENTRIES) {
+        entries.splice(0, entries.length - JOURNEY_MAX_ENTRIES);
+    }
+    _writeJourney(entries);
+};
+
+let _journeyHooksInstalled = false;
+
+/**
+ * Install history listeners so SPA route changes append to the journey
+ * without a full page reload. Idempotent — safe to call from every
+ * collectPageContext invocation.
+ */
+const _installJourneyHooks = () => {
+    if (_journeyHooksInstalled || typeof window === 'undefined') return;
+    _journeyHooksInstalled = true;
+    try {
+        const origPush = window.history.pushState;
+        const origReplace = window.history.replaceState;
+        window.history.pushState = function (...args) {
+            const ret = origPush.apply(this, args);
+            _appendJourneyEntry(window.location.pathname);
+            return ret;
+        };
+        window.history.replaceState = function (...args) {
+            const ret = origReplace.apply(this, args);
+            _appendJourneyEntry(window.location.pathname);
+            return ret;
+        };
+        window.addEventListener('popstate', () => _appendJourneyEntry(window.location.pathname));
+    } catch {
+        /* host page may freeze history — accept the loss of SPA journey entries */
+    }
+};
+
+/**
+ * Collect page context from the host page (URL, referrer, UTM params, journey).
+ * Called on widget load and again when a session is created — reads from
+ * window.location and document.referrer, and appends the current path to
+ * the journey.
  */
 export const collectPageContext = () => {
     const url = window.location.href;
@@ -470,12 +552,19 @@ export const collectPageContext = () => {
     const currentCount = parseInt(sessionStorage.getItem(pageCountKey) || '0', 10) + 1;
     sessionStorage.setItem(pageCountKey, currentCount.toString());
 
+    // Record this page in the journey and wire up SPA route hooks so any
+    // subsequent history.pushState / popstate before the chat opens is
+    // captured too.
+    _appendJourneyEntry(window.location.pathname);
+    _installJourneyHooks();
+
     return {
         page_url: url,
         referrer,
         utm_params: Object.keys(utm_params).length > 0 ? utm_params : null,
         is_return_visit,
         pages_viewed: currentCount,
+        journey: _readJourney(),
         _load_time: performance.now(),
     };
 };
@@ -496,6 +585,7 @@ export const sendBehavioralSignals = async (sessionId, signals) => {
                 time_on_page: signals.time_on_page || null,
                 pages_viewed: signals.pages_viewed || null,
                 is_return_visit: signals.is_return_visit || false,
+                journey: Array.isArray(signals.journey) && signals.journey.length > 0 ? signals.journey : null,
             }),
         });
         if (!response.ok) {

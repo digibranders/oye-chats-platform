@@ -47,9 +47,41 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
     return apiError;
 };
 
+// The active AbortController for the current workspace context. Every API
+// request opts in to being cancelled on workspace switch via ``config.signal``
+// unless the caller supplied their own signal. The controller is rotated by
+// ``WorkspaceContext.switchWorkspace`` so all in-flight requests scoped to
+// the previous workspace abort atomically — this prevents cross-tenant data
+// leaks where a slow response for workspace A lands after the UI switched
+// to workspace B.
+let currentWorkspaceAbortController = null;
+
+/**
+ * Return the AbortSignal that new requests should use, minting a fresh
+ * controller lazily. Exported so ``WorkspaceContext`` can call
+ * ``rotateWorkspaceAbort`` on switch.
+ */
+export function rotateWorkspaceAbort() {
+    if (currentWorkspaceAbortController) {
+        try { currentWorkspaceAbortController.abort(); } catch { /* noop */ }
+    }
+    currentWorkspaceAbortController = new AbortController();
+    return currentWorkspaceAbortController.signal;
+}
+
+function getWorkspaceAbortSignal() {
+    if (!currentWorkspaceAbortController) {
+        currentWorkspaceAbortController = new AbortController();
+    }
+    return currentWorkspaceAbortController.signal;
+}
+
 // Request interceptor: inject API key (supports both Client and Operator auth).
 // Reads via authStorage so session-only logins ("Remember me" off) land in
-// sessionStorage and still attach correctly here.
+// sessionStorage and still attach correctly here. Also attaches
+// ``X-Workspace-Id`` for Client-authed requests so the backend can resolve
+// which workspace the caller is acting in (their own vs. a linked-operator
+// workspace they joined via an invite).
 api.interceptors.request.use(
     (config) => {
         const token = getAuthItem('admin_token');
@@ -59,7 +91,20 @@ api.interceptors.request.use(
                 config.headers['X-Operator-Key'] = token;
             } else {
                 config.headers['X-API-Key'] = token;
+                // Only client auth benefits from X-Workspace-Id — legacy operator
+                // keys are implicitly scoped to their one workspace and the
+                // backend ignores the header on that auth path.
+                const workspaceId = getAuthItem('current_workspace_id');
+                if (workspaceId) {
+                    config.headers['X-Workspace-Id'] = workspaceId;
+                }
             }
+        }
+        // Opt every request into the workspace-scoped abort controller unless
+        // the caller explicitly provided their own signal (e.g. long-running
+        // stream downloads that manage their own cancellation).
+        if (!config.signal) {
+            config.signal = getWorkspaceAbortSignal();
         }
         return config;
     },
@@ -70,13 +115,36 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
+        // Requests aborted by a workspace switch (via ``rotateWorkspaceAbort``)
+        // arrive here as ``ERR_CANCELED`` from axios. Suppress the auto-logout
+        // path and don't rethrow noisily — callers should filter these via
+        // ``axios.isCancel(err)`` and simply not update state.
+        if (axios.isCancel?.(error) || error.code === 'ERR_CANCELED') {
+            return Promise.reject(error);
+        }
+
         const status = error.response?.status;
         const authType = getAuthItem('auth_type');
-        const detail = (error.response?.data?.detail || '').toString().toLowerCase();
+        const detailRaw = error.response?.data?.detail;
+        const detail = (detailRaw || '').toString().toLowerCase();
+        const detailErrorCode = (typeof detailRaw === 'object' && detailRaw?.error) || null;
         const requestUrl = (error.config?.url || '').toString();
 
         const isLoginAttempt = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/operator-login');
         const isOperatorOnClientOnlyEndpoint = authType === 'operator' && detail.includes('api key');
+
+        // A 403 with error code ``workspace_access_denied`` means the caller
+        // still holds a valid Client identity but has lost access to the
+        // workspace they had cached in ``current_workspace_id`` (revoked,
+        // deleted, or otherwise). Don't nuke the whole session — surface the
+        // signal so the frontend can drop the workspace, refresh the list,
+        // and land the user on a workspace they still belong to.
+        if (status === 403 && detailErrorCode === 'workspace_access_denied') {
+            window.dispatchEvent(new CustomEvent('oyechats:workspace-access-denied', {
+                detail: { workspaceId: getAuthItem('current_workspace_id') },
+            }));
+            return Promise.reject(error);
+        }
 
         if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
             // Clear from BOTH stores so a session-only login that auto-
@@ -2308,5 +2376,142 @@ export const regenerateClientApiKey = async () => {
     } catch (error) {
         console.error('API Error regenerating client API key:', error);
         throw buildApiError(error, 'Failed to regenerate API key');
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Operator invites + workspace membership
+//
+// Owner-facing invite CRUD + the public airlock endpoints + workspace
+// listing for the switcher. All scoped by the current X-Workspace-Id header
+// so calling ``createInvite`` while in workspace X invites into workspace X.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Send an operator invite to the given email. Called from Team → Invite modal.
+ * ``role`` is one of ``operator | admin`` (v1). ``departmentId`` is optional.
+ * Returns ``{ invite, accept_url }`` — the URL is included so a copy-to-clipboard
+ * affordance is possible; the email is fired backend-side.
+ */
+export const createOperatorInvite = async ({ email, role = 'operator', departmentId = null }) => {
+    try {
+        const response = await api.post('/invites', {
+            email,
+            role,
+            department_id: departmentId,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to send invite');
+    }
+};
+
+/**
+ * List invites for the current workspace. ``statusFilter`` narrows to
+ * pending / accepted / revoked / expired / all (default = all).
+ */
+export const listOperatorInvites = async (statusFilter = null) => {
+    try {
+        const params = statusFilter ? { status_filter: statusFilter } : {};
+        const response = await api.get('/invites', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load invites');
+    }
+};
+
+/** Regenerate the token and resend the invite email. */
+export const resendOperatorInvite = async (inviteId) => {
+    try {
+        const response = await api.post(`/invites/${inviteId}/resend`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to resend invite');
+    }
+};
+
+/** Revoke a pending invite. Idempotent — resolved invites are no-ops. */
+export const revokeOperatorInvite = async (inviteId) => {
+    try {
+        await api.delete(`/invites/${inviteId}`);
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to revoke invite');
+    }
+};
+
+/**
+ * Unauthenticated — used by the ``/invite/{token}`` airlock page BEFORE login
+ * to render workspace name + inviter + status so the invitee can decide
+ * whether to sign up or log in.
+ */
+export const getInvitePublic = async (token) => {
+    try {
+        const response = await api.get(`/invites/by-token/${encodeURIComponent(token)}`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'This invite link is invalid or expired');
+    }
+};
+
+/**
+ * Accept the invite as the currently-logged-in Client. Requires X-API-Key.
+ * Backend validates email match (case-insensitive) and creates the linked
+ * Operator row atomically.
+ */
+export const acceptInvitePublic = async (token) => {
+    try {
+        const response = await api.post(`/invites/by-token/${encodeURIComponent(token)}/accept`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to accept invite');
+    }
+};
+
+/**
+ * List every workspace the current caller can act in (owned + linked-operator
+ * memberships). Called by ``WorkspaceContext`` on mount and after a switch.
+ * Bypasses the workspace abort controller so it isn't cancelled during
+ * a switch (workspace list is orthogonal to the workspace being switched).
+ */
+export const getMyWorkspaces = async () => {
+    try {
+        // Ignore the workspace-scoped AbortController for THIS call — otherwise
+        // a switch mid-flight would cancel the list refresh we just triggered.
+        const response = await api.get('/me/workspaces', { signal: undefined });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load workspaces');
+    }
+};
+
+/**
+ * Add the calling Client (workspace owner) as an operator in their own
+ * workspace. Idempotent — reactivates a previously-left row if one exists.
+ * The self-operator does NOT consume a paid seat.
+ *
+ * Returns ``{ operator_id, role, is_active, was_existing }``. UI can toast
+ * "Welcome back to live chat" when ``was_existing`` is true.
+ */
+export const addSelfAsOperator = async () => {
+    try {
+        const response = await api.post('/me/self-operator');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to add yourself as an operator');
+    }
+};
+
+/**
+ * Deactivate the caller's self-operator row (owner leaves live chat).
+ * Sets ``is_active=False`` — historical chats stay linked, in-flight chats
+ * complete naturally. Idempotent.
+ */
+export const removeSelfAsOperator = async () => {
+    try {
+        await api.delete('/me/self-operator');
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to leave live chat');
     }
 };

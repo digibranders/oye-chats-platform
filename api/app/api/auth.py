@@ -29,6 +29,15 @@ legacy_agent_key_header = APIKeyHeader(name=LEGACY_AGENT_KEY_NAME, auto_error=Fa
 BOT_KEY_NAME = "X-Bot-Key"
 bot_key_header = APIKeyHeader(name=BOT_KEY_NAME, auto_error=False)
 
+# ── Workspace context (invite-based multi-workspace) ──
+# When a caller presents X-API-Key together with X-Workspace-Id, the resolver
+# looks up the linked-operator row for that workspace and returns
+# ``type="operator"`` so role-escalation guards and RBAC see the operator's
+# role, not the Client's implicit "unrestricted" status. Absent header ⇒ the
+# caller is acting as the owner of their own workspace (legacy behavior).
+WORKSPACE_ID_NAME = "X-Workspace-Id"
+workspace_id_header = APIKeyHeader(name=WORKSPACE_ID_NAME, auto_error=False)
+
 
 def _resolve_operator_key(
     operator_key: str | None,
@@ -36,6 +45,48 @@ def _resolve_operator_key(
 ) -> str | None:
     """Return the effective operator key, preferring the new header over the legacy one."""
     return operator_key or legacy_agent_key
+
+
+def _parse_workspace_id(raw: str | None) -> int | None:
+    """Coerce the X-Workspace-Id header to an int; ``None`` if absent or malformed.
+
+    Malformed values are treated as absent (legacy behavior) rather than 4xx so
+    a bugged frontend doesn't hard-fail every API call — the downstream check
+    against the actual workspace ownership will still catch cross-tenant leaks.
+    """
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _resolve_linked_operator_for_workspace(
+    session,
+    caller_client_id: int,
+    workspace_id: int,
+) -> Operator | None:
+    """Look up the linked Operator row that grants ``caller_client_id`` access
+    to ``workspace_id``.
+
+    Returns ``None`` when no such role exists (auth should 403). The caller is
+    responsible for checking ``is_active`` on the returned operator.
+    """
+    return (
+        session.execute(
+            select(Operator).where(
+                Operator.client_id == workspace_id,
+                Operator.linked_client_id == caller_client_id,
+            )
+        )
+        .scalars()
+        .first()
+    )
 
 
 def _ensure_not_suspended(client: Client) -> None:
@@ -174,13 +225,28 @@ def get_current_client_or_operator(
     api_key: str = Security(api_key_header),
     operator_key: str = Security(operator_key_header),
     legacy_agent_key: str = Security(legacy_agent_key_header),
+    workspace_id_raw: str = Security(workspace_id_header),
 ):
     """
     Dependency: Authenticate via X-API-Key (Client) or X-Operator-Key (Operator).
     Returns a dict with 'type' ('client'|'operator'), the entity, and 'client_id'.
     Used by endpoints that both admins and operators can access.
+
+    Workspace-aware routing
+    -----------------------
+    When called with ``X-API-Key`` AND ``X-Workspace-Id`` naming a workspace that
+    is NOT the caller's own, the resolver looks up the caller's linked-operator
+    row for that workspace and returns ``type="operator"`` scoped to it. This
+    lets one Client identity act as an operator in another workspace via the
+    invite flow, while every existing endpoint that scopes on ``auth["client_id"]``
+    continues to work unchanged — the workspace's owner id lands there.
+
+    Legacy ``X-Operator-Key`` sessions ignore ``X-Workspace-Id`` (they're
+    implicitly scoped to their one workspace). ``X-API-Key`` sessions without
+    an ``X-Workspace-Id`` header default to the caller's own workspace.
     """
     effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
+    requested_workspace_id = _parse_workspace_id(workspace_id_raw)
 
     # Try operator key first (more specific)
     if effective_operator_key:
@@ -225,11 +291,84 @@ def get_current_client_or_operator(
     if api_key:
         with get_session() as session:
             client = session.execute(select(Client).where(Client.api_key == api_key)).scalars().first()
-            if client:
-                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
-                _ensure_not_suspended(client)
+            if client is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid API Key.",
+                )
+            _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
+            _ensure_not_suspended(client)
+
+            # No workspace header, or caller pointing at their own workspace →
+            # act as owner (legacy path).
+            if requested_workspace_id is None or requested_workspace_id == client.id:
                 session.expunge(client)
-                return {"type": "client", "entity": client, "client_id": client.id, "operator_id": None}
+                return {
+                    "type": "client",
+                    "entity": client,
+                    "client_id": client.id,
+                    "operator_id": None,
+                }
+
+            # Cross-workspace request — validate the caller has a linked-operator
+            # role there, and present as operator so downstream role guards see
+            # the operator's role (not the Client's unrestricted status).
+            operator = _resolve_linked_operator_for_workspace(session, client.id, requested_workspace_id)
+            if operator is None:
+                logger.info(
+                    "Client %s attempted to act in workspace %s without a linked operator role.",
+                    client.id,
+                    requested_workspace_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": "workspace_access_denied",
+                        "workspace_id": requested_workspace_id,
+                        "message": "You do not have access to this workspace.",
+                    },
+                )
+            if not getattr(operator, "is_active", True):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "error": "workspace_access_denied",
+                        "workspace_id": requested_workspace_id,
+                        "message": "Your operator role in this workspace has been revoked.",
+                    },
+                )
+
+            # Workspace owner's standing gates every operator's access — a
+            # suspended workspace locks out its linked operators too.
+            owner = session.execute(select(Client).where(Client.id == requested_workspace_id)).scalars().first()
+            if owner is not None:
+                _ = owner.id, owner.is_superadmin, owner.suspended_at
+                _ensure_not_suspended(owner)
+
+            _ = (
+                operator.id,
+                operator.name,
+                operator.email,
+                operator.client_id,
+                operator.role,
+                operator.department_id,
+                operator.operator_api_key,
+                operator.is_online,
+                operator.linked_client_id,
+            )
+            session.expunge(operator)
+            return {
+                "type": "operator",
+                "entity": operator,
+                # Workspace's owning client_id — every existing downstream query
+                # that scopes ``WHERE ... client_id = auth["client_id"]`` keeps
+                # working transparently.
+                "client_id": requested_workspace_id,
+                "operator_id": operator.id,
+                # New: the underlying Client identity — useful for auditing and
+                # for cache-key invalidation across workspaces.
+                "linked_client_id": client.id,
+            }
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

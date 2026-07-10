@@ -43,6 +43,46 @@ def _sanitize_url(url: str | None, max_len: int = 2000) -> str | None:
     return url if _SAFE_URL_SCHEME.match(url) else None
 
 
+# Caps for widget-supplied visitor_journey payloads. The array reaches the
+# database as JSONB and is rendered as a timeline in the admin UI — bounding
+# both entry count and per-field length keeps row size predictable on
+# high-navigation sites (SPA with hundreds of history.pushState calls) and
+# blocks obvious injection (long strings, unexpected schemes).
+_MAX_JOURNEY_ENTRIES = 50
+_MAX_JOURNEY_PATH_LEN = 500
+_MAX_JOURNEY_TS_LEN = 40
+
+
+def _sanitize_journey(entries: list | None) -> list[dict] | None:
+    """Normalize the widget's ``journey`` array into a bounded list of dicts.
+
+    Accepts what the widget sends today — ``[{"path": "/services", "ts":
+    "2026-07-09T12:00:15Z"}, ...]`` — and drops anything malformed rather
+    than raising. Preserves order (matters for the timeline UI). Returns
+    ``None`` when the input is empty or every entry was rejected.
+    """
+    if not entries:
+        return None
+    cleaned: list[dict] = []
+    for raw in entries[:_MAX_JOURNEY_ENTRIES]:
+        if not isinstance(raw, dict):
+            continue
+        path = raw.get("path")
+        if not isinstance(path, str):
+            continue
+        path = path.strip()[:_MAX_JOURNEY_PATH_LEN]
+        if not path:
+            continue
+        entry: dict = {"path": path}
+        ts = raw.get("ts")
+        if isinstance(ts, str):
+            ts_clean = ts.strip()[:_MAX_JOURNEY_TS_LEN]
+            if ts_clean:
+                entry["ts"] = ts_clean
+        cleaned.append(entry)
+    return cleaned or None
+
+
 def _redact_email(email: str | None) -> str:
     """Return a partially redacted email for safe logging (GDPR)."""
     if not email or "@" not in email:
@@ -94,6 +134,12 @@ class BehavioralSignalsRequest(PydanticBaseModel):
     time_on_page: float | None = None  # seconds
     pages_viewed: int | None = None
     is_return_visit: bool = False
+    # Ordered list of ``{"path": "/services", "ts": "2026-07-09T12:00:15Z"}``
+    # entries recorded by the widget as the visitor navigated between
+    # pages on the host site before opening chat. Optional — omitted for
+    # legacy widget builds. Capped server-side to _MAX_JOURNEY_ENTRIES
+    # per session to bound row size on high-navigation sites.
+    journey: list[dict] | None = None
 
 
 class MeetingBookedRequest(PydanticBaseModel):
@@ -528,9 +574,23 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 @limiter.limit("10/minute", key_func=key_from_bot_key)
 def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
+    from app.services.plan_entitlements_service import is_lead_source_attribution_enabled
+
     try:
         with get_session() as session:
-            ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            chat_session = ensure_chat_session(session, body.session_id, bot_id=bot.id)
+
+            # Snapshot UTM + visitor_journey onto the lead row only when the
+            # owning client's plan includes Lead Source Attribution. Free /
+            # Starter clients still get their lead captured (with contact
+            # info) — they just don't get the durable per-lead attribution
+            # copy that Standard / Enterprise clients see in the Leads UI.
+            utm_snapshot: dict | None = None
+            journey_snapshot: list | None = None
+            if bot.client_id and is_lead_source_attribution_enabled(bot.client_id, session):
+                utm_snapshot = chat_session.utm_params or None
+                journey_snapshot = chat_session.visitor_journey or None
+
             create_or_update_lead_info(
                 session,
                 session_id=body.session_id,
@@ -539,6 +599,8 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
                 email=body.email,
                 phone=body.phone,
                 company=body.company,
+                utm_params=utm_snapshot,
+                visitor_journey=journey_snapshot,
             )
             session.commit()
             logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={_redact_email(body.email)}")
@@ -590,6 +652,13 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
                 chat_session.referrer = safe_referrer
             if body.utm_params and not chat_session.utm_params:
                 chat_session.utm_params = body.utm_params
+
+            # First non-empty journey wins so an intermittent widget resend
+            # (e.g. tab regain focus) never overwrites the earlier "before
+            # they opened chat" navigation history with just the last hop.
+            safe_journey = _sanitize_journey(body.journey)
+            if safe_journey and not chat_session.visitor_journey:
+                chat_session.visitor_journey = safe_journey
 
             # Update visit count from widget
             if body.is_return_visit and chat_session.visit_count <= 1:

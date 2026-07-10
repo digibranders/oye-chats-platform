@@ -287,6 +287,41 @@ def get_entitlements(
     return result
 
 
+# ── Lead source attribution gate ──────────────────────────────────────────
+#
+# Lead Source Attribution (UTM + visitor journey persisted on LeadInfo,
+# surfaced on the Leads page + CSV export) is a paid-tier deliverable.
+# The gate lives here so backend routes and the frontend entitlement
+# response agree on the rule without duplicating the slug list.
+#
+# Rule: "Standard" and "Enterprise" plans expose full attribution.
+# Everyone else (Free / Starter / custom slugs) sees leads without the
+# source badge and journey timeline. The Leads UI renders an upsell tile
+# in the same slot so the feature is discoverable without leaking data.
+LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "enterprise"})
+
+
+def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> bool:
+    """True iff this client's active plan includes lead source attribution.
+
+    Uses the same cached ``get_entitlements`` path as every other gate so
+    a fresh subscription upgrade takes effect within the 60s TTL. Falls
+    back to ``False`` on any resolver error — the defensive default,
+    matching the "lock everything down on failure" policy elsewhere in
+    this module.
+    """
+    try:
+        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "lead_source_attribution: entitlements lookup failed for client=%s — denying",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in LEAD_SOURCE_ATTRIBUTION_SLUGS
+
+
 def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> PlanEntitlements:
     """Build the entitlements dataclass from primary sources. Internal."""
     # 1. Look up the subscription. ``get_client_subscription`` returns the

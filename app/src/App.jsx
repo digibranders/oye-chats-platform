@@ -25,6 +25,7 @@ import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import OAuthCallback from './pages/OAuthCallback';
 import AffiliateInvite from './pages/AffiliateInvite';
+import InviteAirlock from './pages/InviteAirlock';
 import Dashboard from './pages/Dashboard';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Settings from './pages/Settings';
@@ -159,6 +160,11 @@ function App() {
                         either auto-accepts (logged-in) or shows two CTAs
                         (sign in / sign up) for the recipient to choose. */}
                     <Route path="/affiliate-invite" element={<AffiliateInvite />} />
+                    {/* Operator invite airlock — public; the invite backend
+                        sends this URL in the email. Four states: signup,
+                        login, one-click accept, sign-out-to-switch. See
+                        InviteAirlock.jsx for the state matrix. */}
+                    <Route path="/invite/:token" element={<InviteAirlock />} />
                     {/* Legacy URL — invites sent before the cut-over still
                         point at /affiliate-accept. Preserve the token. */}
                     <Route

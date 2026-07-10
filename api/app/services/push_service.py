@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
@@ -39,7 +40,7 @@ from app.config import (
     VAPID_PRIVATE_KEY_FILE,
     VAPID_SUBJECT,
 )
-from app.db.models import OperatorPushSubscription
+from app.db.models import Operator, OperatorPushSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -221,3 +222,119 @@ def send_push_to_operators(
     for operator_id in operator_ids:
         total += send_push_to_operator(session, operator_id, payload, tag=tag, ttl=ttl)
     return total
+
+
+# ── Notification preferences filter ─────────────────────────────────────────
+#
+# ``Operator.notification_preferences`` is a JSONB column with (currently) this
+# shape:
+#
+#   {
+#     "push": {
+#       "enabled": true,
+#       "quiet_hours": { "start": "22:00", "end": "07:00", "tz": "Asia/Kolkata" },
+#       "events": {
+#         "handoff_request": true,
+#         "offline_message": true,
+#         "chat_transferred": true
+#       }
+#     }
+#   }
+#
+# Absent / null prefs = fully opted in (backward compat). Malformed prefs are
+# treated as fully opted in too — an operator missing a push in a config-parse
+# edge case is a worse outcome than one extra push.
+
+_EVENT_CATEGORY = {
+    # Every handoff-related notification (initial + escalations) shares one
+    # opt-out category so an operator either wants handoff pings or doesn't.
+    "handoff_request": "handoff_request",
+    "handoff_moved_to_offline": "handoff_request",
+    "handoff_expired": "handoff_request",
+    "chat_transferred": "chat_transferred",
+    "offline_message_received": "offline_message",
+}
+
+
+def _parse_hhmm(raw: Any) -> time | None:
+    """Parse ``"HH:MM"`` → ``datetime.time``; return None on any fault."""
+    if not isinstance(raw, str) or len(raw) < 3:
+        return None
+    try:
+        hh, mm = raw.split(":", 1)
+        return time(int(hh), int(mm))
+    except (ValueError, TypeError):
+        return None
+
+
+def _in_quiet_hours(quiet: dict[str, Any], now_utc: datetime) -> bool:
+    """Return True if ``now_utc`` falls inside the operator's quiet window."""
+    start = _parse_hhmm(quiet.get("start"))
+    end = _parse_hhmm(quiet.get("end"))
+    if start is None or end is None or start == end:
+        return False
+
+    tz_name = quiet.get("tz") if isinstance(quiet.get("tz"), str) else "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+
+    local_now = now_utc.astimezone(tz).time()
+    if start < end:
+        # Same-day window (e.g. 13:00-17:00).
+        return start <= local_now < end
+    # Wraps midnight (e.g. 22:00-07:00) — quiet if either side of midnight.
+    return local_now >= start or local_now < end
+
+
+def _operator_wants_push(prefs: Any, event_type: str, now_utc: datetime) -> bool:
+    """Consult a single operator's prefs for a specific ``event_type``.
+
+    Absent / non-dict prefs → True (opted in). Explicit ``push.enabled=False``
+    or ``push.events.<category>=False`` → False. Quiet hours match → False.
+    """
+    if not isinstance(prefs, dict):
+        return True
+    push = prefs.get("push")
+    if not isinstance(push, dict):
+        return True
+    if push.get("enabled") is False:
+        return False
+
+    events = push.get("events")
+    if isinstance(events, dict):
+        category = _EVENT_CATEGORY.get(event_type, event_type)
+        # Missing key = opted in; explicit False = opted out.
+        if events.get(category) is False:
+            return False
+
+    quiet = push.get("quiet_hours")
+    return not (isinstance(quiet, dict) and _in_quiet_hours(quiet, now_utc))
+
+
+def filter_operators_by_push_prefs(
+    session: Session,
+    operator_ids: list[int],
+    event_type: str,
+    *,
+    now: datetime | None = None,
+) -> list[int]:
+    """Drop operator IDs whose ``notification_preferences`` opt them out.
+
+    Consulted by every dispatch task before the fan-out. Preserves input order
+    so downstream ordering (round-robin, tie-breakers) isn't perturbed.
+    Operators not found in the DB are dropped defensively.
+    """
+    if not operator_ids:
+        return []
+    now_utc = now or datetime.now(UTC)
+    rows = session.execute(
+        select(Operator.id, Operator.notification_preferences).where(Operator.id.in_(operator_ids))
+    ).all()
+    prefs_by_id = {row[0]: row[1] for row in rows}
+    return [
+        op_id
+        for op_id in operator_ids
+        if op_id in prefs_by_id and _operator_wants_push(prefs_by_id[op_id], event_type, now_utc)
+    ]
