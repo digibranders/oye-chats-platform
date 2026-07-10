@@ -17,6 +17,9 @@
   --color-primary-800: #3730a3;
   --color-primary-900: #312e81;
 
+  /* ── App canvas — light-theme main body background (periwinkle tint) ── */
+  --color-canvas: #ebeff6;
+
   /* ── Surface — Warm Stone (not cold slate) ── */
   --color-surface-50: #fafaf9;
   --color-surface-100: #f5f5f4;
