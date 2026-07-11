@@ -256,6 +256,42 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
             for p in session.execute(select(Plan).where(Plan.is_default.is_(True), Plan.id != plan_id)).scalars().all():
                 p.is_default = False
 
+        # Finding B: Razorpay plans are immutable, so a price edit that leaves
+        # razorpay_plan_id_* pointing at the old plan makes "displayed != charged"
+        # — the catalog quotes the new price while every new mandate keeps
+        # debiting the old one. When a price field changes and the caller didn't
+        # also supply a matching new plan id, mint a fresh Razorpay plan and swap
+        # the id in the SAME update so the two never diverge. (The discounted-plan
+        # cache self-heals separately via resolve_discounted_plan.)
+        _PRICE_TO_PLAN_ID = {
+            "monthly_price_cents": ("razorpay_plan_id_monthly", "monthly"),
+            "annual_price_cents": ("razorpay_plan_id_annual", "yearly"),
+        }
+        for price_field, (id_field, period) in _PRICE_TO_PLAN_ID.items():
+            new_price = update_data.get(price_field)
+            if (
+                new_price is not None
+                and int(new_price) != int(getattr(plan, price_field) or 0)
+                and id_field not in update_data
+            ):
+                from app.services import razorpay_service
+
+                new_rzp_id = razorpay_service.create_plan_for_price(
+                    name=f"{plan.name} ({period})",
+                    amount_paise=int(new_price),
+                    period=period,
+                    currency=plan.currency or "INR",
+                )
+                update_data[id_field] = new_rzp_id
+                logger.info(
+                    "Plan %s %s price %s→%s; minted Razorpay plan %s",
+                    plan.id,
+                    period,
+                    getattr(plan, price_field),
+                    new_price,
+                    new_rzp_id,
+                )
+
         # JSONB dict fields MERGE instead of replace. The admin editor sends
         # only the keys its typed UI knows about; assigning that payload
         # wholesale silently deletes every backend-only key — which is exactly

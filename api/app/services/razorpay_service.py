@@ -527,6 +527,32 @@ def resolve_discounted_plan(
     return plan["id"]
 
 
+def create_plan_for_price(*, name: str, amount_paise: int, period: str, currency: str = "INR") -> str:
+    """Mint a fresh immutable Razorpay plan at ``amount_paise`` and return its id.
+
+    Used when a super-admin edits a plan's price (finding B): Razorpay plans are
+    immutable, so a new price needs a new plan. ``period`` is Razorpay's cadence
+    (``"monthly"`` / ``"yearly"``).
+    """
+    if amount_paise <= 0:
+        raise ValueError(f"amount_paise must be positive, got {amount_paise}")
+    if period not in ("monthly", "yearly"):
+        raise ValueError(f"period must be 'monthly' or 'yearly', got {period!r}")
+    rzp = _get_razorpay()
+    try:
+        plan = rzp.plan.create(
+            data={
+                "period": period,
+                "interval": 1,
+                "item": {"name": name[:255], "amount": int(amount_paise), "currency": currency},
+            }
+        )
+    except Exception as exc:
+        logger.exception("Razorpay plan.create failed for new price %s (%s): %s", amount_paise, period, exc)
+        raise RazorpayBillingError("Could not create Razorpay plan for the new price. Please try again.") from exc
+    return plan["id"]
+
+
 def create_seat_addon_subscription(
     session: Session,
     client: Client,
