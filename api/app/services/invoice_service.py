@@ -162,7 +162,13 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     buyer_state = buyer.billing_state_code if buyer else None
     buyer_country = buyer.billing_country if buyer else None
     kind = supply_kind(seller.state_code, buyer_state, buyer_country)
-    issued = datetime.now(UTC)
+    # Finding G: date the document (and its FY serial bucket) from the actual
+    # payment instant, not the wall-clock at finalize. A charge captured at
+    # 23:59 IST on 31 Mar but finalized after midnight must still be numbered
+    # and dated in the old FY / GSTR period. Fall back to period_end, then now.
+    issued = invoice.paid_at or invoice.period_end or datetime.now(UTC)
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=UTC)
 
     if seller.gst_enabled:
         breakup = compute_tax(

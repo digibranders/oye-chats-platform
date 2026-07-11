@@ -1089,6 +1089,24 @@ def _extract_payment_entity(payload: dict[str, Any]) -> dict[str, Any] | None:
     return ((payload.get("payment") or {}).get("entity")) or None
 
 
+def _capture_paid_at(pay: dict[str, Any] | None) -> datetime:
+    """The true capture instant of a Razorpay payment (finding G).
+
+    Razorpay stamps epoch-seconds ``created_at`` on the payment entity. Dating the
+    invoice from this — not from webhook-processing ``now()`` — keeps a payment
+    captured just before a month/FY boundary in the correct GSTR period even when
+    the webhook is processed after the boundary. Falls back to ``now()`` when the
+    timestamp is missing or unparseable.
+    """
+    captured = (pay or {}).get("created_at")
+    try:
+        if captured is not None:
+            return datetime.fromtimestamp(int(captured), tz=UTC)
+    except (TypeError, ValueError, OSError, OverflowError):
+        logger.warning("unparseable payment created_at=%r; falling back to now()", captured)
+    return datetime.now(UTC)
+
+
 def _extract_order_entity(payload: dict[str, Any]) -> dict[str, Any] | None:
     return ((payload.get("order") or {}).get("entity")) or None
 
@@ -1676,6 +1694,7 @@ def _ensure_subscription_charge_invoice(
     period_start: datetime | None,
     period_end: datetime | None,
     razorpay_invoice_id: str | None = None,
+    paid_at: datetime | None = None,
 ) -> Invoice | None:
     """Create + finalize the payment-history invoice for a subscription charge.
 
@@ -1705,7 +1724,9 @@ def _ensure_subscription_charge_invoice(
         period_start=period_start,
         period_end=period_end,
         description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
-        paid_at=datetime.now(UTC),
+        # Finding G: date from the real capture instant so the FY serial + doc
+        # date land in the correct GST period at a month/FY boundary.
+        paid_at=paid_at or datetime.now(UTC),
     )
     session.add(invoice)
     session.flush()
@@ -1748,6 +1769,7 @@ def record_verified_subscription_charge(
             period_start=local.current_period_start,
             period_end=local.current_period_end,
             razorpay_invoice_id=pay.get("invoice_id"),
+            paid_at=_capture_paid_at(pay),
         )
     except Exception:  # noqa: BLE001
         logger.exception("verify: failed to record first-charge invoice for payment %s", razorpay_payment_id)
@@ -1801,6 +1823,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             period_start=new_period_start,
             period_end=new_period_end,
             razorpay_invoice_id=pay_entity.get("invoice_id"),
+            paid_at=_capture_paid_at(pay_entity),
         )
         period_invoice_id = period_invoice.id if period_invoice else None
 
@@ -2069,7 +2092,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         status="paid",
         razorpay_payment_id=rzp_payment_id,
         description=topup_description,
-        paid_at=datetime.now(UTC),
+        paid_at=_capture_paid_at(pay_entity),  # finding G: real capture instant
     )
     session.add(invoice)
     session.flush()
