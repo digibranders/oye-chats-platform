@@ -71,20 +71,20 @@ class CreatePlanRequest(BaseModel):
     description: str | None = None
     pricing_model: str = "per_operator"
     currency: str = "INR"
-    monthly_price_cents: int = 0
-    annual_price_cents: int = 0
-    monthly_price_usd_cents: int | None = None
-    annual_price_usd_cents: int | None = None
-    extra_seat_price_usd_cents: int | None = None
-    annual_discount_percent: int = 30
-    trial_days: int = 14
+    monthly_price_cents: int = Field(0, ge=0)
+    annual_price_cents: int = Field(0, ge=0)
+    monthly_price_usd_cents: int | None = Field(None, ge=0)
+    annual_price_usd_cents: int | None = Field(None, ge=0)
+    extra_seat_price_usd_cents: int | None = Field(None, ge=0)
+    annual_discount_percent: int = Field(30, ge=0, le=100)
+    trial_days: int = Field(14, ge=0)
     limits: dict | None = None
     features: dict | None = None
     marketing: dict | None = None
-    overage_rate_cents: int = 0
-    credits_per_month: int = 0
-    included_operator_seats: int = 1
-    extra_seat_price_cents: int = 1500
+    overage_rate_cents: int = Field(0, ge=0)
+    credits_per_month: int = Field(0, ge=0)
+    included_operator_seats: int = Field(1, ge=1)
+    extra_seat_price_cents: int = Field(1500, ge=0)
     razorpay_plan_id_monthly: str | None = None
     razorpay_plan_id_annual: str | None = None
     is_active: bool = True
@@ -97,20 +97,20 @@ class UpdatePlanRequest(BaseModel):
     description: str | None = None
     pricing_model: str | None = None
     currency: str | None = None
-    monthly_price_cents: int | None = None
-    annual_price_cents: int | None = None
-    monthly_price_usd_cents: int | None = None
-    annual_price_usd_cents: int | None = None
-    extra_seat_price_usd_cents: int | None = None
-    annual_discount_percent: int | None = None
-    trial_days: int | None = None
+    monthly_price_cents: int | None = Field(None, ge=0)
+    annual_price_cents: int | None = Field(None, ge=0)
+    monthly_price_usd_cents: int | None = Field(None, ge=0)
+    annual_price_usd_cents: int | None = Field(None, ge=0)
+    extra_seat_price_usd_cents: int | None = Field(None, ge=0)
+    annual_discount_percent: int | None = Field(None, ge=0, le=100)
+    trial_days: int | None = Field(None, ge=0)
     limits: dict | None = None
     features: dict | None = None
     marketing: dict | None = None
-    overage_rate_cents: int | None = None
-    credits_per_month: int | None = None
-    included_operator_seats: int | None = None
-    extra_seat_price_cents: int | None = None
+    overage_rate_cents: int | None = Field(None, ge=0)
+    credits_per_month: int | None = Field(None, ge=0)
+    included_operator_seats: int | None = Field(None, ge=1)
+    extra_seat_price_cents: int | None = Field(None, ge=0)
     is_active: bool | None = None
     is_default: bool | None = None
     sort_order: int | None = None

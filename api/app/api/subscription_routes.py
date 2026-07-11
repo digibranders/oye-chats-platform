@@ -38,6 +38,11 @@ from app.services.plan_service import (
 
 logger = logging.getLogger(__name__)
 
+# Absolute safety ceiling on operator seats when a plan defines no
+# ``limits.operators`` — stops an unbounded seat delta from minting hundreds of
+# seat charges in a single call (§5).
+_MAX_OPERATOR_SEATS_ABSOLUTE = 100
+
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
 
@@ -1269,7 +1274,9 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
 
-        if sub.status == "canceled":
+        # Accept both spellings (§5): a British-spelled "cancelled" terminal row
+        # would otherwise slip this guard and be cancelled a second time.
+        if sub.status in ("canceled", "cancelled"):
             raise HTTPException(status_code=400, detail="Subscription is already canceled.")
 
         provider = (sub.payment_provider or "razorpay").lower()
@@ -1454,10 +1461,19 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
         # would happily sell seats past that cap, charging for capacity
         # the client could never activate.
         ceiling = (plan.limits or {}).get("operators")
-        if isinstance(ceiling, int) and ceiling > 0 and new_total > ceiling:
+        if isinstance(ceiling, int) and ceiling > 0:
+            if new_total > ceiling:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more.",
+                )
+        elif new_total > _MAX_OPERATOR_SEATS_ABSOLUTE:
+            # §5: a plan with no ``limits.operators`` had NO ceiling, so an
+            # unbounded delta could mint hundreds of seat charges in one call.
+            # Enforce an absolute safety cap.
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more.",
+                detail=f"Cannot exceed {_MAX_OPERATOR_SEATS_ABSOLUTE} operator seats. Contact support for more.",
             )
 
         # Seats above the plan's included floor are billed via a SEPARATE

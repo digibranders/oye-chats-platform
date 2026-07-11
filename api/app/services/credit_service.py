@@ -218,10 +218,31 @@ def invalidate_pricing_cache() -> None:
         _pricing_cache_loaded_at = 0.0
 
 
+# Fail-closed default when an action's credit cost is missing or malformed:
+# charge (at least) 1 rather than defaulting to 0 (free), which would silently
+# leak revenue on a typo'd/unpriced action or a non-numeric config value (§5).
+_DEFAULT_CREDIT_COST = 1
+
+
 def get_credit_cost(session: Session, action: str) -> int:
-    """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``)."""
+    """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``).
+
+    Fails CLOSED: an unknown action or a non-numeric config value yields
+    ``_DEFAULT_CREDIT_COST`` (not 0/free) and is logged, so pricing gaps surface
+    as a charge rather than a silent free ride.
+    """
     pricing = get_pricing(session)
-    return int(pricing.get(f"credit_cost.{action}", 0))
+    raw = pricing.get(f"credit_cost.{action}", _DEFAULT_CREDIT_COST)
+    try:
+        return max(int(raw), 0)
+    except (TypeError, ValueError):
+        logger.warning(
+            "credit_cost.%s is non-numeric (%r) — failing closed to %d",
+            action,
+            raw,
+            _DEFAULT_CREDIT_COST,
+        )
+        return _DEFAULT_CREDIT_COST
 
 
 def is_kill_switch_active(session: Session) -> bool:

@@ -69,3 +69,22 @@ def test_expire_old_topups_does_not_oversweep(db):
     expired = credit_service.expire_old_topups(db)
     db.flush()
     assert expired == 60  # only the unused remainder
+
+
+# ── §5: get_credit_cost fails closed ──────────────────────────────────────────
+
+
+def test_get_credit_cost_unknown_action_fails_closed(db, monkeypatch):
+    # Unknown action → charge the fail-closed default (1), never free (0).
+    monkeypatch.setattr(credit_service, "get_pricing", lambda s: {})
+    assert credit_service.get_credit_cost(db, "brand_new_action") == credit_service._DEFAULT_CREDIT_COST
+
+
+def test_get_credit_cost_non_numeric_fails_closed(db, monkeypatch):
+    monkeypatch.setattr(credit_service, "get_pricing", lambda s: {"credit_cost.ai_chat": "oops"})
+    assert credit_service.get_credit_cost(db, "ai_chat") == credit_service._DEFAULT_CREDIT_COST
+
+
+def test_get_credit_cost_reads_configured_value(db, monkeypatch):
+    monkeypatch.setattr(credit_service, "get_pricing", lambda s: {"credit_cost.ai_chat": 3})
+    assert credit_service.get_credit_cost(db, "ai_chat") == 3
