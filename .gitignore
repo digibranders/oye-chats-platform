@@ -61,3 +61,6 @@ api/uv.toml
 
 # Git worktrees (local isolated workspaces)
 .worktrees/
+
+# Superpowers / brainstorm skill scratch output (never commit)
+.superpowers/
