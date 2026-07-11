@@ -1465,6 +1465,21 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
         # (P0-3). extra_seats is clamped at 0 inside the helper.
         extra_seats = new_total - floor
 
+        # Finding J: all extra seats bill against the single global seat plan, so
+        # the price the customer is actually charged is RAZORPAY_SEAT_PLAN_PRICE_CENTS
+        # — NOT the plan's own extra_seat_price_cents. Surface the charged price
+        # (below) and log any per-plan divergence so a misconfigured plan can't
+        # silently display a seat price it will never bill.
+        seat_price_cents = app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS
+        if extra_seats > 0 and int(plan.extra_seat_price_cents or 0) != seat_price_cents:
+            logger.warning(
+                "Plan %s extra_seat_price_cents=%s but the seat add-on charges %s — "
+                "displaying the charged price; fix the plan config to match.",
+                plan.id,
+                plan.extra_seat_price_cents,
+                seat_price_cents,
+            )
+
         try:
             from app.services import razorpay_service
 
@@ -1494,7 +1509,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
                 "pending_seats": extra_seats,
                 "operator_quantity": sub.operator_quantity,  # unchanged until webhook
                 "included_operator_seats": floor,
-                "extra_seat_price_cents": int(plan.extra_seat_price_cents or 0),
+                "extra_seat_price_cents": seat_price_cents,
                 "currency": plan.currency,
             }
 
@@ -1509,7 +1524,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
             "extra_seats": extra_seats,
             "operator_quantity": new_total,
             "included_operator_seats": floor,
-            "extra_seat_price_cents": int(plan.extra_seat_price_cents or 0),
+            "extra_seat_price_cents": seat_price_cents,
             "currency": plan.currency,
         }
 
