@@ -106,6 +106,19 @@ class WebhookOutOfOrder(RazorpayBillingError):
     """
 
 
+class RazorpayTransientError(RazorpayBillingError):
+    """Raised when a webhook can't be *decided* because a dependent Razorpay read
+    failed (e.g. ``order.fetch`` timed out), so we don't yet know whether it was a
+    top-up.
+
+    Swallowing this (the old behaviour) acked the event as "ignored" and burned
+    the idempotency row, permanently losing a paid top-up — customer charged,
+    zero credits, never reprocessed. Raising routes it through the standard
+    failure path (rollback + dead-letter + 5xx) so Razorpay redelivers; the
+    Invoice/credit idempotency makes the eventual success a no-op (finding C).
+    """
+
+
 # ── Client init ───────────────────────────────────────────────────────────────
 
 
@@ -1946,8 +1959,17 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         try:
             fetched_order = _get_razorpay().order.fetch(order_id_for_notes)
             notes = (fetched_order or {}).get("notes") or {}
-        except Exception:
-            logger.warning("Could not fetch Razorpay order %s for top-up notes", order_id_for_notes)
+        except Exception as exc:
+            # Finding C: we do NOT know whether this was a top-up. Swallowing here
+            # acked the event and burned the dedup row, permanently losing a paid
+            # top-up. Raise so the event dead-letters and Razorpay retries; the
+            # Invoice/credit idempotency below makes the eventual success a no-op.
+            logger.warning(
+                "order.fetch failed for %s; raising to force webhook retry: %s",
+                order_id_for_notes,
+                exc,
+            )
+            raise RazorpayTransientError(f"could not fetch order {order_id_for_notes} for top-up notes") from exc
 
     purpose = notes.get("purpose")
 
