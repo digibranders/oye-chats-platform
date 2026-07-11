@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, select_autoescape
 
+from app.core.gstin import state_name
 from app.db.models import Invoice
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -304,9 +305,15 @@ def render_invoice_html(invoice: Invoice) -> str:
             ]
         elif invoice.total_tax_minor:
             tax_rows = [{"label": f"IGST @ {rate_pct}%", "amount": _fmt_inr(invoice.igst_minor)}]
-        if invoice.is_export and seller.get("lut_active"):
-            lut = f" ({seller['lut_number']})" if seller.get("lut_number") else ""
-            export_legend = f"Supply meant for export under LUT without payment of IGST{lut}."
+        if invoice.is_export:
+            if seller.get("lut_active"):
+                lut = f" ({seller['lut_number']})" if seller.get("lut_number") else ""
+                export_legend = f"Supply meant for export under LUT without payment of IGST{lut}."
+            else:
+                # Rule 96A fallback — export WITHOUT a LUT is made on payment of
+                # IGST, and Rule 46 mandates this exact endorsement (previously
+                # missing, so an IGST-paid export printed no export legend at all).
+                export_legend = "SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX."
 
     period = ""
     if invoice.period_start and invoice.period_end:
@@ -327,7 +334,11 @@ def render_invoice_html(invoice: Invoice) -> str:
     meta_items = []
     if is_tax_invoice:
         if invoice.place_of_supply:
-            meta_items.append(f"Place of supply: {invoice.place_of_supply}")
+            # Rule 46: the place of supply must carry the State NAME, not a bare
+            # code (e.g. "27 – Maharashtra"), for an inter-state supply.
+            name = state_name(invoice.place_of_supply)
+            pos = f"{invoice.place_of_supply} – {name}" if name else invoice.place_of_supply
+            meta_items.append(f"Place of supply: {pos}")
         meta_items.append("Reverse charge: No")
     if period:
         meta_items.append(f"Service period: {period}")

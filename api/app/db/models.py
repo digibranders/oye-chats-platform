@@ -1181,6 +1181,42 @@ class Invoice(Base):
     subscription = relationship("Subscription", back_populates="invoices")
 
 
+# Finding L: once an invoice is numbered it IS a legal document — its tax and
+# identity columns must never change. Immutability was previously convention-only
+# (finalize simply refused to re-run), so any later code path could still mutate a
+# frozen row and only arithmetic-inconsistent tampering would be caught by
+# reconciliation. This DB-session guard rejects mutation of every frozen column on
+# a numbered invoice, allowing ONLY delivery/lifecycle fields (PDF/email/e-invoice
+# registration/payment status). The finalize transition itself — invoice_number
+# going NULL→value in the same UPDATE — is allowed.
+_INVOICE_FROZEN_EXEMPT = frozenset(
+    {"pdf_url", "invoice_url", "emailed_at", "status", "irn", "signed_qr", "razorpay_invoice_id"}
+)
+
+
+@sqlalchemy.event.listens_for(Invoice, "before_update")
+def _reject_frozen_invoice_mutation(mapper, connection, target):  # noqa: ANN001
+    state = sqlalchemy.inspect(target)
+    # If invoice_number is being assigned in THIS update, it's the finalize
+    # transition (finalize writes the number + all tax columns together) — allow
+    # it. Enforcement only applies once a row is numbered and the number is NOT
+    # changing (i.e. a later edit to an already-finalized document).
+    if state.attrs.invoice_number.history.has_changes():
+        return
+    if target.invoice_number is None:
+        return  # never finalized (legacy row) — freely mutable
+    changed = [
+        col.key
+        for col in mapper.column_attrs
+        if col.key not in _INVOICE_FROZEN_EXEMPT and state.attrs[col.key].history.has_changes()
+    ]
+    if changed:
+        raise ValueError(
+            f"Invoice {target.invoice_number} is finalized; refusing to mutate "
+            f"frozen column(s): {', '.join(sorted(changed))}"
+        )
+
+
 class InvoiceCounter(Base):
     """Gapless per-FY invoice serial allocator.
 
