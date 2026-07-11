@@ -665,7 +665,15 @@ def update_pricing_config(
             request=request,
         )
         session.commit()
-        return {"key": key, "value": body.value}
+    # Finding O2: the pricing/kill-switch config is read through a 60s in-memory
+    # cache. Without invalidating it here, a super-admin toggle (e.g. the credit
+    # kill switch) would take up to 60s to take effect — a fail-open window where
+    # deductions keep running after the switch is flipped on. Invalidate now so
+    # the change is immediate.
+    from app.services.credit_service import invalidate_pricing_cache
+
+    invalidate_pricing_cache()
+    return {"key": key, "value": body.value}
 
 
 @router.get("/feature-flags")

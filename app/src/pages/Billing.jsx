@@ -341,7 +341,11 @@ export default function Billing() {
     if (params.get('topup') === 'success') {
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, '', cleanUrl);
-      showToast('Top-up successful — credits will appear shortly.', 'success');
+      // Finding O6: the ``?topup=success`` param is written by the redirect, NOT
+      // proof the payment cleared — a bookmarked/replayed URL would otherwise
+      // show a false "successful". Phrase it as in-progress and let the polled
+      // loadAll reconcile against the server's real balance.
+      showToast('Processing your top-up — your balance will update shortly.', 'info');
       const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
       return () => timers.forEach((t) => clearTimeout(t));
     }
@@ -351,7 +355,9 @@ export default function Billing() {
     }
     if (params.get('subscription') === 'success') {
       window.history.replaceState({}, '', window.location.pathname);
-      showToast('Subscription confirmed — refreshing.', 'success');
+      // O6: don't assert "confirmed" from the URL — the activation webhook is the
+      // source of truth. Show in-progress and let loadAll reflect the real state.
+      showToast('Finalizing your subscription — this page will update shortly.', 'info');
       const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
       return () => timers.forEach((t) => clearTimeout(t));
     }

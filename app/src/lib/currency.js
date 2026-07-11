@@ -1,3 +1,8 @@
+// Single source of truth for the INR→USD display fallback rate, used only
+// when the server's geo `display_rate` is unavailable. Must match the backend
+// DISPLAY_USD_TO_INR default so every surface shows the same USD price (O5).
+export const FALLBACK_USD_TO_INR = 94.67;
+
 /**
  * Money formatting for minor-unit amounts (paise / cents).
  *

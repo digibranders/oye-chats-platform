@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { FALLBACK_USD_TO_INR } from '../../lib/currency';
 import {
     X, Check, Sparkles, Loader2, Crown, Zap,
     ShieldCheck, ExternalLink, Star, AlertCircle, Mail,
@@ -989,7 +990,7 @@ function toDisplayPrice(planCents, planCurrency, geo) {
         };
     }
     if (native === 'INR' && display === 'USD') {
-        const rate = Number(geo.display_rate) || 83;
+        const rate = Number(geo.display_rate) || FALLBACK_USD_TO_INR;
         // INR paise → USD cents: divide by rate (rupees per dollar), preserve
         // 2dp by rounding at the cent level rather than the dollar level.
         const usdCents = Math.round((safeCents / 100 / rate) * 100);

@@ -245,11 +245,36 @@ def _scope_clause(client_id: int, bot_id: int | None):
 
 
 def get_balance(session: Session, client_id: int, bot_id: int | None = None) -> int:
-    """Return the current balance for the given ledger scope."""
-    return int(
+    """Return the current SPENDABLE balance for the given ledger scope.
+
+    Equals the raw delta sum MINUS the still-unconsumed remainder of top-up grants
+    that have passed their expiry but which the daily sweep hasn't zeroed yet
+    (finding O3). Without this subtraction the balance would overstate what the
+    FIFO allocator — which skips expired grants — can actually spend, causing the
+    same "short allocation" / stuck-balance divergence finding E fixed for refunds
+    (up to one sweep interval). The overhang is 0 in the common case (nothing
+    expired-and-unswept), so this stays cheap.
+    """
+    total = int(
         session.scalar(select(func.coalesce(func.sum(CreditLedger.delta), 0)).where(*_scope_clause(client_id, bot_id)))
         or 0
     )
+    now = datetime.now(UTC)
+    expired = (
+        session.execute(
+            select(CreditLedger).where(
+                *_scope_clause(client_id, bot_id),
+                CreditLedger.delta > 0,
+                CreditLedger.reason == "topup",
+                CreditLedger.expires_at.is_not(None),
+                CreditLedger.expires_at <= now,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    overhang = sum(max(int(g.delta) - _consumed_against(session, g.id), 0) for g in expired)
+    return total - overhang
 
 
 def _consumed_against(session: Session, grant_id: int) -> int:
@@ -663,6 +688,13 @@ def expire_old_topups(session: Session) -> int:
 
     total_expired = 0
     for grant in expired_grants:
+        # Finding O1: take the per-scope advisory lock BEFORE reading consumption.
+        # Reading `consumed` first and locking afterwards is a TOCTOU — a
+        # concurrent deduction landing between the read and the lock would leave
+        # `unused` stale and over-sweep the grant (expiring credits the customer
+        # just spent). Locking first serialises against check_and_deduct so the
+        # consumption read below is stable.
+        _acquire_client_lock(session, grant.client_id, grant.bot_id)
         consumed = _consumed_against(session, grant.id)
         already_expired = int(
             session.scalar(
@@ -676,7 +708,6 @@ def expire_old_topups(session: Session) -> int:
         unused = grant.delta - consumed - already_expired
         if unused <= 0:
             continue
-        _acquire_client_lock(session, grant.client_id, grant.bot_id)
         session.add(
             CreditLedger(
                 client_id=grant.client_id,
@@ -997,9 +1028,11 @@ def reverse_refund_clawback(
     mirroring positive row against the SAME ``grant_id`` — restoring the grant's
     remaining balance and keeping :func:`get_balance_breakdown` accurate.
 
-    Idempotency is the caller's responsibility (a ``refund_failed:<id>`` marker
-    in ``processed_webhooks``); given that, re-running is still safe because the
-    restore is keyed on the original clawback rows. Returns total credits restored.
+    NOT self-idempotent (finding O4): re-running finds the same original clawback
+    rows and writes ANOTHER mirroring positive, double-restoring the credits.
+    Idempotency is therefore the CALLER's responsibility — a ``refund_failed:<id>``
+    marker in ``processed_webhooks`` must gate this so it runs at most once per
+    failed refund. Returns total credits restored.
     """
     _acquire_client_lock(session, client_id, bot_id)
     clawback_rows = (
