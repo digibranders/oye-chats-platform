@@ -52,6 +52,7 @@ from app.config import (
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
+from app.core.dates import add_months
 from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
 from app.services import credit_service, invoice_service
 
@@ -1652,84 +1653,32 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 .all()
             )
             carried_extra_seats = 0
+            # (old_row, seat_addon_id) pairs whose Razorpay mandates must be
+            # cancelled — but only AFTER every fail-prone local write below has
+            # committed. Finding I: cancelling at the gateway inline (as this used
+            # to) is irreversible, so if a later statement rolled back we'd strand
+            # a mandate cancelled at Razorpay while its local row stayed active.
+            # We do the LOCAL flip here (needed before the new-sub INSERT — the
+            # partial unique index allows only one active client-level sub) and
+            # defer the gateway cancels to the end of the handler, mirroring how
+            # the seat-carry below is already ordered "last, after every fail-prone
+            # DB write".
+            superseded_gateway_cancels: list[tuple[Subscription, str | None]] = []
             for old in existing:
-                # Retire the predecessor's UPI mandate AT THE GATEWAY, not just
-                # locally. The re-auth model keeps the old mandate live until the
-                # new one authorizes (so an abandoned checkout doesn't strand the
-                # customer); now that the new sub is active we cancel the old one
-                # immediately so Razorpay stops debiting it (BL-4 double-charge).
-                #
-                # ``existing`` is queried before ``local`` is inserted, so it can
-                # never contain the just-activated row — but we guard defensively
-                # against the razorpay id in case of any future reordering. Each
-                # cancel is wrapped so one gateway failure can't abort the
-                # activation (the local flip below still stops entitlement).
-                gateway_cancel_ok = True
-                if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
-                    try:
-                        cancel_subscription(old, at_period_end=False)
-                    except Exception:
-                        # The gateway cancel FAILED, so the old UPI mandate is
-                        # still LIVE at Razorpay and will keep debiting the
-                        # customer (the BL-4 double-charge, relocated to the
-                        # failure path). We cannot leave the old row locally
-                        # ``active``: the partial unique index
-                        # ``ix_subscriptions_client_legacy_active`` allows only
-                        # ONE active/trialing/past_due client-level (bot_id NULL)
-                        # subscription per client, so a second active row would
-                        # make the new sub's INSERT below fail and abort the
-                        # whole activation (losing the resilience property). So
-                        # we still flip it out of the active set, but we do NOT
-                        # pretend it was a clean cancel — we stamp a distinct
-                        # ``cancel_reason`` so the still-live mandate is
-                        # queryable for reconcile/retry, and log at ERROR
-                        # (alert-worthy). This is materially safer than the
-                        # original silent lie: the failure is loud and the row
-                        # is distinguishable from a normal cancel.
-                        gateway_cancel_ok = False
-                        logger.error(
-                            "Gateway-cancel FAILED for superseded subscription %s "
-                            "at activation of %s (client %s) — the old UPI mandate "
-                            "is STILL LIVE at Razorpay and will keep debiting the "
-                            "customer. Marked local row canceled with "
-                            "cancel_reason=gateway_cancel_failed_mandate_live for "
-                            "manual/automated reconciliation.",
-                            old.razorpay_subscription_id,
-                            razorpay_sub_id,
-                            client_id,
-                            exc_info=True,
-                        )
-
-                # The operator-seat add-on is a SEPARATE Razorpay subscription
-                # (P0-3) that ``cancel_subscription`` above never touches. Left
-                # alone it becomes an orphan: still billing the old (now
-                # superseded) mandate forever, with the local pointer to it
-                # gone the moment ``local`` below overwrites the client's
-                # active subscription. Cancel it here and carry the seat count
-                # onto the new subscription (below) so the customer's paid
-                # seats survive the cutover instead of silently vanishing.
-                if old.seat_addon_subscription_id:
+                seat_addon_id = old.seat_addon_subscription_id
+                if seat_addon_id:
+                    # Carry the seat count onto the new sub (below) and clear the
+                    # local pointer now so the carry re-homes it; the old seat sub
+                    # is gateway-cancelled at the end.
                     carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_quantity or 0))
-                    try:
-                        cancel_seat_addon(session, old)
-                    except Exception:
-                        logger.error(
-                            "Seat add-on cancel FAILED for superseded subscription %s "
-                            "(seat add-on %s, client %s) at activation of %s — the old "
-                            "seat add-on mandate is STILL LIVE at Razorpay and will keep "
-                            "debiting the customer on top of the new subscription. Needs "
-                            "manual reconciliation.",
-                            old.razorpay_subscription_id,
-                            old.seat_addon_subscription_id,
-                            client_id,
-                            razorpay_sub_id,
-                            exc_info=True,
-                        )
-
+                    old.seat_addon_subscription_id = None
+                    old.seat_addon_quantity = 0
+                # Flip out of the active set immediately (entitlement stops here).
+                # cancel_reason is left as-is on a clean cancel; the deferred
+                # gateway cancel below stamps the reconcile marker only on failure.
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
-                if not gateway_cancel_ok:
-                    old.cancel_reason = "gateway_cancel_failed_mandate_live"
+                superseded_gateway_cancels.append((old, seat_addon_id))
 
         # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /
         # scheduled-promotion paths so we can recognise this is a transition
@@ -1796,7 +1745,18 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # they've spent some between click and authorization.
         live_remaining_before_reset = transition_service.remaining_plan_credits(session, local.client_id)
 
-        _grant_subscription_period(session, local, current_period_end)
+        # Finding N: a UPI ``activated`` can land BEFORE the first charge with no
+        # ``current_end``. Granting then without advancing the period marker means
+        # the first ``subscription.charged`` (which DOES carry current_end) grants
+        # a SECOND time for the same period — refunding the customer's first-cycle
+        # consumption. Derive the first period end from current_start + the plan
+        # interval (which equals the current_end Razorpay will send on that first
+        # charge) so the marker advances now and the charged correctly no-ops.
+        grant_period_end = current_period_end
+        if grant_period_end is None and current_period_start is not None:
+            cycle = (local.billing_cycle if local else None) or notes.get("billing_cycle") or "monthly"
+            grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
+        _grant_subscription_period(session, local, grant_period_end)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent —
         # the old sub's column is zeroed the first time this runs, so webhook
@@ -1837,6 +1797,45 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                     client_id,
                     exc_info=True,
                 )
+
+        # Finding I: NOW — after every fail-prone local write above (new-sub
+        # INSERT, grant, proration, seat carry) — retire the superseded mandate(s)
+        # at the gateway. Placed here so a rollback of any of those can never leave
+        # a mandate cancelled at Razorpay while its local row is active. The local
+        # rows are already flipped to ``canceled``; if a gateway cancel fails the
+        # old UPI mandate is STILL LIVE, so we re-stamp a distinct reason
+        # (queryable for reconcile) and log at ERROR. Residual commit-time orphans
+        # are swept by the reconcile jobs, same as the seat carry above.
+        for old, seat_addon_id in superseded_gateway_cancels:
+            if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
+                try:
+                    cancel_subscription(old, at_period_end=False)
+                except Exception:
+                    old.cancel_reason = "gateway_cancel_failed_mandate_live"
+                    logger.error(
+                        "Gateway-cancel FAILED for superseded subscription %s at activation of %s "
+                        "(client %s) — the old UPI mandate is STILL LIVE at Razorpay and will keep "
+                        "debiting the customer. cancel_reason=gateway_cancel_failed_mandate_live for "
+                        "reconciliation.",
+                        old.razorpay_subscription_id,
+                        razorpay_sub_id,
+                        client_id,
+                        exc_info=True,
+                    )
+            if seat_addon_id:
+                try:
+                    cancel_seat_addon_by_id(seat_addon_id)
+                except Exception:
+                    logger.error(
+                        "Seat add-on cancel FAILED for superseded subscription %s (seat add-on %s, "
+                        "client %s) at activation of %s — the old seat add-on mandate is STILL LIVE "
+                        "at Razorpay. Needs manual reconciliation.",
+                        old.razorpay_subscription_id,
+                        seat_addon_id,
+                        client_id,
+                        razorpay_sub_id,
+                        exc_info=True,
+                    )
 
         logger.info(
             "Activated Razorpay subscription %s → local %s (client %s)",

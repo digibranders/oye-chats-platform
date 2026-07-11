@@ -509,7 +509,17 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
 
             plan = plan_cache.get(sub.plan_id)
             if plan:
-                mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle) * sub.operator_quantity
+                # MRR = main plan (its Razorpay quantity is ALWAYS 1) + the
+                # SEPARATE flat seat add-on (extra_seats × per-seat price).
+                # operator_quantity holds the TOTAL seat count, so the old
+                # `plan_monthly × operator_quantity` double/triple-counted seat
+                # revenue — a 3-seat Standard reported ~$144 instead of ~$58
+                # (finding K).
+                included = int(plan.included_operator_seats or 1)
+                extra_seats = max(int(sub.operator_quantity or included) - included, 0)
+                mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle)
+                if extra_seats:
+                    mrr_cents += _to_usd_cents(extra_seats * int(plan.extra_seat_price_cents or 0), plan.currency)
 
         # Total paid invoices, normalised to USD cents.
         paid_invoices = session.execute(
