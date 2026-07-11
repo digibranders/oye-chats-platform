@@ -71,20 +71,20 @@ class CreatePlanRequest(BaseModel):
     description: str | None = None
     pricing_model: str = "per_operator"
     currency: str = "INR"
-    monthly_price_cents: int = 0
-    annual_price_cents: int = 0
-    monthly_price_usd_cents: int | None = None
-    annual_price_usd_cents: int | None = None
-    extra_seat_price_usd_cents: int | None = None
-    annual_discount_percent: int = 30
-    trial_days: int = 14
+    monthly_price_cents: int = Field(0, ge=0)
+    annual_price_cents: int = Field(0, ge=0)
+    monthly_price_usd_cents: int | None = Field(None, ge=0)
+    annual_price_usd_cents: int | None = Field(None, ge=0)
+    extra_seat_price_usd_cents: int | None = Field(None, ge=0)
+    annual_discount_percent: int = Field(30, ge=0, le=100)
+    trial_days: int = Field(14, ge=0)
     limits: dict | None = None
     features: dict | None = None
     marketing: dict | None = None
-    overage_rate_cents: int = 0
-    credits_per_month: int = 0
-    included_operator_seats: int = 1
-    extra_seat_price_cents: int = 1500
+    overage_rate_cents: int = Field(0, ge=0)
+    credits_per_month: int = Field(0, ge=0)
+    included_operator_seats: int = Field(1, ge=1)
+    extra_seat_price_cents: int = Field(1500, ge=0)
     razorpay_plan_id_monthly: str | None = None
     razorpay_plan_id_annual: str | None = None
     is_active: bool = True
@@ -97,20 +97,20 @@ class UpdatePlanRequest(BaseModel):
     description: str | None = None
     pricing_model: str | None = None
     currency: str | None = None
-    monthly_price_cents: int | None = None
-    annual_price_cents: int | None = None
-    monthly_price_usd_cents: int | None = None
-    annual_price_usd_cents: int | None = None
-    extra_seat_price_usd_cents: int | None = None
-    annual_discount_percent: int | None = None
-    trial_days: int | None = None
+    monthly_price_cents: int | None = Field(None, ge=0)
+    annual_price_cents: int | None = Field(None, ge=0)
+    monthly_price_usd_cents: int | None = Field(None, ge=0)
+    annual_price_usd_cents: int | None = Field(None, ge=0)
+    extra_seat_price_usd_cents: int | None = Field(None, ge=0)
+    annual_discount_percent: int | None = Field(None, ge=0, le=100)
+    trial_days: int | None = Field(None, ge=0)
     limits: dict | None = None
     features: dict | None = None
     marketing: dict | None = None
-    overage_rate_cents: int | None = None
-    credits_per_month: int | None = None
-    included_operator_seats: int | None = None
-    extra_seat_price_cents: int | None = None
+    overage_rate_cents: int | None = Field(None, ge=0)
+    credits_per_month: int | None = Field(None, ge=0)
+    included_operator_seats: int | None = Field(None, ge=1)
+    extra_seat_price_cents: int | None = Field(None, ge=0)
     is_active: bool | None = None
     is_default: bool | None = None
     sort_order: int | None = None
@@ -255,6 +255,63 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
         if update_data.get("is_default"):
             for p in session.execute(select(Plan).where(Plan.is_default.is_(True), Plan.id != plan_id)).scalars().all():
                 p.is_default = False
+
+        # Finding B: Razorpay plans are immutable, so a price edit that leaves
+        # razorpay_plan_id_* pointing at the old plan makes "displayed != charged"
+        # — the catalog quotes the new price while every new mandate keeps
+        # debiting the old one. When a price field changes and the caller didn't
+        # also supply a matching new plan id, mint a fresh Razorpay plan and swap
+        # the id in the SAME update so the two never diverge. (The discounted-plan
+        # cache self-heals separately via resolve_discounted_plan.)
+        _PRICE_TO_PLAN_ID = {
+            "monthly_price_cents": ("razorpay_plan_id_monthly", "monthly"),
+            "annual_price_cents": ("razorpay_plan_id_annual", "yearly"),
+        }
+        # Mint the fresh Razorpay plan(s) FIRST, before mutating anything, so a
+        # failure on the second cycle can't leave the row half-updated. Collect
+        # the minted ids and only apply them once BOTH succeed. On any gateway
+        # failure, map to a 502 (matching every other RazorpayBillingError site)
+        # and log the orphaned plan ids so they can be reconciled — never leak a
+        # generic 500.
+        from app.services import razorpay_service
+
+        minted_ids: dict[str, str] = {}
+        for price_field, (id_field, period) in _PRICE_TO_PLAN_ID.items():
+            new_price = update_data.get(price_field)
+            if (
+                new_price is not None
+                and int(new_price) != int(getattr(plan, price_field) or 0)
+                and id_field not in update_data
+            ):
+                try:
+                    new_rzp_id = razorpay_service.create_plan_for_price(
+                        name=f"{plan.name} ({period})",
+                        amount_paise=int(new_price),
+                        period=period,
+                        # These fields are INR minor units (paise); a plan whose
+                        # currency is USD has no razorpay_plan_id_* to re-mint, so
+                        # pin INR and never mislabel a paise amount as USD.
+                        currency="INR",
+                    )
+                except razorpay_service.RazorpayBillingError as exc:
+                    if minted_ids:
+                        logger.error(
+                            "Plan %s price edit aborted after minting %s; those Razorpay plans are "
+                            "now orphaned (unreferenced) and need reconciliation.",
+                            plan.id,
+                            minted_ids,
+                        )
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+                minted_ids[id_field] = new_rzp_id
+                logger.info(
+                    "Plan %s %s price %s→%s; minted Razorpay plan %s",
+                    plan.id,
+                    period,
+                    getattr(plan, price_field),
+                    new_price,
+                    new_rzp_id,
+                )
+        update_data.update(minted_ids)
 
         # JSONB dict fields MERGE instead of replace. The admin editor sends
         # only the keys its typed UI knows about; assigning that payload
@@ -452,7 +509,17 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
 
             plan = plan_cache.get(sub.plan_id)
             if plan:
-                mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle) * sub.operator_quantity
+                # MRR = main plan (its Razorpay quantity is ALWAYS 1) + the
+                # SEPARATE flat seat add-on (extra_seats × per-seat price).
+                # operator_quantity holds the TOTAL seat count, so the old
+                # `plan_monthly × operator_quantity` double/triple-counted seat
+                # revenue — a 3-seat Standard reported ~$144 instead of ~$58
+                # (finding K).
+                included = int(plan.included_operator_seats or 1)
+                extra_seats = max(int(sub.operator_quantity or included) - included, 0)
+                mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle)
+                if extra_seats:
+                    mrr_cents += _to_usd_cents(extra_seats * int(plan.extra_seat_price_cents or 0), plan.currency)
 
         # Total paid invoices, normalised to USD cents.
         paid_invoices = session.execute(

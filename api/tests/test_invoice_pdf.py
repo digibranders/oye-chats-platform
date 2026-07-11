@@ -203,3 +203,44 @@ def test_pdf_renders_and_contains_number():
     text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
     assert "DB/26-27/000001" in text
     assert "Digibranders" in text
+
+
+# ── Finding M: Rule 46 presentation gaps ──────────────────────────────────────
+
+
+def test_place_of_supply_renders_state_name():
+    """Rule 46: place of supply carries the State NAME, not a bare code."""
+    html = render_invoice_html(_tax_invoice(place_of_supply="27"))
+    assert "Place of supply: 27 – Maharashtra" in html
+
+
+def test_export_with_lut_endorsement():
+    inv = _tax_invoice(
+        is_export=True,
+        supply_kind="export",
+        seller_snapshot={**_tax_invoice().seller_snapshot, "lut_active": True, "lut_number": "LUT-2026-1"},
+    )
+    html = render_invoice_html(inv)
+    assert "under LUT without payment of IGST" in html
+    assert "LUT-2026-1" in html
+
+
+def test_export_without_lut_prints_igst_paid_endorsement():
+    """Rule 96A fallback: an IGST-paid export (no LUT) must print the Rule 46
+    endorsement, which was previously missing entirely."""
+    inv = _tax_invoice(
+        is_export=True,
+        supply_kind="export",
+        seller_snapshot={**_tax_invoice().seller_snapshot, "lut_active": False, "lut_number": None},
+    )
+    html = render_invoice_html(inv)
+    assert "SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX" in html
+
+
+def test_state_name_helper():
+    from app.core.gstin import state_name
+
+    assert state_name("27") == "Maharashtra"
+    assert state_name("29") == "Karnataka"
+    assert state_name(None) is None
+    assert state_name("99") is None

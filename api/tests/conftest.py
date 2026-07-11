@@ -58,6 +58,19 @@ def pg_engine():
     admin.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _reset_pricing_cache():
+    """The pricing/kill-switch config is served through a module-global 60s cache.
+    The DB truncate between tests clears the table but NOT that in-memory cache, so
+    a test that flips the kill switch would leak it into later tests (up to 60s).
+    Reset it around every test so suites are order-independent (finding O2)."""
+    from app.services.credit_service import invalidate_pricing_cache
+
+    invalidate_pricing_cache()
+    yield
+    invalidate_pricing_cache()
+
+
 @pytest.fixture()
 def db(pg_engine):
     session = _Session(pg_engine)

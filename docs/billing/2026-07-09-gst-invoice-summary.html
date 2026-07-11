@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OyeChats — GST, Tax & Invoice: Conclusion, Structure & Findings</title>
+<style>
+  :root{
+    --bg:#eef1f8; --card:#ffffff; --ink:#0f172a; --muted:#475569; --faint:#64748b;
+    --line:#e6eaf2; --brand:#4f46e5; --brand-soft:#eef2ff; --brand-ink:#312e81;
+    --green:#15803d; --green-soft:#dcfce7; --amber:#b45309; --amber-soft:#fef3c7;
+    --red:#b91c1c; --red-soft:#fee2e2; --slate:#475569; --slate-soft:#f1f5f9;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; padding:32px 18px 80px;
+  }
+  .wrap{max-width:1020px;margin:0 auto}
+  header.page{margin-bottom:26px}
+  .kicker{color:var(--brand);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:12px}
+  h1{font-size:30px;line-height:1.2;margin:6px 0 8px;letter-spacing:-.02em}
+  .sub{color:var(--muted);max-width:760px}
+  .meta{margin-top:12px;font-size:12.5px;color:var(--faint)}
+  .meta code{background:var(--slate-soft);padding:2px 7px;border-radius:6px;color:var(--slate)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+        padding:26px 28px;margin:18px 0;box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -18px rgba(15,23,42,.18)}
+  .card h2{font-size:20px;margin:0 0 4px;letter-spacing:-.01em}
+  .card h2 .n{color:var(--brand);font-weight:800;margin-right:8px}
+  .card .lead{color:var(--muted);margin:0 0 18px}
+  h3{font-size:15px;margin:22px 0 8px;color:var(--brand-ink)}
+
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f8fafc;font-weight:600;color:var(--slate);font-size:12.5px;letter-spacing:.02em}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:none}
+  .tot td{font-weight:700;background:var(--brand-soft);color:var(--brand-ink)}
+
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+  .p-high{background:var(--red-soft);color:var(--red)}
+  .p-med{background:var(--amber-soft);color:var(--amber)}
+  .p-low{background:var(--slate-soft);color:var(--slate)}
+  .p-ok{background:var(--green-soft);color:var(--green)}
+  .p-brand{background:var(--brand-soft);color:var(--brand-ink)}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .mini{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:#fcfdff}
+  .mini h4{margin:0 0 10px;font-size:15px}
+  .big{font-size:26px;font-weight:800;letter-spacing:-.02em}
+  .keep{color:var(--green)} .owe{color:var(--red)}
+
+  .callout{border-left:4px solid var(--brand);background:var(--brand-soft);padding:14px 18px;border-radius:10px;margin:14px 0;color:var(--brand-ink)}
+  .warn{border-left:4px solid var(--amber);background:var(--amber-soft);color:#7c4a03}
+  .danger{border-left:4px solid var(--red);background:var(--red-soft);color:#7f1d1d}
+  .ok{border-left:4px solid var(--green);background:var(--green-soft);color:#14532d}
+
+  ul.tight{margin:8px 0;padding-left:20px} ul.tight li{margin:5px 0}
+  .muted{color:var(--muted)} .small{font-size:12.5px}
+
+  /* ---- A4 invoice ---- */
+  .invoice-frame{background:#eceff6;border-radius:16px;padding:26px;display:flex;justify-content:center}
+  .a4{width:100%;max-width:720px;background:#fff;border:1px solid #dfe4ee;border-radius:10px;overflow:hidden;
+      box-shadow:0 10px 30px -18px rgba(15,23,42,.35)}
+  .a4 .strip{height:8px;background:linear-gradient(90deg,var(--brand),#6366f1)}
+  .a4 .in{padding:30px 34px}
+  .a4 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
+  .a4 .brand{font-size:22px;font-weight:800;color:var(--brand-ink);letter-spacing:-.01em}
+  .a4 .brand small{display:block;font-size:11px;color:var(--faint);font-weight:600;letter-spacing:.04em;margin-top:2px}
+  .a4 .doctype{text-align:right}
+  .a4 .doctype .t{font-size:13px;font-weight:800;letter-spacing:.14em;color:#334155}
+  .a4 .doctype .no{font-size:13px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+  .a4 .paid{display:inline-block;margin-top:8px;background:var(--green-soft);color:var(--green);font-weight:700;font-size:11px;padding:2px 10px;border-radius:999px}
+  .a4 .cols{display:flex;gap:26px;margin-top:24px}
+  .a4 .cols>div{flex:1}
+  .a4 .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);font-weight:700;margin-bottom:6px}
+  .a4 .party{font-size:13px;line-height:1.55;color:#1e293b}
+  .a4 .party b{color:var(--ink)}
+  .a4 .metabar{display:flex;gap:22px;flex-wrap:wrap;margin:22px 0 10px;padding:11px 14px;background:#f8fafc;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--muted)}
+  .a4 .metabar b{color:#334155}
+  .a4 table.items{margin-top:6px}
+  .a4 table.items th{background:#fff;border-bottom:2px solid var(--line)}
+  .a4 .totbox{margin-top:14px;margin-left:auto;width:300px;font-size:13px}
+  .a4 .totbox .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line)}
+  .a4 .totbox .grand{border-top:2px solid var(--brand);border-bottom:none;margin-top:4px;padding-top:10px;font-weight:800;color:var(--brand-ink);font-size:15px}
+  .a4 .words{margin-top:16px;font-size:12px;color:var(--muted);font-style:italic}
+  .a4 .foot{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;color:var(--faint);display:flex;justify-content:space-between;gap:16px}
+
+  /* ---- invoice gallery ---- */
+  .inv-item{margin:26px 0}
+  .inv-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed var(--line)}
+  .inv-head .name{font-weight:800;font-size:16px;color:var(--ink)}
+  .inv-head .name .idx{color:var(--brand);margin-right:7px}
+  .inv-head .cls{font-size:12.5px;color:var(--muted)}
+  .a4.compact .in{padding:24px 28px}
+  .a4.compact .brand{font-size:19px}
+  .a4.compact .cols{margin-top:18px}
+  .legend{margin-top:14px;font-size:11.5px;color:#7c4a03;background:var(--amber-soft);border-radius:8px;padding:9px 13px;line-height:1.5}
+  .a4 .totbox .grand.neg{color:var(--red);border-top-color:var(--red)}
+  .neg{color:var(--red)}
+  .fx{font-size:11px;color:var(--faint);margin-top:2px}
+
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .toc a{font-size:12.5px;text-decoration:none;color:var(--brand-ink);background:var(--brand-soft);padding:5px 11px;border-radius:8px;border:1px solid #e0e5ff}
+  .toc a:hover{background:#e3e8ff}
+  @media print{body{background:#fff;padding:0}.card{box-shadow:none;break-inside:avoid}.toc{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <div class="kicker">OyeChats · Billing &amp; GST</div>
+    <h1>Tax, Invoicing &amp; Compliance — Conclusion, Invoice Structure &amp; Findings</h1>
+    <p class="sub">The final position on how GST is charged, what a finished OyeChats invoice looks like, how Indian vs foreign customers are treated, and every open finding from the code review — worked on the real plans <b>Starter ₹1,799</b> and <b>Standard ₹3,599</b>.</p>
+    <div class="meta">Snapshot: <code>development @ e594f6d</code> · 2026-07-09 · Prepared as a CA / billing-systems review · GST @ 18%, SAC 997331, prices GST-<b>inclusive</b>.</div>
+    <nav class="toc">
+      <a href="#conclusion">Conclusion</a>
+      <a href="#structure">Invoice structure</a>
+      <a href="#sample">A4 sample invoice</a>
+      <a href="#gst">Indian vs foreign GST</a>
+      <a href="#examples">Worked examples</a>
+      <a href="#findings">Findings</a>
+      <a href="#do">What to do</a>
+    </nav>
+  </header>
+
+  <!-- CONCLUSION -->
+  <section class="card" id="conclusion">
+    <h2><span class="n">1</span>Conclusion</h2>
+    <p class="lead">Where the system stands, in plain terms.</p>
+    <div class="ok callout">
+      <b>Domestic (Indian, INR) invoicing is production-grade and above the industry norm.</b> Gapless per-financial-year numbering (IST), immutable seller/buyer snapshots, exact single-rounding-point tax math, correct credit-note reversals, and a live reconciliation surface. This path can be signed off.
+    </div>
+    <div class="danger callout">
+      <b>Cross-border / USD billing is not yet safe to switch on.</b> An “international” sale settled in <b>INR</b> is <b>not</b> an export for GST — treating it as zero-rated (no tax) without foreign-exchange realisation (FIRC) + a valid LUT is the one mistake that turns a clean system into a liability. It is correctly fenced off today (<code>INTL_PAYMENTS_ENABLED=false</code> → “contact sales”).
+    </div>
+    <ul class="tight">
+      <li><b>GST is inclusive.</b> The customer pays the sticker price; you do <i>not</i> add tax on top. The invoice <i>discloses</i> the GST already embedded in the price.</li>
+      <li><b>The embedded GST is real money you owe the government</b> — roughly <b>15.25%</b> of every rupee collected (18% inclusive). It is not “just for the invoice.” Your true revenue = sticker ÷ 1.18.</li>
+      <li><b>India = GST; genuine export = zero-rated</b> — but the test is <b>place of supply + forex</b>, never citizenship or physical location. Today, 100% of real (INR) sales are domestic → GST on all of them.</li>
+    </ul>
+  </section>
+
+  <!-- STRUCTURE -->
+  <section class="card" id="structure">
+    <h2><span class="n">2</span>Final invoice structure</h2>
+    <p class="lead">Every field on a finished OyeChats tax invoice, and the rules behind it.</p>
+    <table>
+      <thead><tr><th style="width:32%">Element</th><th>Value / rule</th></tr></thead>
+      <tbody>
+        <tr><td><b>Document number</b></td><td><code>PREFIX/FY/NNNNNN</code> → e.g. <code>DB/26-27/000042</code>. Gapless, 6-digit serial, per <b>financial year</b> (1 Apr–31 Mar, computed in IST). Allocated only at finalize, so a failed payment never burns a number (Rule 46).</td></tr>
+        <tr><td><b>Document type</b></td><td><span class="pill p-brand">tax_invoice</span> (GST registered) · <span class="pill p-low">receipt</span> (RCT series, no seller GSTIN) · <span class="pill p-low">credit_note</span> (CN series, refunds). Independent series so the tax-invoice range stays consecutive.</td></tr>
+        <tr><td><b>Seller (from)</b></td><td>Legal name, trade name, GSTIN, address, state — <b>snapshotted</b> at finalize so later edits never change an issued document.</td></tr>
+        <tr><td><b>Buyer (bill to)</b></td><td>Name / legal name, billing address, state, country, GSTIN (B2B), email — also snapshotted.</td></tr>
+        <tr><td><b>Place of supply</b></td><td>Buyer’s state (domestic); supplier’s own state for B2C with no state on record (Circular 242). Undefined for exports.</td></tr>
+        <tr><td><b>Line item</b></td><td>Description, <b>SAC 997331</b>, taxable amount. (Single-rate today; per-line rate is a future need.)</td></tr>
+        <tr><td><b>Tax breakup</b></td><td><b>Intra-state:</b> CGST 9% + SGST 9%. <b>Inter-state:</b> IGST 18%. <b>Export + LUT:</b> zero-rated. Always reconciles: <code>taxable + tax = total</code> and <code>cgst + sgst + igst = tax</code>.</td></tr>
+        <tr><td><b>Totals</b></td><td>Taxable value → tax → grand total (= the inclusive sticker) → amount in words (Indian numbering).</td></tr>
+        <tr><td><b>Legends</b></td><td>“Reverse charge: No”, service period, payment reference, export/LUT legend when applicable, “computer-generated”.</td></tr>
+        <tr><td><b>PDF</b></td><td>A4 Rule-46 layout (WeasyPrint), uploaded to an unguessable capability URL, emailed with the PDF attached; <code>emailed_at</code> tracks delivery.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SAMPLE INVOICES -->
+  <section class="card" id="sample">
+    <h2><span class="n">3</span>Sample invoices — every type</h2>
+    <p class="lead">A full gallery of finished documents. Seller is illustrated as a <b>Maharashtra-registered</b> entity (GSTIN <code>27…</code>, State 27), so “intra-state” = Maharashtra → Maharashtra. Every figure is exact for GST-inclusive pricing at 18%.</p>
+
+    <table>
+      <thead><tr><th>#</th><th>Type</th><th>Buyer</th><th>Tax treatment</th><th>GSTR-1</th></tr></thead>
+      <tbody>
+        <tr><td>A</td><td>Intra-state B2B (MH→MH)</td><td>Registered co. in Maharashtra</td><td>CGST 9% + SGST 9%</td><td>B2B</td></tr>
+        <tr><td>B</td><td>Inter-state B2B (MH→KA)</td><td>Registered co. in Karnataka</td><td>IGST 18%</td><td>B2B</td></tr>
+        <tr><td>C</td><td>Intra-state B2C (MH→MH)</td><td>Individual, no GSTIN, Maharashtra</td><td>CGST 9% + SGST 9%</td><td>B2CS</td></tr>
+        <tr><td>D</td><td>Inter-state B2C (MH→DL)</td><td>Individual, no GSTIN, Delhi</td><td>IGST 18%</td><td>B2CS / B2CL*</td></tr>
+        <tr><td>E</td><td>Export — foreign (USD)</td><td>US company, no GSTIN</td><td>Zero-rated under LUT</td><td>EXP</td></tr>
+        <tr><td>F</td><td>Credit note (refund)</td><td>Reverses invoice A</td><td>Negative CGST+SGST</td><td>CDNR</td></tr>
+        <tr><td>G</td><td>Top-up (one-time)</td><td>Individual, no GSTIN, Maharashtra</td><td>CGST+SGST (odd-paisa demo)</td><td>B2CS</td></tr>
+        <tr><td>H</td><td>Operator seat add-on</td><td>Registered co. in Maharashtra</td><td>CGST 9% + SGST 9%</td><td>B2B</td></tr>
+      </tbody>
+    </table>
+    <p class="small muted">* An inter-state B2C invoice over ₹1,00,000 (e.g. a large annual plan) is reported under <b>B2CL</b> instead of B2CS.</p>
+
+    <!-- A: Intra-state B2B -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">A</span>Intra-state B2B — Standard ₹3,599 (Maharashtra → Maharashtra)</div><div class="cls"><span class="pill p-ok">CGST + SGST</span> · GSTR-1: B2B</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000042</div><div class="no">Issued: 09 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Acme Analytics Pvt Ltd</b><br>402 Solitaire Corp Park, Andheri East<br>Mumbai, MH — 400069<br>GSTIN: 27AAACA1234A1Z2</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>27 · Maharashtra</b></span><span>Reverse charge: <b>No</b></span><span>Service period: <b>09 Jul – 08 Aug 2026</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>OyeChats <b>Standard</b> plan — monthly subscription</td><td>997331</td><td class="num">₹3,050.00</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>₹3,050.00</span></div>
+            <div class="row"><span>CGST @ 9%</span><span>₹274.50</span></div>
+            <div class="row"><span>SGST @ 9%</span><span>₹274.50</span></div>
+            <div class="row"><span>Total tax</span><span>₹549.00</span></div>
+            <div class="row grand"><span>Total</span><span>₹3,599.00</span></div>
+          </div>
+          <div class="words">Rupees Three Thousand Five Hundred Ninety-Nine Only</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- B: Inter-state B2B -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">B</span>Inter-state B2B — Standard ₹3,599 (Maharashtra → Karnataka)</div><div class="cls"><span class="pill p-brand">IGST</span> · GSTR-1: B2B</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000043</div><div class="no">Issued: 09 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Nimbus Software Pvt Ltd</b><br>81 Industrial Layout, Koramangala<br>Bengaluru, KA — 560095<br>GSTIN: 29AABCN5678K1Z1</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>29 · Karnataka</b></span><span>Reverse charge: <b>No</b></span><span>Service period: <b>09 Jul – 08 Aug 2026</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>OyeChats <b>Standard</b> plan — monthly subscription</td><td>997331</td><td class="num">₹3,050.00</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>₹3,050.00</span></div>
+            <div class="row"><span>IGST @ 18%</span><span>₹549.00</span></div>
+            <div class="row grand"><span>Total</span><span>₹3,599.00</span></div>
+          </div>
+          <div class="words">Rupees Three Thousand Five Hundred Ninety-Nine Only</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+      <div class="callout small">Same product, same ₹3,599 the customer pays — because the buyer is in a <b>different state</b>, the tax is a single <b>IGST @ 18%</b> instead of CGST+SGST.</div>
+    </div>
+
+    <!-- C: Intra-state B2C -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">C</span>Intra-state B2C — Starter ₹1,799 (Maharashtra → Maharashtra, no GSTIN)</div><div class="cls"><span class="pill p-ok">CGST + SGST</span> · GSTR-1: B2CS</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000044</div><div class="no">Issued: 09 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Rahul Mehta</b><br>14 Sunrise Residency, Kothrud<br>Pune, MH — 411038<br>Unregistered (B2C)</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>27 · Maharashtra</b></span><span>Reverse charge: <b>No</b></span><span>Service period: <b>09 Jul – 08 Aug 2026</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>OyeChats <b>Starter</b> plan — monthly subscription</td><td>997331</td><td class="num">₹1,524.58</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>₹1,524.58</span></div>
+            <div class="row"><span>CGST @ 9%</span><span>₹137.21</span></div>
+            <div class="row"><span>SGST @ 9%</span><span>₹137.21</span></div>
+            <div class="row"><span>Total tax</span><span>₹274.42</span></div>
+            <div class="row grand"><span>Total</span><span>₹1,799.00</span></div>
+          </div>
+          <div class="words">Rupees One Thousand Seven Hundred Ninety-Nine Only</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+      <div class="callout small">B2C with no GSTIN and no state given defaults the place of supply to the <b>seller’s own state</b> (Circular 242) → intra-state. Capturing the buyer’s state at checkout (finding <b>F4</b>) would make genuinely inter-state B2C report correctly.</div>
+    </div>
+
+    <!-- D: Inter-state B2C -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">D</span>Inter-state B2C — Standard ₹3,599 (Maharashtra → Delhi, no GSTIN)</div><div class="cls"><span class="pill p-brand">IGST</span> · GSTR-1: B2CS</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000045</div><div class="no">Issued: 09 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Priya Sharma</b><br>221 Green Enclave, Saket<br>New Delhi, DL — 110017<br>Unregistered (B2C)</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>07 · Delhi</b></span><span>Reverse charge: <b>No</b></span><span>Service period: <b>09 Jul – 08 Aug 2026</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>OyeChats <b>Standard</b> plan — monthly subscription</td><td>997331</td><td class="num">₹3,050.00</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>₹3,050.00</span></div>
+            <div class="row"><span>IGST @ 18%</span><span>₹549.00</span></div>
+            <div class="row grand"><span>Total</span><span>₹3,599.00</span></div>
+          </div>
+          <div class="words">Rupees Three Thousand Five Hundred Ninety-Nine Only</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+      <div class="callout small">Buyer states Delhi → inter-state → <b>IGST</b>. Under ₹1,00,000 so it lands in <b>B2CS</b>; the same customer on a large annual plan above ₹1L would report under <b>B2CL</b> (invoice-level).</div>
+    </div>
+
+    <!-- E: Export USD -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">E</span>Export — Standard $39.00 (foreign customer, USD)</div><div class="cls"><span class="pill p-med">Zero-rated · LUT</span> · GSTR-1: EXP · Phase&nbsp;2</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000046</div><div class="no">Issued: 09 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Globex LLC</b><br>251 Little Falls Drive<br>Wilmington, DE — 19808, USA<br>Country: US · Unregistered</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>96 · Outside India</b></span><span>Reverse charge: <b>No</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>OyeChats <b>Standard</b> plan — monthly subscription</td><td>997331</td><td class="num">$39.00</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>$39.00</span></div>
+            <div class="row"><span>IGST (zero-rated, LUT)</span><span>$0.00</span></div>
+            <div class="row grand"><span>Total</span><span>$39.00</span></div>
+            <div class="fx">Statutory INR value (Rule 34 @ ₹85.50/USD, illustrative): <b>₹3,334.50</b> · IGST ₹0.00</div>
+          </div>
+          <div class="words">US Dollars Thirty-Nine Only</div>
+          <div class="legend"><b>Export legend:</b> “Supply meant for export of service under LUT (ARN AD270726000000X) without payment of IGST.” Valid only if the payment is received in <b>convertible foreign exchange</b> (FIRC/eBRC) and a current LUT is on file — findings <b>F2/F3/F10</b>. Not enabled until the Phase-2 USD/forex rail ships.</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+      <div class="danger callout small"><b>Two things that must be true</b> for this $0-GST invoice to be legal: (1) money received as <b>forex with a FIRC</b> — an INR-settled “foreign” sale is <b>not</b> an export; (2) a <b>valid LUT</b> for the year. Without a valid LUT, the fallback is <b>IGST @ 18%</b> under Rule 96A — on a $39 inclusive price that is taxable $33.05 + IGST $5.95.</div>
+    </div>
+
+    <!-- F: Credit note -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">F</span>Credit note — full refund of invoice A</div><div class="cls"><span class="pill p-high">Reversal</span> · GSTR-1: CDNR</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">CREDIT NOTE</div><div class="no">CN/26-27/000003</div><div class="no">Issued: 16 Jul 2026</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Acme Analytics Pvt Ltd</b><br>402 Solitaire Corp Park, Andheri East<br>Mumbai, MH — 400069<br>GSTIN: 27AAACA1234A1Z2</div></div>
+          </div>
+          <div class="metabar"><span>Against invoice: <b>DB/26-27/000042</b></span><span>Dated: <b>09 Jul 2026</b></span><span>Reason: <b>Full refund</b></span><span>POS: <b>27 · Maharashtra</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>Reversal — Standard plan (subscription cancelled &amp; refunded)</td><td>997331</td><td class="num neg">−₹3,050.00</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span class="neg">−₹3,050.00</span></div>
+            <div class="row"><span>CGST @ 9%</span><span class="neg">−₹274.50</span></div>
+            <div class="row"><span>SGST @ 9%</span><span class="neg">−₹274.50</span></div>
+            <div class="row grand neg"><span>Total credited</span><span>−₹3,599.00</span></div>
+          </div>
+          <div class="words">Rupees Three Thousand Five Hundred Ninety-Nine Only (credited)</div>
+          <div class="legend">Recomputed with the <b>original invoice’s frozen tax parameters</b>, so a full refund reverses it exactly. Reduces output-tax liability — subject to the §34 <b>30-November</b> deadline (finding <b>F7</b>).</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated document.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- G: Top-up -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">G</span>Top-up (one-time) — ₹999 credit pack (Maharashtra B2C)</div><div class="cls"><span class="pill p-ok">CGST + SGST</span> · GSTR-1: B2CS · odd-paisa demo</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000047</div><div class="no">Issued: 12 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Rahul Mehta</b><br>14 Sunrise Residency, Kothrud<br>Pune, MH — 411038<br>Unregistered (B2C)</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>27 · Maharashtra</b></span><span>Reverse charge: <b>No</b></span><span>Type: <b>One-time top-up</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>OyeChats <b>credit top-up</b> — prepaid usage credits</td><td>997331</td><td class="num">₹846.61</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>₹846.61</span></div>
+            <div class="row"><span>CGST @ 9%</span><span>₹76.19</span></div>
+            <div class="row"><span>SGST @ 9%</span><span>₹76.20</span></div>
+            <div class="row"><span>Total tax</span><span>₹152.39</span></div>
+            <div class="row grand"><span>Total</span><span>₹999.00</span></div>
+          </div>
+          <div class="words">Rupees Nine Hundred Ninety-Nine Only</div>
+          <div class="legend">The odd paisa of tax (₹152.39 ÷ 2) is assigned to <b>SGST</b> (₹76.20 vs CGST ₹76.19) so CGST + SGST reconciles exactly to the total tax — the engine’s largest-remainder rule. Top-ups are taxed <b>at purchase</b> (prepaid single-purpose credits).</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- H: Seat add-on -->
+    <div class="inv-item">
+      <div class="inv-head"><div class="name"><span class="idx">H</span>Operator seat add-on — ₹499 (separate subscription, Maharashtra B2B)</div><div class="cls"><span class="pill p-ok">CGST + SGST</span> · GSTR-1: B2B</div></div>
+      <div class="invoice-frame"><div class="a4 compact">
+        <div class="strip"></div>
+        <div class="in">
+          <div class="top">
+            <div><div class="brand">OyeChats<small>DIGIBRANDERS (SELLER OF RECORD)</small></div></div>
+            <div class="doctype"><div class="t">TAX INVOICE</div><div class="no">DB/26-27/000048</div><div class="no">Issued: 09 Jul 2026</div><div class="paid">PAID</div></div>
+          </div>
+          <div class="cols">
+            <div><div class="lbl">From</div><div class="party"><b>Digibranders</b><br>Unit 501, Trade World, Kamala Mills<br>Lower Parel, Mumbai, MH — 400013<br>GSTIN: 27AABCD1234E1Z5 · State: 27 · Maharashtra</div></div>
+            <div><div class="lbl">Bill to</div><div class="party"><b>Acme Analytics Pvt Ltd</b><br>402 Solitaire Corp Park, Andheri East<br>Mumbai, MH — 400069<br>GSTIN: 27AAACA1234A1Z2</div></div>
+          </div>
+          <div class="metabar"><span>Place of supply: <b>27 · Maharashtra</b></span><span>Reverse charge: <b>No</b></span><span>Service period: <b>09 Jul – 08 Aug 2026</b></span></div>
+          <table class="items"><thead><tr><th>Description</th><th style="width:90px">SAC</th><th class="num" style="width:130px">Amount</th></tr></thead>
+            <tbody><tr><td>Extra operator seat — monthly (×1)</td><td>997331</td><td class="num">₹422.88</td></tr></tbody></table>
+          <div class="totbox">
+            <div class="row"><span>Taxable value</span><span>₹422.88</span></div>
+            <div class="row"><span>CGST @ 9%</span><span>₹38.06</span></div>
+            <div class="row"><span>SGST @ 9%</span><span>₹38.06</span></div>
+            <div class="row"><span>Total tax</span><span>₹76.12</span></div>
+            <div class="row grand"><span>Total</span><span>₹499.00</span></div>
+          </div>
+          <div class="words">Rupees Four Hundred Ninety-Nine Only</div>
+          <div class="legend">Seats are billed on a <b>separate ₹499 subscription</b>, so they get their own invoice/serial — never merged into the main plan (which would multiply the whole plan price).</div>
+          <div class="foot"><span>developer@oyechats.com · Computer-generated invoice.</span><span>For Digibranders · Authorised signatory</span></div>
+        </div>
+      </div></div>
+    </div>
+
+  </section>
+
+  <!-- GST INDIAN VS FOREIGN -->
+  <section class="card" id="gst">
+    <h2><span class="n">4</span>Indian vs foreign customers — how GST is decided</h2>
+    <p class="lead">The legal test is <b>place of supply + foreign-exchange realisation</b> — never citizenship, and never physical location alone.</p>
+
+    <div class="grid2">
+      <div class="mini">
+        <h4>🇮🇳 Indian customer <span class="pill p-ok">GST applies</span></h4>
+        <p class="small muted" style="margin:0 0 8px">Billing country = IN, or paid by UPI / Indian card, or a valid Indian GSTIN.</p>
+        <ul class="tight small">
+          <li>Domestic supply → <b>18% GST, inclusive, in INR</b>.</li>
+          <li>Same state as seller → <b>CGST + SGST</b>. Different state → <b>IGST</b>.</li>
+          <li>App shows <b>INR</b>; Razorpay charges the sticker.</li>
+        </ul>
+      </div>
+      <div class="mini">
+        <h4>🌐 Foreign customer <span class="pill p-med">export / blocked today</span></h4>
+        <p class="small muted" style="margin:0 0 8px">Billing country ≠ IN → app shows <b>USD</b>; paid checkout is <b>blocked</b> → “contact sales”.</p>
+        <ul class="tight small">
+          <li>A genuine export is <b>zero-rated (no GST)</b> — <b>only</b> if forex is received (FIRC) + valid LUT + recipient truly outside India.</li>
+          <li>An <b>INR-settled</b> “foreign” sale is <b>not</b> an export → GST still due.</li>
+          <li>Not enabled until the USD/forex rail ships (Phase 2).</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>The tricky cases — answered</h3>
+    <table>
+      <thead><tr><th>Scenario</th><th style="width:20%">GST?</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Indian resident, Indian account, pays <b>from the USA</b> (travelling)</td><td><span class="pill p-ok">YES · INR</span></td><td>Recipient is in India → domestic supply. Physical location doesn’t relocate the recipient. IP mismatch is logged as a FEMA signal, not blocked.</td></tr>
+        <tr><td><b>US citizen resident in India</b>, US card, pays from India</td><td><span class="pill p-ok">YES · INR</span></td><td>GST ignores citizenship. Recipient is in India → GST. A single foreign card cannot waive it.</td></tr>
+        <tr><td>Indian company with GSTIN buying</td><td><span class="pill p-ok">YES · INR</span></td><td>B2B domestic. GSTIN pins the state (place of supply) and enables the buyer’s Input Tax Credit.</td></tr>
+        <tr><td><b>Genuine non-resident</b> abroad, foreign card, forex received, LUT valid</td><td><span class="pill p-brand">NO · export</span></td><td>Recipient outside India + payment in forex → zero-rated export. Citizenship irrelevant.</td></tr>
+        <tr><td><b>Indian resident on a trip</b> — selects a foreign country in billing &amp; pays from a foreign bank in USD</td><td><span class="pill p-med">DEPENDS · forex</span></td><td>The dropdown doesn’t decide it — <b>forex settlement does</b>. Money received as <b>INR</b> (no FIRC) → not an export → <b>GST due</b>. Genuinely received as <b>USD forex + FIRC</b> with a valid LUT → defensible zero-rated export (you rely on consistent proxies + forex, not on detecting residency). Travelling doesn’t relocate residence, but a good-faith proxy+forex determination is what the OIDAR rules ask of you.</td></tr>
+        <tr><td>Someone in India selecting “USA” to dodge tax</td><td><span class="pill p-high">YES — you’d owe it</span></td><td>Not a real export. If you skip GST, <b>OyeChats</b> pays it out of pocket + penalty. Hence the two-proxy + forex gate.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout"><b>How OyeChats decides without documents:</b> GST for a digital (OIDAR) service is designed around proxies you already have — <b>billing country/state, card issuer country (UPI = always India), and IP</b>. Rule: if <b>≥2 proxies point to India → charge GST</b>. Treat as export only when ≥2 point abroad <b>and</b> forex is realised (FIRC) <b>and</b> a valid LUT is on file. When signals conflict, <b>default to charging GST</b> (supplier-safe). No citizenship or paperwork required.</div>
+    <p class="small muted" style="margin-top:10px"><b>Optional safeguard:</b> a checkout confirmation — “I confirm I am billed outside India and not an Indian resident” — cleanly shifts the misrepresentation risk onto the customer for the travelling-Indian case above. And the hard backstop is always <b>forex settlement</b>: an INR-settled sale can never be a zero-rated export, whatever the customer selected.</p>
+  </section>
+
+  <!-- WORKED EXAMPLES -->
+  <section class="card" id="examples">
+    <h2><span class="n">5</span>Worked examples — your real plans</h2>
+    <p class="lead">GST-inclusive means: <b>your revenue = sticker ÷ 1.18</b>, and <b>GST = sticker − revenue</b>. The customer always pays the sticker.</p>
+
+    <div class="grid2">
+      <div class="mini">
+        <h4>Starter — ₹1,799 / month</h4>
+        <table class="small">
+          <tr><td>Customer pays</td><td class="num"><b>₹1,799.00</b></td></tr>
+          <tr><td>Your revenue (÷1.18)</td><td class="num keep"><b>₹1,524.58</b></td></tr>
+          <tr><td>GST @ 18% (remit)</td><td class="num owe">₹274.42</td></tr>
+          <tr><td class="muted">— CGST+SGST (same state)</td><td class="num muted">₹137.21 + ₹137.21</td></tr>
+          <tr><td class="muted">— or IGST (other state)</td><td class="num muted">₹274.42</td></tr>
+        </table>
+      </div>
+      <div class="mini">
+        <h4>Standard — ₹3,599 / month</h4>
+        <table class="small">
+          <tr><td>Customer pays</td><td class="num"><b>₹3,599.00</b></td></tr>
+          <tr><td>Your revenue (÷1.18)</td><td class="num keep"><b>₹3,050.00</b></td></tr>
+          <tr><td>GST @ 18% (remit)</td><td class="num owe">₹549.00</td></tr>
+          <tr><td class="muted">— CGST+SGST (same state)</td><td class="num muted">₹274.50 + ₹274.50</td></tr>
+          <tr><td class="muted">— or IGST (other state)</td><td class="num muted">₹549.00</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <h3>What you actually keep</h3>
+    <table>
+      <thead><tr><th>Plan</th><th class="num">Customer pays</th><th class="num">You keep</th><th class="num">Govt gets</th><th class="num">Annual revenue kept</th></tr></thead>
+      <tbody>
+        <tr><td>Starter</td><td class="num">₹1,799</td><td class="num keep"><b>₹1,524.58</b></td><td class="num owe">₹274.42</td><td class="num">₹18,294.96</td></tr>
+        <tr><td>Standard</td><td class="num">₹3,599</td><td class="num keep"><b>₹3,050.00</b></td><td class="num owe">₹549.00</td><td class="num">₹36,600.00</td></tr>
+        <tr><td>+ Extra seat</td><td class="num">₹499</td><td class="num keep">₹422.88</td><td class="num owe">₹76.12</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+
+    <h3>If the GST rate changed (customer price stays fixed — inclusive)</h3>
+    <table>
+      <thead><tr><th>GST rate</th><th class="num">Standard — you keep</th><th class="num">Govt gets</th><th class="num">vs 18% today</th></tr></thead>
+      <tbody>
+        <tr><td>12%</td><td class="num keep">₹3,213.39</td><td class="num">₹385.61</td><td class="num keep">+₹163.39</td></tr>
+        <tr class="tot"><td>18% (today)</td><td class="num">₹3,050.00</td><td class="num">₹549.00</td><td class="num">—</td></tr>
+        <tr><td>28%</td><td class="num owe">₹2,811.72</td><td class="num">₹787.28</td><td class="num owe">−₹238.28</td></tr>
+      </tbody>
+    </table>
+    <p class="small muted">Because prices are inclusive, a rate change moves <b>your margin</b>, not the customer’s price — unless you consciously reprice the sticker.</p>
+
+    <div class="callout small"><b>Export upside (Phase 2):</b> a <i>genuine</i> zero-rated export keeps the full ₹3,599 (no ₹549.00 to remit). But only with forex + LUT — otherwise you still owe the ₹549.00.</div>
+  </section>
+
+  <!-- FINDINGS -->
+  <section class="card" id="findings">
+    <h2><span class="n">6</span>Review findings — ranked</h2>
+    <p class="lead">None are live incidents today. The two HIGH items are conditions on enabling cross-border billing, not production bugs.</p>
+    <table>
+      <thead><tr><th style="width:60px">ID</th><th style="width:90px">Severity</th><th>Finding</th><th style="width:90px">Live now?</th></tr></thead>
+      <tbody>
+        <tr><td><b>F2</b></td><td><span class="pill p-high">HIGH</span></td><td>Export zero-rating must be gated on <b>evidenced forex (FIRC)</b>, not the LUT flag alone. An INR-settled foreign sale is not an export.</td><td>No <span class="muted small">(intl off)</span></td></tr>
+        <tr><td><b>F3</b></td><td><span class="pill p-high">HIGH</span></td><td>USD invoices must use the <b>Rule-34 notified FX rate</b> for the statutory INR value, snapshotted — not the fixed display rate.</td><td>No <span class="muted small">(intl off)</span></td></tr>
+        <tr><td><b>F10</b></td><td><span class="pill p-med">MED</span></td><td><b>LUT has no validity dates</b> — an expired LUT would still zero-rate. Add valid-from/to + expiry alert.</td><td>No</td></tr>
+        <tr><td><b>F9</b></td><td><span class="pill p-med">MED</span></td><td>Confirm the <b>Razorpay settlement entity = seller-profile legal entity</b> (same PAN/GSTIN). MOR integrity.</td><td>Yes</td></tr>
+        <tr><td><b>F5</b></td><td><span class="pill p-med">MED</span></td><td><b>RCM on imported digital services</b> (OpenAI, Google, Razorpay, crawlers) — self-invoice + pay IGST + claim ITC. Finance process.</td><td>Yes</td></tr>
+        <tr><td><b>F4</b></td><td><span class="pill p-med">MED</span></td><td>Domestic B2C <b>place-of-supply state under-captured</b> (defaults to seller state). Capture recipient state at checkout.</td><td>Yes</td></tr>
+        <tr><td><b>F11</b></td><td><span class="pill p-med">MED</span></td><td>No <b>effective-dating</b> for a statutory rate change — applies at deploy/finalize time, not the notified date.</td><td>Yes</td></tr>
+        <tr><td><b>F7</b></td><td><span class="pill p-low">LOW</span></td><td>Credit notes lack the <b>30-Nov §34 time-bar</b> guard for cross-financial-year reversals.</td><td>Yes</td></tr>
+        <tr><td><b>F1/F6</b></td><td><span class="pill p-low">LOW</span></td><td>Single header-level rate; no <b>per-line SAC/rate</b> — needed only if the catalog diversifies beyond one SAC.</td><td>Yes <span class="muted small">(single SAC)</span></td></tr>
+        <tr><td><b>F8</b></td><td><span class="pill p-low">WATCH</span></td><td><b>E-invoicing (IRN/QR)</b> unbuilt — fine below ₹5cr turnover; schema is ready.</td><td>Yes</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- WHAT TO DO -->
+  <section class="card" id="do">
+    <h2><span class="n">7</span>What to do</h2>
+    <div class="grid2">
+      <div class="mini">
+        <h4>Now — domestic hygiene</h4>
+        <ul class="tight small">
+          <li><b>F9</b> — confirm the Razorpay ↔ seller PAN/GSTIN entity chain.</li>
+          <li><b>F5</b> — stand up monthly RCM on imported SaaS.</li>
+          <li><b>F4</b> — add a recipient-state field at checkout.</li>
+          <li><b>F7</b> — add the 30-Nov credit-note guard.</li>
+          <li><b>F11</b> — effective-dated rate changes.</li>
+        </ul>
+      </div>
+      <div class="mini">
+        <h4>Before enabling USD (hard gate)</h4>
+        <ul class="tight small">
+          <li><b>F2</b> — forex-evidence-gated zero-rating + a forex-settling rail + FIRC capture.</li>
+          <li><b>F3</b> — Rule-34 FX on the invoice, snapshotted; reconcile the three rates.</li>
+          <li><b>F10</b> — LUT validity window + expiry alerts.</li>
+          <li>Extend finalize to produce a statutory INR value for non-INR supplies.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="warn callout" style="margin-top:16px"><b>Get it in writing:</b> commission your practising CA’s written opinion on (1) OIDAR classification, (2) the LUT/forex-settlement rail, and (3) an Indian-resident paying with a foreign card — before flipping cross-border billing on.</div>
+    <p class="small muted" style="margin-top:14px">Companion documents: <code>docs/billing/2026-07-09-billing-invoice-system-architecture.md</code> (full architecture &amp; flows) and <code>docs/billing/2026-07-09-gst-billing-ca-review.md</code> (detailed findings with file:line evidence).</p>
+  </section>
+
+  <p class="small muted" style="text-align:center;margin-top:26px">Internal engineering-compliance review · not a substitute for a practising CA’s written opinion · OyeChats / Digibranders · 2026-07-09</p>
+
+</div>
+</body>
+</html>

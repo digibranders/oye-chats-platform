@@ -104,6 +104,8 @@ async def task_crawl_and_ingest(
         concurrency=concurrency,
         ordered_urls=ordered_urls,
         force_reingest=force_reingest,
+        # Stable across ARQ retries → per-page charge idempotency (finding H).
+        crawl_job_id=ctx.get("job_id"),
     )
 
 
@@ -129,6 +131,10 @@ async def task_ingest_web_batch(
 
     logger.info("task_ingest_web_batch: client_id=%d, pages=%d, bot_id=%s", client_id, len(pages), bot_id)
 
+    # ARQ stamps a stable job_id that survives retries — use it as the crawl
+    # idempotency scope so a retried batch never re-charges pages it billed on
+    # the first attempt (finding H).
+    crawl_job_id = ctx.get("job_id")
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
@@ -139,6 +145,7 @@ async def task_ingest_web_batch(
             cost_per_page=cost_per_page,
             deduct_reason=deduct_reason,
             deduct_reference_id=deduct_reference_id,
+            crawl_job_id=crawl_job_id,
         ),
     )
 

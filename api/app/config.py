@@ -258,6 +258,14 @@ RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 #   production never accidentally references a test plan.
 RAZORPAY_SEAT_PLAN_ID: str = os.getenv("RAZORPAY_SEAT_PLAN_ID", "plan_T5rNFpt3vSkl4R")
 
+# The per-seat price that ``RAZORPAY_SEAT_PLAN_ID`` ACTUALLY charges (INR minor
+# units). All extra seats bill against that single global plan, so this — not a
+# plan's ``extra_seat_price_cents`` — is the amount the customer is charged.
+# Surfaced to the UI so the displayed seat price always equals the charged price
+# (finding J); a plan whose ``extra_seat_price_cents`` differs is logged as a
+# misconfiguration rather than silently showing a price it won't bill.
+RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "49900"))
+
 # Default billing provider for all subscriptions and top-ups.
 BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()
 

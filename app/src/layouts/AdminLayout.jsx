@@ -136,7 +136,7 @@ function AdminLayoutInner() {
   };
 
   return (
-    <div className="h-screen overflow-hidden bg-surface-50 dark:bg-surface-950 flex transition-colors duration-300">
+    <div className="h-screen overflow-hidden bg-canvas dark:bg-surface-950 flex transition-colors duration-300">
       {/* Mobile backdrop */}
       <AnimatePresence>
         {isMobile && isSidebarOpen && (

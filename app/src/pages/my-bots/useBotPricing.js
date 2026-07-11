@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getBillingGeo } from '../../services/api';
+import { FALLBACK_USD_TO_INR } from '../../lib/currency';
 
 /**
  * Geo-aware price helper for the bot create flow, mirroring PlanModal's rule:
@@ -38,7 +39,7 @@ export function useBotPricing() {
                 return { cents, symbol: '$' };
             }
             // No USD column → convert the INR price at the geo rate.
-            const rate = Number(geo?.display_rate) || 94.67;
+            const rate = Number(geo?.display_rate) || FALLBACK_USD_TO_INR;
             const inr = cycle === 'annual'
                 ? Math.round((plan.annual_price_cents ?? 0) / 12)
                 : (plan.monthly_price_cents ?? 0);
