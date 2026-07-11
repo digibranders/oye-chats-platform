@@ -1267,7 +1267,11 @@ class CreditLedger(Base):
         ).with_variant(String(), "sqlite"),
         nullable=False,
     )
-    reference_id = Column(Integer, nullable=True)  # chat_message_id, document_id, invoice_id, etc.
+    reference_id = Column(Integer, nullable=True)  # coarse AUDIT label: bot_id / document_id / invoice_id
+    # Finding H: opt-in, globally-unique idempotency token for a billable unit of
+    # work (e.g. "chat:<uuid>", "ingest:doc:<id>"). Only set on deduction rows
+    # whose caller opted in; NULL for every legacy/per-request deduction.
+    idempotency_key = Column(String, nullable=True)
     grant_id = Column(Integer, ForeignKey("credit_ledger.id", ondelete="SET NULL"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)  # only set on topup grants
     note = Column(Text, nullable=True)
@@ -1288,6 +1292,16 @@ class CreditLedger(Base):
         ),
         Index("ix_credit_ledger_grant_id", "grant_id"),
         Index("ix_credit_ledger_reference_id", "reference_id"),
+        # Finding H: back the opt-in idempotency guard in check_and_deduct with a
+        # partial unique index so a race that slips the app-level check still fails
+        # closed. One deduction row per key; NULL keys (every legacy/per-request
+        # deduction) are exempt, so existing callers are unaffected.
+        Index(
+            "uq_credit_ledger_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=sqlalchemy.text("idempotency_key IS NOT NULL AND delta < 0"),
+        ),
     )
 
 

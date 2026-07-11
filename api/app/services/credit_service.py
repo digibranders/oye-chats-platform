@@ -280,18 +280,24 @@ def _grants_for(
     Order:
       1. ``plan_grant`` first (use-it-or-lose-it; consume before top-ups).
       2. ``topup`` next, oldest ``expires_at`` first.
-      3. ``manual_adjust`` last (treated as topup-like but with no expiry).
+      3. ``refund`` alongside topups (no expiry; sorts after dated topups).
+      4. ``manual_adjust`` last (treated as topup-like but with no expiry).
+
+    ``refund`` MUST be included (finding E): ``get_balance`` sums every positive
+    delta, so an allocatable set that excluded refunds left the customer with a
+    positive-but-unspendable balance. Invariant: ``get_balance`` equals what this
+    allocator can consume.
     """
     stmt = select(CreditLedger).where(
         *_scope_clause(client_id, bot_id),
         CreditLedger.delta > 0,
-        CreditLedger.reason.in_(("plan_grant", "topup", "manual_adjust")),
+        CreditLedger.reason.in_(("plan_grant", "topup", "manual_adjust", "refund")),
     )
     if only_unexpired:
         now = datetime.now(UTC)
         stmt = stmt.where((CreditLedger.expires_at.is_(None)) | (CreditLedger.expires_at > now))
     stmt = stmt.order_by(
-        text("CASE reason WHEN 'plan_grant' THEN 0 WHEN 'topup' THEN 1 ELSE 2 END"),
+        text("CASE reason WHEN 'plan_grant' THEN 0 WHEN 'topup' THEN 1 WHEN 'refund' THEN 1 ELSE 2 END"),
         CreditLedger.expires_at.asc().nulls_last(),
         CreditLedger.created_at.asc(),
     )
@@ -353,6 +359,7 @@ def check_and_deduct(
     reason: str,
     reference_id: int | None = None,
     bot_id: int | None = None,
+    idempotency_key: str | None = None,
 ) -> int:
     """Atomically deduct ``amount`` credits, allocating FIFO within one scope.
 
@@ -360,6 +367,22 @@ def check_and_deduct(
     Returns the new balance. Raises :class:`InsufficientCredits` if the scope
     does not have enough credits, or :class:`KillSwitchActive` if global
     deductions are paused.
+
+    ``idempotency_key`` (finding H): an OPT-IN, globally-unique token identifying
+    one billable unit of work (e.g. ``"ingest:doc:<id>"``). When supplied, a
+    retry / re-queued ARQ job carrying the same key is a no-op — the existing
+    deduction stands and the current balance is returned. ``reference_id`` remains
+    a coarse AUDIT label (bot/doc id) and does NOT drive idempotency; callers that
+    pass no key keep the exact prior behaviour (charge per call). A partial unique
+    index on ``idempotency_key`` backs the app-level check against a lost race.
+
+    This is intended for TRUSTED server-side callers (background jobs), NOT for
+    untrusted/visitor-facing endpoints: a caller that can freely hold the key
+    constant across distinct billable events would get them for free. Callers
+    MUST namespace the key to include the ledger scope (client/bot) so two
+    different scopes can never mint the same key — that makes the cross-scope
+    unique-index race unreachable; same-scope retries are serialised by the
+    advisory lock and caught by the check below.
     """
     if amount <= 0:
         return get_balance(session, client_id, bot_id)
@@ -368,6 +391,24 @@ def check_and_deduct(
         raise KillSwitchActive("Credit deductions are temporarily halted")
 
     _acquire_client_lock(session, client_id, bot_id)
+
+    # Idempotency (finding H): short-circuit if a deduction with this key already
+    # exists. Runs under the advisory lock so two concurrent retries can't both
+    # pass. Keys are globally unique (namespaced by caller), so the lookup is not
+    # scope-restricted — a stray cross-scope collision should surface, not silently
+    # double-charge.
+    if idempotency_key is not None:
+        already = session.scalar(
+            select(CreditLedger.id)
+            .where(CreditLedger.idempotency_key == idempotency_key, CreditLedger.delta < 0)
+            .limit(1)
+        )
+        if already is not None:
+            logger.info(
+                "credit_service: idempotent skip — deduction for key=%s already recorded",
+                idempotency_key,
+            )
+            return get_balance(session, client_id, bot_id)
 
     available = get_balance(session, client_id, bot_id)
     if available < amount:
@@ -389,6 +430,9 @@ def check_and_deduct(
                 reason=reason,
                 reference_id=reference_id,
                 grant_id=grant.id,
+                # Stamp the key only on the FIRST chunk so the partial unique
+                # index (one row per key) isn't violated by a multi-grant split.
+                idempotency_key=idempotency_key if remaining == amount else None,
             )
         )
         remaining -= take
