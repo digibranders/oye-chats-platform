@@ -44,6 +44,7 @@ import BillingDetailsCard from '../components/billing/BillingDetailsCard';
 import InvoicesCard from '../components/billing/InvoicesCard';
 import { cn } from '../lib/utils';
 import { pickAmount } from '../lib/currency';
+import { openRazorpayCheckout } from '../lib/razorpay';
 import { useCurrency } from '../context/CurrencyContext';
 import { trialDaysLeft } from '../utils/trial';
 
@@ -428,6 +429,27 @@ export default function Billing() {
       // (e.g. "Razorpay declined the seat update") instead of closing on a
       // toast and losing the context the user needs to fix it.
       const result = await changeOperatorSeats(delta);
+
+      // First seat purchase → the backend created the seat add-on subscription
+      // in `created` state and did NOT grant the seats yet; the customer must
+      // authorize the mandate first (finding A). Open Razorpay Checkout; the
+      // seat `activated` webhook then grants entitlement. We deliberately do
+      // NOT reflect the new seat count until that webhook lands.
+      if (result?.requires_authorization && result?.checkout) {
+        const c = result.checkout;
+        await openRazorpayCheckout({
+          key: c.key_id,
+          subscription_id: c.subscription_id,
+          name: c.name || 'OyeChats operator seats',
+          description: c.description,
+          prefill: c.prefill,
+          theme: c.theme,
+        });
+        showToast('Seat add-on authorized — your seats will activate in a moment.', 'success');
+        await loadAll({ silent: true });
+        return;
+      }
+
       showToast(
         delta > 0
           ? `Added a seat (now ${result?.operator_quantity ?? '?'} total).`
@@ -435,6 +457,15 @@ export default function Billing() {
         'success',
       );
       await loadAll({ silent: true });
+    } catch (err) {
+      // Dismissing the Razorpay modal is not a failure — the customer simply
+      // didn't authorize, and no seats were granted (nor charged). Surface it
+      // gently and swallow, but let real errors propagate to the modal.
+      if (err?.code === 'dismissed') {
+        showToast('Seat purchase cancelled — you were not charged.', 'info');
+        return;
+      }
+      throw err;
     } finally {
       setSeatBusy(false);
     }

@@ -1011,6 +1011,12 @@ class Subscription(Base):
     # whole plan amount — seats must be their own sub (P0-3).
     seat_addon_subscription_id = Column(String, nullable=True)
     seat_addon_quantity = Column(Integer, nullable=False, server_default="0")
+    # Finding A: extra seats DESIRED on a first purchase, awaiting mandate
+    # authorization. Entitlement (operator_quantity) is NOT granted until the
+    # seat add-on's ``activated`` webhook confirms the mandate — otherwise seats
+    # run free before Razorpay ever charges. NULL = nothing pending. Distinct
+    # from seat_addon_quantity (the AUTHORIZED/billed count).
+    seat_addon_pending_quantity = Column(Integer, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

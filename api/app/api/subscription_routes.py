@@ -1468,7 +1468,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
         try:
             from app.services import razorpay_service
 
-            razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
+            checkout = razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
         except razorpay_service.RazorpayBillingError as exc:
             logger.exception("Seat add-on update failed for client %s: %s", client.id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -1478,6 +1478,28 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
             logger.exception("Seat update failed for client %s: %s", client.id, exc)
             raise HTTPException(status_code=502, detail="Could not update seats with payment provider.") from exc
 
+        if checkout is not None:
+            # First seat purchase → the mandate isn't authorized yet, so we do
+            # NOT grant entitlement (finding A). The client opens this checkout;
+            # the seat ``activated`` webhook bumps operator_quantity. Persist the
+            # pending marker set inside the helper and return the checkout.
+            session.commit()
+            logger.info(
+                "Client %s seat purchase pending authorization → %s (extra=%s)", client.id, new_total, extra_seats
+            )
+            return {
+                "message": "Authorize the seat add-on to activate your new seats.",
+                "requires_authorization": True,
+                "checkout": checkout,
+                "pending_seats": extra_seats,
+                "operator_quantity": sub.operator_quantity,  # unchanged until webhook
+                "included_operator_seats": floor,
+                "extra_seat_price_cents": int(plan.extra_seat_price_cents or 0),
+                "currency": plan.currency,
+            }
+
+        # Edit against an already-authorized add-on (or a reduction) → the change
+        # applies immediately, so the local entitlement mirror can move now.
         sub.operator_quantity = new_total
         session.commit()
         logger.info("Client %s changed seat count → %s (extra=%s)", client.id, new_total, extra_seats)

@@ -625,9 +625,16 @@ def create_seat_addon_subscription(
         extra_seats,
     )
 
+    return _seat_checkout_payload(subscription["id"], client, extra_seats)
+
+
+def _seat_checkout_payload(subscription_id: str, client: Client, extra_seats: int) -> dict[str, Any]:
+    """Checkout payload for a seat add-on subscription. Reused when re-opening an
+    unauthorized pending purchase (finding A C1) so we never need a Razorpay
+    round-trip just to rebuild it — the JS SDK only needs subscription_id + key."""
     return {
         "provider": "razorpay",
-        "subscription_id": subscription["id"],
+        "subscription_id": subscription_id,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
         "description": f"{extra_seats} extra seat(s) — ₹499/seat/month",
@@ -639,41 +646,103 @@ def create_seat_addon_subscription(
     }
 
 
-def edit_seat_addon_quantity(session: Session, sub: Subscription, extra_seats: int) -> None:
+def edit_seat_addon_quantity(
+    session: Session, sub: Subscription, extra_seats: int, *, require_authorization: bool = True
+) -> dict[str, Any] | None:
     """Set the operator-seat add-on quantity for ``sub``.
 
-    Creates the add-on subscription on first use, edits its quantity
-    thereafter, and cancels it when ``extra_seats`` drops to 0. The main
-    plan subscription is NEVER touched here (P0-3).
+    Creates the add-on subscription on first use, edits its quantity thereafter,
+    and cancels it when ``extra_seats`` drops to 0. The main plan subscription is
+    NEVER touched here (P0-3).
+
+    Returns the Razorpay Checkout payload ONLY on a customer-initiated first
+    purchase (``require_authorization=True``, the default) — the seat
+    subscription is created in ``created`` state and charges nothing until the
+    customer authorizes the mandate, so entitlement must wait for the seat
+    ``activated`` webhook (finding A). The desired count is stashed in
+    ``seat_addon_pending_quantity`` and ``seat_addon_quantity`` stays 0 until
+    then. Returns ``None`` when no authorization step is needed: an edit on an
+    already-authorized add-on, a reduction/cancel, or the SYSTEM seat-carry at a
+    plan cutover (``require_authorization=False``) — there the seats were already
+    authorized on the prior subscription, so they activate immediately.
     """
     extra_seats = max(int(extra_seats), 0)
     if extra_seats == 0:
         if sub.seat_addon_subscription_id:
             cancel_seat_addon(session, sub)
         sub.seat_addon_quantity = 0
+        sub.seat_addon_pending_quantity = None
         session.flush()
-        return
+        return None
 
-    rzp = _get_razorpay()
     if not sub.seat_addon_subscription_id:
         addon = create_seat_addon_subscription(session, sub.client, extra_seats=extra_seats)
         sub.seat_addon_subscription_id = addon["subscription_id"]
-    else:
-        try:
-            rzp.subscription.edit(
-                sub.seat_addon_subscription_id,
-                data={"quantity": extra_seats, "schedule_change_at": "now"},
-            )
-        except Exception as exc:
-            logger.exception(
-                "Razorpay seat add-on edit (qty=%d) failed for %s: %s",
-                extra_seats,
-                sub.seat_addon_subscription_id,
-                exc,
-            )
-            raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
+        if require_authorization:
+            # Customer first purchase → mandate not yet authorized. Stash the
+            # desired count as PENDING and return the checkout. Do NOT set
+            # seat_addon_quantity/operator_quantity — the activation webhook does.
+            sub.seat_addon_pending_quantity = extra_seats
+            session.flush()
+            return addon
+        # System carry across a plan cutover: the seats were authorized on the
+        # prior sub, so activate them on the new sub immediately (no re-auth).
+        # Bump operator_quantity too (H1) — the carried seat sub is minted in
+        # ``created`` state and won't fire an ``activated`` webhook to do it, so
+        # without this the customer's paid seats would silently vanish after any
+        # plan change (seat enforcement reads operator_quantity).
+        included = int((sub.plan.included_operator_seats if sub.plan else 1) or 1)
+        sub.seat_addon_quantity = extra_seats
+        sub.seat_addon_pending_quantity = None
+        sub.operator_quantity = included + extra_seats
+        session.flush()
+        return None
+
+    # A seat sub id is already present. CRITICAL (finding A C1): a pending,
+    # never-authorized first purchase ALSO has seat_addon_subscription_id set
+    # (the sub sits in ``created`` state and never charges). If we fell through
+    # to the "edit + entitle" path below, a customer who dismissed the checkout
+    # and retried would get entitled seats with no mandate and no charge — the
+    # exact free-seats bug. So while a purchase is still pending authorization,
+    # keep re-authorizing: update the created sub's quantity if it changed,
+    # re-stash pending, and return the checkout again. Never entitle here.
+    if require_authorization and sub.seat_addon_pending_quantity is not None:
+        rzp = _get_razorpay()
+        if int(sub.seat_addon_pending_quantity) != extra_seats:
+            try:
+                rzp.subscription.edit(sub.seat_addon_subscription_id, data={"quantity": extra_seats})
+            except Exception as exc:
+                logger.exception(
+                    "Razorpay seat add-on quantity update (pending re-auth, qty=%d) failed for %s: %s",
+                    extra_seats,
+                    sub.seat_addon_subscription_id,
+                    exc,
+                )
+                raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
+        sub.seat_addon_pending_quantity = extra_seats
+        session.flush()
+        return _seat_checkout_payload(sub.seat_addon_subscription_id, sub.client, extra_seats)
+
+    # Existing, already-authorized add-on → the mandate can be charged now, so
+    # apply the new quantity immediately.
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.edit(
+            sub.seat_addon_subscription_id,
+            data={"quantity": extra_seats, "schedule_change_at": "now"},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay seat add-on edit (qty=%d) failed for %s: %s",
+            extra_seats,
+            sub.seat_addon_subscription_id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
     sub.seat_addon_quantity = extra_seats
+    sub.seat_addon_pending_quantity = None
     session.flush()
+    return None
 
 
 def cancel_seat_addon(session: Session, sub: Subscription) -> None:
@@ -1029,6 +1098,79 @@ def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
     return (result.rowcount or 0) > 0
 
 
+def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str, Any]) -> None:
+    """Emit a payment-history invoice for a seat add-on charge (finding A).
+
+    Seat revenue must be documented for GST/reconciliation just like a plan
+    charge — but it grants NO credits. Idempotent on the Razorpay payment id;
+    routed through ``finalize_invoice_safely`` so it becomes a numbered GST tax
+    invoice when invoicing v2 is on, and so a finalize failure never blocks the
+    webhook.
+    """
+    pay_entity = _extract_payment_entity(payload) or {}
+    payment_id = pay_entity.get("id")
+    if not payment_id:
+        return
+    existing = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+    if existing:
+        return
+    invoice = Invoice(
+        client_id=sub.client_id,
+        subscription_id=sub.id,
+        bot_id=sub.bot_id,
+        amount_cents=int(pay_entity.get("amount") or 0),
+        currency=str(pay_entity.get("currency") or "INR").lower(),
+        status="paid",
+        razorpay_payment_id=payment_id,
+        description="Operator seat add-on",
+        paid_at=_capture_paid_at(pay_entity),
+    )
+    session.add(invoice)
+    session.flush()
+    invoice_service.finalize_invoice_safely(session, invoice)
+
+
+def _handle_seat_addon_event(
+    session: Session, event_name: str, sub_entity: dict[str, Any], payload: dict[str, Any]
+) -> str:
+    """Seat add-on lifecycle. Grants NO plan credits, but gates seat entitlement
+    on mandate authorization and invoices seat charges (finding A)."""
+    seat_sub_id = sub_entity.get("id")
+    local = session.scalars(select(Subscription).where(Subscription.seat_addon_subscription_id == seat_sub_id)).first()
+    if local is None:
+        logger.info("Seat add-on event %s for unknown seat sub %s — acknowledged", event_name, seat_sub_id)
+        return f"Seat add-on event {event_name} (no local sub)"
+
+    included = int((local.plan.included_operator_seats if local.plan else 1) or 1)
+
+    if event_name in ("subscription.activated", "subscription.charged"):
+        # Authorization confirmed → promote the pending count to authorized and
+        # grant entitlement. ``pending`` is None on a plain renewal charge, in
+        # which case the already-authorized seat_addon_quantity stands.
+        pending = local.seat_addon_pending_quantity
+        if pending is not None:
+            local.seat_addon_quantity = int(pending)
+            local.seat_addon_pending_quantity = None
+        local.operator_quantity = included + int(local.seat_addon_quantity or 0)
+        if event_name == "subscription.charged":
+            _record_seat_invoice(session, local, payload)
+
+    elif event_name in ("subscription.cancelled", "subscription.completed"):
+        # Terminal — the add-on is gone. Drop to the plan's included seats.
+        local.seat_addon_quantity = 0
+        local.seat_addon_pending_quantity = None
+        local.operator_quantity = included
+
+    elif event_name == "subscription.halted":
+        # Temporary (repeated payment failure). Suspend entitlement but KEEP the
+        # authorized count (M1): a recovery ``charged`` re-derives operator_quantity
+        # from it, so we never invoice a seat without restoring its entitlement.
+        local.operator_quantity = included
+
+    session.flush()
+    return f"Seat add-on event {event_name} handled"
+
+
 def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str | None) -> str:
     """Dispatch a verified Razorpay webhook event to the right handler.
 
@@ -1063,12 +1205,12 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         sub_entity = _extract_subscription_entity(payload) or {}
         sub_notes = sub_entity.get("notes") or {}
         if (sub_notes.get("purpose") or "").lower() == "seat_addon":
-            logger.info(
-                "Seat add-on subscription event %s (%s) acknowledged; no plan credit granted",
-                event_name,
-                sub_entity.get("id"),
-            )
-            return f"Seat add-on event {event_name} acknowledged"
+            # Seat add-ons carry NO plan entitlement (routing them through the
+            # plan handlers would grant monthly plan credits for a seat charge —
+            # P0-3), but they DO gate seat entitlement and must invoice seat
+            # revenue (finding A), so they get their own handler rather than an
+            # ack-drop.
+            return _handle_seat_addon_event(session, event_name, sub_entity, payload)
 
     handlers = {
         "subscription.activated": _handle_subscription_activated,
@@ -1661,7 +1803,9 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         total_carried_seats = max(carried_extra_seats, int(notes.get("carried_seat_count") or 0))
         if total_carried_seats > 0:
             try:
-                edit_seat_addon_quantity(session, local, total_carried_seats)
+                # System carry: seats already authorized on the prior sub, so
+                # activate immediately on the new one (no re-authorization).
+                edit_seat_addon_quantity(session, local, total_carried_seats, require_authorization=False)
             except Exception:
                 logger.error(
                     "Failed to re-create seat add-on (%d seats) on new subscription "
