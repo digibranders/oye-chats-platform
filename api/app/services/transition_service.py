@@ -140,15 +140,28 @@ def execute_paid_upgrade(
     # A different target plan supersedes the stale pending (its unauthorised
     # Razorpay sub never charges and Razorpay expires it).
     if sub.upgrade_pending_subscription_id and sub.upgrade_pending_plan_id == new_plan.id:
-        logger.info(
-            "Reusing pending upgrade checkout %s for client %s → plan %s",
-            sub.upgrade_pending_subscription_id,
-            client.id,
-            new_plan.slug,
-        )
-        return razorpay_service.rebuild_upgrade_checkout(
+        reused = razorpay_service.rebuild_upgrade_checkout(
             sub.upgrade_pending_subscription_id, client, new_plan, billing_cycle
         )
+        if reused is not None:
+            logger.info(
+                "Reusing pending upgrade checkout %s for client %s → plan %s",
+                sub.upgrade_pending_subscription_id,
+                client.id,
+                new_plan.slug,
+            )
+            return reused
+        # The pending checkout was abandoned and is no longer authorizable — clear
+        # the stale marker and fall through to mint a fresh one (M3), so the
+        # customer isn't stranded with a dead checkout.
+        logger.info(
+            "Pending upgrade checkout %s for client %s is dead; re-minting",
+            sub.upgrade_pending_subscription_id,
+            client.id,
+        )
+        sub.upgrade_pending_subscription_id = None
+        sub.upgrade_pending_plan_id = None
+        session.flush()
 
     # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
     # the activation webhook will call ``reset_monthly_plan_credits`` before

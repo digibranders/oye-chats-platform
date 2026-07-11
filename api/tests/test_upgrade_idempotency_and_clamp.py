@@ -89,6 +89,31 @@ def test_upgrade_to_different_plan_supersedes(db, monkeypatch):
     assert sub.upgrade_pending_plan_id == third.id
 
 
+def test_dead_pending_checkout_is_reminted(db, monkeypatch):
+    """M3: if the pending checkout is abandoned/expired (rebuild returns None),
+    execute_paid_upgrade must clear the stale marker and mint a fresh one instead
+    of handing back a dead checkout."""
+    client, sub, new = _setup(db)
+    sub.upgrade_pending_subscription_id = "sub_dead"
+    sub.upgrade_pending_plan_id = new.id
+    db.flush()
+    created = []
+
+    def fake_create(session, c, plan, cycle, extra_notes=None):
+        created.append(f"sub_fresh_{len(created) + 1}")
+        return {"subscription_id": created[-1]}
+
+    monkeypatch.setattr("app.services.razorpay_service.create_subscription", fake_create)
+    monkeypatch.setattr("app.services.razorpay_service.rebuild_upgrade_checkout", lambda *a, **k: None)  # dead
+
+    result = transition_service.execute_paid_upgrade(db, client, sub, new, "monthly")
+    db.commit()
+
+    assert created == ["sub_fresh_1"]  # re-minted
+    assert result["subscription_id"] == "sub_fresh_1"
+    assert sub.upgrade_pending_subscription_id == "sub_fresh_1"  # marker refreshed
+
+
 def test_activation_clears_pending_marker(db):
     client, sub, new = _setup(db)
     sub.upgrade_pending_subscription_id = "sub_new_1"

@@ -369,7 +369,10 @@ def check_and_deduct(
     deductions are paused.
 
     ``idempotency_key`` (finding H): an OPT-IN, globally-unique token identifying
-    one billable unit of work (e.g. ``"ingest:doc:<id>"``). When supplied, a
+    one billable unit of work. Only the crawl ingestion path passes one today —
+    ``ingest:{client_id}:{bot_id}:{crawl_job_id}:{url_sha}`` (see
+    ``pipeline.batch_web_ingestion``); the visitor ``/chat`` path deliberately
+    does NOT (a client-held key there is a free-chat vector). When supplied, a
     retry / re-queued ARQ job carrying the same key is a no-op — the existing
     deduction stands and the current balance is returned. ``reference_id`` remains
     a coarse AUDIT label (bot/doc id) and does NOT drive idempotency; callers that
@@ -398,16 +401,33 @@ def check_and_deduct(
     # scope-restricted — a stray cross-scope collision should surface, not silently
     # double-charge.
     if idempotency_key is not None:
-        already = session.scalar(
-            select(CreditLedger.id)
+        prior = session.execute(
+            select(CreditLedger.reason, func.coalesce(func.sum(-CreditLedger.delta), 0))
             .where(CreditLedger.idempotency_key == idempotency_key, CreditLedger.delta < 0)
-            .limit(1)
-        )
-        if already is not None:
-            logger.info(
-                "credit_service: idempotent skip — deduction for key=%s already recorded",
-                idempotency_key,
-            )
+            .group_by(CreditLedger.reason)
+        ).all()
+        if prior:
+            # Defense-in-depth: a key is meant to be 1:1 with a fixed billable
+            # unit. If it's ever reused for a DIFFERENT amount/reason, skipping
+            # silently could leak value — so fail loud in the log rather than
+            # quietly no-op a larger charge. (Not currently reachable: every key
+            # is server-derived and 1:1 with its work unit.)
+            prior_reason, prior_amount = prior[0]
+            if len(prior) > 1 or int(prior_amount) != amount or prior_reason != reason:
+                logger.warning(
+                    "credit_service: idempotency_key=%s reused with a different unit "
+                    "(prior reason=%s amount=%s; now reason=%s amount=%s) — skipping anyway",
+                    idempotency_key,
+                    prior_reason,
+                    prior_amount,
+                    reason,
+                    amount,
+                )
+            else:
+                logger.info(
+                    "credit_service: idempotent skip — deduction for key=%s already recorded",
+                    idempotency_key,
+                )
             return get_balance(session, client_id, bot_id)
 
     available = get_balance(session, client_id, bot_id)

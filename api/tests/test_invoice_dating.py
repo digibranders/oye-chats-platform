@@ -75,6 +75,32 @@ def test_finalize_dates_from_paid_at_not_now(db, enabled):
     assert "25-26" in inv.invoice_number
 
 
+def test_finalize_fy_boundary_ist(db, enabled):
+    """End-to-end proof of the fix: a capture at 23:59 IST on 31-Mar (still FY
+    25-26) vs 01:30 IST on 1-Apr (FY 26-27) must land in the right FY serial —
+    exercising _capture_paid_at (UTC) x financial_year_label (IST) together, which
+    is the exact interaction finding G is about. IST = UTC+5:30."""
+    _seller(db)
+    # 31-Mar-2026 23:59 IST == 31-Mar-2026 18:29 UTC → FY 25-26.
+    late_fy2526 = datetime(2026, 3, 31, 18, 29, tzinfo=UTC)
+    # 01-Apr-2026 01:30 IST == 31-Mar-2026 20:00 UTC → FY 26-27.
+    early_fy2627 = datetime(2026, 3, 31, 20, 0, tzinfo=UTC)
+
+    c1 = _client(db, "g-boundary-a@test.example", billing_state_code="27", billing_country="IN")
+    inv1 = Invoice(client_id=c1.id, amount_cents=179900, currency="inr", status="paid", paid_at=late_fy2526)
+    db.add(inv1)
+    db.flush()
+    assert invoice_service.finalize_invoice(db, inv1) is True
+    assert "25-26" in inv1.invoice_number
+
+    c2 = _client(db, "g-boundary-b@test.example", billing_state_code="27", billing_country="IN")
+    inv2 = Invoice(client_id=c2.id, amount_cents=179900, currency="inr", status="paid", paid_at=early_fy2627)
+    db.add(inv2)
+    db.flush()
+    assert invoice_service.finalize_invoice(db, inv2) is True
+    assert "26-27" in inv2.invoice_number
+
+
 def test_finalize_falls_back_to_now_without_paid_at(db, enabled):
     _seller(db)
     c = _client(db, "g-fallback@test.example", billing_state_code="27", billing_country="IN")

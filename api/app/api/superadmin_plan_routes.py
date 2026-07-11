@@ -267,6 +267,15 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
             "monthly_price_cents": ("razorpay_plan_id_monthly", "monthly"),
             "annual_price_cents": ("razorpay_plan_id_annual", "yearly"),
         }
+        # Mint the fresh Razorpay plan(s) FIRST, before mutating anything, so a
+        # failure on the second cycle can't leave the row half-updated. Collect
+        # the minted ids and only apply them once BOTH succeed. On any gateway
+        # failure, map to a 502 (matching every other RazorpayBillingError site)
+        # and log the orphaned plan ids so they can be reconciled — never leak a
+        # generic 500.
+        from app.services import razorpay_service
+
+        minted_ids: dict[str, str] = {}
         for price_field, (id_field, period) in _PRICE_TO_PLAN_ID.items():
             new_price = update_data.get(price_field)
             if (
@@ -274,15 +283,26 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                 and int(new_price) != int(getattr(plan, price_field) or 0)
                 and id_field not in update_data
             ):
-                from app.services import razorpay_service
-
-                new_rzp_id = razorpay_service.create_plan_for_price(
-                    name=f"{plan.name} ({period})",
-                    amount_paise=int(new_price),
-                    period=period,
-                    currency=plan.currency or "INR",
-                )
-                update_data[id_field] = new_rzp_id
+                try:
+                    new_rzp_id = razorpay_service.create_plan_for_price(
+                        name=f"{plan.name} ({period})",
+                        amount_paise=int(new_price),
+                        period=period,
+                        # These fields are INR minor units (paise); a plan whose
+                        # currency is USD has no razorpay_plan_id_* to re-mint, so
+                        # pin INR and never mislabel a paise amount as USD.
+                        currency="INR",
+                    )
+                except razorpay_service.RazorpayBillingError as exc:
+                    if minted_ids:
+                        logger.error(
+                            "Plan %s price edit aborted after minting %s; those Razorpay plans are "
+                            "now orphaned (unreferenced) and need reconciliation.",
+                            plan.id,
+                            minted_ids,
+                        )
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+                minted_ids[id_field] = new_rzp_id
                 logger.info(
                     "Plan %s %s price %s→%s; minted Razorpay plan %s",
                     plan.id,
@@ -291,6 +311,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                     new_price,
                     new_rzp_id,
                 )
+        update_data.update(minted_ids)
 
         # JSONB dict fields MERGE instead of replace. The admin editor sends
         # only the keys its typed UI knows about; assigning that payload

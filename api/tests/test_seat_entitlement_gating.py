@@ -131,18 +131,75 @@ def test_retry_with_changed_quantity_updates_created_sub(db):
     rzp.subscription.edit.assert_called_once()  # created sub quantity updated
 
 
-def test_carry_sets_operator_quantity(db):
-    """H1: the system seat-carry (require_authorization=False) must bump
-    operator_quantity, else carried seats vanish after a plan cutover."""
+def test_carry_does_not_self_entitle(db):
+    """Revenue-safety: the system seat-carry (require_authorization=False) mints a
+    NEW seat sub in `created` state (uncharged) — it must NOT grant entitlement,
+    or the customer gets free, unbilled seats forever. Entitlement stays gated on
+    a seat webhook; carried seats are suspended until re-authorized (a documented
+    pre-existing gap, deliberately NOT widened here)."""
     client, sub = _sub(db, included=1)
     rzp = MagicMock()
     rzp.subscription.create.return_value = {"id": "sub_seat_new"}
     with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
         result = razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2, require_authorization=False)
 
-    assert result is None  # no re-auth needed on a carry
-    assert sub.seat_addon_quantity == 2
-    assert sub.operator_quantity == 3  # 1 included + 2 carried — usable immediately
+    assert result is None  # carry doesn't return a checkout
+    assert sub.seat_addon_quantity == 2  # billed mirror carried
+    assert sub.operator_quantity == 1  # NOT entitled — no free seats on an uncharged sub
+
+
+def test_seat_halted_suspends_but_keeps_count_then_recovers(db):
+    """M1: a temporary halt (dunning) must suspend entitlement but KEEP the
+    authorized count, so a recovery charge restores entitlement without a gap
+    where the customer is charged for seats they can't use."""
+    client, sub = _sub(db)
+    sub.seat_addon_subscription_id = "sub_seat"
+    sub.seat_addon_quantity = 2
+    sub.operator_quantity = 3
+    db.flush()
+
+    halt = {
+        "event": "subscription.halted",
+        "payload": {"subscription": {"entity": {"id": "sub_seat", "notes": {"purpose": "seat_addon"}}}},
+    }
+    razorpay_service.handle_webhook_event(db, halt, event_id="evt_seat_halt")
+    assert sub.operator_quantity == 1  # entitlement suspended
+    assert sub.seat_addon_quantity == 2  # count RETAINED (not zeroed)
+
+    # Recovery charge restores entitlement from the retained count.
+    charged = {
+        "event": "subscription.charged",
+        "payload": {
+            "subscription": {"entity": {"id": "sub_seat", "notes": {"purpose": "seat_addon"}}},
+            "payment": {
+                "entity": {"id": "pay_recover", "amount": 99800, "currency": "INR", "created_at": 1_780_000_100}
+            },
+        },
+    }
+    razorpay_service.handle_webhook_event(db, charged, event_id="evt_seat_recover")
+    assert sub.operator_quantity == 3  # restored
+
+
+def test_seat_charged_twice_creates_one_invoice(db):
+    """Duplicate seat charge delivery must not double-invoice (idempotent on
+    payment_id)."""
+    from sqlalchemy import func
+
+    client, sub = _sub(db)
+    sub.seat_addon_subscription_id = "sub_seat"
+    sub.seat_addon_quantity = 2
+    db.flush()
+    event = {
+        "event": "subscription.charged",
+        "payload": {
+            "subscription": {"entity": {"id": "sub_seat", "notes": {"purpose": "seat_addon"}}},
+            "payment": {"entity": {"id": "pay_dup", "amount": 99800, "currency": "INR", "created_at": 1_780_000_200}},
+        },
+    }
+    razorpay_service.handle_webhook_event(db, event, event_id="evt_dup_1")
+    razorpay_service.handle_webhook_event(db, {**event}, event_id="evt_dup_2")  # redelivery
+    n = db.scalar(select(func.count()).select_from(Invoice).where(Invoice.razorpay_payment_id == "pay_dup"))
+    assert n == 1
 
 
 def test_seat_cancelled_resets_entitlement(db):

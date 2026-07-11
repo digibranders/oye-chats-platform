@@ -1283,8 +1283,9 @@ class CreditLedger(Base):
     )
     reference_id = Column(Integer, nullable=True)  # coarse AUDIT label: bot_id / document_id / invoice_id
     # Finding H: opt-in, globally-unique idempotency token for a billable unit of
-    # work (e.g. "chat:<uuid>", "ingest:doc:<id>"). Only set on deduction rows
-    # whose caller opted in; NULL for every legacy/per-request deduction.
+    # work. Only the crawl ingestion path sets one today
+    # ("ingest:{client}:{bot}:{job}:{url_sha}"); NULL for every other/per-request
+    # deduction. Backed by a partial unique index (see __table_args__).
     idempotency_key = Column(String, nullable=True)
     grant_id = Column(Integer, ForeignKey("credit_ledger.id", ondelete="SET NULL"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)  # only set on topup grants

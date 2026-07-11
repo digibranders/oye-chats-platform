@@ -441,20 +441,35 @@ def create_subscription(
     }
 
 
-def rebuild_upgrade_checkout(subscription_id: str, client: Client, plan: Plan, billing_cycle: str) -> dict[str, Any]:
+# Razorpay subscription states in which the hosted checkout can still be paid.
+# Anything else (cancelled/completed/expired/active) means the pending checkout is
+# dead and a fresh one must be minted.
+_AUTHORIZABLE_SUB_STATES = frozenset({"created", "authenticated", "pending"})
+
+
+def rebuild_upgrade_checkout(
+    subscription_id: str, client: Client, plan: Plan, billing_cycle: str
+) -> dict[str, Any] | None:
     """Rebuild the Checkout payload for an EXISTING (in-flight) Razorpay
     subscription — used to return a pending upgrade's checkout on a double-submit
     instead of minting a second subscription (finding D).
 
     Fetches the subscription to recover its ``short_url`` (Razorpay's hosted
-    checkout) and billed plan id. Raises rather than silently minting a new sub,
-    so a fetch failure never reopens the double-charge window.
+    checkout) and billed plan id. Raises rather than silently minting a new sub on
+    a fetch failure, so we never reopen the double-charge window. Returns ``None``
+    when the pending sub is no longer authorizable (abandoned → cancelled/expired)
+    so the caller can clear the stale marker and mint a fresh checkout instead of
+    handing back a dead one (M3).
     """
     try:
         sub = _get_razorpay().subscription.fetch(subscription_id)
     except Exception as exc:
         logger.exception("Could not reload pending upgrade subscription %s: %s", subscription_id, exc)
         raise RazorpayBillingError("Could not reload your pending upgrade. Please try again.") from exc
+    status = str(sub.get("status") or "").lower()
+    if status not in _AUTHORIZABLE_SUB_STATES:
+        logger.info("Pending upgrade sub %s is '%s' — not reusable; caller will re-mint", subscription_id, status)
+        return None
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
@@ -685,16 +700,22 @@ def edit_seat_addon_quantity(
             sub.seat_addon_pending_quantity = extra_seats
             session.flush()
             return addon
-        # System carry across a plan cutover: the seats were authorized on the
-        # prior sub, so activate them on the new sub immediately (no re-auth).
-        # Bump operator_quantity too (H1) — the carried seat sub is minted in
-        # ``created`` state and won't fire an ``activated`` webhook to do it, so
-        # without this the customer's paid seats would silently vanish after any
-        # plan change (seat enforcement reads operator_quantity).
-        included = int((sub.plan.included_operator_seats if sub.plan else 1) or 1)
+        # System carry across a plan cutover. The carried seats move onto a NEW
+        # Razorpay seat sub minted in ``created`` state — a fresh UPI mandate that
+        # does NOT charge until re-authorized. We therefore MUST NOT grant
+        # entitlement here: bumping operator_quantity would hand the customer free,
+        # unbilled seats indefinitely (a revenue leak). We keep only the billed
+        # mirror; entitlement stays gated on a seat ``activated``/``charged``
+        # webhook (finding A), so if the carried mandate is re-authorized the seats
+        # activate then, and if it isn't they never entitle and never leak.
+        #
+        # KNOWN PRE-EXISTING GAP (out of scope, tracked separately): nothing here
+        # surfaces the carried-seat checkout for re-authorization the way
+        # ``promote_scheduled_change`` does for the plan, so carried seats are
+        # currently suspended after a cutover until the customer re-buys them.
+        # The old code had the same uncharged-carry gap; this PR does not widen it.
         sub.seat_addon_quantity = extra_seats
         sub.seat_addon_pending_quantity = None
-        sub.operator_quantity = included + extra_seats
         session.flush()
         return None
 
@@ -1858,7 +1879,13 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         local.current_period_end = current_period_end
     if customer_id and not local.razorpay_customer_id:
         local.razorpay_customer_id = customer_id
-    local.operator_quantity = quantity
+    # ``quantity`` is the MAIN plan's Razorpay quantity (always 1 — seats bill on
+    # a separate add-on sub, P0-3). Since finding A makes operator_quantity the
+    # authoritative seat-entitlement mirror maintained by the seat webhooks,
+    # writing the bare main-plan quantity here would clobber a seat-holder down to
+    # 1 until their next seat charge. Re-derive from included + authorized seats.
+    included = int((local.plan.included_operator_seats if local.plan else 1) or 1)
+    local.operator_quantity = included + int(local.seat_addon_quantity or 0)
     session.flush()
     return f"Subscription {razorpay_sub_id} re-activated"
 
