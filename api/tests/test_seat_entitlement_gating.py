@@ -148,6 +148,17 @@ def test_carry_does_not_self_entitle(db):
     assert sub.operator_quantity == 1  # NOT entitled — no free seats on an uncharged sub
 
 
+def test_first_purchase_checkout_carries_short_url_for_reauth(db):
+    """The seat checkout now surfaces Razorpay's hosted short_url so a webhook path
+    (the plan-cutover carry) can email a re-authorization link."""
+    client, sub = _sub(db)
+    rzp = MagicMock()
+    rzp.subscription.create.return_value = {"id": "sub_seat", "short_url": "https://rzp.io/i/seat"}
+    with patch.object(razorpay_service, "_get_razorpay", return_value=rzp):
+        checkout = razorpay_service.edit_seat_addon_quantity(db, sub, extra_seats=2)
+    assert checkout["short_url"] == "https://rzp.io/i/seat"
+
+
 def test_seat_halted_suspends_but_keeps_count_then_recovers(db):
     """M1: a temporary halt (dunning) must suspend entitlement but KEEP the
     authorized count, so a recovery charge restores entitlement without a gap

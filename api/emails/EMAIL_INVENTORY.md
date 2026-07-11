@@ -29,7 +29,7 @@
 ### Rendering — all in code (one design system)
 **Every email now renders raw HTML in Python** from the shared design system in
 `app/services/email_design.py` (monochrome + single-indigo-accent, dark-mode hardened
-for Outlook). There are **no Brevo saved templates in the send path** — all 19 senders
+for Outlook). There are **no Brevo saved templates in the send path** — all 20 senders
 build HTML and dispatch through `_send_brevo_email()` (which supports attachments, used
 by invoices). The gallery in `emails/gallery/` is generated from these same senders, so
 what you review is what customers receive.
@@ -48,7 +48,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (19 distinct emails)
+## 2. Email Catalogue (20 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -165,6 +165,16 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Metered | No |
 | Context | See Razorpay UPI update constraint — plan change = cancel + recreate + re-auth |
 
+#### C3. Operator-seat re-authorization (UPI mandate)
+| | |
+|---|---|
+| Function | `send_seat_reauth_email(to_email, name, seat_count, reauth_url)` |
+| Subject | `Action needed: re-authorize your operator seats` |
+| Body | Plan cutover moved the seat add-on to a new UPI mandate → authorize it so carried seats aren't suspended |
+| Trigger | `razorpay_service.py` seat carry inside `_handle_subscription_activated` (a plan cutover carrying operator seats onto the new subscription) |
+| Metered | No |
+| Context | Seats bill on a SEPARATE mandate (P0-3); a cutover mints a new, uncharged seat sub that must be re-authorized (finding A follow-up) |
+
 ### D. Lead / Qualification / Live Chat
 
 #### D1. Qualified lead alert
@@ -269,7 +279,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **19 distinct emails** across 5 categories: Auth (4), Trial lifecycle (5), Billing (2), Lead/Live-chat (6), Affiliate (2).
+- **20 distinct emails** across 5 categories: Auth (4), Trial lifecycle (5), Billing (3), Lead/Live-chat (6), Affiliate (2).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF).

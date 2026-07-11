@@ -54,7 +54,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
-from app.services import credit_service, invoice_service
+from app.services import credit_service, email_service, invoice_service
 
 if TYPE_CHECKING:
     import razorpay
@@ -641,16 +641,21 @@ def create_seat_addon_subscription(
         extra_seats,
     )
 
-    return _seat_checkout_payload(subscription["id"], client, extra_seats)
+    return _seat_checkout_payload(subscription["id"], client, extra_seats, short_url=subscription.get("short_url"))
 
 
-def _seat_checkout_payload(subscription_id: str, client: Client, extra_seats: int) -> dict[str, Any]:
+def _seat_checkout_payload(
+    subscription_id: str, client: Client, extra_seats: int, *, short_url: str | None = None
+) -> dict[str, Any]:
     """Checkout payload for a seat add-on subscription. Reused when re-opening an
     unauthorized pending purchase (finding A C1) so we never need a Razorpay
-    round-trip just to rebuild it — the JS SDK only needs subscription_id + key."""
+    round-trip just to rebuild it — the JS SDK only needs subscription_id + key.
+    ``short_url`` (Razorpay's hosted checkout) is included when known so a webhook
+    path can email the customer a re-authorization link."""
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
+        "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
         "description": f"{extra_seats} extra seat(s) — ₹499/seat/month",
@@ -1784,9 +1789,30 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         total_carried_seats = max(carried_extra_seats, int(notes.get("carried_seat_count") or 0))
         if total_carried_seats > 0:
             try:
-                # System carry: seats already authorized on the prior sub, so
-                # activate immediately on the new one (no re-authorization).
-                edit_seat_addon_quantity(session, local, total_carried_seats, require_authorization=False)
+                # The carried seats move to a NEW seat add-on sub with a NEW UPI
+                # mandate that must be re-authorized before it charges (finding A).
+                # Gate entitlement (require_authorization=True stashes the pending
+                # count + returns the checkout) — activating uncharged seats here
+                # would be free, unbilled seats — and email the customer the hosted
+                # re-auth link so their seats aren't silently suspended with no
+                # path back. A failed email never rolls back the activation.
+                seat_checkout = edit_seat_addon_quantity(
+                    session, local, total_carried_seats, require_authorization=True
+                )
+                reauth_url = (seat_checkout or {}).get("short_url")
+                client_row = session.get(Client, client_id)
+                if reauth_url and client_row and client_row.email:
+                    try:
+                        email_service.send_seat_reauth_email(
+                            client_row.email,
+                            name=client_row.name,
+                            seat_count=total_carried_seats,
+                            reauth_url=reauth_url,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Seat re-auth email failed for client %s after cutover (carry stands)", client_id
+                        )
             except Exception:
                 logger.error(
                     "Failed to re-create seat add-on (%d seats) on new subscription "

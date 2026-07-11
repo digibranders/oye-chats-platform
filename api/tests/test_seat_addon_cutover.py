@@ -230,7 +230,10 @@ def test_activation_cancels_old_seat_addon_and_carries_to_new_sub(db):
 
     new = db.query(Subscription).filter_by(razorpay_subscription_id="sub_new_seatcut").one()
     assert new.seat_addon_subscription_id == "sub_addon_new"
-    assert new.seat_addon_quantity == 3
+    # Carry now GATES entitlement on re-auth: pending set, quantity 0 until
+    # the customer authorizes the new seat mandate (finding A follow-up).
+    assert new.seat_addon_pending_quantity == 3
+    assert new.seat_addon_quantity == 0
 
 
 def test_activation_without_old_seat_addon_does_not_create_one(db):
@@ -439,4 +442,5 @@ def test_promote_scheduled_change_seat_carry_reaches_activation(db):
 
     new = db.query(Subscription).filter_by(razorpay_subscription_id="sub_new_dge2e").one()
     assert new.seat_addon_subscription_id == "sub_addon_dge2e_new"
-    assert new.seat_addon_quantity == 4
+    assert new.seat_addon_pending_quantity == 4
+    assert new.seat_addon_quantity == 0

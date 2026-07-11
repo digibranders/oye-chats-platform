@@ -962,6 +962,45 @@ def send_downgrade_reauth_email(
         _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
 
 
+def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, reauth_url: str) -> None:
+    """Tell the customer their operator seats need a fresh mandate after a plan
+    change (finding A follow-up).
+
+    A plan cutover cancels the old seat add-on mandate and mints a new one, which
+    — like the plan itself — must be re-authorized before it charges (and before
+    the seats are re-entitled). This emails the hosted re-auth link so carried
+    seats aren't silently suspended with no path back.
+    """
+    seats = f"{seat_count} extra seat{'s' if seat_count != 1 else ''}"
+    inner = (
+        h1("Re-authorize your operator seats")
+        + p(
+            f"Hi {_first_name(name)} — after your recent plan change, your {strong(seats)} moved to a new "
+            f"payment mandate. Because seats bill on their own UPI mandate, you&rsquo;ll need to authorize it "
+            f"once more so your team keeps its seats."
+        )
+        + ed.alert(
+            "It takes under a minute. Until you confirm, the extra seats stay paused — please complete it soon.",
+            "warning",
+        )
+        + button("Authorize my seats", reauth_url)
+        + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    try:
+        send_email_async(
+            to_email,
+            "Action needed: re-authorize your operator seats",
+            shell(
+                subject="Action needed: re-authorize your operator seats",
+                preheader="Authorize your seat mandate to keep your team's seats active.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("seat_reauth_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="seat_reauth", email=to_email)
+
+
 def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | None = None) -> None:
     """Send the customer their finalized invoice/receipt with the PDF attached."""
     from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
