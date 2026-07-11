@@ -441,6 +441,33 @@ def create_subscription(
     }
 
 
+def rebuild_upgrade_checkout(subscription_id: str, client: Client, plan: Plan, billing_cycle: str) -> dict[str, Any]:
+    """Rebuild the Checkout payload for an EXISTING (in-flight) Razorpay
+    subscription — used to return a pending upgrade's checkout on a double-submit
+    instead of minting a second subscription (finding D).
+
+    Fetches the subscription to recover its ``short_url`` (Razorpay's hosted
+    checkout) and billed plan id. Raises rather than silently minting a new sub,
+    so a fetch failure never reopens the double-charge window.
+    """
+    try:
+        sub = _get_razorpay().subscription.fetch(subscription_id)
+    except Exception as exc:
+        logger.exception("Could not reload pending upgrade subscription %s: %s", subscription_id, exc)
+        raise RazorpayBillingError("Could not reload your pending upgrade. Please try again.") from exc
+    return {
+        "provider": "razorpay",
+        "subscription_id": subscription_id,
+        "short_url": sub.get("short_url"),
+        "key_id": RAZORPAY_KEY_ID,
+        "name": "OyeChats",
+        "description": f"{plan.name} ({billing_cycle})",
+        "prefill": {"name": client.name or "", "email": client.email or ""},
+        "theme": {"color": "#6366f1"},
+        "billing_plan_id": sub.get("plan_id"),
+    }
+
+
 def resolve_discounted_plan(
     session: Session,
     base_plan: Plan,
@@ -1598,14 +1625,22 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # by the change-plan path and ``start_trial_subscription``.
         # Sets the period marker so the first subscription.charged for this
         # period is a no-op (H4).
+        from app.services import transition_service
+
+        # Finding F: capture the customer's ACTUAL unused plan credits BEFORE the
+        # reset below zeroes them, so the pending rollover (snapshotted at click
+        # time) is clamped to what's really left — not re-granted in full after
+        # they've spent some between click and authorization.
+        live_remaining_before_reset = transition_service.remaining_plan_credits(session, local.client_id)
+
         _grant_subscription_period(session, local, current_period_end)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent —
         # the old sub's column is zeroed the first time this runs, so webhook
         # replays don't double-credit.
-        from app.services import transition_service
-
-        transition_service.apply_pending_proration(session, local, prev_rzp_sub_id)
+        transition_service.apply_pending_proration(
+            session, local, prev_rzp_sub_id, live_remaining=live_remaining_before_reset
+        )
 
         # Carry the operator-seat add-on across the cutover — done LAST, after
         # every fail-prone DB write above, because ``edit_seat_addon_quantity``

@@ -998,6 +998,14 @@ class Subscription(Base):
     # credit — never NULL so arithmetic stays simple.
     upgrade_credit_pending_cents = Column(Integer, default=0, server_default="0", nullable=False)
 
+    # Finding D: idempotency marker for an in-flight paid→paid upgrade checkout.
+    # Set on the OLD sub when execute_paid_upgrade mints the new (not-yet-local)
+    # Razorpay subscription; a sequential double-submit for the SAME target plan
+    # returns this existing checkout instead of minting a second sub (which would
+    # double-charge the first cycle). Cleared when the upgrade activates.
+    upgrade_pending_subscription_id = Column(String, nullable=True)
+    upgrade_pending_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+
     # Razorpay id of the SEPARATE per-seat add-on subscription. Kept distinct
     # from razorpay_subscription_id because Razorpay quantity multiplies the
     # whole plan amount — seats must be their own sub (P0-3).
