@@ -6,21 +6,19 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import update as _sa_update
 
-from app.db.models import Invoice as _Invoice
+from app import config
+from app.db.models import Client, Invoice
+from app.services import invoice_reports, invoice_service
+from app.services.seller_profile_service import save_seller_profile
 
 
 def _raw_tamper(db, inv, **cols):
     """Mutate a finalized invoice at the DB level, bypassing the ORM immutability
     guard (finding L). Models the out-of-band edits / corruption that the
     reconciliation anomaly detector exists to catch."""
-    db.execute(_sa_update(_Invoice).where(_Invoice.id == inv.id).values(**cols))
+    db.execute(_sa_update(Invoice).where(Invoice.id == inv.id).values(**cols))
     db.expire(inv)
 
-
-from app import config
-from app.db.models import Client, Invoice
-from app.services import invoice_reports, invoice_service
-from app.services.seller_profile_service import save_seller_profile
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
 
