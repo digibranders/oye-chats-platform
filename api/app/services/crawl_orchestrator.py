@@ -35,6 +35,7 @@ from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
+from app.services.brand_color_extractor import fetch_recommended_colors
 from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
     CrawlCancelled,
@@ -297,7 +298,18 @@ async def run_full_crawl(
                 )
 
         results = crawl_data.get("results")
-        recommended_colors = crawl_data.get("recommended_colors", [])
+        recommended_colors = crawl_data.get("recommended_colors") or []
+        # The active crawl providers (Spider, Jina) return markdown, not HTML,
+        # so their ``recommended_colors`` is always empty. Fetch the seed URL's
+        # raw HTML once and extract the brand palette from its CSS/inline
+        # styles. Best-effort — a fetch failure keeps ``recommended_colors``
+        # empty, which then correctly clears any stale palette on the bot.
+        if not recommended_colors:
+            try:
+                recommended_colors = await fetch_recommended_colors(url)
+            except Exception:
+                logger.warning("brand color extraction failed for %s", url, exc_info=True)
+                recommended_colors = []
         # Coverage diagnostics from the crawler subprocess. ``discovered_total``
         # is every URL the crawler ever enqueued (visited + still-queued +
         # robots-blocked); ``queue_remaining`` is what was still pending when
@@ -472,13 +484,22 @@ async def run_full_crawl(
         # yet, so re-crawls never overwrite an explicit choice.
         services_url_suggestion = _pick_services_url(valid_pages)
 
-        if recommended_colors or brand_tone or company_context or services_url_suggestion:
+        # Persist crawl metadata. For a bot-scoped crawl we ALWAYS write
+        # ``recommended_colors`` (even an empty list), so a re-crawl of a site
+        # that yields no extractable palette resets the stale colors from a
+        # prior website instead of silently keeping them. brand_tone /
+        # company_context stay truthy-gated because we don't want a one-off
+        # extraction miss to wipe otherwise-good text metadata.
+        # For the client-fallback path (bot_id is None) we keep the original
+        # "only touch DB when there's data" behavior — nothing user-visible
+        # depends on clearing the client-level palette between crawls.
+        should_persist = bot_id is not None or bool(recommended_colors) or bool(brand_tone) or bool(company_context)
+        if should_persist:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)
                     if bot_db and bot_db.client_id == client_id:
-                        if recommended_colors:
-                            bot_db.recommended_colors = recommended_colors
+                        bot_db.recommended_colors = recommended_colors
                         if brand_tone:
                             bot_db.brand_tone = brand_tone
                         if company_context:
@@ -493,7 +514,7 @@ async def run_full_crawl(
                         logger.info(
                             "Saved crawl metadata for bot %s: colors=%d, tone=%s, company_name=%s",
                             bot_id,
-                            len(recommended_colors) if recommended_colors else 0,
+                            len(recommended_colors),
                             "yes" if brand_tone else "no",
                             company_context.get("name") if company_context else "no",
                         )
