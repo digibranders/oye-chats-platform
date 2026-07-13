@@ -130,6 +130,27 @@ export function NotificationProvider({ children }) {
         }
     }, [isAuthed]);
 
+    // Re-hydrate on workspace switch — notifications (handoff requests,
+    // offline messages, chat transfers) are workspace-scoped, so a switch
+    // from workspace A to workspace B must pull B's notifications or the
+    // bell counter, dropdown, and incoming-handoff banner stay pointed at
+    // A's data. Complements the abort-controller cancellation in api.js:
+    // that stops A's in-flight requests, this fires the fresh fetch under B.
+    useEffect(() => {
+        function onWorkspaceSwitched() {
+            if (isAuthed()) {
+                // Reset the seen-handoff dedup set — a session id from A
+                // that we've already surfaced there shouldn't suppress a
+                // legitimate new handoff banner in B.
+                seenHandoffSessionsRef.current = new Set();
+                setIncomingHandoff(null);
+                hydrate();
+            }
+        }
+        window.addEventListener('oyechats:workspace-switched', onWorkspaceSwitched);
+        return () => window.removeEventListener('oyechats:workspace-switched', onWorkspaceSwitched);
+    }, [hydrate, isAuthed]);
+
     // ── Incoming handoff slot ──
     // Surfaces the most recent handoff request that has NOT yet been
     // dismissed by the operator. The banner subscribes to this. We track

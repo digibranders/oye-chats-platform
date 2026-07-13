@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import OyeChatsMark from '../components/OyeChatsMark';
 import { useBotContext } from '../context/BotContext';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { getAuthState } from '../utils/auth';
 import { getOfflineMessages, getLeadStats, getCurrentUser } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
@@ -25,7 +26,15 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const [expandedMenus, setExpandedMenus] = useState({});
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
-  const { isOperator: isOperatorRole, isBotManager } = getAuthState();
+  const authState = getAuthState();
+  const { currentRole: workspaceRole, currentWorkspaceName } = useWorkspace();
+  // Role source of truth: legacy X-Operator-Key sessions read from
+  // ``getAuthState().isOperator``; new client-authed sessions get their role
+  // from the WorkspaceContext (which tracks whether the currently-active
+  // workspace is one they own or one they were invited into). Either signal
+  // says "operator" ⇒ slim operator sidebar.
+  const isOperatorRole = authState.isOperator || workspaceRole === 'operator';
+  const isBotManager = authState.isBotManager;
   // Entitlements drive which paid-only menu items render. Free users see
   // a slimmer sidebar; Standard+ see the full set. The hook is cheap
   // (Redis-cached server-side; module-cached client-side) so calling it
@@ -381,7 +390,11 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
               animate={{ opacity: 1, x: 0 }}
               className="text-[15px] font-bold text-surface-900 dark:text-white tracking-tight"
             >
-              {localStorage.getItem('company_name') || 'OyeChats'}
+              {/* Workspace-aware label — the active workspace's display
+                  name comes from WorkspaceContext so switching updates
+                  the sidebar header instantly. Falls back to the cached
+                  company_name (owned workspace) and finally to OyeChats. */}
+              {currentWorkspaceName || localStorage.getItem('company_name') || 'OyeChats'}
             </motion.span>
           )}
         </div>

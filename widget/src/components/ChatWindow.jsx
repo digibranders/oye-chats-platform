@@ -570,6 +570,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             sender: m.role === 'user' ? 'user' : 'bot',
                             timestamp: m.timestamp,
                             feedback: typeof m.feedback === 'number' ? m.feedback : null,
+                            // Hydrate the media card the same way a live stream does
+                            // (see the FINAL_METADATA branch below) so a video/document
+                            // card re-renders under the bot answer on refresh.
+                            ...(m.media_card ? { media_card: m.media_card } : {}),
+                            ...(Array.isArray(m.media_secondary) ? { media_secondary: m.media_secondary } : {}),
                             ...(m.role === 'system' ? { type: 'system' } : {}),
                         }));
                         setMessages(mapped);
@@ -935,6 +940,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     sender: m.role === 'user' ? 'user' : 'bot',
                     timestamp: m.timestamp,
                     feedback: null,
+                    ...(m.media_card ? { media_card: m.media_card } : {}),
+                    ...(Array.isArray(m.media_secondary) ? { media_secondary: m.media_secondary } : {}),
                     ...(m.role === 'system' ? { type: 'system' } : {}),
                 }));
                 setMessages(prev => [...mapped, ...prev]);

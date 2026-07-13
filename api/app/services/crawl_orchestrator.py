@@ -35,6 +35,7 @@ from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
+from app.services.brand_color_extractor import fetch_recommended_colors
 from app.services.brand_tone import preset_text
 from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
@@ -117,8 +118,17 @@ def _apply_crawl_metadata_to_bot(
     """
     overrides = set(bot_db.manual_field_overrides or [])
     written: list[str] = []
-    if recommended_colors:
-        bot_db.recommended_colors = recommended_colors
+    # Always refresh ``recommended_colors`` — even when the extractor came
+    # back empty. A re-crawl of a site whose palette can no longer be
+    # extracted MUST clear the stale colors from the previous site, otherwise
+    # the widget keeps rendering with the wrong brand until the customer
+    # notices and re-picks manually. There's no ``manual_field_overrides``
+    # guard here because ``recommended_colors`` is a suggestion surface, not
+    # a user-editable field — customers pick from it into the actual color
+    # settings, which live on separate fields the helper never touches.
+    normalized_colors = recommended_colors or []
+    if bot_db.recommended_colors != normalized_colors:
+        bot_db.recommended_colors = normalized_colors
         written.append("recommended_colors")
     if brand_tone and "brand_tone" not in overrides:
         bot_db.brand_tone = brand_tone
@@ -351,11 +361,24 @@ async def run_full_crawl(
                 )
 
         results = crawl_data.get("results")
-        recommended_colors = crawl_data.get("recommended_colors", [])
+        recommended_colors = crawl_data.get("recommended_colors") or []
+        # The active crawl providers (Spider, Jina) return markdown, not HTML,
+        # so their ``recommended_colors`` is always empty. Fetch the seed URL's
+        # raw HTML once and extract the brand palette from its CSS/inline
+        # styles. Best-effort — a fetch failure keeps ``recommended_colors``
+        # empty, which then correctly clears any stale palette on the bot.
+        if not recommended_colors:
+            try:
+                recommended_colors = await fetch_recommended_colors(url)
+            except Exception:
+                logger.warning("brand color extraction failed for %s", url, exc_info=True)
+                recommended_colors = []
 
         # A cancel that landed just as the scrape finished (so the provider
         # returned normally instead of raising) still stops here — before we
-        # spend the embed budget on the final sweep.
+        # spend the embed budget on the final sweep. Runs AFTER the color
+        # fallback so a mid-cancel run still surfaces whatever palette we
+        # managed to extract for the retry attempt.
         if is_cancellation_requested(client_id):
             raise CrawlCancelled({"results": results or [], "recommended_colors": recommended_colors})
         # Coverage diagnostics from the crawler subprocess. ``discovered_total``
@@ -542,7 +565,22 @@ async def run_full_crawl(
         # Resolve the classified preset key to its canonical, prompt-ready text.
         brand_tone_text = preset_text(brand_tone_key)
 
-        if recommended_colors or brand_tone_text or company_context or services_url_suggestion:
+        # Persist crawl metadata. For a bot-scoped crawl we ALWAYS run through
+        # the helper (even when everything extracted was empty) so a re-crawl
+        # that yields no palette resets the stale colors from a prior site
+        # instead of silently keeping them — see the ``recommended_colors``
+        # handling inside ``_apply_crawl_metadata_to_bot``. For the client-
+        # fallback path (bot_id is None) we keep the original "only touch DB
+        # when there's data" behavior — nothing user-visible depends on
+        # clearing the client-level palette between crawls.
+        should_persist = (
+            bot_id is not None
+            or recommended_colors
+            or brand_tone_text
+            or company_context
+            or services_url_suggestion
+        )
+        if should_persist:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)

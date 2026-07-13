@@ -16,7 +16,16 @@ const features = [
 ];
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  // Read the initial email from the URL up front so ``useState``'s lazy
+  // initializer captures it before the first render — the invite airlock
+  // routes here as ``/login?next=/invite/<token>&email=<invited_email>``
+  // and pre-filling saves the invitee from retyping their own email. Not
+  // locked so someone using their own credentials with a different email
+  // can still edit; the airlock's email-match check catches any drift on
+  // the return trip.
+  const [initialSearchParams] = useSearchParams();
+  const _initialEmail = (initialSearchParams.get('email') || '').trim();
+  const [email, setEmail] = useState(_initialEmail);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -133,9 +142,23 @@ export default function Login() {
   if (getAuthItem('admin_token')) {
     if (getAuthItem('admin_is_verified') === 'false') {
       const pending = getAuthItem('admin_pending_email') || '';
-      return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
+      // Preserve the deep-link ``next`` (e.g. ``/invite/<token>``) through
+      // the verification bounce so an already-logged-in but unverified user
+      // clicking an invite link still lands on the airlock after OTP entry.
+      const verifyParams = new URLSearchParams();
+      if (pending) verifyParams.set('email', pending);
+      if (safeNext) verifyParams.set('next', safeNext);
+      const q = verifyParams.toString();
+      return <Navigate to={`/verify-email${q ? `?${q}` : ''}`} replace />;
     }
     const isOperator = localStorage.getItem('auth_type') === 'operator';
+    // Deep-link ``next`` wins over defaults — invite airlock, push-notification
+    // click, etc. Without this, an already-logged-in user clicking an invite
+    // link would get bounced straight to their dashboard instead of the
+    // airlock, losing the invite context they intended to act on.
+    if (safeNext) {
+      return <Navigate to={safeNext} replace />;
+    }
     // If an affiliate token is in the URL, keep routing it through the
     // invite landing — the recipient is already logged in and the page
     // will auto-fire accept-existing.
@@ -273,10 +296,16 @@ export default function Login() {
               button hides itself if /auth/google/status returns enabled=false,
               so misconfigured envs degrade gracefully. */}
           <div className="mb-5">
+            {/* Preserve the deep-link ``next`` (e.g. ``/invite/<token>``)
+                so a Google sign-in from the invite airlock lands the user
+                BACK on the airlock to accept, not on the dashboard root.
+                ``safeNext`` is already open-redirect validated above; the
+                affiliate-token fallback stays as a lower-priority default
+                for the standalone affiliate-invite flow. */}
             <GoogleAuthButton
               label="Sign in with Google"
               mode="login"
-              next={affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/'}
+              next={safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/')}
               tabIndex={0}
             />
           </div>

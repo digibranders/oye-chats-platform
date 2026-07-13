@@ -145,6 +145,20 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
     for operator_id in list(manager.operator_connections.keys()):
         await manager._send_to_operator(operator_id, notification)
 
+    # Fan out a Web Push to off-WS operators + workspace owner so out-of-hours
+    # submissions surface as OS notifications, not just emails. The task skips
+    # operators currently on WS (they got the frame above).
+    try:
+        from app.worker.enqueue import enqueue_sync
+
+        enqueue_sync("task_dispatch_offline_message_push", msg.id)
+    except Exception:
+        logger.exception(
+            "Failed to enqueue offline-message push for message=%s bot=%s",
+            msg.id,
+            bot.id,
+        )
+
     # Drop a workspace-scoped notification into the bell so it survives a
     # reload + reaches operators on any page in the admin dashboard.
     try:

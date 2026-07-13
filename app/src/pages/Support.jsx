@@ -8,15 +8,26 @@ import LiveChat from './LiveChat';
 import OfflineMessages from './OfflineMessages';
 import useEntitlements from '../hooks/useEntitlements';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
+import { getAuthState } from '../utils/auth';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 export default function Support() {
   const [searchParams] = useSearchParams();
   const { entitlements: ent } = useEntitlements();
   const { requestUpgrade } = useUpgradeModal();
-  // Live operator handoff lives behind the live_chat plan feature. Free
-  // users still get the Messages inbox (visitors leaving offline messages
-  // is a baseline trust feature) but the Live Chat tab is gated.
-  const liveChatLocked = !ent.hasFeature('live_chat');
+  const { isOperator } = getAuthState();
+  const { currentRole } = useWorkspace();
+  // Two ways a caller can be acting as an operator right now:
+  //   1) Legacy X-Operator-Key session — ``getAuthState().isOperator`` = true.
+  //   2) Linked-operator flow — they're a Client (own X-API-Key) viewing
+  //      SOMEONE ELSE'S workspace via the switcher, where ``currentRole`` is
+  //      'operator' (that's what drives the "OPERATOR" badge in the switcher).
+  // Neither can upgrade the workspace's subscription, so nagging them with
+  // "Upgrade to enable" is nonsense — the owner is the only one who can pay,
+  // and if there's an operator on the workspace at all then the workspace
+  // already has the live_chat feature (invite_service enforces that on CREATE).
+  const actingAsOperator = isOperator || currentRole === 'operator';
+  const liveChatLocked = !actingAsOperator && !ent.hasFeature('live_chat');
 
   // Tab definitions are memoised so a re-render from any source doesn't
   // recompute the array identity unnecessarily — the Tabs component uses

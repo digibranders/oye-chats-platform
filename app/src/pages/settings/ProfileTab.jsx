@@ -10,6 +10,8 @@ import {
     cancelClientEmailChange,
 } from '../../services/api';
 import { getAuthItem, setAuthItem } from '../../utils/authStorage';
+import { useWorkspace } from '../../context/WorkspaceContext';
+import InstallAsAppCard from '../../components/InstallAsAppCard';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -63,6 +65,12 @@ const labelCls = 'text-xs font-medium text-surface-500 dark:text-surface-400 mb-
 export default function ProfileTab() {
     const { showToast } = useToast();
     const isOperator = getAuthItem('auth_type') === 'operator';
+    // Linked-operator flow: a Client viewing a workspace where
+    // ``currentRole === 'operator'``. Same audience as InstallBanner —
+    // cover both flavors so the workspace switcher swap is enough to
+    // reveal (or hide) the install card without a reload.
+    const { currentRole: workspaceRole } = useWorkspace();
+    const isOperatorRole = isOperator || workspaceRole === 'operator';
 
     const [profile, setProfile] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -476,6 +484,12 @@ export default function ProfileTab() {
                     )}
                 </div>
             )}
+
+            {/* Install-as-app card is only rendered on the Profile tab when
+                the current role is operator — for admins/owners the same
+                card lives on the Notifications tab (which operators can't
+                see, see Settings.jsx tab filter). */}
+            {isOperatorRole && <InstallAsAppCard />}
         </div>
     );
 }

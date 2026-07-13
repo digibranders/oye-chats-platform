@@ -217,7 +217,12 @@ class TestGetCurrentClientOrOperator:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client_or_operator(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+            auth.get_current_client_or_operator(
+                api_key="client-key-123",
+                operator_key=None,
+                legacy_agent_key=None,
+                workspace_id_raw=None,
+            )
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_suspended"
@@ -228,16 +233,26 @@ class TestGetCurrentClientOrOperator:
         session.execute.return_value = _ExecuteResult(client)
         _patch_session(monkeypatch, session)
 
-        result = auth.get_current_client_or_operator(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+        result = auth.get_current_client_or_operator(
+            api_key="client-key-123",
+            operator_key=None,
+            legacy_agent_key=None,
+            workspace_id_raw=None,
+        )
         assert result["type"] == "client"
         assert result["entity"] is client
 
     def test_operator_of_suspended_workspace_rejected(self, monkeypatch):
+        # ``bot_id`` mirrors the DB column added when operators became
+        # bot-scoped — auth.get_current_client_or_operator dereferences it
+        # to populate the returned dict's ``bot_id`` field. The mock has
+        # to carry it or the getattr chain in auth.py raises.
         operator = SimpleNamespace(
             id=9,
             name="Op",
             email="op@example.com",
             client_id=1,
+            bot_id=42,
             role="operator",
             department_id=None,
             operator_api_key="op-key",
@@ -254,7 +269,12 @@ class TestGetCurrentClientOrOperator:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client_or_operator(api_key=None, operator_key="op-key", legacy_agent_key=None)
+            auth.get_current_client_or_operator(
+                api_key=None,
+                operator_key="op-key",
+                legacy_agent_key=None,
+                workspace_id_raw=None,
+            )
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_suspended"

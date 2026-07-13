@@ -182,29 +182,14 @@ const ChatInput = ({
                 </div>
             </form>
 
-            {/* Privacy notice — bot mode only. Sits above the action bar so
-                the link is visible before a visitor sends their first
-                message. Hidden in live/waiting modes where the consent has
-                effectively already been given via the handoff flow. */}
+            {/* Action bar — bot mode only. 3-column grid keeps the privacy
+                link geometrically centered between the left icon cluster
+                (headphones / meeting) and the right "Powered by" credit,
+                regardless of how wide either side becomes. Hidden in
+                live/waiting modes where consent is implied by the handoff. */}
             {!isLive && !isWaiting && (
-                <p className={`text-[10px] text-gray-400 leading-snug mt-2 px-1 ${userHasSent ? 'hidden md:block' : ''}`}>
-                    This chat may be monitored and recorded according to our{' '}
-                    <a
-                        href="https://www.oyechats.com/legal/privacy"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-semibold underline text-gray-500 hover:text-gray-700 transition-colors"
-                    >
-                        Privacy Policy
-                    </a>
-                    .
-                </p>
-            )}
-
-            {/* Action bar — bot mode only */}
-            {!isLive && !isWaiting && (
-                <div className="flex items-center justify-between gap-3 mt-3.5 pt-1 px-1">
-                    <div className="flex items-center gap-3 min-w-0">
+                <div className="grid grid-cols-3 items-center gap-3 mt-3.5 pt-1 px-1">
+                    <div className="flex items-center gap-3 min-w-0 justify-self-start">
                         {onHandoff && (
                             <button
                                 type="button"
@@ -237,15 +222,28 @@ const ChatInput = ({
                             </button>
                         )}
                     </div>
-                    {showBranding && (
+                    <p className={`text-[10px] text-gray-400 leading-snug text-center justify-self-center ${userHasSent ? 'hidden md:block' : ''}`}>
+                        See {' '}
+                        <a
+                            href="https://www.oyechats.com/legal/privacy"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold underline text-gray-500 hover:text-gray-700 transition-colors"
+                        >
+                            Privacy Policy
+                        </a>
+                    </p>
+                    {showBranding ? (
                         <a
                             href="https://oyechats.com"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
+                            className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
                         >
                             Powered by OyeChats
                         </a>
+                    ) : (
+                        <span className="justify-self-end" />
                     )}
                 </div>
             )}

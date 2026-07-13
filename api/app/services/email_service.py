@@ -749,6 +749,58 @@ def send_affiliate_invite_email(to_email: str, accept_url: str, *, expires_in_da
     )
 
 
+def send_operator_invite_email(
+    to_email: str,
+    accept_url: str,
+    *,
+    workspace_name: str,
+    inviter_name: str | None,
+    expires_in_days: int = 7,
+) -> None:
+    """Magic-link invite for a new operator to join ``workspace_name``.
+
+    ``accept_url`` carries the plaintext invite token (path or query) —
+    ``invite_service.accept_invite`` matches it back against the pending
+    row. Single-use in effect: once accepted, the token no longer
+    resolves to a pending invite, so a resend goes through a new URL.
+
+    Templating matches ``send_affiliate_invite_email`` so both invites
+    read the same to the recipient (heading + explainer + button +
+    fallback link + safe-to-ignore note).
+    """
+    expiry = f"{expires_in_days} day" if expires_in_days == 1 else f"{expires_in_days} days"
+    safe_workspace = esc(workspace_name)
+    inviter_snippet = (
+        f"{esc(inviter_name)} has invited you"
+        if inviter_name
+        else "You&rsquo;ve been invited"
+    )
+    inner = (
+        h1(f"You&rsquo;ve been invited to {safe_workspace}")
+        + p(
+            f"{inviter_snippet} to join {strong(safe_workspace)} on {esc(BRAND_NAME)} as an operator. "
+            f"Once you accept you&rsquo;ll be able to take live chats and support their visitors from your dashboard."
+        )
+        + p(f"Click below to accept. This link expires in {strong(esc(expiry))}.")
+        + button("Accept invitation", accept_url)
+        + p("If the button doesn&rsquo;t work, paste this link into your browser:", top=8)
+        + f'<p class="oc-link" style="margin:0 0 16px 0;font-family:{ed.FONT};font-size:13px;'
+        f'color:{ed.ACCENT};word-break:break-all;line-height:1.5;">{link(esc(accept_url), accept_url)}</p>'
+        + p(
+            "Didn&rsquo;t expect this? You can safely ignore it — the invite will expire and no account will be created."
+        )
+    )
+    send_email_async(
+        to_email,
+        f"You’ve been invited to join {workspace_name} on {BRAND_NAME}",
+        shell(
+            subject=f"You’ve been invited to join {workspace_name} on {BRAND_NAME}",
+            preheader=f"Accept your invite to join {workspace_name}. Link expires in {expiry}.",
+            inner=inner,
+        ),
+    )
+
+
 # ── Trial lifecycle emails ───────────────────────────────────────────────────
 
 

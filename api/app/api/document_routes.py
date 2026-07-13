@@ -176,6 +176,23 @@ def delete_document_endpoint(
             # behind. No-op for crawled URL sources (never archived).
             delete_archived_copies(client_id, bot_id, document_name)
 
+            # If this delete removed the last URL-typed document for the bot,
+            # the "Extracted from your Website" palette becomes stale — clear it
+            # so a fresh crawl starts from a clean slate instead of showing the
+            # previous website's brand colors on the Appearance tab.
+            if bot_id:
+                any_url_doc_left = (
+                    session.query(Document.id)
+                    .filter(Document.bot_id == bot_id, Document.document_name.like("http%"))
+                    .first()
+                )
+                if any_url_doc_left is None:
+                    bot = session.query(Bot).filter(Bot.id == bot_id, Bot.client_id == client_id).one_or_none()
+                    if bot and bot.recommended_colors:
+                        bot.recommended_colors = []
+                        session.commit()
+                        logger.info(f"Cleared recommended_colors for bot {bot_id} (no crawled sources remain)")
+
             # Invalidate cached QA responses — knowledge base has changed
             if bot_id:
                 cache_delete_prefix(qa_prefix_for_bot(bot_id))

@@ -40,6 +40,12 @@ export const AUTH_STORAGE_KEYS = [
     'company_website',
     'onboarding_complete',
     'selected_bot_id',
+    // Workspace switcher state — the currently-active workspace context that
+    // gets sent as X-Workspace-Id on every API call. Persisted across reloads
+    // so the user comes back to the workspace they were in last.
+    'current_workspace_id',
+    'current_workspace_name',
+    'current_workspace_role',
 ];
 
 /**

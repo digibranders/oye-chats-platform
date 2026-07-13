@@ -481,6 +481,16 @@ class LeadInfo(Base):
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     company = Column(String, nullable=True)
+
+    # Durable source attribution — snapshot of the parent session's UTM +
+    # visitor journey at the moment this lead was captured. Kept on the
+    # lead row (not just the session) so attribution survives session
+    # pruning by retention policies. Populated only when the owning
+    # client is on a plan that includes the Lead Source Attribution
+    # feature (Standard / Enterprise). See ``chat_routes.lead_capture_endpoint``.
+    utm_params = Column(JSONB, nullable=True)
+    visitor_journey = Column(JSONB, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="lead_info")
@@ -504,6 +514,13 @@ class ChatSession(Base):
     page_url = Column(String, nullable=True)
     referrer = Column(String, nullable=True)
     utm_params = Column(JSONB, nullable=True)
+    # Ordered list of ``{"path": "/services", "ts": "2026-07-09T12:00:15Z"}``
+    # entries the widget recorded as the visitor moved between pages on
+    # the host site before opening the chat. Written once from
+    # ``/chat/behavioral-signals`` — first payload with a non-empty journey
+    # wins so later "just before opening chat" navigations don't overwrite
+    # the earlier top-of-funnel context.
+    visitor_journey = Column(JSONB, nullable=True)
     visit_count = Column(Integer, default=1, server_default="1", nullable=False)
 
     # BANT Qualification State
@@ -703,6 +720,13 @@ class Operator(Base):
     operator_api_key = Column(String, unique=True, index=True, nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
 
+    # Bot binding — one operator, one bot. See migration
+    # ``b1c7e9d3f2a5_operator_bot_one_to_one.py`` for the schema change and the
+    # backfill that picked each workspace's oldest bot for pre-existing rows.
+    # Live-chat routing scopes every assignment to this bot so an operator on
+    # Bot A never gets a Bot B conversation delivered.
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+
     # Role & department
     role = Column(String, default="operator", server_default="operator", nullable=False)  # owner|admin|operator
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
@@ -712,9 +736,152 @@ class Operator(Base):
     max_concurrent_chats = Column(Integer, default=5, server_default="5", nullable=False)
     notification_preferences = Column(JSONB, nullable=True)
 
-    client = relationship("Client")
+    # Linked-identity fields — populated when an operator was created via an
+    # invite the invitee accepted while authenticated as a Client.
+    # ``linked_client_id`` points at that underlying Client identity, so the
+    # auth resolver can grant operator capabilities to a caller presenting the
+    # Client's ``X-API-Key`` together with the workspace's ``X-Workspace-Id``.
+    # NULL for legacy operators (created with their own password via
+    # ``POST /operators/create``) — they authenticate via ``X-Operator-Key``
+    # and continue to work unchanged.
+    linked_client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    # Historic snapshot of the email the invite was sent to. Preserved even if
+    # the linked Client's email later changes so we can audit "who accepted
+    # this invite" against the invite email at the moment of acceptance.
+    invited_email = Column(String, nullable=True)
+
+    client = relationship("Client", foreign_keys=[client_id])
+    linked_client = relationship("Client", foreign_keys=[linked_client_id])
     department = relationship("Department", back_populates="operators")
     active_sessions = relationship("ChatSession", back_populates="assigned_operator")
+
+    __table_args__ = (
+        # A given Client identity may hold at most ONE operator role per
+        # workspace. Legacy operators (linked_client_id IS NULL) are excluded
+        # from this constraint so multiple pre-invite-model rows in the same
+        # workspace can coexist during the migration period.
+        Index(
+            "ux_operators_linked_per_workspace",
+            "client_id",
+            "linked_client_id",
+            unique=True,
+            postgresql_where=sqlalchemy.text("linked_client_id IS NOT NULL"),
+        ),
+    )
+
+
+class OperatorInvite(Base):
+    """Invitation for a person to join a workspace as an operator.
+
+    Lifecycle
+    ---------
+    * **pending** — created by an owner or admin, email sent, token unused.
+    * **accepted** — invitee authenticated (as a new or existing Client) and
+      accepted the invite; a linked Operator row was created in the target
+      workspace.
+    * **revoked** — owner or admin cancelled the invite before acceptance.
+    * **expired** — ``expires_at`` passed with no acceptance. A sweep task or
+      lazy check flips the status.
+
+    Security
+    --------
+    Only ``token_hash`` (SHA-256 of the raw invite token) is stored — the
+    plaintext token appears exactly once in the invite email link. Timing-safe
+    equality is used at lookup so token verification doesn't leak length via
+    string comparison shortcuts.
+    """
+
+    __tablename__ = "operator_invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Workspace being invited to — the owner's client_id also IS the workspace ID.
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Target email — always stored lowercased. Uniqueness of pending invites is
+    # enforced by the partial index below.
+    email = Column(String, nullable=False, index=True)
+
+    # Role and department the invitee will get on acceptance.
+    role = Column(String, nullable=False, default="operator", server_default="operator")
+    department_id = Column(
+        Integer,
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # SHA-256 hex digest of the raw invite token. 64 chars → String(64).
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+
+    # Lifecycle enum — validated at the application layer since the set of
+    # valid states may grow (e.g. ``resent``, ``forwarded``) and inline enums
+    # are painful to migrate. Server-default keeps DB inserts consistent.
+    status = Column(
+        String,
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Audit — who invited whom, when it resolved.
+    invited_by_client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Snapshot of the inviter's display name at creation time so a later name
+    # change on the inviter's Client row doesn't retroactively rewrite the
+    # invite email content.
+    invited_by_name = Column(String, nullable=True)
+
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    accepted_by_client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_by_client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Delivery tracking — timestamp of the most recent send + how many resends.
+    # Rate-limits the resend endpoint.
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    resend_count = Column(Integer, default=0, server_default="0", nullable=False)
+
+    workspace = relationship("Client", foreign_keys=[client_id])
+    invited_by = relationship("Client", foreign_keys=[invited_by_client_id])
+    accepted_by = relationship("Client", foreign_keys=[accepted_by_client_id])
+    revoked_by = relationship("Client", foreign_keys=[revoked_by_client_id])
+    department = relationship("Department", foreign_keys=[department_id])
+
+    __table_args__ = (
+        # At most one PENDING invite per (workspace, email). Accepted / revoked
+        # / expired rows are retained for audit and don't collide.
+        Index(
+            "ux_operator_invites_pending_unique",
+            "client_id",
+            "email",
+            unique=True,
+            postgresql_where=sqlalchemy.text("status = 'pending'"),
+        ),
+    )
 
 
 class ChatMessage(Base):
@@ -725,6 +892,18 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     feedback = Column(Integer, nullable=True)
     trace_id = Column(String(255), nullable=True)  # Langfuse trace ID for feedback linking
+    # Media-card payloads emitted alongside a bot answer. The sentinels
+    # ([YOUTUBE_CARD:…] / [DOWNLOAD_CARD:…]) are stripped from ``content`` at
+    # save time by ``_extract_media_card``; persisting the parsed card here
+    # is what lets the widget re-render the video/document card after a
+    # refresh, instead of showing only the text answer.
+    # Shape (media_card): {"type": "youtube", "video_id": "..."} |
+    #                     {"type": "download", "url": "...", "name": "..."}
+    # Shape (media_secondary): list of ≤1 same-shaped payloads (the
+    # opposite-type "Also available" chip). Nullable so historical rows
+    # and card-less answers stay valid.
+    media_card = Column(JSONB, nullable=True)
+    media_secondary = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")

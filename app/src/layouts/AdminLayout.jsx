@@ -9,9 +9,11 @@ import CommandPalette from '../components/CommandPalette';
 import TrialBanner from '../components/TrialBanner';
 import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
+import WorkspaceAccessDeniedModal from '../components/WorkspaceAccessDeniedModal';
 import { PushProvider, usePush } from '../context/PushContext';
 import { BotProvider } from '../context/BotContext';
 import { NotificationProvider } from '../context/NotificationContext';
+import { WorkspaceProvider } from '../context/WorkspaceContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
 
 const MD_BREAKPOINT = 768;
@@ -225,18 +227,31 @@ function AdminLayoutInner() {
           itself on /support so the live-chat console isn't covered by a
           redundant alert. */}
       <LiveChatRequestBanner />
+
+      {/* Rendered as a modal-over-everything when the backend returns a
+          workspace_access_denied 403 for the currently-active workspace
+          (revoked, deleted, or otherwise gone). Reads from WorkspaceContext
+          so switching to a valid workspace dismisses it automatically. */}
+      <WorkspaceAccessDeniedModal />
     </div>
   );
 }
 
 export default function AdminLayout() {
   return (
-    <NotificationProvider>
-      <BotProvider>
-        <PushProvider>
-          <AdminLayoutInner />
-        </PushProvider>
-      </BotProvider>
-    </NotificationProvider>
+    // WorkspaceProvider wraps everything so that BotContext + PushContext +
+    // NotificationContext can read the active workspace on mount and react to
+    // switches. A switch aborts every in-flight request via the shared
+    // AbortController in api.js, so downstream contexts safely re-fetch under
+    // the new workspace without racing the stale ones.
+    <WorkspaceProvider>
+      <NotificationProvider>
+        <BotProvider>
+          <PushProvider>
+            <AdminLayoutInner />
+          </PushProvider>
+        </BotProvider>
+      </NotificationProvider>
+    </WorkspaceProvider>
   );
 }

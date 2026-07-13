@@ -855,16 +855,39 @@ class ConnectionManager:
                 },
             )
 
-        # Notify new operator
+        # Notify new operator over WS. If they're not reachable this way
+        # (offline, or connected to a different gunicorn worker), the push
+        # task below fills the gap.
+        visitor_name = self._session_metadata.get(session_id, {}).get("name", "Anonymous")
         await self._send_to_operator(
             new_operator_id,
             {
                 "type": "chat_accepted",
                 "session_id": session_id,
-                "visitor_name": self._session_metadata.get(session_id, {}).get("name", "Anonymous"),
+                "visitor_name": visitor_name,
                 "reason": self._session_metadata.get(session_id, {}).get("reason"),
             },
         )
+
+        # Enqueue a Web Push fallback — the task consults Redis presence and
+        # only fires if the target isn't currently on WS anywhere, so an
+        # operator with an open tab gets exactly one alert.
+        try:
+            from app.worker.enqueue import enqueue_sync
+
+            enqueue_sync(
+                "task_dispatch_transfer_push",
+                session_id,
+                new_operator_id,
+                new_operator_name,
+                visitor_name,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue transfer push for session=%s operator=%s",
+                session_id,
+                new_operator_id,
+            )
 
         # Notify visitor
         await self._send_to_visitor(

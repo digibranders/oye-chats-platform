@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Breadcrumbs from '../components/Breadcrumbs';
+import WorkspacePill from './WorkspacePill';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import Avatar from '../components/ui/Avatar';
@@ -112,8 +113,16 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         >
           {isSidebarOpen && !isMobile ? <PanelLeftClose size={18} /> : <Menu size={18} />}
         </button>
-        <div className="min-w-0 truncate">
-          <Breadcrumbs />
+        <div className="min-w-0 flex items-center gap-3 truncate">
+          {/* Workspace switcher — top-left of the app. Renders as an
+              interactive pill for callers who belong to multiple
+              workspaces, as a static label when they only have one. See
+              WorkspacePill for the invited-only "Create your own workspace"
+              affordance behavior. */}
+          <WorkspacePill />
+          <div className="min-w-0 truncate">
+            <Breadcrumbs />
+          </div>
         </div>
       </div>
 
