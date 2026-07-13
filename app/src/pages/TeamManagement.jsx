@@ -32,10 +32,6 @@ export default function TeamManagement() {
     const { showToast } = useToast();
     const { requestUpgrade } = useUpgradeModal();
     const { entitlements: ent } = useEntitlements();
-    // Sidebar bot list — used to resolve operator.bot_id → bot_name as a
-    // fallback when the operators API row lacks the denormalized name (e.g.
-    // after a bot rename that hasn't propagated to the row yet).
-    const { bots } = useBotContext();
     // Live-chat-derived team features (operators, departments, canned
     // responses) are all bundled behind the `live_chat` plan feature. Free
     // plans render the team page so users can SEE the surface, but every
@@ -85,6 +81,15 @@ export default function TeamManagement() {
     // caller has no other workspace to be viewing anyway).
     const { currentWorkspaceId } = useWorkspace();
     const isViewingOwnWorkspace = !currentWorkspaceId || currentWorkspaceId === myClientId;
+    // The sidebar's bot switcher scopes team management: an operator is
+    // bound to exactly one bot (``Operator.bot_id``, migration
+    // b1c7e9d3f2a5), and the roster / pending-invites lists here filter to
+    // just that bot so a workspace with multiple bots doesn't drown one
+    // team in another's members. When no bot is resolved yet (fresh
+    // workspace, still-loading BotContext) both derived lists are empty
+    // and the empty state prompts the admin to pick a bot.
+    const { selectedBot } = useBotContext();
+    const selectedBotId = selectedBot?.id ?? null;
     // Legacy X-Operator-Key sessions don't have a Client identity we can
     // check against ``linked_client_id`` — self-add is a Client-only affordance
     // so we don't render it for legacy operator logins.
@@ -156,6 +161,19 @@ export default function TeamManagement() {
     };
 
     useEffect(() => { fetchData(); fetchPendingInvites(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Derived rosters scoped to the sidebar-selected bot. Recomputed lazily
+    // on every render — both source arrays live in state, so this is O(n)
+    // and cheap even for a workspace with hundreds of operators. Kept
+    // separate from the workspace-level ``operators`` array so places that
+    // reason about the FULL workspace (self-op detection, department
+    // counts) can still read the unfiltered list.
+    const botScopedOperators = selectedBotId
+        ? operators.filter((op) => op.bot_id === selectedBotId)
+        : [];
+    const botScopedPendingInvites = selectedBotId
+        ? pendingInvites.filter((inv) => inv.bot_id === selectedBotId)
+        : [];
 
     // ── Invite Operator (only flow) ──────────────────────────────────────────
     const handleSendInvite = async (e) => {
@@ -386,10 +404,15 @@ export default function TeamManagement() {
                 <div className="space-y-4">
                     <div className="flex justify-between items-center flex-wrap gap-3">
                         <p className="text-sm text-surface-500 dark:text-surface-400">
-                            {operators.length} operator{operators.length !== 1 ? 's' : ''}
-                            {pendingInvites.length > 0 && (
+                            {botScopedOperators.length} operator{botScopedOperators.length !== 1 ? 's' : ''}
+                            {botScopedPendingInvites.length > 0 && (
                                 <span className="ml-2 text-surface-400 dark:text-surface-500">
-                                    · {pendingInvites.length} pending
+                                    · {botScopedPendingInvites.length} pending
+                                </span>
+                            )}
+                            {selectedBot?.name && (
+                                <span className="ml-2 text-surface-400 dark:text-surface-500">
+                                    · on <span className="font-medium text-surface-600 dark:text-surface-300">{selectedBot.name}</span>
                                 </span>
                             )}
                         </p>
@@ -457,15 +480,18 @@ export default function TeamManagement() {
                         </div>
                     )}
 
-                    {/* ── Pending invites section (owner + admin) ─────────── */}
-                    {isBotManager && !pendingInvitesLoading && pendingInvites.length > 0 && (
+                    {/* ── Pending invites section (owner + admin) ───────────
+                        Bot-scoped: only invites targeting the currently-
+                        selected bot show up so a workspace with dozens of
+                        pending invites across bots doesn't drown the surface. */}
+                    {isBotManager && !pendingInvitesLoading && botScopedPendingInvites.length > 0 && (
                         <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-4">
                             <div className="flex items-center gap-2 mb-3">
                                 <Clock size={14} className="text-surface-500" />
                                 <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200">Pending invitations</h3>
                             </div>
                             <div className="space-y-2">
-                                {pendingInvites.map((inv) => (
+                                {botScopedPendingInvites.map((inv) => (
                                     <div key={inv.id} className="flex items-center gap-3 py-2 border-b border-surface-100 dark:border-surface-800 last:border-0">
                                         <div className="w-8 h-8 rounded-lg bg-surface-100 dark:bg-surface-800 flex items-center justify-center">
                                             <Mail size={14} className="text-surface-500" />
@@ -601,7 +627,7 @@ export default function TeamManagement() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
-                                {operators.map((operator) => (
+                                {botScopedOperators.map((operator) => (
                                     <>
                                         <tr key={operator.id} className="hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors">
                                             <td className="px-4 py-3">
@@ -617,12 +643,9 @@ export default function TeamManagement() {
                                             </td>
                                             <td className="px-4 py-3 text-sm text-surface-700 dark:text-surface-300">
                                                 {/* Each operator is bound to exactly one bot at invite time
-                                                    (``Operator.bot_id``, one-to-one). ``bot_name`` is the
-                                                    denormalized display value the operators API returns
-                                                    alongside the row; when it's missing (e.g. an older row
-                                                    or a bot rename that hasn't refetched yet) fall back to
-                                                    the bots list we already have in memory. */}
-                                                {operator.bot_name || bots.find(b => b.id === operator.bot_id)?.name || '—'}
+                                                    (``Operator.bot_id``, one-to-one). ``bot_name`` comes
+                                                    from the /operators API which joins on Bot for us. */}
+                                                {operator.bot_name || '—'}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-1.5">

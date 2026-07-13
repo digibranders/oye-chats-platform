@@ -15,7 +15,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from app.db.models import Client, Operator
+from app.db.models import Bot, Client, Operator
 from app.services import operator_presence_service as presence
 
 pytestmark = pytest.mark.skipif(
@@ -30,13 +30,22 @@ def test_get_online_operator_ids_falls_back_to_db_when_redis_down(db, monkeypatc
     db.add_all([client_a, client_b])
     db.flush()
 
+    # Every operator is bound to exactly one bot (``Operator.bot_id`` NOT
+    # NULL — see migration ``b1c7e9d3f2a5_operator_bot_one_to_one``). The
+    # test doesn't exercise the binding directly, but the FK constraint
+    # forces us to seed a bot per workspace so the inserts don't blow up.
+    bot_a = Bot(client_id=client_a.id, bot_key="bot-a", name="Bot A", system_prompt="")
+    bot_b = Bot(client_id=client_b.id, bot_key="bot-b", name="Bot B", system_prompt="")
+    db.add_all([bot_a, bot_b])
+    db.flush()
+
     # Production truth: operator online-ness in the DB is tracked by the
     # is_online column (set True on WS connect, cleared on disconnect /
     # _fix_stale_online_flags). last_seen_at is NOT maintained, so the fallback
     # must key on is_online.
-    online = Operator(client_id=client_a.id, name="Online", email="f@ex.com", is_online=True)
-    offline = Operator(client_id=client_a.id, name="Offline", email="s@ex.com", is_online=False)
-    other = Operator(client_id=client_b.id, name="Other", email="o@ex.com", is_online=True)
+    online = Operator(client_id=client_a.id, bot_id=bot_a.id, name="Online", email="f@ex.com", is_online=True)
+    offline = Operator(client_id=client_a.id, bot_id=bot_a.id, name="Offline", email="s@ex.com", is_online=False)
+    other = Operator(client_id=client_b.id, bot_id=bot_b.id, name="Other", email="o@ex.com", is_online=True)
     db.add_all([online, offline, other])
     db.commit()
 
