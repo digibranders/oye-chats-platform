@@ -15,7 +15,7 @@ const INVOICE_TYPE_LABELS = {
 
 const INVOICE_STATUS_STYLES = {
   paid: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10',
-  issued: 'text-sky-600 dark:text-sky-400 bg-sky-500/10',
+  issued: 'text-primary-600 dark:text-primary-400 bg-primary-500/10',
 };
 
 function formatDate(iso) {
@@ -76,7 +76,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
 
   if (loading) {
     return (
-      <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+      <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
         <div className="h-4 w-24 rounded bg-surface-100 dark:bg-surface-800 animate-pulse" />
       </div>
     );
@@ -84,8 +84,8 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
 
   if (error) {
     return (
-      <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-        <h3 className="text-base font-semibold tracking-tight text-surface-900 dark:text-surface-50 mb-1">Invoices</h3>
+      <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <h3 className="text-base font-bold tracking-tight text-surface-900 dark:text-surface-50 mb-1">Invoices</h3>
         <p className="text-[13px] text-surface-500 mb-3">
           Couldn&apos;t load your invoices. Check your connection and try again.
         </p>
@@ -102,8 +102,8 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
 
   if (invoices.length === 0) {
     return (
-      <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-        <h3 className="text-base font-semibold tracking-tight text-surface-900 dark:text-surface-50 mb-1">Invoices</h3>
+      <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <h3 className="text-base font-bold tracking-tight text-surface-900 dark:text-surface-50 mb-1">Invoices</h3>
         <p className="text-[13px] text-surface-500">
           Your tax invoices and receipts appear here after each payment.
         </p>
@@ -112,8 +112,8 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
   }
 
   return (
-    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-      <h3 className="text-base font-semibold tracking-tight text-surface-900 dark:text-surface-50 mb-4">Invoices</h3>
+    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+      <h3 className="text-base font-bold tracking-tight text-surface-900 dark:text-surface-50 mb-4">Invoices</h3>
       <div className="space-y-2">
         {invoices.slice(0, limit).map(inv => {
           const isCreditNote = inv.invoice_type === 'credit_note';
@@ -144,7 +144,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
                         className={cn(
                           'px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider',
                           isCreditNote
-                            ? 'text-sky-600 dark:text-sky-400 bg-sky-500/10'
+                            ? 'text-primary-600 dark:text-primary-400 bg-primary-500/10'
                             : 'text-surface-500 dark:text-surface-400 bg-surface-500/10',
                         )}
                       >
@@ -167,7 +167,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
                 <span
                   className={cn(
                     'text-[13px] font-semibold tabular-nums',
-                    isCreditNote ? 'text-sky-600 dark:text-sky-400' : 'text-surface-700 dark:text-surface-300',
+                    isCreditNote ? 'text-primary-600 dark:text-primary-400' : 'text-surface-700 dark:text-surface-300',
                   )}
                 >
                   {isCreditNote ? `−${amount}` : amount}

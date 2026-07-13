@@ -129,9 +129,9 @@ export default function AffiliateInvite() {
     };
 
     return (
-        <div className="min-h-screen flex bg-[#030D1F]">
+        <div className="min-h-screen flex bg-surface-50">
             <BrandPanel />
-            <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-[#030D1F] overflow-y-auto">
+            <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50 overflow-y-auto">
                 <motion.div
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -139,17 +139,17 @@ export default function AffiliateInvite() {
                     className="w-full max-w-[440px] my-auto"
                 >
                     <div className="flex items-center gap-3 mb-8 lg:hidden">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
+                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-600 to-primary-400 text-white flex items-center justify-center shadow-lg shadow-primary-500/30">
                             <Sparkles size={18} />
                         </div>
-                        <span className="text-lg font-bold text-white">OyeChats</span>
+                        <span className="text-lg font-bold text-surface-900">OyeChats</span>
                     </div>
 
                     {/* ── Lookup loading ── */}
                     {isLookingUp ? (
                         <div className="flex flex-col items-center justify-center py-16">
-                            <Loader2 size={32} className="animate-spin text-blue-400" />
-                            <p className="text-white/45 text-sm mt-3">Validating invite…</p>
+                            <Loader2 size={32} className="animate-spin text-primary-500" />
+                            <p className="text-surface-500 text-sm mt-3">Validating invite…</p>
                         </div>
                     ) : lookupError ? (
                         /* ── Bad token (expired / invalid / used) ── */
@@ -181,23 +181,23 @@ export default function AffiliateInvite() {
 
 function BrandPanel() {
     return (
-        <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden auth-dark-panel">
+        <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden bg-gradient-to-br from-[#17121f] via-[#14101e] to-[#0f0b15] text-white">
             <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(37,99,235,0.18) 0%, rgba(37,99,235,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(162,28,175,0.18) 0%, rgba(162,28,175,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
             <div className="relative z-10 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-600/80 backdrop-blur-md border border-blue-400/30 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg shadow-primary-900/30">
                     <Sparkles size={20} className="text-white" />
                 </div>
                 <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
             </div>
             <div className="relative z-10 my-auto max-w-md">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-400/25 text-blue-300 text-[11px] font-bold uppercase tracking-wider mb-4">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/20 text-white text-[11px] font-bold uppercase tracking-wider mb-4">
                     <Gift size={11} /> Partners invite
                 </div>
                 <h2 className="text-4xl xl:text-5xl font-bold text-white leading-[1.15] mb-4">
                     Welcome to
                     <br />
-                    <span className="bg-gradient-to-r from-blue-400 via-blue-300 to-cyan-400 bg-clip-text text-transparent">
+                    <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
                         OyeChats Partners
                     </span>
                 </h2>
@@ -215,24 +215,24 @@ function BadTokenCard({ error }) {
     const expired = error?.status === 410;
     return (
         <div>
-            <div className="mb-4 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300">
+            <div className="mb-4 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-600">
                 <div className="flex items-start gap-2.5">
                     <AlertCircle size={16} className="shrink-0 mt-0.5" />
                     <div>
                         <p className="text-sm font-medium">
                             {expired ? 'This invite has expired or already been used' : 'Invite link is invalid'}
                         </p>
-                        <p className="text-[12px] mt-1 text-rose-300/80">{error?.message}</p>
+                        <p className="text-[12px] mt-1 text-rose-600/80">{error?.message}</p>
                     </div>
                 </div>
             </div>
-            <p className="text-sm text-white/45 text-center">
+            <p className="text-sm text-surface-500 text-center">
                 Need a fresh invite? Contact{' '}
-                <a href="mailto:support@oyechats.com" className="font-semibold text-blue-400 hover:text-blue-300">
+                <a href="mailto:support@oyechats.com" className="font-semibold text-primary-600 hover:text-primary-700">
                     support@oyechats.com
                 </a>
                 {' '}or{' '}
-                <Link to="/login" className="font-semibold text-blue-400 hover:text-blue-300">sign in</Link>
+                <Link to="/login" className="font-semibold text-primary-600 hover:text-primary-700">sign in</Link>
                 {' '}to your existing account.
             </p>
         </div>
@@ -244,20 +244,20 @@ function NotLoggedInCard({ invite, token }) {
     return (
         <>
             <div className="mb-6">
-                <h1 className="text-2xl font-bold text-white tracking-tight">You&rsquo;re invited!</h1>
-                <p className="text-white/45 mt-2 text-sm">
+                <h1 className="text-2xl font-bold text-surface-900 tracking-tight">You&rsquo;re invited!</h1>
+                <p className="text-surface-500 mt-2 text-sm">
                     OyeChats Partners earn recurring commission on every customer they refer.
                     Pick how you&rsquo;d like to continue.
                 </p>
             </div>
 
-            <div className="mb-5 p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300">
-                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-blue-300/80">
+            <div className="mb-5 p-3.5 rounded-xl bg-primary-50 border border-primary-200 text-primary-700">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-primary-600">
                     <Mail size={12} /> Invite for
                 </div>
-                <p className="text-sm font-mono font-semibold text-blue-200 mt-1 truncate">{invite.email}</p>
+                <p className="text-sm font-mono font-semibold text-primary-700 mt-1 truncate">{invite.email}</p>
                 {invite.expires_at && (
-                    <p className="text-[11px] text-blue-300/60 mt-1">
+                    <p className="text-[11px] text-primary-500 mt-1">
                         Expires {new Date(invite.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </p>
                 )}
@@ -267,8 +267,8 @@ function NotLoggedInCard({ invite, token }) {
                 <Link
                     to={`/login${tokenQs}`}
                     className={cn(
-                        'w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl',
-                        'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
+                        'w-full py-3 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
+                        'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
                         'flex justify-center items-center gap-2 text-sm',
                     )}
                 >
@@ -278,8 +278,8 @@ function NotLoggedInCard({ invite, token }) {
                 <Link
                     to={`/register${tokenQs}`}
                     className={cn(
-                        'w-full py-3 bg-white/[.04] hover:bg-white/[.07] text-white font-semibold rounded-xl',
-                        'border border-white/10 hover:border-white/20 transition-all active:scale-[0.98]',
+                        'w-full py-3 bg-white hover:bg-surface-100 text-surface-900 font-semibold rounded-xl',
+                        'border border-surface-200 hover:border-surface-300 transition-all active:scale-[0.98]',
                         'flex justify-center items-center gap-2 text-sm',
                     )}
                 >
@@ -288,9 +288,9 @@ function NotLoggedInCard({ invite, token }) {
                 </Link>
             </div>
 
-            <p className="text-[11px] text-white/35 mt-5 text-center leading-relaxed">
+            <p className="text-[11px] text-surface-500 mt-5 text-center leading-relaxed">
                 Either way, after signing in/up you&rsquo;ll automatically be enrolled
-                and the <strong className="text-white/60">Affiliate</strong> menu will appear in your sidebar.
+                and the <strong className="text-surface-700">Affiliate</strong> menu will appear in your sidebar.
             </p>
         </>
     );
@@ -300,8 +300,8 @@ function LoggedInAcceptCard({ invite, status, message, error, onSignOutRetry, on
     if (status === 'accepting' || status === 'idle') {
         return (
             <div className="flex flex-col items-center justify-center py-12">
-                <Loader2 size={32} className="animate-spin text-blue-400" />
-                <p className="text-white/45 text-sm mt-3">Activating your Partner account…</p>
+                <Loader2 size={32} className="animate-spin text-primary-500" />
+                <p className="text-surface-500 text-sm mt-3">Activating your Partner account…</p>
             </div>
         );
     }
@@ -309,28 +309,28 @@ function LoggedInAcceptCard({ invite, status, message, error, onSignOutRetry, on
     if (status === 'mismatch') {
         return (
             <div>
-                <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                <div className="mb-4 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-700">
                     <div className="flex items-start gap-2.5">
                         <AlertCircle size={16} className="shrink-0 mt-0.5" />
                         <div>
                             <p className="text-sm font-medium">Wrong account</p>
-                            <p className="text-[12px] mt-1 text-amber-300/80 leading-relaxed">
+                            <p className="text-[12px] mt-1 text-amber-700/80 leading-relaxed">
                                 This invite was sent to{' '}
-                                <span className="font-mono font-semibold text-amber-200">{invite?.email}</span>
+                                <span className="font-mono font-semibold text-amber-800">{invite?.email}</span>
                                 {' '}but you&rsquo;re signed in as a different account.
                             </p>
                         </div>
                     </div>
                 </div>
-                <p className="text-[12px] text-white/45 leading-relaxed mb-4">
+                <p className="text-[12px] text-surface-500 leading-relaxed mb-4">
                     {error}
                 </p>
                 <button
                     type="button"
                     onClick={onSignOutRetry}
                     className={cn(
-                        'w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl',
-                        'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
+                        'w-full py-2.5 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
+                        'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
                         'flex justify-center items-center gap-2 text-sm',
                     )}
                 >
@@ -344,18 +344,18 @@ function LoggedInAcceptCard({ invite, status, message, error, onSignOutRetry, on
     if (status === 'error') {
         return (
             <div>
-                <div className="mb-4 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300">
+                <div className="mb-4 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-600">
                     <div className="flex items-start gap-2.5">
                         <AlertCircle size={16} className="shrink-0 mt-0.5" />
                         <div>
                             <p className="text-sm font-medium">Something went wrong</p>
-                            <p className="text-[12px] mt-1 text-rose-300/80">{error}</p>
+                            <p className="text-[12px] mt-1 text-rose-600/80">{error}</p>
                         </div>
                     </div>
                 </div>
-                <p className="text-sm text-white/45 text-center">
+                <p className="text-sm text-surface-500 text-center">
                     Try again later or contact{' '}
-                    <a href="mailto:support@oyechats.com" className="font-semibold text-blue-400 hover:text-blue-300">
+                    <a href="mailto:support@oyechats.com" className="font-semibold text-primary-600 hover:text-primary-700">
                         support@oyechats.com
                     </a>.
                 </p>
@@ -367,23 +367,23 @@ function LoggedInAcceptCard({ invite, status, message, error, onSignOutRetry, on
     const isFirstTime = status === 'accepted';
     return (
         <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center">
-                <CheckCircle2 size={32} className="text-emerald-400" />
+            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+                <CheckCircle2 size={32} className="text-emerald-600" />
             </div>
-            <h2 className="text-2xl font-bold text-white tracking-tight">
+            <h2 className="text-2xl font-bold text-surface-900 tracking-tight">
                 {isFirstTime ? `You're in!` : `Already a Partner`}
             </h2>
-            <p className="text-white/55 mt-2 text-sm leading-relaxed">{message}</p>
-            <p className="text-white/40 mt-2 text-xs leading-relaxed">
-                The <strong className="text-white/60">Affiliate</strong> menu is now in your sidebar.
+            <p className="text-surface-500 mt-2 text-sm leading-relaxed">{message}</p>
+            <p className="text-surface-500 mt-2 text-xs leading-relaxed">
+                The <strong className="text-surface-700">Affiliate</strong> menu is now in your sidebar.
                 Open it to create your first referral code.
             </p>
             <button
                 type="button"
                 onClick={onContinue}
                 className={cn(
-                    'mt-6 w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl',
-                    'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
+                    'mt-6 w-full py-3 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
+                    'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
                     'flex justify-center items-center gap-2 text-sm',
                 )}
             >

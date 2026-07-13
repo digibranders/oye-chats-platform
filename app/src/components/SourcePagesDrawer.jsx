@@ -89,21 +89,21 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-            className="fixed inset-y-0 right-0 z-50 w-full max-w-[560px] flex flex-col bg-white dark:bg-surface-950 border-l border-surface-200 dark:border-surface-800 shadow-2xl"
+            className="fixed inset-y-0 right-0 z-50 w-full max-w-[560px] flex flex-col bg-[var(--bg-card)] dark:bg-surface-900 border-l border-surface-200 dark:border-surface-800 shadow-2xl"
             role="dialog"
             aria-label={`Crawled pages for ${sourceUrl}`}
           >
             {/* ── Header ── */}
             <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-surface-200 dark:border-surface-800 shrink-0">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="p-2 rounded-xl bg-sky-50 dark:bg-sky-500/10 text-sky-500 shrink-0">
+                <div className="p-2 rounded-xl bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 shrink-0">
                   <Globe size={18} />
                 </div>
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold text-surface-900 dark:text-white truncate">
                     {sourceUrl}
                   </h2>
-                  <p className="text-xs text-surface-400 mt-0.5">
+                  <p className="text-xs text-surface-400 mt-0.5 tabular-nums">
                     {loading
                       ? 'Loading pages…'
                       : data
@@ -182,7 +182,7 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                         >
                           {/* Path + title */}
                           <div className="min-w-0">
-                            <span className="block text-xs font-mono text-sky-600 dark:text-sky-400 truncate leading-snug">
+                            <span className="block text-xs font-mono text-primary-600 dark:text-primary-400 truncate leading-snug">
                               {path}
                             </span>
                             {page.title && (
@@ -200,7 +200,7 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                             onClick={(e) => e.stopPropagation()}
                             className={cn(
                               'p-1 rounded text-surface-300 dark:text-surface-600',
-                              'hover:text-sky-500 dark:hover:text-sky-400 transition-colors duration-150',
+                              'hover:text-primary-600 dark:hover:text-primary-400 transition-colors duration-150',
                               'opacity-0 group-hover:opacity-100 cursor-pointer'
                             )}
                             aria-label={`Open ${page.url}`}
@@ -218,7 +218,7 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
             {/* ── Footer stats ── */}
             {!loading && data && data.pages.length > 0 && (
               <div className="shrink-0 px-6 py-4 border-t border-surface-100 dark:border-surface-800 bg-surface-50 dark:bg-surface-900/50 flex items-center gap-4">
-                <div className="flex items-center gap-1.5 text-xs text-surface-400">
+                <div className="flex items-center gap-1.5 text-xs text-surface-400 tabular-nums">
                   <span className="font-semibold text-surface-700 dark:text-surface-300">{data.total_pages}</span>
                   pages indexed
                 </div>

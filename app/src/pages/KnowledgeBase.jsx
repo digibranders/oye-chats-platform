@@ -658,7 +658,7 @@ export default function KnowledgeBase() {
   const fileTypeIcon = (name) => {
     const ext = name.split('.').pop().toLowerCase();
     if (ext === 'pdf') return 'bg-rose-50 dark:bg-rose-500/10 text-rose-500';
-    if (ext === 'docx') return 'bg-sky-50 dark:bg-sky-500/10 text-sky-500';
+    if (ext === 'docx') return 'bg-primary-50 dark:bg-primary-500/10 text-primary-500';
     return 'bg-surface-100 dark:bg-surface-800 text-surface-500';
   };
 
@@ -673,12 +673,12 @@ export default function KnowledgeBase() {
       <PageHeader title="Sources" subtitle="Train your chatbot with documents and websites" />
       <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
 
-      <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm max-w-4xl min-h-[400px]">
+      <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm max-w-4xl min-h-[400px]">
 
         {/* FILE UPLOAD */}
         {activeTab === 'files' && (
           <div className="space-y-5">
-            <h2 className="text-base font-semibold text-surface-900 dark:text-white">Upload Knowledge Documents</h2>
+            <h2 className="text-base font-bold text-surface-900 dark:text-white">Upload Knowledge Documents</h2>
 
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -846,7 +846,7 @@ export default function KnowledgeBase() {
         {activeTab === 'urls' && (
           <div className="space-y-5">
             <div>
-              <h2 className="text-base font-semibold text-surface-900 dark:text-white">Ingest Website Content</h2>
+              <h2 className="text-base font-bold text-surface-900 dark:text-white">Ingest Website Content</h2>
               <p className="text-sm text-surface-500 mt-1">Enter a URL and we&apos;ll crawl the site to build your chatbot&apos;s knowledge</p>
             </div>
             <form onSubmit={handleCrawlSubmit} className="space-y-4">
@@ -919,13 +919,13 @@ export default function KnowledgeBase() {
                 className={cn(
                   'w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-sm',
                   useJs
-                    ? 'border-violet-400 dark:border-violet-500 bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                    ? 'border-primary-400 dark:border-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
                     : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-600 dark:text-surface-400 hover:border-surface-300 dark:hover:border-surface-600'
                 )}
               >
                 <div className={cn(
                   'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
-                  useJs ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-300' : 'bg-surface-100 dark:bg-surface-700 text-surface-400'
+                  useJs ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-300' : 'bg-surface-100 dark:bg-surface-700 text-surface-400'
                 )}>
                   <Zap size={15} />
                 </div>
@@ -935,7 +935,7 @@ export default function KnowledgeBase() {
                 </div>
                 <div className={cn(
                   'w-10 h-5 rounded-full transition-all relative shrink-0',
-                  useJs ? 'bg-violet-500' : 'bg-surface-300 dark:bg-surface-600'
+                  useJs ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-600'
                 )}>
                   <div className={cn(
                     'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all',
@@ -1029,26 +1029,26 @@ export default function KnowledgeBase() {
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
-                  className="p-6 rounded-2xl border border-slate-200 dark:border-[#1F2C47]/50 bg-slate-50 dark:bg-[#0B1329] shadow-sm"
+                  className="p-6 rounded-2xl border border-surface-200 dark:border-surface-800 bg-surface-50 dark:bg-surface-900 shadow-sm"
                 >
                   <div className="flex items-start gap-4">
                     <div className={cn(
                       'w-12 h-12 rounded-xl flex items-center justify-center shrink-0',
                       recrawlDiff.mode === 'delta'
                         ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                        : 'bg-indigo-50 dark:bg-[#20274B] text-indigo-600 dark:text-indigo-400',
+                        : 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400',
                     )}>
                       {recrawlDiff.mode === 'delta'
                         ? <Sparkles size={22} />
-                        : <RefreshCw size={22} className="text-[#6366F1] dark:text-[#818CF8]" />}
+                        : <RefreshCw size={22} className="text-primary-600 dark:text-primary-400" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-semibold text-slate-900 dark:text-white leading-tight">
+                      <h3 className="text-base font-semibold text-surface-900 dark:text-white leading-tight">
                         {recrawlDiff.mode === 'delta'
                           ? 'Re-crawl only updated pages?'
                           : 'Re-crawl the entire website?'}
                       </h3>
-                      <p className="text-sm text-surface-500 dark:text-[#8F9BB3] mt-1">
+                      <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                         {recrawlDiff.mode === 'delta'
                           ? "Unchanged pages are free — you'll only be billed for pages whose content changed since the last crawl."
                           : 'Every discovered page will be re-scraped and re-embedded, and every page will be charged.'}
@@ -1057,7 +1057,7 @@ export default function KnowledgeBase() {
                         href={recrawlDiff.crawlUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-primary-600 dark:text-[#4E75E5] hover:text-primary-700 dark:hover:text-[#5B85FC] font-medium mt-3 transition-colors"
+                        className="inline-flex items-center gap-1.5 text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 font-medium mt-3 transition-colors"
                       >
                         <Globe size={15} />
                         <span className="truncate max-w-[240px] sm:max-w-md">{recrawlDiff.crawlUrl}</span>
@@ -1066,7 +1066,7 @@ export default function KnowledgeBase() {
                     </div>
                   </div>
 
-                  <div className="h-px bg-slate-200 dark:bg-slate-800/80 my-5" />
+                  <div className="h-px bg-surface-200 dark:bg-surface-800/80 my-5" />
 
                   {recrawlDiff.error ? (
                     <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-500/5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm space-y-1.5">
@@ -1092,10 +1092,10 @@ export default function KnowledgeBase() {
                             sublabel: 'Pages unchanged',
                             count: recrawlDiff.unchanged,
                             urls: recrawlDiff.unchanged_urls || [],
-                            labelClass: 'text-slate-400 dark:text-[#8F9BB3]',
-                            borderClass: 'border-slate-200 dark:border-[#1E2B4B]',
-                            bgClass: 'bg-slate-100/50 dark:bg-[#0C152B]/40',
-                            ringClass: 'ring-slate-300 dark:ring-[#2E3D63]',
+                            labelClass: 'text-surface-400 dark:text-surface-400',
+                            borderClass: 'border-surface-200 dark:border-surface-800',
+                            bgClass: 'bg-surface-100/50 dark:bg-surface-800/40',
+                            ringClass: 'ring-surface-300 dark:ring-surface-700',
                           },
                           {
                             key: 'new',
@@ -1103,10 +1103,10 @@ export default function KnowledgeBase() {
                             sublabel: 'New pages found',
                             count: recrawlDiff.new_pages,
                             urls: recrawlDiff.new_urls || [],
-                            labelClass: 'text-[#34D399]',
-                            borderClass: 'border-emerald-200 dark:border-[#143224]',
-                            bgClass: 'bg-emerald-50/30 dark:bg-[#0A1F16]/40',
-                            ringClass: 'ring-emerald-300 dark:ring-[#22573D]',
+                            labelClass: 'text-emerald-500 dark:text-emerald-400',
+                            borderClass: 'border-emerald-200 dark:border-emerald-500/30',
+                            bgClass: 'bg-emerald-50/30 dark:bg-emerald-500/5',
+                            ringClass: 'ring-emerald-300 dark:ring-emerald-500/40',
                           },
                           {
                             key: 'removed',
@@ -1114,10 +1114,10 @@ export default function KnowledgeBase() {
                             sublabel: 'Pages removed',
                             count: recrawlDiff.removed_pages,
                             urls: recrawlDiff.removed_urls || [],
-                            labelClass: 'text-[#F87171]',
-                            borderClass: 'border-rose-200 dark:border-[#3B1922]',
-                            bgClass: 'bg-rose-50/30 dark:bg-[#240C12]/40',
-                            ringClass: 'ring-rose-300 dark:ring-[#5C2030]',
+                            labelClass: 'text-rose-500 dark:text-rose-400',
+                            borderClass: 'border-rose-200 dark:border-rose-500/30',
+                            bgClass: 'bg-rose-50/30 dark:bg-rose-500/5',
+                            ringClass: 'ring-rose-300 dark:ring-rose-500/40',
                           },
                         ].map((tile) => {
                           const isActive = recrawlDiffViewing === tile.key;
@@ -1137,10 +1137,10 @@ export default function KnowledgeBase() {
                                 onClick={() => setRecrawlDiffViewing(isActive ? null : tile.key)}
                                 disabled={isDisabled}
                                 className={cn(
-                                  'absolute top-3 right-3 p-1 rounded-md text-slate-400 dark:text-[#6B7C9B] transition-colors',
+                                  'absolute top-3 right-3 p-1 rounded-md text-surface-400 dark:text-surface-500 transition-colors',
                                   isDisabled
                                     ? 'opacity-40 cursor-not-allowed'
-                                    : 'hover:text-slate-700 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/5 cursor-pointer',
+                                    : 'hover:text-surface-700 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/5 cursor-pointer',
                                 )}
                                 aria-label={`View ${tile.label.toLowerCase()} pages`}
                                 aria-expanded={isActive}
@@ -1150,10 +1150,10 @@ export default function KnowledgeBase() {
                               <div className={cn('text-xs font-semibold uppercase tracking-wider pr-7', tile.labelClass)}>
                                 {tile.label}
                               </div>
-                              <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums my-1">
+                              <div className="text-2xl font-bold text-surface-900 dark:text-white tabular-nums my-1">
                                 {tile.count.toLocaleString()}
                               </div>
-                              <div className="text-xs text-slate-500 dark:text-[#6B7C9B]">
+                              <div className="text-xs text-surface-500 dark:text-surface-500">
                                 {tile.sublabel}
                               </div>
                             </div>
@@ -1181,7 +1181,7 @@ export default function KnowledgeBase() {
                               'mt-4 rounded-xl border p-4 flex items-start gap-3',
                               exceeds
                                 ? 'border-rose-200 dark:border-rose-500/30 bg-rose-50/60 dark:bg-rose-500/5'
-                                : 'border-slate-200 dark:border-[#1E2B4B] bg-white/60 dark:bg-[#0C152B]/40',
+                                : 'border-surface-200 dark:border-surface-800 bg-white/60 dark:bg-surface-800/40',
                             )}
                           >
                             <div
@@ -1199,7 +1199,7 @@ export default function KnowledgeBase() {
                                 'text-sm font-semibold',
                                 exceeds
                                   ? 'text-rose-700 dark:text-rose-200'
-                                  : 'text-slate-900 dark:text-white',
+                                  : 'text-surface-900 dark:text-white',
                               )}>
                                 {exceeds ? (
                                   <>
@@ -1215,7 +1215,7 @@ export default function KnowledgeBase() {
                                   </>
                                 )}
                               </div>
-                              <div className="text-xs text-slate-500 dark:text-[#8F9BB3] tabular-nums">
+                              <div className="text-xs text-surface-500 dark:text-surface-400 tabular-nums">
                                 {perPage.toLocaleString()} credit{perPage === 1 ? '' : 's'} per page
                                 {' × '}
                                 {pages.toLocaleString()} page{pages === 1 ? '' : 's'}
@@ -1225,7 +1225,7 @@ export default function KnowledgeBase() {
                                   'font-semibold',
                                   exceeds
                                     ? 'text-rose-600 dark:text-rose-300'
-                                    : 'text-slate-900 dark:text-white',
+                                    : 'text-surface-900 dark:text-white',
                                 )}>
                                   {balance.toLocaleString()}
                                 </span>{' '}
@@ -1250,31 +1250,31 @@ export default function KnowledgeBase() {
                         const active = buckets[recrawlDiffViewing];
                         const truncated = active.count > active.urls.length;
                         return (
-                          <div className="mt-4 rounded-xl border border-slate-200 dark:border-[#1E2B4B] bg-white/60 dark:bg-[#0C152B]/40 overflow-hidden">
-                            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-[#1E2B4B] flex items-center justify-between gap-2">
-                              <span className="text-xs font-semibold text-slate-900 dark:text-white">
+                          <div className="mt-4 rounded-xl border border-surface-200 dark:border-surface-800 bg-white/60 dark:bg-surface-800/40 overflow-hidden">
+                            <div className="px-4 py-2.5 border-b border-surface-200 dark:border-surface-800 flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-surface-900 dark:text-white">
                                 {active.label}
-                                <span className="text-slate-500 dark:text-[#6B7C9B] font-normal ml-1.5">
+                                <span className="text-surface-500 dark:text-surface-500 font-normal ml-1.5">
                                   ({active.count.toLocaleString()})
                                 </span>
                               </span>
                               <button
                                 type="button"
                                 onClick={() => setRecrawlDiffViewing(null)}
-                                className="p-1 rounded text-slate-400 dark:text-[#6B7C9B] hover:text-slate-700 dark:hover:text-white transition-colors"
+                                className="p-1 rounded text-surface-400 dark:text-surface-500 hover:text-surface-700 dark:hover:text-white transition-colors"
                                 aria-label="Close page list"
                               >
                                 <X size={12} />
                               </button>
                             </div>
-                            <ul className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-[#1E2B4B]/60">
+                            <ul className="max-h-56 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800/60">
                               {active.urls.map((u) => (
                                 <li key={u} className="px-4 py-1.5 text-xs">
                                   <a
                                     href={u}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-300 hover:underline truncate"
+                                    className="flex items-center gap-1.5 text-surface-700 dark:text-surface-200 hover:text-primary-600 dark:hover:text-primary-300 hover:underline truncate"
                                   >
                                     <ExternalLink size={11} className="shrink-0 opacity-60" />
                                     <span className="truncate">{u}</span>
@@ -1282,13 +1282,13 @@ export default function KnowledgeBase() {
                                 </li>
                               ))}
                               {active.urls.length === 0 && (
-                                <li className="px-4 py-3 text-xs text-slate-500 dark:text-[#6B7C9B] text-center">
+                                <li className="px-4 py-3 text-xs text-surface-500 dark:text-surface-500 text-center">
                                   No pages in this bucket.
                                 </li>
                               )}
                             </ul>
                             {truncated && (
-                              <div className="px-4 py-1.5 border-t border-slate-200 dark:border-[#1E2B4B] text-[10px] text-slate-500 dark:text-[#6B7C9B]">
+                              <div className="px-4 py-1.5 border-t border-surface-200 dark:border-surface-800 text-[10px] text-surface-500 dark:text-surface-500">
                                 Showing first {active.urls.length.toLocaleString()} of {active.count.toLocaleString()} pages.
                               </div>
                             )}
@@ -1315,7 +1315,7 @@ export default function KnowledgeBase() {
                             'flex items-center justify-center font-medium px-4 py-2 rounded-xl transition-all text-sm shadow-sm text-white',
                             isFullBlocked
                               ? 'bg-rose-600 hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-600'
-                              : 'bg-primary-600 hover:bg-primary-700 dark:bg-[#4F46E5] dark:hover:bg-[#4338CA]',
+                              : 'bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600',
                           )}
                         >
                           {isFullBlocked
@@ -1329,7 +1329,7 @@ export default function KnowledgeBase() {
                     <button
                       type="button"
                       onClick={dismissRecrawlDiff}
-                      className="flex items-center justify-center border border-slate-300 dark:border-slate-700 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-200 font-medium px-4 py-2 rounded-xl transition-all text-sm"
+                      className="flex items-center justify-center border border-surface-300 dark:border-surface-700 bg-transparent hover:bg-surface-100 dark:hover:bg-surface-800/40 text-surface-700 dark:text-surface-200 font-medium px-4 py-2 rounded-xl transition-all text-sm"
                     >
                       Cancel
                     </button>
@@ -1407,7 +1407,7 @@ export default function KnowledgeBase() {
                                   );
                                   setCrawlCount(n);
                                 }}
-                                className="w-20 text-right rounded-md border border-amber-300 dark:border-amber-500/30 bg-white dark:bg-surface-900 px-2 py-1 text-xs tabular-nums"
+                                className="w-20 text-right rounded-md border border-amber-300 dark:border-amber-500/30 bg-[var(--bg-card)] dark:bg-surface-900 px-2 py-1 text-xs tabular-nums"
                               />
                             </div>
                             <input
@@ -1554,9 +1554,9 @@ export default function KnowledgeBase() {
 
             {renderStatus(crawlStatus)}
             {!isCrawling && scanningUrls.length === 0 && (
-              <div className="p-4 bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/20 rounded-xl text-sky-700 dark:text-sky-300 text-sm">
+              <div className="p-4 bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/20 rounded-xl text-primary-700 dark:text-primary-300 text-sm">
                 <p className="font-semibold mb-1">How crawling works:</p>
-                <ul className="list-disc pl-5 space-y-1 text-sky-600/80 dark:text-sky-400/80 text-xs">
+                <ul className="list-disc pl-5 space-y-1 text-primary-600/80 dark:text-primary-400/80 text-xs">
                   <li>We fetch the main page and follow internal links</li>
                   <li>Content is stripped of HTML and chunked for AI ingestion</li>
                   <li>Next.js / React / SPA sites are auto-detected and crawled with JavaScript mode</li>
@@ -1575,7 +1575,7 @@ export default function KnowledgeBase() {
           <div className="space-y-5">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-semibold text-surface-900 dark:text-white">All Sources</h2>
+                <h2 className="text-base font-bold text-surface-900 dark:text-white">All Sources</h2>
                 <p className="text-sm text-surface-500 mt-0.5">Files and websites your chatbot is trained on</p>
               </div>
               <button onClick={fetchDocuments} className="text-sm text-primary-600 dark:text-primary-400 hover:underline font-medium">Refresh</button>
@@ -1634,14 +1634,14 @@ export default function KnowledgeBase() {
                         <tr className="hover:bg-surface-50 dark:hover:bg-surface-800/30 transition-colors">
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
-                              <div className={cn('p-1.5 rounded-lg shrink-0', isUrl ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-500' : 'bg-rose-50 dark:bg-rose-500/10 text-rose-500')}>
+                              <div className={cn('p-1.5 rounded-lg shrink-0', isUrl ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-500' : 'bg-rose-50 dark:bg-rose-500/10 text-rose-500')}>
                                 <Icon size={14} />
                               </div>
                               {isUrl ? (
                                 <button
                                   type="button"
                                   onClick={() => setDrawerSource(doc.name)}
-                                  className="text-sm font-medium text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline truncate max-w-[280px] text-left cursor-pointer transition-colors duration-150"
+                                  className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 hover:underline truncate max-w-[280px] text-left cursor-pointer transition-colors duration-150"
                                 >
                                   {doc.name}
                                 </button>
@@ -1655,7 +1655,7 @@ export default function KnowledgeBase() {
                                 <button
                                   type="button"
                                   onClick={() => toggleSourceHistory(doc.name)}
-                                  className="p-0.5 rounded text-surface-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors shrink-0"
+                                  className="p-0.5 rounded text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors shrink-0"
                                   aria-expanded={isHistoryOpen}
                                   aria-label={isHistoryOpen ? 'Hide recrawl history' : 'Show recrawl history'}
                                 >
@@ -1669,7 +1669,7 @@ export default function KnowledgeBase() {
                           <td className="px-5 py-3.5">
                             <span className={cn(
                               'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold',
-                              isUrl ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400' : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400'
+                              isUrl ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400' : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400'
                             )}>
                               {isUrl ? 'Website' : 'Document'}
                             </span>
@@ -1701,7 +1701,7 @@ export default function KnowledgeBase() {
                                     <button
                                       type="button"
                                       onClick={() => setDrawerSource(doc.name)}
-                                      className="p-1.5 rounded-lg text-surface-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors"
+                                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
                                       aria-label={`View pages scanned for ${doc.name}`}
                                     >
                                       <Eye size={14} />

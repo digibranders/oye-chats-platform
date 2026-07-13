@@ -160,14 +160,14 @@ const COST_ROWS = [
     icon: FileText,
     label: 'Document upload (per file)',
     detail: 'Charged per file added to your knowledge base. Refunded if a file fails to save.',
-    iconColor: 'text-violet-500',
+    iconColor: 'text-primary-500',
   },
   {
     key: 'url_scan',
     icon: Globe,
     label: 'URL crawl (per page)',
     detail: 'Charged per page actually ingested into your knowledge base.',
-    iconColor: 'text-sky-500',
+    iconColor: 'text-primary-500',
   },
   
   // {
@@ -946,7 +946,7 @@ function OverviewTab({
                     className={cn(
                       'absolute right-0 top-5 z-10 w-64 rounded-xl border p-3 shadow-lg',
                       'border-surface-200 dark:border-surface-700',
-                      'bg-white dark:bg-surface-900',
+                      'bg-[var(--bg-card)] dark:bg-surface-900',
                       'text-xs text-surface-600 dark:text-surface-300 leading-relaxed',
                       'opacity-0 invisible group-hover:opacity-100 group-hover:visible',
                       'transition-all duration-150',

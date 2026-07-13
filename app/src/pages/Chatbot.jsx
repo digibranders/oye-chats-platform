@@ -153,7 +153,7 @@ export default function Chatbot() {
                             </p>
                             <button
                                 onClick={() => refreshBots()}
-                                className="inline-flex items-center gap-2 rounded-xl bg-white dark:bg-surface-900 px-3 py-2 text-sm font-medium text-rose-700 dark:text-rose-300 shadow-sm ring-1 ring-rose-200 dark:ring-rose-500/30 transition-colors hover:bg-rose-100 dark:hover:bg-rose-500/20"
+                                className="inline-flex items-center gap-2 rounded-xl bg-[var(--bg-card)] dark:bg-surface-900 px-3 py-2 text-sm font-medium text-rose-700 dark:text-rose-300 shadow-sm ring-1 ring-rose-200 dark:ring-rose-500/30 transition-colors hover:bg-rose-100 dark:hover:bg-rose-500/20"
                             >
                                 Retry
                             </button>

@@ -131,7 +131,7 @@ export default function OfflineMessages({ embedded = false }) {
 
     const statusBadge = (status) => {
         const styles = {
-            new: 'bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400',
+            new: 'bg-primary-100 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400',
             read: 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400',
             replied: 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
         };
@@ -158,15 +158,15 @@ export default function OfflineMessages({ embedded = false }) {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                 {[
                     { label: 'Total', value: stats.total, icon: MessageSquare, color: 'text-surface-900 dark:text-white', iconColor: 'text-surface-400 dark:text-surface-500' },
-                    { label: 'Unread', value: stats.unread, icon: Inbox, color: 'text-blue-600 dark:text-blue-400', iconColor: 'text-blue-600 dark:text-blue-400' },
+                    { label: 'Unread', value: stats.unread, icon: Inbox, color: 'text-primary-600 dark:text-primary-400', iconColor: 'text-primary-600 dark:text-primary-400' },
                     { label: 'Replied', value: stats.replied, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400', iconColor: 'text-emerald-600 dark:text-emerald-400' },
                     { label: 'Reply Rate', value: `${stats.replyRate}%`, icon: TrendingUp, color: 'text-primary-600 dark:text-primary-400', iconColor: 'text-primary-600 dark:text-primary-400' },
                 ].map(s => (
-                    <div key={s.label} className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 p-4 md:p-5 flex items-center gap-3.5 transition-all hover:shadow-sm">
+                    <div key={s.label} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 p-4 md:p-5 flex items-center gap-3.5 transition-all hover:shadow-sm">
                         <s.icon size={20} className={cn('shrink-0', s.iconColor)} />
                         <div className="flex flex-col justify-center min-w-0">
                             <p className="text-[11px] font-medium text-surface-400 dark:text-surface-500 leading-none mb-1.5">{s.label}</p>
-                            <p className={cn('text-[22px] font-extrabold leading-none tracking-tight', s.color)}>{s.value}</p>
+                            <p className={cn('text-[22px] font-extrabold leading-none tracking-tight tabular-nums', s.color)}>{s.value}</p>
                         </div>
                     </div>
                 ))}
@@ -182,7 +182,7 @@ export default function OfflineMessages({ embedded = false }) {
                             'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
                             statusFilter === s
                                 ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/30 text-primary-700 dark:text-primary-400'
-                                : 'bg-white dark:bg-surface-900 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800'
+                                : 'bg-[var(--bg-card)] dark:bg-surface-900 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800'
                         )}
                     >
                         {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -219,7 +219,7 @@ export default function OfflineMessages({ embedded = false }) {
                         <span className="text-sm font-medium text-primary-700 dark:text-primary-300">{selectedIds.size} selected</span>
                         <button
                             onClick={handleBulkMarkRead}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--bg-card)] dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
                         >
                             <CheckCircle2 size={13} /> Mark as read
                         </button>
@@ -235,7 +235,7 @@ export default function OfflineMessages({ embedded = false }) {
 
             <div className="flex gap-6">
                 {/* Message List */}
-                <div className="flex-1 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+                <div className="flex-1 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                     {/* Select all header */}
                     {filteredByDate.length > 0 && (
                         <div className="px-4 py-2.5 border-b border-surface-100 dark:border-surface-800 flex items-center gap-3">
@@ -278,7 +278,7 @@ export default function OfflineMessages({ embedded = false }) {
                                         className={cn(
                                             'p-4 cursor-pointer transition-colors hover:bg-surface-50 dark:hover:bg-surface-800/50 flex gap-3',
                                             selectedMessage?.id === msg.id && 'bg-primary-50/50 dark:bg-primary-500/10',
-                                            msg.status === 'new' && 'border-l-2 border-l-blue-500'
+                                            msg.status === 'new' && 'border-l-2 border-l-primary-500'
                                         )}
                                     >
                                         <button
@@ -352,7 +352,7 @@ export default function OfflineMessages({ embedded = false }) {
 
                 {/* Detail Panel */}
                 {selectedMessage && (
-                    <div className="w-96 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 shrink-0 self-start sticky top-4">
+                    <div className="w-96 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 shrink-0 self-start sticky top-4">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="font-bold text-surface-900 dark:text-white">Message Details</h3>
                             <div className="flex gap-1">

@@ -207,7 +207,7 @@ export default function DomainRestrictions({ botId, initialAllowedDomains, initi
                 add an entry that starts with <code className="font-mono text-[11px] text-surface-700 dark:text-surface-300">*.</code>
             </p>
 
-            <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg p-3 mb-3">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg p-3 mb-3">
                 <div className="flex flex-wrap gap-2">
                     {domains.map((domain) => (
                         <span

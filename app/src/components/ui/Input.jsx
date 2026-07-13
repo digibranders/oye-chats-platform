@@ -10,7 +10,7 @@ const Input = forwardRef(({ className, icon: Icon, suffix, error, ...props }, re
       <input
         ref={ref}
         className={cn(
-          'w-full h-10 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 outline-none transition-all duration-200 text-sm',
+          'w-full h-10 rounded-xl border bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 outline-none transition-all duration-200 text-sm',
           Icon ? 'pl-10' : 'pl-3.5',
           suffix ? 'pr-10' : 'pr-3.5',
           error

@@ -68,7 +68,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                         </div>
 
                         {/* Card Footer */}
-                        <div className="p-4 bg-white dark:bg-surface-900 flex items-center justify-between border-t border-surface-200 dark:border-surface-700">
+                        <div className="p-4 bg-[var(--bg-card)] dark:bg-surface-900 flex items-center justify-between border-t border-surface-200 dark:border-surface-700">
                             <div>
                                 <h3 className="font-semibold text-sm text-surface-900 dark:text-surface-100">{theme.name}</h3>
                                 {isSelected && (
@@ -103,7 +103,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                     <div className="relative z-10 w-full max-w-2xl bg-white/10 backdrop-blur-2xl rounded-[3rem] border border-white/20 shadow-[0_32px_120px_-15px_rgba(0,0,0,0.6)] flex flex-col items-center p-10 overflow-hidden">
                         {/* Glass accents */}
                         <div className="absolute -top-32 -left-32 w-72 h-72 bg-primary-500/20 rounded-full blur-[100px] pointer-events-none"></div>
-                        <div className="absolute -bottom-32 -right-32 w-72 h-72 bg-cyan-500/20 rounded-full blur-[100px] pointer-events-none"></div>
+                        <div className="absolute -bottom-32 -right-32 w-72 h-72 bg-primary-500/20 rounded-full blur-[100px] pointer-events-none"></div>
 
                         <button
                             onClick={() => setPreviewTheme(null)}
