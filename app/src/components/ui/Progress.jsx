@@ -10,8 +10,8 @@ export default function Progress({ value = 0, max = 100, size = 'md', color = 'p
     success: 'bg-emerald-500',
     warning: 'bg-amber-500',
     error: 'bg-rose-500',
-    info: 'bg-sky-500',
-    dynamic: pct >= 75 ? 'bg-emerald-500 dark:bg-emerald-400' : pct >= 50 ? 'bg-sky-500 dark:bg-sky-400' : pct >= 25 ? 'bg-amber-500 dark:bg-amber-400' : 'bg-surface-400 dark:bg-surface-500',
+    info: 'bg-primary-500',
+    dynamic: pct >= 75 ? 'bg-emerald-500 dark:bg-emerald-400' : pct >= 50 ? 'bg-primary-500 dark:bg-primary-400' : pct >= 25 ? 'bg-amber-500 dark:bg-amber-400' : 'bg-surface-400 dark:bg-surface-500',
   };
 
   return (
@@ -37,7 +37,7 @@ export function CircularProgress({ value = 0, max = 100, size = 48, strokeWidth 
     success: 'text-emerald-500',
     warning: 'text-amber-500',
     error: 'text-rose-500',
-    dynamic: pct >= 75 ? 'text-emerald-500' : pct >= 50 ? 'text-sky-500' : pct >= 25 ? 'text-amber-500' : 'text-surface-400',
+    dynamic: pct >= 75 ? 'text-emerald-500' : pct >= 50 ? 'text-primary-500' : pct >= 25 ? 'text-amber-500' : 'text-surface-400',
   };
 
   return (

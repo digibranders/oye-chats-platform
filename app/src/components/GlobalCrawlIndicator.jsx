@@ -161,7 +161,7 @@ const GlobalCrawlIndicator = () => {
     // (warn). Terminal states never reach this point — they're handled by
     // the one-shot toast above and the indicator returns null.
     const isCancelling = crawl.status === 'cancelling';
-    const accent = isCancelling ? 'from-amber-400 to-orange-500' : 'from-primary-500 to-violet-500';
+    const accent = isCancelling ? 'from-amber-400 to-orange-500' : 'from-primary-500 to-primary-600';
     const icon = isCancelling
         ? <Loader2 size={18} className="text-amber-500 animate-spin" />
         : <Globe size={18} className="text-primary-500" />;

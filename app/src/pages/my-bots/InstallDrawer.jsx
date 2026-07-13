@@ -123,7 +123,7 @@ export default function InstallDrawer({ bot, open, onClose }) {
             <div
                 ref={panelRef}
                 tabIndex={-1}
-                className="absolute right-0 top-0 h-full w-full sm:max-w-lg bg-white dark:bg-surface-900 shadow-xl border-l border-surface-200 dark:border-surface-700 overflow-y-auto outline-none animate-slide-in-right"
+                className="absolute right-0 top-0 h-full w-full sm:max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 shadow-xl border-l border-surface-200 dark:border-surface-700 overflow-y-auto outline-none animate-slide-in-right"
             >
                 <div className="sticky top-0 z-10 bg-white/95 dark:bg-surface-900/95 backdrop-blur px-5 py-4 border-b border-surface-100 dark:border-surface-800 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-surface-900 dark:text-surface-50 truncate pr-3">
@@ -162,7 +162,7 @@ export default function InstallDrawer({ bot, open, onClose }) {
                                 </button>
                             </div>
                         </div>
-                        <div className="flex items-center bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2">
+                        <div className="flex items-center bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2">
                             <Key className="w-3.5 h-3.5 text-amber-500 mr-2 flex-shrink-0" />
                             <code className="text-xs text-surface-700 dark:text-surface-300 font-mono break-all">
                                 {showKey ? bot.bot_key : maskKey(bot.bot_key)}
@@ -190,7 +190,7 @@ export default function InstallDrawer({ bot, open, onClose }) {
                                 </a>
                                 <button
                                     onClick={handleDemoCopy}
-                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 text-surface-600 dark:text-surface-300 hover:text-surface-700 dark:hover:text-surface-200 text-xs font-semibold rounded-lg transition-colors bg-white dark:bg-surface-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 text-surface-600 dark:text-surface-300 hover:text-surface-700 dark:hover:text-surface-200 text-xs font-semibold rounded-lg transition-colors bg-[var(--bg-card)] dark:bg-surface-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
                                 >
                                     {copiedField === `demo-${bot.id}` ? <Check size={13} /> : <Link2 size={13} />}
                                     {copiedField === `demo-${bot.id}` ? 'Copied!' : 'Copy Link'}

@@ -11,7 +11,7 @@ import { trialDaysLeft } from '../utils/trial';
  *
  * Three visual states, ranked by urgency:
  *
- *   1. ``trialing`` with > 3 days left → indigo informational chip.
+ *   1. ``trialing`` with > 3 days left → cobalt informational chip.
  *      Low-key, doesn't dominate the page.
  *   2. ``trialing`` with ≤ 3 days left → amber urgency strip with
  *      countdown copy.
@@ -75,9 +75,9 @@ export default function TrialBanner() {
                 role="status"
                 className="bg-rose-600 dark:bg-rose-700 text-white border-b border-rose-700 dark:border-rose-800"
             >
-                <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-3 flex items-center gap-3 flex-wrap">
-                    <AlertCircle size={18} className="shrink-0" />
-                    <span className="text-[13px] font-medium leading-snug">
+                <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-2 flex items-center gap-3">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <span className="text-[13px] font-medium leading-snug flex-1 min-w-0">
                         Your free trial ended.
                         <span className="opacity-90 ml-1">
                             Your bot is currently offline. Pick a plan to bring it back live —
@@ -86,7 +86,7 @@ export default function TrialBanner() {
                     </span>
                     <Link
                         to="/billing?tab=seats"
-                        className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white text-rose-700 text-[13px] font-semibold hover:bg-rose-50 transition-colors"
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white text-rose-700 text-[13px] font-semibold hover:bg-rose-50 transition-colors"
                     >
                         Reactivate now
                     </Link>
@@ -123,9 +123,9 @@ export default function TrialBanner() {
                     role="status"
                     className="bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-500/30"
                 >
-                    <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-2.5 flex items-center gap-3 flex-wrap">
+                    <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-2 flex items-center gap-3">
                         <Clock size={16} className="shrink-0" />
-                        <span className="text-[13px] font-medium leading-snug">
+                        <span className="text-[13px] font-medium leading-snug tabular-nums flex-1 min-w-0">
                             Heads up — your free trial {daysCopy}.
                             <span className="opacity-80 ml-1">
                                 Pick a plan to avoid your bot going offline.
@@ -133,7 +133,7 @@ export default function TrialBanner() {
                         </span>
                         <Link
                             to="/billing?tab=seats"
-                            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-semibold transition-colors"
+                            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-semibold transition-colors"
                         >
                             Choose a plan
                         </Link>
@@ -150,16 +150,16 @@ export default function TrialBanner() {
             );
         }
 
-        // Calm indigo chip — plenty of runway left.
+        // Calm cobalt chip — plenty of runway left.
         const daysCopy = remaining === 1 ? '1 day left' : `${remaining} days left`;
         return (
             <div
                 role="status"
-                className="bg-indigo-50 dark:bg-indigo-500/10 text-indigo-900 dark:text-indigo-200 border-b border-indigo-200 dark:border-indigo-500/20"
+                className="bg-primary-50 dark:bg-primary-500/10 text-primary-900 dark:text-primary-200 border-b border-primary-200 dark:border-primary-500/20"
             >
-                <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-2 flex items-center gap-2.5 flex-wrap">
-                    <Sparkles size={15} className="shrink-0 text-indigo-600 dark:text-indigo-300" />
-                    <span className="text-[13px] leading-snug">
+                <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-1.5 flex items-center gap-2.5">
+                    <Sparkles size={15} className="shrink-0 text-primary-600 dark:text-primary-300" />
+                    <span className="text-[13px] leading-snug tabular-nums flex-1 min-w-0">
                         <span className="font-semibold">{daysCopy}</span> in your free trial.
                         <span className="opacity-80 ml-1">
                             Convert any time to keep your bot, credits and chat history.
@@ -167,7 +167,7 @@ export default function TrialBanner() {
                     </span>
                     <Link
                         to="/billing?tab=seats"
-                        className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[12.5px] font-semibold transition-colors"
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-primary-600 hover:bg-primary-700 text-white text-[12.5px] font-semibold transition-colors"
                     >
                         Pick a plan
                     </Link>
@@ -175,7 +175,7 @@ export default function TrialBanner() {
                         type="button"
                         onClick={dismiss}
                         aria-label="Dismiss trial banner"
-                        className="shrink-0 -mr-1 p-1 rounded-md text-indigo-900/60 hover:text-indigo-900 hover:bg-indigo-100 dark:text-indigo-200/70 dark:hover:text-indigo-100 dark:hover:bg-indigo-500/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
+                        className="shrink-0 -mr-1 p-1 rounded-md text-primary-900/60 hover:text-primary-900 hover:bg-primary-100 dark:text-primary-200/70 dark:hover:text-primary-100 dark:hover:bg-primary-500/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
                     >
                         <X size={14} />
                     </button>

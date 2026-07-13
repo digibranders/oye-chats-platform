@@ -28,9 +28,9 @@ const SUPPORT_EMAIL = import.meta.env.VITE_SALES_EMAIL || 'support@oyechats.com'
 const MOST_POPULAR_SLUG = 'standard';
 const TIER_META = {
     free:       { icon: Sparkles, accent: 'slate',   description: 'Start exploring AI-powered chat' },
-    starter:    { icon: Zap,      accent: 'sky',     description: 'For growing teams with live chat needs' },
+    starter:    { icon: Zap,      accent: 'primary', description: 'For growing teams with live chat needs' },
     standard:   { icon: Crown,    accent: 'primary', description: 'Full AI + BANT sales intelligence' },
-    enterprise: { icon: ShieldCheck, accent: 'violet', description: 'Custom credits, dedicated support' },
+    enterprise: { icon: ShieldCheck, accent: 'slate', description: 'Custom credits, dedicated support' },
 };
 
 const ACCENTS = {
@@ -40,23 +40,11 @@ const ACCENTS = {
         chip:       'bg-surface-100 dark:bg-surface-800 text-surface-700 dark:text-surface-300',
         cta:        'bg-surface-900 dark:bg-white text-white dark:text-surface-900 hover:bg-surface-800 dark:hover:bg-surface-100',
     },
-    sky: {
-        rail:       'border-surface-200 dark:border-surface-700 hover:border-sky-300 dark:hover:border-sky-500/40',
-        railActive: 'border-sky-400 dark:border-sky-500/60 bg-sky-50/70 dark:bg-sky-500/10 shadow-[0_0_0_3px_rgba(56,189,248,0.12)]',
-        chip:       'bg-sky-100 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300',
-        cta:        'bg-sky-600 hover:bg-sky-700 text-white',
-    },
     primary: {
         rail:       'border-surface-200 dark:border-surface-700 hover:border-primary-300 dark:hover:border-primary-500/40',
-        railActive: 'border-primary-500 dark:border-primary-500/70 bg-primary-50/70 dark:bg-primary-500/10 shadow-[0_0_0_3px_rgba(99,102,241,0.18)]',
+        railActive: 'border-primary-500 dark:border-primary-500/70 bg-primary-50/70 dark:bg-primary-500/10 shadow-[0_0_0_3px_rgba(162,28,175,0.18)]',
         chip:       'bg-primary-100 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300',
-        cta:        'bg-primary-600 hover:bg-primary-700 text-white',
-    },
-    violet: {
-        rail:       'border-surface-200 dark:border-surface-700 hover:border-violet-300 dark:hover:border-violet-500/40',
-        railActive: 'border-violet-400 dark:border-violet-500/60 bg-violet-50/70 dark:bg-violet-500/10 shadow-[0_0_0_3px_rgba(168,85,247,0.14)]',
-        chip:       'bg-violet-100 dark:bg-violet-500/15 text-violet-700 dark:text-violet-300',
-        cta:        'bg-violet-600 hover:bg-violet-700 text-white',
+        cta:        'bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-700 hover:to-primary-600 text-white',
     },
 };
 
@@ -447,7 +435,7 @@ export default function PlanModal({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 16, scale: 0.97 }}
                         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative w-full max-w-5xl max-h-[90vh] bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 flex flex-col overflow-hidden"
+                        className="relative w-full max-w-5xl max-h-[90vh] bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 flex flex-col overflow-hidden"
                     >
                         {/* Header */}
                         <div className="flex items-start justify-between px-6 py-4 border-b border-surface-200 dark:border-surface-800 shrink-0">
@@ -611,7 +599,7 @@ function CycleToggle({ value, onChange, disabled }) {
                     className={cn(
                         'px-3 py-1.5 rounded-md transition-colors disabled:opacity-50 inline-flex items-center gap-1.5',
                         value === o.value
-                            ? 'bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-50 shadow-sm'
+                            ? 'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-50 shadow-sm'
                             : 'text-surface-600 dark:text-surface-400 hover:text-surface-900 dark:hover:text-surface-200',
                     )}
                 >
@@ -645,11 +633,11 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
                 'relative w-full text-left rounded-xl border px-4 py-3.5 min-h-[88px]',
                 'transition-colors duration-200 group',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
-                isSelected ? accent.railActive : accent.rail + ' bg-white dark:bg-surface-900',
+                isSelected ? accent.railActive : accent.rail + ' bg-[var(--bg-card)] dark:bg-surface-900',
             )}
         >
             {isMostPopular && (
-                <span className="absolute -top-2 left-4 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-primary-600 text-white shadow-sm">
+                <span className="absolute -top-2 left-4 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-sm shadow-primary-500/30">
                     <Star size={9} fill="currentColor" />
                     Most popular
                 </span>
@@ -781,7 +769,7 @@ function FocusedPlan({
             {!submitError && submitNotice && (
                 <div
                     role="status"
-                    className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-300 text-[13px]"
+                    className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 text-primary-700 dark:text-primary-300 text-[13px]"
                 >
                     <AlertCircle size={14} className="shrink-0 mt-0.5" />
                     <span>{submitNotice}</span>
@@ -926,7 +914,7 @@ function ReferralBlock({ referral }) {
                             maxLength={20}
                             className={cn(
                                 'flex-1 rounded-lg border px-3 py-1.5 text-sm font-mono tracking-widest uppercase',
-                                'bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-50',
+                                'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-50',
                                 'placeholder:text-surface-400 dark:placeholder:text-surface-500 placeholder:font-sans placeholder:tracking-normal',
                                 'focus:outline-none focus:ring-2 focus:ring-primary-500/40',
                                 'disabled:opacity-60 disabled:cursor-not-allowed',
@@ -1423,7 +1411,7 @@ function renderPriceLabel(plan, billingCycle, geo, compact = false) {
 //   * What happens if I do nothing?
 //
 // The trialing state renders as a promotional / "look what you get" card
-// (blue tint, calendar + gift iconography, static "N days free trial" label)
+// (cobalt tint, calendar + gift iconography, static "N days free trial" label)
 // because the outer TrialUpgradeBanner in Billing.jsx already owns urgency
 // escalation. Doubling up here would just make the modal feel alarmist for
 // customers on day 2 of a 14-day trial. The trial_expired state is a
@@ -1467,8 +1455,8 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
                 role="status"
                 className={cn(
                     'relative overflow-hidden rounded-2xl border p-4 sm:p-5',
-                    'border-blue-200/80 bg-blue-50/80',
-                    'dark:border-blue-500/25 dark:bg-blue-500/[0.07]',
+                    'border-primary-200/80 bg-primary-50/80',
+                    'dark:border-primary-500/25 dark:bg-primary-500/[0.07]',
                 )}
             >
                 <div className="flex items-center gap-4">
@@ -1476,20 +1464,20 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
                     <div
                         className={cn(
                             'flex-shrink-0 w-14 h-14 rounded-full flex items-center justify-center',
-                            'bg-blue-100 dark:bg-blue-500/15 ring-1 ring-inset ring-blue-200/70 dark:ring-blue-500/20',
+                            'bg-primary-100 dark:bg-primary-500/15 ring-1 ring-inset ring-primary-200/70 dark:ring-primary-500/20',
                         )}
                     >
-                        <Calendar className="w-6 h-6 text-blue-600 dark:text-blue-300" strokeWidth={1.9} />
+                        <Calendar className="w-6 h-6 text-primary-600 dark:text-primary-300" strokeWidth={1.9} />
                     </div>
 
                     {/* Middle — headline + body */}
                     <div className="min-w-0 flex-1">
-                        <div className="text-[15px] font-bold tracking-tight text-blue-950 dark:text-blue-50">
+                        <div className="text-[15px] font-bold tracking-tight text-primary-900 dark:text-primary-50">
                             {headline}
                         </div>
-                        <p className="mt-1 text-[13px] leading-relaxed text-blue-900/85 dark:text-blue-100/85">
+                        <p className="mt-1 text-[13px] leading-relaxed text-primary-900/85 dark:text-primary-100/85">
                             Your chatbot is live with the full <strong className="font-semibold">{planName}</strong> feature set right now. Authorise your card or UPI to keep it running past{' '}
-                            <strong className="font-semibold text-blue-700 dark:text-blue-300">{deadlineLabel}</strong>.
+                            <strong className="font-semibold text-primary-700 dark:text-primary-300">{deadlineLabel}</strong>.
                         </p>
                     </div>
 
@@ -1501,7 +1489,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
                     <div
                         className={cn(
                             'hidden md:flex flex-shrink-0 items-center justify-center pl-5 ml-1 self-stretch',
-                            'border-l border-blue-200/60 dark:border-blue-500/20',
+                            'border-l border-primary-200/60 dark:border-primary-500/20',
                         )}
                         aria-hidden="true"
                     >
@@ -1546,7 +1534,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
 /**
  * Decorative gift-box illustration for the trialing strip. Rendered as inline
  * SVG so it can share the exact same currentColor + stroke width as the rest
- * of the strip's blue palette (no PNG asset, no colour drift across themes).
+ * of the strip's cobalt palette (no PNG asset, no colour drift across themes).
  * Sized for the ~64px right column; the ambient sparkles are the only detail
  * cue that this is a "reward" flourish rather than a generic icon.
  */
@@ -1558,7 +1546,7 @@ function GiftDecoration() {
             viewBox="0 0 60 60"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
-            className="text-blue-400/80 dark:text-blue-300/70"
+            className="text-primary-400/80 dark:text-primary-300/70"
         >
             {/* Ambient sparkles top-right */}
             <path d="M50 8 L50 14 M47 11 L53 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />

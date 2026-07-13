@@ -39,14 +39,14 @@ export default function DataTable({
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 overflow-hidden">
+      <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 overflow-hidden">
         <SkeletonTable rows={pageSize} cols={columns.length} />
       </div>
     );
   }
 
   return (
-    <div className={cn('rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 overflow-hidden', className)}>
+    <div className={cn('rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 overflow-hidden', className)}>
       <div className="overflow-x-auto">
         <table className="w-full text-left">
           <thead>

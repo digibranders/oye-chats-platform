@@ -87,7 +87,7 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
             exit={{ x: isRight ? '100%' : '-100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className={cn(
-              'relative h-full w-full bg-white dark:bg-surface-900 shadow-2xl border-surface-200 dark:border-surface-800 overflow-y-auto',
+              'relative h-full w-full bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl border-surface-200 dark:border-surface-800 overflow-y-auto',
               isRight ? 'ml-auto border-l' : 'mr-auto border-r',
               sizes[size],
               className
@@ -105,7 +105,7 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
 
 function DrawerHeader({ children, onClose, className }) {
   return (
-    <div className={cn('sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between', className)}>
+    <div className={cn('sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between', className)}>
       <div className="flex-1 min-w-0">{children}</div>
       {onClose && (
         <button

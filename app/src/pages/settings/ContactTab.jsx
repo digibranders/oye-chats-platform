@@ -26,7 +26,7 @@ export default function ContactTab() {
     };
 
     return (
-        <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
             <div className="flex items-start gap-4 mb-4">
                 <div className="relative shrink-0">
                     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-sm shadow-primary-500/30 flex items-center justify-center">
@@ -34,7 +34,7 @@ export default function ContactTab() {
                     </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                    <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50">
+                    <h2 className="text-base font-bold text-surface-900 dark:text-surface-50">
                         Need something custom?
                     </h2>
                     <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">

@@ -8,10 +8,11 @@ import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
+import { CHART_COLORS } from '../components/ui/charts';
 
 const TAG_OPTIONS = [
     { id: 'hot-lead', label: 'Hot Lead', color: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-rose-200 dark:border-rose-500/30' },
-    { id: 'support', label: 'Support', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400 border-sky-200 dark:border-sky-500/30' },
+    { id: 'support', label: 'Support', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400 border-primary-200 dark:border-primary-500/30' },
     { id: 'spam', label: 'Spam', color: 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400 border-surface-200 dark:border-surface-700' },
     { id: 'vip', label: 'VIP', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-amber-200 dark:border-amber-500/30' },
 ];
@@ -116,7 +117,7 @@ export default function Users({ embedded = false }) {
                     <input
                         type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search visitors..."
-                        className="w-full pl-10 pr-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                        className="w-full pl-10 pr-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                     />
                 </div>
             </div>
@@ -137,7 +138,7 @@ export default function Users({ embedded = false }) {
                     ))}
                 </div>
             ) : filtered.length === 0 ? (
-                <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm py-14 text-center">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm py-14 text-center">
                     <MessageCircle className="w-8 h-8 mx-auto mb-3 text-surface-300 dark:text-surface-600" />
                     <p className="text-sm text-surface-500 dark:text-surface-400">No visitors found</p>
                 </div>
@@ -149,7 +150,7 @@ export default function Users({ embedded = false }) {
                             onClick={() => handleViewChat(visitor.session_id)}
                             className={cn(
                                 'group w-full flex items-center gap-4 px-4 py-3 rounded-xl',
-                                'bg-white dark:bg-surface-900',
+                                'bg-[var(--bg-card)] dark:bg-surface-900',
                                 'border border-surface-200 dark:border-surface-800',
                                 'hover:border-primary-300 dark:hover:border-primary-500/40',
                                 'hover:shadow-sm transition-all text-left',
@@ -169,7 +170,7 @@ export default function Users({ embedded = false }) {
                             <span className="inline-flex items-center justify-center min-w-[1.75rem] h-6 px-2 rounded-full bg-surface-100 dark:bg-surface-800 text-[11px] font-bold text-surface-600 dark:text-surface-300">
                                 {visitor.chats}
                             </span>
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 dark:border-surface-700 text-xs font-semibold text-surface-600 dark:text-surface-300 group-hover:border-primary-400 dark:group-hover:border-primary-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-all bg-white dark:bg-surface-800">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 dark:border-surface-700 text-xs font-semibold text-surface-600 dark:text-surface-300 group-hover:border-primary-400 dark:group-hover:border-primary-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-all bg-[var(--bg-card)] dark:bg-surface-800">
                                 <MessageCircle className="w-3.5 h-3.5" /> View
                             </span>
                         </button>
@@ -194,7 +195,7 @@ export default function Users({ embedded = false }) {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                            className="relative ml-auto h-full w-full max-w-lg bg-white dark:bg-surface-900 shadow-2xl flex flex-col border-l border-surface-200 dark:border-surface-800"
+                            className="relative ml-auto h-full w-full max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl flex flex-col border-l border-surface-200 dark:border-surface-800"
                         >
                             {/* Drawer Header */}
                             <div className="px-5 py-4 border-b border-surface-100 dark:border-surface-800 shrink-0">
@@ -248,13 +249,13 @@ export default function Users({ embedded = false }) {
                                         <p className="text-[10px] font-medium text-surface-400 dark:text-surface-500 mb-1">Messages last 7 days</p>
                                         <ResponsiveContainer width="100%" height={36}>
                                             <BarChart data={timelineData} barSize={6}>
-                                                <XAxis dataKey="date" tick={{ fontSize: 8, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                                <XAxis dataKey="date" tick={{ fontSize: 8, fill: CHART_COLORS.axis }} axisLine={false} tickLine={false} />
                                                 <ReTooltip
-                                                    contentStyle={{ background: 'var(--color-surface-900, #0f172a)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 8, fontSize: 11 }}
-                                                    labelStyle={{ color: '#94a3b8' }}
-                                                    itemStyle={{ color: '#a5b4fc' }}
+                                                    contentStyle={{ background: 'var(--color-surface-900, #18181b)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 8, fontSize: 11 }}
+                                                    labelStyle={{ color: CHART_COLORS.axis }}
+                                                    itemStyle={{ color: CHART_COLORS.primary }}
                                                 />
-                                                <Bar dataKey="count" fill="#6366f1" radius={[2, 2, 0, 0]} />
+                                                <Bar dataKey="count" fill={CHART_COLORS.primary} radius={[2, 2, 0, 0]} />
                                             </BarChart>
                                         </ResponsiveContainer>
                                     </div>

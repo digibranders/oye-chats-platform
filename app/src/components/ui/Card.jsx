@@ -4,7 +4,7 @@ function Card({ className, children, hover = false, ...props }) {
   return (
     <div
       className={cn(
-        'rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 shadow-sm transition-all duration-200',
+        'rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 shadow-sm transition-all duration-200',
         hover && 'hover:shadow-md hover:border-surface-300 dark:hover:border-surface-700 hover:-translate-y-0.5',
         className
       )}

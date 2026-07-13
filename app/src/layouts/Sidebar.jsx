@@ -368,7 +368,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
       );
 
   return (
-    <aside className={cn(sidebarClasses, 'bg-white dark:bg-surface-950 border-r border-surface-200 dark:border-surface-800/50')}>
+    <aside className={cn(sidebarClasses, 'bg-[var(--sidebar-bg)] dark:bg-surface-950 border-r border-surface-200 dark:border-surface-800/50')}>
       {/* Logo */}
       <div className="flex items-center h-16 px-4 shrink-0">
         <div className="flex items-center gap-3">
@@ -419,15 +419,18 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             <div className="relative">
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg bg-surface-50 dark:bg-surface-900/80 border border-surface-200 dark:border-surface-800 hover:border-surface-300 dark:hover:border-surface-700 transition-all text-left group"
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl bg-[var(--bg-card)] dark:bg-surface-900/80 border border-surface-200 dark:border-surface-800 shadow-sm hover:border-surface-300 dark:hover:border-surface-700 transition-all text-left group"
               >
-                <div className="w-6 h-6 rounded-md bg-primary-500/15 flex items-center justify-center flex-shrink-0">
-                  <Bot size={13} className="text-primary-400" />
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-400 flex items-center justify-center flex-shrink-0 shadow-[0_3px_8px_rgba(162,28,175,0.28)]">
+                  <Bot size={15} className="text-white" />
                 </div>
-                <p className="text-[12px] font-semibold text-surface-700 dark:text-surface-200 truncate flex-1">
-                  {selectedBot?.name || 'Select a Bot'}
-                </p>
-                <ChevronDown size={14} className={cn('text-surface-500 transition-transform', dropdownOpen && 'rotate-180')} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-surface-400 leading-none mb-0.5">Active bot</p>
+                  <p className="text-[12.5px] font-semibold text-surface-800 dark:text-surface-100 truncate leading-tight">
+                    {selectedBot?.name || 'Select a Bot'}
+                  </p>
+                </div>
+                <ChevronDown size={14} className={cn('text-surface-400 transition-transform shrink-0', dropdownOpen && 'rotate-180')} />
               </button>
 
               <AnimatePresence>

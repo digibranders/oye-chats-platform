@@ -139,7 +139,7 @@ export default function BusinessHoursEditor({ value, onChange, disabled = false 
                         {DAYS.map(({ key, label }) => {
                             const day = hours.days?.[key] || { enabled: false, start: '09:00', end: '17:00' };
                             return (
-                                <div key={key} className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-surface-900">
+                                <div key={key} className="flex items-center gap-3 px-4 py-3 bg-[var(--bg-card)] dark:bg-surface-900">
                                     <Toggle
                                         id={`bh-${key}`}
                                         checked={day.enabled}

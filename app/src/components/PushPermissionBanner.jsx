@@ -4,7 +4,7 @@ import { Bell, BellOff, ShieldAlert, X } from 'lucide-react';
 /**
  * PushPermissionBanner — refined floating card surfacing three actionable states:
  *
- *   1. ``default`` — they haven't been asked yet. Indigo nudge with a clear
+ *   1. ``default`` — they haven't been asked yet. Cobalt nudge with a clear
  *      "Enable notifications" CTA. Fires the browser permission prompt.
  *   2. ``denied``  — they previously blocked. Browsers don't let us re-prompt
  *      from JS, so we show recovery instructions instead. Calm amber, not
@@ -59,11 +59,11 @@ function markDismissed() {
 const VARIANTS = {
     default: {
         Icon: Bell,
-        iconBg: 'bg-indigo-100 dark:bg-indigo-500/15',
-        iconColor: 'text-indigo-600 dark:text-indigo-300',
-        accentRing: 'ring-indigo-200/60 dark:ring-indigo-400/15',
+        iconBg: 'bg-primary-100 dark:bg-primary-500/15',
+        iconColor: 'text-primary-600 dark:text-primary-300',
+        accentRing: 'ring-primary-200/60 dark:ring-primary-400/15',
         buttonClass:
-            'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white shadow-sm shadow-indigo-600/20',
+            'bg-primary-600 hover:bg-primary-500 active:bg-primary-700 text-white shadow-sm shadow-primary-600/20',
         title: 'Stay reachable when this tab is closed',
         body: 'Turn on browser notifications and we will alert you the moment a visitor wants to chat — even when the dashboard tab is in the background.',
         actionLabel: 'Enable notifications',
@@ -143,7 +143,7 @@ export default function PushPermissionBanner({ push }) {
     if (!supported) return null;
     // Skip rendering during the brief hook-init window. Without this gate, a
     // returning user (permission already "granted", subscription still present
-    // at the browser layer) sees the indigo "Enable notifications" card flash
+    // at the browser layer) sees the cobalt "Enable notifications" card flash
     // for ~10ms while the hook awaits ``getSubscription()`` + re-posts to the
     // backend — confusing UX since they're about to land back in the happy
     // path. The hook flips ``initializing`` to false the moment the first
@@ -193,7 +193,7 @@ export default function PushPermissionBanner({ push }) {
                             ? 'Re-check browser notification permission'
                             : 'Enable browser notifications'
                     }
-                    className="group flex items-start gap-3 pr-6 w-full text-left cursor-pointer rounded-xl -m-1 p-1 transition hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60 dark:focus-visible:ring-indigo-400/40"
+                    className="group flex items-start gap-3 pr-6 w-full text-left cursor-pointer rounded-xl -m-1 p-1 transition hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 dark:focus-visible:ring-primary-400/40"
                 >
                     <div className={`shrink-0 w-9 h-9 rounded-full grid place-items-center ${variant.iconBg}`}>
                         <variant.Icon size={17} className={variant.iconColor} strokeWidth={2} />

@@ -1,37 +1,47 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 /* Switch dark mode to class strategy so ThemeContext controls it via .dark on <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* ── Primary — Indigo (richer, more premium than flat blue) ── */
-  --color-primary-50: #eef2ff;
-  --color-primary-100: #e0e7ff;
-  --color-primary-200: #c7d2fe;
-  --color-primary-300: #a5b4fc;
-  --color-primary-400: #818cf8;
-  --color-primary-500: #6366f1;
-  --color-primary-600: #4f46e5;
-  --color-primary-700: #4338ca;
-  --color-primary-800: #3730a3;
-  --color-primary-900: #312e81;
+  /* ── Primary — Volt violet (Voltage Paper — matches oyechats.com) ──
+     Ramp centered so 600 = the brand volt #A21CAF. */
+  --color-primary-50: #fdf4ff;
+  --color-primary-100: #fae8ff;
+  --color-primary-200: #f5d0fe;
+  --color-primary-300: #f0abfc;
+  --color-primary-400: #e879f9;
+  --color-primary-500: #d946ef;
+  --color-primary-600: #a21caf;
+  --color-primary-700: #86198f;
+  --color-primary-800: #701a75;
+  --color-primary-900: #4a044e;
 
-  /* ── App canvas — light-theme main body background (periwinkle tint) ── */
-  --color-canvas: #ebeff6;
+  /* ── App canvas — used by bg-canvas surfaces (warm white, Voltage Paper) ── */
+  --color-canvas: #ffffff;
 
-  /* ── Surface — Warm Stone (not cold slate) ── */
-  --color-surface-50: #fafaf9;
-  --color-surface-100: #f5f5f4;
-  --color-surface-200: #e7e5e4;
-  --color-surface-300: #d6d3d1;
-  --color-surface-400: #a8a29e;
-  --color-surface-500: #78716c;
-  --color-surface-600: #57534e;
-  --color-surface-700: #44403c;
-  --color-surface-800: #292524;
-  --color-surface-900: #1c1917;
-  --color-surface-950: #0c0a09;
+  /* ── Surface — Warm paper / ink (Voltage Paper — matches oyechats.com) ──
+     50 = paper #FAFAF7 (warm off-white app bg, white cards sit on top) ·
+     100 = rail/hover · 200 = hairline border (line #E7E5DE) ·
+     300 = strong border · 400 = muted-2 · 500 = muted text ·
+     700 = body (ink-2 #3F3F46) · 900 = headings · 950 = ink #0A0A0A.
+     Warm zinc/stone undertone throughout to match the website's paper feel. */
+  --color-surface-50: #fafaf7;
+  --color-surface-100: #f4f3ef;
+  --color-surface-200: #e7e5de;
+  --color-surface-300: #d4d4d0;
+  --color-surface-400: #a1a1aa;
+  --color-surface-500: #71717a;
+  --color-surface-600: #52525b;
+  --color-surface-700: #3f3f46;
+  --color-surface-800: #27272a;
+  --color-surface-900: #18181b;
+  --color-surface-950: #0a0a0a;
+
+  /* ── Typography (matches oyechats.com) ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* ── Accent Colors (muted, sophisticated) ── */
   --color-emerald-50: #ecfdf5;
@@ -134,8 +144,8 @@
 
 /* ── Base ── */
 :root {
-  --bg: var(--color-surface-50);
-  --bg-card: #ffffff;
+  --bg: var(--color-surface-50);          /* warm paper #FAFAF7 — white cards sit on top */
+  --bg-card: #ffffff;                      /* pure white card (Minecloud) */
   --bg-card-hover: var(--color-surface-50);
   --bg-muted: var(--color-surface-100);
   --border: var(--color-surface-200);
@@ -143,9 +153,9 @@
   --text: var(--color-surface-900);
   --text-secondary: var(--color-surface-500);
   --text-muted: var(--color-surface-400);
-  --ring: var(--color-primary-500);
-  --sidebar-bg: var(--color-surface-950);
-  --sidebar-border: var(--color-surface-800);
+  --ring: var(--color-primary-600);
+  --sidebar-bg: #ffffff;                   /* white sidebar rail (Minecloud) */
+  --sidebar-border: var(--color-surface-200);
 }
 
 .dark {
@@ -170,7 +180,7 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  font-feature-settings: 'ss01';
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -219,16 +229,16 @@ body {
   background: rgba(28, 25, 23, 0.5);
 }
 
-/* ── Gradient mesh for auth pages — website blue theme ── */
+/* ── Gradient mesh for auth pages — Voltage Paper violet ── */
 .gradient-mesh {
-  background: linear-gradient(-45deg, #0a2d96, #1d4ed8, #0369a1, #1e40af, #1d4ed8);
+  background: linear-gradient(-45deg, #4a044e, #701a75, #a21caf, #86198f, #701a75);
   background-size: 400% 400%;
   animation: gradient-shift 15s ease infinite;
 }
 
-/* ── Auth page dark panel (matches website #010812 void) ── */
+/* ── Auth page dark panel (matches website ink-invert #14101E void) ── */
 .auth-dark-panel {
-  background: linear-gradient(135deg, #010812 0%, #030D1F 50%, #040f20 100%);
+  background: linear-gradient(135deg, #14101e 0%, #1c0f28 50%, #14101e 100%);
 }
 
 /* ── Glass card — matches website glass-2 style ── */
@@ -259,7 +269,7 @@ body {
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(135deg, rgba(37,99,235,0.5), rgba(99,102,241,0.3), rgba(6,182,212,0.4));
+  background: linear-gradient(135deg, rgba(162,28,175,0.5), rgba(217,70,239,0.3), rgba(134,25,143,0.4));
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
@@ -269,10 +279,10 @@ body {
 
 /* ── Glow utility ── */
 .glow-blue {
-  box-shadow: 0 0 30px rgba(37, 99, 235, 0.15), 0 0 60px rgba(37, 99, 235, 0.08);
+  box-shadow: 0 0 30px rgba(162, 28, 175, 0.15), 0 0 60px rgba(162, 28, 175, 0.08);
 }
 .glow-blue-sm {
-  box-shadow: 0 0 15px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 0 15px rgba(162, 28, 175, 0.2);
 }
 
 /* ── Noise texture overlay ── */

@@ -73,7 +73,7 @@ export default function usePushNotifications() {
   // ``initializing`` blocks the banner from rendering during the brief
   // window between mount and the hook's first subscribe pass completing.
   // Without this, returning users (permission already "granted", subscription
-  // already exists at the browser layer) see a 10ms flash of the indigo
+  // already exists at the browser layer) see a 10ms flash of the violet
   // "Enable notifications" card while the hook checks `getSubscription()`
   // and posts to the backend. ``true`` until the first useEffect cycle
   // resolves to either subscribed=true, an error, or a state that should

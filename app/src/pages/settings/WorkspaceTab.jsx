@@ -12,7 +12,7 @@ function LinkCard({ to, icon, title, description }) {
     return (
         <Link
             to={to}
-            className="group flex items-center gap-4 p-4 rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 shadow-sm hover:border-primary-300 dark:hover:border-primary-500/40 hover:bg-surface-50 dark:hover:bg-surface-800/60 transition-all"
+            className="group flex items-center gap-4 p-4 rounded-2xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 shadow-sm hover:border-primary-300 dark:hover:border-primary-500/40 hover:bg-surface-50 dark:hover:bg-surface-800/60 transition-all"
         >
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300 shrink-0">
                 {icon}
@@ -120,8 +120,8 @@ export default function WorkspaceTab() {
             </div>
 
             {/* ── API key ─────────────────────────────────────────────────── */}
-            <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
-                <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 mb-1 flex items-center gap-2">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+                <h2 className="text-base font-bold text-surface-900 dark:text-surface-50 mb-1 flex items-center gap-2">
                     <KeyRound size={16} className="text-primary-600 dark:text-primary-400" />
                     API Key
                 </h2>
@@ -154,7 +154,7 @@ export default function WorkspaceTab() {
                                     Your new API key (shown once)
                                 </p>
                                 <div className="flex items-center gap-2">
-                                    <code className="flex-1 min-w-0 truncate font-mono text-sm text-surface-900 dark:text-surface-100 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2">
+                                    <code className="flex-1 min-w-0 truncate font-mono text-sm text-surface-900 dark:text-surface-100 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2">
                                         {revealedKey}
                                     </code>
                                     <button
@@ -203,7 +203,7 @@ export default function WorkspaceTab() {
             </div>
 
             {/* ── Bot configuration pointer ───────────────────────────────── */}
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
                 <div className="flex items-start gap-3">
                     <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 shrink-0">
                         <Bot size={17} />

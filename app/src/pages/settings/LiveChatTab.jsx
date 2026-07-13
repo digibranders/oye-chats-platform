@@ -70,7 +70,7 @@ function summarizeHours(bh) {
 }
 
 const queueInputCls =
-    'w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 disabled:opacity-60 disabled:cursor-not-allowed';
+    'w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 disabled:opacity-60 disabled:cursor-not-allowed';
 
 /**
  * Settings → Live Chat — central hub for live-chat availability config.
@@ -188,7 +188,7 @@ export default function LiveChatTab() {
 
     if (!botId) {
         return (
-            <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-8 text-center">
+            <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 p-8 text-center">
                 <p className="text-sm font-medium text-surface-700 dark:text-surface-200">No bot selected</p>
                 <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                     Create a bot first — live chat availability is configured per bot.
@@ -218,7 +218,7 @@ export default function LiveChatTab() {
         <div className="space-y-6">
             {/* Header */}
             <div>
-                <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50">Live Chat</h2>
+                <h2 className="text-base font-bold text-surface-900 dark:text-surface-50">Live Chat</h2>
                 <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                     Availability and queue behaviour for{' '}
                     <strong className="font-semibold text-surface-700 dark:text-surface-300">
@@ -255,7 +255,7 @@ export default function LiveChatTab() {
             )}
 
             {/* ── 1. Workspace default business hours ─────────────────────── */}
-            <section className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+            <section className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
                 <h3 className="text-[15px] font-semibold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                     <Clock size={16} className="text-primary-600 dark:text-primary-400" />
                     Default business hours
@@ -272,7 +272,7 @@ export default function LiveChatTab() {
             </section>
 
             {/* ── 2. Queue behaviour ──────────────────────────────────────── */}
-            <section className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+            <section className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
                 <h3 className="text-[15px] font-semibold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                     <Users size={16} className="text-primary-600 dark:text-primary-400" />
                     Queue behaviour
@@ -350,7 +350,7 @@ export default function LiveChatTab() {
             </div>
 
             {/* ── 3. Department overrides (read-only summary + deep-link) ──── */}
-            <section className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+            <section className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                         <h3 className="text-[15px] font-semibold text-surface-900 dark:text-surface-50 flex items-center gap-2">
@@ -391,7 +391,7 @@ export default function LiveChatTab() {
                         {departments.map((dept) => (
                             <li
                                 key={dept.id}
-                                className="flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-surface-900"
+                                className="flex items-center justify-between gap-3 px-4 py-3 bg-[var(--bg-card)] dark:bg-surface-900"
                             >
                                 <span className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
                                     {dept.name}
