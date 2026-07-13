@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getAuthState } from '../utils/auth';
-import { getAuthItem } from '../utils/authStorage';
 import Cropper from 'react-easy-crop';
 import {
     CheckCircle, RefreshCw, Sparkles, Check, AlertCircle, X,
-    ZoomIn, ZoomOut, RotateCw, Bot, MoreHorizontal, Headphones, Lock,
+    ZoomIn, ZoomOut, RotateCw, Bot, MoreHorizontal, Headphones, CalendarDays, Lock,
 } from 'lucide-react';
-import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin } from '../services/api';
+import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin, getBrandTonePresets, detectBrandTone, previewBrandTone } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
@@ -61,12 +60,28 @@ const DEFAULT_DRAFT = {
     // ── Absorbed from old Settings (sub-project 1 gap closure) ──
     system_prompt: '',
     brand_tone: '',
+    brand_tone_preset: null,
     company_name: '',
     company_description: '',
+    // Server-managed: names of auto-fillable fields the user locked by editing
+    // them (see PersonalityTab hints). Read-only in the draft — never sent on save.
+    manual_field_overrides: [],
     feature_flags: {},
+    // Owned by the Integrations → Meetings tab (saved via updateBot). Mirrored
+    // here read-only so the Live Preview can show the booking affordance; it is
+    // intentionally NOT part of the BotSettings save payload.
+    meeting_booking_enabled: false,
     live_chat_queue_timeout_seconds: 20,
     live_chat_max_queue_size: 10,
 };
+
+/**
+ * Font stack used by the embeddable widget (see widget/src/index.css `:host`).
+ * Applied to the Live Preview subtree so its typography matches the real
+ * rendered widget instead of inheriting the dashboard's Inter body font.
+ */
+const WIDGET_FONT_STACK =
+    "'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif";
 
 /**
  * BotSettings — the per-bot editor shell.
@@ -104,6 +119,12 @@ export default function BotSettings({ embedded = false }) {
     const [saved, setSaved] = useState(false);
     const [saveError, setSaveError] = useState(null);
 
+    // ── Brand-tone presets + detect/preview state (AI & Personality tab) ──
+    const [brandTonePresets, setBrandTonePresets] = useState([]);
+    const [detectingTone, setDetectingTone] = useState(false);
+    const [previewingTone, setPreviewingTone] = useState(false);
+    const [tonePreviewSample, setTonePreviewSample] = useState('');
+
     // ── Inner active-tab + preview state ──
     // A valid ``?section=`` deep-links to a sub-tab (e.g. Settings → Live Chat
     // links here with ``section=live_chat``); the gate effect below still
@@ -137,8 +158,7 @@ export default function BotSettings({ embedded = false }) {
     }, []);
 
     // ── Load bot settings into the draft ──
-    useEffect(() => {
-        const fetchSettings = async () => {
+    const fetchSettings = useCallback(async () => {
             try {
                 const settings = await getClientSettings(selectedBot?.id);
                 // Load emails: prefer notification_emails.default (multi), fallback to legacy notification_email
@@ -178,14 +198,21 @@ export default function BotSettings({ embedded = false }) {
                     branding_url: settings.branding_url || 'https://oyechats.com',
                     services: Array.isArray(settings.services) ? settings.services : [],
                     services_url: settings.services_url || '',
-                    // Absorbed configs — `company_name` / `company_description`
-                    // are write-supported by the bot PATCH but not yet returned
-                    // by the bot GET, so they fall back to '' on reload.
+                    // Absorbed configs — the bot GET returns these; company info
+                    // + brand tone auto-fill from the website crawl unless locked
+                    // (see manual_field_overrides).
                     system_prompt: settings.system_prompt || '',
                     brand_tone: settings.brand_tone || '',
+                    brand_tone_preset: settings.brand_tone_preset ?? null,
                     company_name: settings.company_name || '',
                     company_description: settings.company_description || '',
+                    manual_field_overrides: Array.isArray(settings.manual_field_overrides)
+                        ? settings.manual_field_overrides
+                        : [],
                     feature_flags: settings.feature_flags || {},
+                    // Read-only mirror of the Integrations → Meetings toggle so the
+                    // Live Preview matches the real widget's action bar.
+                    meeting_booking_enabled: settings.meeting_booking_enabled ?? false,
                     live_chat_queue_timeout_seconds: settings.live_chat_queue_timeout_seconds ?? 20,
                     live_chat_max_queue_size: settings.live_chat_max_queue_size ?? 10,
                 });
@@ -193,9 +220,73 @@ export default function BotSettings({ embedded = false }) {
                 console.error('Error fetching settings:', error);
                 showToast('error', error.message || 'Failed to load widget settings');
             }
-        };
-        fetchSettings();
     }, [selectedBot?.id, showToast]);
+
+    useEffect(() => {
+        fetchSettings();
+    }, [fetchSettings]);
+
+    // Load the brand-tone preset catalog once (tolerate failure → no chips).
+    useEffect(() => {
+        let cancelled = false;
+        getBrandTonePresets()
+            .then((presets) => {
+                if (!cancelled) setBrandTonePresets(presets);
+            })
+            .catch(() => {
+                /* non-fatal: the tab still works as free text without chips */
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // Reset any stale tone preview when switching bots.
+    useEffect(() => {
+        setTonePreviewSample('');
+    }, [selectedBot?.id]);
+
+    // Re-detect brand tone from the bot's crawled content (no re-crawl). Writes
+    // on the server + unlocks the field; mirror that into the local draft.
+    const handleDetectTone = useCallback(async () => {
+        if (!isBotManager || !selectedBot?.id) return;
+        setDetectingTone(true);
+        try {
+            const result = await detectBrandTone(selectedBot.id);
+            setDraft((prev) => ({
+                ...prev,
+                brand_tone: result.brand_tone || '',
+                brand_tone_preset: result.brand_tone_preset ?? null,
+                manual_field_overrides: (prev.manual_field_overrides || []).filter((f) => f !== 'brand_tone'),
+            }));
+            setTonePreviewSample('');
+            showToast('success', 'Brand tone detected from your website.');
+        } catch (error) {
+            const msg = error?.detail || error?.message || 'Failed to detect brand tone';
+            showToast(error?.status === 400 ? 'info' : 'error', msg);
+        } finally {
+            setDetectingTone(false);
+        }
+    }, [isBotManager, selectedBot?.id, showToast]);
+
+    // Generate a sample bot reply in the current (unsaved) draft tone.
+    const handleTonePreview = useCallback(async () => {
+        if (!selectedBot?.id) return;
+        const tone = (draft.brand_tone || '').trim();
+        if (!tone) {
+            showToast('info', 'Add some brand tone text first.');
+            return;
+        }
+        setPreviewingTone(true);
+        try {
+            const result = await previewBrandTone(selectedBot.id, tone);
+            setTonePreviewSample(result.sample || '');
+        } catch (error) {
+            showToast('error', error?.detail || error?.message || 'Preview unavailable, try again.');
+        } finally {
+            setPreviewingTone(false);
+        }
+    }, [selectedBot?.id, draft.brand_tone, showToast]);
 
     // Prefill the preview URL with the bot's configured website.
     useEffect(() => {
@@ -397,6 +488,7 @@ export default function BotSettings({ embedded = false }) {
                 // ── Absorbed configs (sub-project 1 gap closure) ──
                 system_prompt: draft.system_prompt || null,
                 brand_tone: draft.brand_tone || null,
+                brand_tone_preset: draft.brand_tone_preset || null,
                 company_name: draft.company_name || null,
                 company_description: draft.company_description || null,
                 feature_flags: draft.feature_flags,
@@ -404,6 +496,9 @@ export default function BotSettings({ embedded = false }) {
                 live_chat_max_queue_size: draft.live_chat_max_queue_size,
             };
             await updateClientSettings(payload, selectedBot?.id);
+            // Re-pull so the crawl auto-fill lock state (manual_field_overrides)
+            // and any crawl-written values reflect the just-saved reality.
+            await fetchSettings();
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
         } catch (error) {
@@ -460,7 +555,7 @@ export default function BotSettings({ embedded = false }) {
 
             {/* Live website preview panel */}
             {websitePreviewOpen && (
-                <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-4 shadow-sm animate-fade-in">
+                <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 p-4 shadow-sm animate-fade-in">
                     <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                         <div className="flex-1">
                             <label className="block text-[12px] font-semibold text-surface-600 dark:text-surface-300 mb-1">
@@ -471,7 +566,7 @@ export default function BotSettings({ embedded = false }) {
                                 value={previewUrlInput}
                                 onChange={(e) => setPreviewUrlInput(e.target.value)}
                                 placeholder="https://yourcompany.com"
-                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
                             />
                         </div>
                         <button
@@ -565,7 +660,19 @@ export default function BotSettings({ embedded = false }) {
                 {/* Left Side: 60% Configuration Column */}
                 <div className="w-full lg:w-[60%] flex flex-col gap-10 lg:pr-6">
                     {activeTab === 'general' && <GeneralTab {...tabProps} />}
-                    {activeTab === 'personality' && <PersonalityTab {...tabProps} />}
+                    {activeTab === 'personality' && (
+                        <PersonalityTab
+                            {...tabProps}
+                            brandTonePresets={brandTonePresets}
+                            onDetectTone={handleDetectTone}
+                            detectingTone={detectingTone}
+                            onPreviewTone={handleTonePreview}
+                            previewingTone={previewingTone}
+                            tonePreviewSample={tonePreviewSample}
+                            canDetectTone={Boolean(selectedBot?.website)}
+                            isBotManager={isBotManager}
+                        />
+                    )}
                     {activeTab === 'appearance' && (
                         <AppearanceTab
                             {...tabProps}
@@ -582,7 +689,7 @@ export default function BotSettings({ embedded = false }) {
 
                 {/* Right Side: 40% Live Preview Column (Sticky) */}
                 <div className="lg:w-[40%] flex flex-col items-center sticky top-8 self-start animate-fade-in" style={{ animationDelay: '0.15s' }}>
-                    <div className="flex items-center justify-between w-full max-w-[360px] mb-3 px-2">
+                    <div className="flex items-center justify-between w-full max-w-[380px] mb-3 px-2">
                         <span className="text-[11px] font-black uppercase tracking-widest text-surface-400">Live Preview</span>
                         <div className="flex gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-red-400/30" />
@@ -592,7 +699,7 @@ export default function BotSettings({ embedded = false }) {
                     </div>
 
                     {/* Preview State Tabs */}
-                    <div className="flex gap-1 bg-surface-100 dark:bg-surface-800 p-1 rounded-lg w-full max-w-[360px] mb-3">
+                    <div className="flex gap-1 bg-surface-100 dark:bg-surface-800 p-1 rounded-lg w-full max-w-[380px] mb-3">
                         {[
                             { key: 'chat', label: 'Chat' },
                             { key: 'waiting', label: 'Waiting' },
@@ -608,117 +715,129 @@ export default function BotSettings({ embedded = false }) {
                         ))}
                     </div>
 
-                    {/* Chat Window Preview Wrapper — matches widget classic theme */}
-                    <div className="w-full max-w-[360px] bg-white rounded-2xl overflow-hidden shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)] flex flex-col border border-[#BBE7FF]/30 transition-colors">
+                    {/* Chat Window Preview Wrapper — mirrors the real widget's classic
+                        (light) theme 1:1 (see widget/src/components/{themeConfigs,
+                        ChatWindow,WelcomeScreen,ChatInput}.jsx). The Calibri font stack
+                        matches widget/src/index.css so the preview can't drift from
+                        what visitors actually see. */}
+                    <div
+                        className="w-full max-w-[380px] bg-[#F8F8F8] rounded-2xl overflow-hidden shadow-xl flex flex-col border border-[#BBE7FF]/30 transition-colors"
+                        style={{ fontFamily: WIDGET_FONT_STACK }}
+                    >
 
-                        {/* 1. Header bar — date/time + action icons */}
-                        <div className="bg-white px-5 py-2.5 flex items-center justify-between shrink-0">
+                        {/* 1. Header bar — date/time + action icons. The "···" menu
+                            mirrors the widget: on the welcome screen its only entry is
+                            "Leave a message", which shows solely in bot mode when live
+                            chat is OFF. "New chat" (+) needs a prior user message, so it
+                            never appears here. */}
+                        <div className="bg-[#F8F8F8] px-5 py-2 flex items-center justify-between shrink-0">
                             <span className="text-[11px] text-gray-400 font-medium tracking-wide">
                                 {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                             </span>
                             <div className="flex items-center gap-1">
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
-                                    <MoreHorizontal className="w-4 h-4" />
-                                </div>
+                                {previewState === 'chat' && !draft.live_chat_enabled && (
+                                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
+                                        <MoreHorizontal className="w-4 h-4" />
+                                    </div>
+                                )}
                                 <div className="w-7 h-7 flex items-center justify-center text-gray-400">
                                     <X className="w-5 h-5" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 2. Floating agent badge */}
+                        {/* 2. Floating agent badge — avatar + bot name only (no
+                            subtitle, no status dot), matching renderAgentBadge(). */}
                         {previewState === 'chat' && (
-                            <div className="shrink-0 flex justify-center -mb-5 relative z-10">
+                            <div className="shrink-0 flex justify-center -mt-3 -mb-5 relative z-30">
                                 <div
                                     className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40"
-                                    style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)' }}
+                                    style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
                                 >
                                     {draft.avatar_type === 'orb' ? (
                                         <div
-                                            className="w-8 h-8 rounded-full flex-shrink-0"
+                                            className="w-7 h-7 rounded-full flex-shrink-0"
                                             style={{
                                                 background: `radial-gradient(circle at 35% 35%, ${draft.orb_color || draft.primary_color}44, ${draft.orb_color || draft.primary_color}bb, ${draft.orb_color || draft.primary_color})`,
-                                                boxShadow: `0 0 8px ${draft.orb_color || draft.primary_color}44`,
+                                                boxShadow: `0 0 6px ${draft.orb_color || draft.primary_color}55`,
                                             }}
                                         />
                                     ) : draft.avatar_type === 'mascot' ? (
-                                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: draft.primary_color }}>
-                                            <Bot className="w-4 h-4 text-white" />
+                                        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: draft.primary_color }}>
+                                            <Bot className="w-3.5 h-3.5 text-white" />
                                         </div>
                                     ) : draft.bot_logo ? (
-                                        <img src={draft.bot_logo} alt="logo" className="w-8 h-8 rounded-full object-cover" />
+                                        <img src={draft.bot_logo} alt="logo" className="w-7 h-7 rounded-full object-cover" />
                                     ) : (
-                                        <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: draft.primary_color }}>
-                                            <Bot className="w-4 h-4 text-white" />
+                                        <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: draft.primary_color }}>
+                                            <Bot className="w-3.5 h-3.5 text-white" />
                                         </div>
                                     )}
-                                    <div className="flex flex-col">
-                                        <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
-                                            {draft.bot_name || 'AI Assistant'}
-                                        </span>
-                                        <span className="text-[10px] text-gray-400 leading-tight">AI Assistant</span>
-                                    </div>
-                                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                                    <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
+                                        {draft.bot_name || 'AI Assistant'}
+                                    </span>
                                 </div>
                             </div>
                         )}
 
-                        {/* 3. Messages Area — conditional by previewState */}
-                        <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[340px] bg-white" style={{ paddingTop: previewState === 'chat' ? 24 : undefined }}>
-
-                            {previewState === 'chat' && (
-                                <div className="flex flex-col items-start text-left w-full pt-2">
-                                    <h2 className="text-2xl font-bold text-[#16202C]">
-                                        {(draft.welcome_title || 'Hi there 👋').replace(/there/i, getAuthItem('admin_name') || 'there').replace(/\p{Extended_Pictographic}/gu, '').trim() || `Hi ${getAuthItem('admin_name') || 'there'}`}
-                                    </h2>
-                                    {(() => {
-                                        // Mirror the live widget's WelcomeScreen layout switch so the
-                                        // toggle in MessagesTab updates this preview in real time.
-                                        const previewIsVertical =
-                                            draft.widget_messages?.welcome_suggestions_layout === 'vertical';
-                                        const previewSuggestions = (
-                                            Array.isArray(draft.widget_messages.welcome_suggestions) &&
-                                            draft.widget_messages.welcome_suggestions.length > 0
-                                                ? draft.widget_messages.welcome_suggestions
-                                                : ['Our Services', 'About us', 'Contact us']
-                                        ).filter(Boolean);
-                                        return (
-                                            <>
-                                                <p
-                                                    className={`text-[15px] text-gray-500 ${
-                                                        previewIsVertical ? 'mt-1 mb-3' : 'mt-1'
-                                                    }`}
-                                                >
-                                                    {draft.welcome_subtitle || 'How can I help you today?'}
-                                                </p>
-                                                <div
-                                                    className={
-                                                        previewIsVertical
-                                                            ? 'flex flex-col gap-2 mt-2 w-full items-stretch'
-                                                            : 'flex flex-wrap gap-2 mt-5 justify-start'
-                                                    }
-                                                >
-                                                    {previewSuggestions.map((s) => (
-                                                        <span
-                                                            key={s}
-                                                            className={
-                                                                previewIsVertical
-                                                                    ? 'w-full text-left px-4 py-2.5 rounded-xl text-[13px] text-gray-700 bg-gray-50 border border-gray-200'
-                                                                    : 'px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200'
-                                                            }
-                                                        >
-                                                            {s}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </>
-                                        );
-                                    })()}
-                                </div>
-                            )}
+                        {/* 3. Messages area — the welcome overlay is bottom-anchored
+                            (justify-end), exactly like the widget's welcome screen. */}
+                        <div
+                            className="relative flex-grow overflow-hidden min-h-[420px] bg-[#F8F8F8]"
+                            style={{ paddingTop: previewState === 'chat' ? 24 : undefined }}
+                        >
+                            {previewState === 'chat' && (() => {
+                                // Mirror WelcomeScreen.jsx: greeting (emoji stripped, with a
+                                // time-of-day fallback), subtitle, and the suggestion pills
+                                // whose layout follows the MessagesTab vertical/horizontal
+                                // toggle so this preview updates live.
+                                const widgetMessages = draft.widget_messages || {};
+                                const previewIsVertical = widgetMessages.welcome_suggestions_layout === 'vertical';
+                                const previewSuggestions = (
+                                    Array.isArray(widgetMessages.welcome_suggestions) && widgetMessages.welcome_suggestions.length > 0
+                                        ? widgetMessages.welcome_suggestions
+                                        : (Array.isArray(draft.welcome_suggestions) && draft.welcome_suggestions.length > 0
+                                            ? draft.welcome_suggestions
+                                            : ['Our Services', 'About us', 'Contact us'])
+                                ).filter(Boolean);
+                                const hour = new Date().getHours();
+                                const fallbackGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+                                const greeting = (draft.welcome_title || fallbackGreeting).replace(/\p{Emoji}/gu, '').trim();
+                                return (
+                                    <div className="absolute inset-0 z-10 flex flex-col items-start justify-end px-5 pb-4" style={{ backgroundColor: '#F8F8F8' }}>
+                                        <div className="flex flex-col items-start text-left w-full">
+                                            <h2 className="text-2xl font-bold text-[#16202C]">{greeting}</h2>
+                                            <p className={`text-[15px] text-gray-500 ${previewIsVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
+                                                {draft.welcome_subtitle || 'How can I help you today?'}
+                                            </p>
+                                            <div
+                                                className={
+                                                    previewIsVertical
+                                                        ? 'flex flex-col gap-2 mt-2 w-full items-stretch'
+                                                        : 'flex flex-wrap gap-2 mt-5 justify-start'
+                                                }
+                                            >
+                                                {previewSuggestions.map((s, i) => (
+                                                    <span
+                                                        key={s}
+                                                        className={
+                                                            previewIsVertical
+                                                                ? 'w-full text-left px-4 py-2.5 rounded-xl text-[13px] text-gray-700 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer'
+                                                                : 'px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer'
+                                                        }
+                                                        style={{ animation: `fade-up 0.3s ease-out ${i * 0.08}s both` }}
+                                                    >
+                                                        {s}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {previewState === 'waiting' && (
-                                <div className="flex flex-col items-center justify-center h-full py-6 gap-2 text-center">
+                                <div className="absolute inset-0 flex flex-col items-center justify-center px-5 py-4 gap-2 text-center">
                                     <div
                                         className="w-14 h-14 rounded-full flex items-center justify-center"
                                         style={{ backgroundColor: `${draft.primary_color}22` }}
@@ -728,35 +847,39 @@ export default function BotSettings({ embedded = false }) {
                                             style={{ borderColor: `${draft.primary_color} transparent transparent transparent` }}
                                         />
                                     </div>
-                                    <div>
-                                        <p className="text-[14px] font-semibold text-[#16202C]">
-                                            {(draft.waiting_message || 'Connecting you to support...').replace(/there/i, getAuthItem('admin_name') || 'there')}
-                                        </p>
-                                    </div>
+                                    <p className="text-[14px] font-semibold text-[#16202C]">
+                                        {draft.waiting_message || 'Connecting you to support...'}
+                                    </p>
                                 </div>
                             )}
 
                             {previewState === 'unavailable' && (
-                                <div className="flex flex-col items-center justify-center h-full py-6 gap-2 text-center">
+                                <div className="absolute inset-0 flex flex-col items-center justify-center px-5 py-4 gap-2 text-center">
                                     <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
                                         <Bot className="w-7 h-7 text-gray-400" />
                                     </div>
-                                    <div>
-                                        <p className="text-[14px] font-semibold text-[#16202C]">
-                                            {(draft.offline_message || "We'll be right back! Leave a message and we'll follow up shortly.").replace(/there/i, getAuthItem('admin_name') || 'there')}
-                                        </p>
-                                    </div>
+                                    <p className="text-[14px] font-semibold text-[#16202C]">
+                                        {draft.offline_message || "We'll be right back! Leave a message and we'll follow up shortly."}
+                                    </p>
                                 </div>
                             )}
                         </div>
 
-                        {/* 4. Input + Footer — only shown in chat state */}
+                        {/* 4. Input + footer — chat state only. Mirrors ChatInput.jsx:
+                            the empty-state send icon is #BBE7FF (not the brand color),
+                            and the action bar carries icon-only affordances on the left
+                            with the "Powered by OyeChats" link on the right (gated by the
+                            show_branding feature flag). */}
                         {previewState === 'chat' && (
-                            <div className="px-4 pb-3 pt-1 shrink-0 bg-white">
+                            <div className="px-4 pb-4 pt-2 bg-[#F8F8F8] shrink-0">
                                 {/* Input box */}
-                                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 py-3 shadow-sm flex items-center justify-between">
-                                    <span className="text-[14px] text-gray-400">{draft.widget_messages.input_placeholder || 'Write a message...'}</span>
-                                    <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: draft.primary_color }}>
+                                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
+                                    <div className="flex-1 min-w-0">
+                                        <span className="block text-[14px] text-gray-400 leading-[20px] truncate">
+                                            {draft.widget_messages.input_placeholder || 'Write a message...'}
+                                        </span>
+                                    </div>
+                                    <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-0.5 flex-shrink-0 text-[#BBE7FF]">
                                         <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
                                     </svg>
                                 </div>
@@ -764,16 +887,42 @@ export default function BotSettings({ embedded = false }) {
                                 {/* Privacy notice */}
                                 <p className="text-[10px] text-gray-400 leading-snug mt-2 px-1">
                                     This chat may be monitored and recorded according to our{' '}
-                                    <span className="font-semibold underline text-gray-500">Privacy Policy</span>.
+                                    <a
+                                        href="https://www.oyechats.com/legal/privacy"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="font-semibold underline text-gray-500 hover:text-gray-700 transition-colors"
+                                    >
+                                        Privacy Policy
+                                    </a>
+                                    .
                                 </p>
 
-                                {/* Footer — Live chat */}
-                                {draft.live_chat_enabled && liveChatAllowed && (
-                                    <div className="flex items-center gap-1 text-[11px] text-gray-400 mt-3 pt-1 px-1">
-                                        <Headphones size={12} />
-                                        <span>{draft.widget_messages.live_chat_label || 'Live chat'}</span>
+                                {/* Action bar — handoff / meeting icons + branding */}
+                                <div className="flex items-center justify-between gap-3 mt-3.5 pt-1 px-1">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        {draft.live_chat_enabled && liveChatAllowed && (
+                                            <span className="flex items-center gap-1 text-[11px]" style={{ color: '#9ca3af' }} title="Live chat">
+                                                <Headphones size={12} />
+                                            </span>
+                                        )}
+                                        {draft.meeting_booking_enabled && (
+                                            <span className="flex items-center gap-1 text-[11px] text-gray-400" title="Book a meeting">
+                                                <CalendarDays size={12} />
+                                            </span>
+                                        )}
                                     </div>
-                                )}
+                                    {draft.feature_flags?.show_branding !== false && (
+                                        <a
+                                            href="https://oyechats.com"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
+                                        >
+                                            Powered by OyeChats
+                                        </a>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </div>
@@ -783,7 +932,7 @@ export default function BotSettings({ embedded = false }) {
             {/* Crop Modal */}
             {showCropModal && cropImage && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-surface-900/70 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden">
                         {/* Header */}
                         <div className="px-5 py-4 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between">
                             <div>

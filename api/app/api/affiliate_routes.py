@@ -52,6 +52,7 @@ from app.services.affiliate_service import (
     InviteNotFound,
     NotAffiliate,
 )
+from app.services.audit_service import record_audit
 from app.services.email_service import (
     send_affiliate_invite_email,
     send_affiliate_welcome_email,
@@ -586,6 +587,7 @@ def list_my_code_referrals(
     status_code=status.HTTP_201_CREATED,
 )
 def create_my_code(
+    request: Request,
     body: CreateCodeRequest,
     affiliate: Affiliate = Depends(get_current_affiliate),
 ):
@@ -598,6 +600,19 @@ def create_my_code(
                 body.label,
                 affiliate_commission_bps=affiliate_service.pct_to_bps(body.affiliate_commission_pct) or 0,
                 customer_discount_bps=affiliate_service.pct_to_bps(body.customer_discount_pct) or 0,
+            )
+            record_audit(
+                session,
+                actor=session.get(Client, affiliate.client_id),
+                action="affiliate.code.create",
+                target_type="referral_code",
+                target_id=row.id,
+                after={
+                    "code": str(row.code),
+                    "affiliate_commission_bps": row.affiliate_commission_bps,
+                    "customer_discount_bps": row.customer_discount_bps,
+                },
+                request=request,
             )
             session.commit()
         except ValueError as e:
@@ -624,13 +639,26 @@ def create_my_code(
 
 @router.patch("/affiliate/codes/{code_id}", response_model=CodeRow)
 def update_my_code(
+    request: Request,
     code_id: int,
     body: UpdateCodeRequest,
     affiliate: Affiliate = Depends(get_current_affiliate),
 ):
     with get_session() as session:
+        existing = session.get(ReferralCode, code_id)
+        before = (
+            {
+                "code": str(existing.code),
+                "label": existing.label,
+                "active": existing.active,
+                "affiliate_commission_bps": existing.affiliate_commission_bps,
+                "customer_discount_bps": existing.customer_discount_bps,
+            }
+            if existing is not None
+            else None
+        )
         try:
-            affiliate_service.update_code(
+            row = affiliate_service.update_code(
                 session,
                 affiliate,
                 code_id,
@@ -647,6 +675,22 @@ def update_my_code(
                     if body.customer_discount_pct is not None
                     else None
                 ),
+            )
+            record_audit(
+                session,
+                actor=session.get(Client, affiliate.client_id),
+                action="affiliate.code.update",
+                target_type="referral_code",
+                target_id=code_id,
+                before=before,
+                after={
+                    "code": str(row.code),
+                    "label": row.label,
+                    "active": row.active,
+                    "affiliate_commission_bps": row.affiliate_commission_bps,
+                    "customer_discount_bps": row.customer_discount_bps,
+                },
+                request=request,
             )
             session.commit()
         except ValueError as e:
@@ -682,6 +726,7 @@ def list_all_affiliates():
     status_code=status.HTTP_201_CREATED,
 )
 def invite(
+    request: Request,
     body: InviteAffiliateRequest,
     admin: Client = Depends(get_current_client_strict),
 ):
@@ -711,6 +756,20 @@ def invite(
                 invited_by_client_id=admin.id,
                 max_active_codes=body.max_active_codes or affiliate_service.DEFAULT_MAX_ACTIVE_CODES,
                 commission_bps=commission_bps,
+            )
+            target = result.get("affiliate") or result.get("invite")
+            record_audit(
+                session,
+                actor=admin,
+                action=f"affiliate.invite.{result['kind']}",
+                target_type="affiliate" if result["kind"] == "instant" else "affiliate_invite",
+                target_id=target.id if target is not None else None,
+                after={
+                    "email": body.email,
+                    "commission_bps": commission_bps,
+                    "max_active_codes": body.max_active_codes or affiliate_service.DEFAULT_MAX_ACTIVE_CODES,
+                },
+                request=request,
             )
             session.commit()
         except ValueError as e:
@@ -941,7 +1000,12 @@ def list_code_referrals_super(affiliate_id: int, code_id: int):
 
 
 @superadmin_router.patch("/{affiliate_id}", response_model=AffiliateRow)
-def update_affiliate_route(affiliate_id: int, body: UpdateAffiliateRequest):
+def update_affiliate_route(
+    affiliate_id: int,
+    body: UpdateAffiliateRequest,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
     """Override caps or toggle the affiliate's active status."""
     deactivate = None
     if body.active is True:
@@ -951,6 +1015,7 @@ def update_affiliate_route(affiliate_id: int, body: UpdateAffiliateRequest):
 
     with get_session() as session:
         try:
+            before = _affiliate_row(session, affiliate_id)
             commission_bps = affiliate_service.pct_to_bps(body.commission_pct)
             affiliate_service.update_affiliate(
                 session,
@@ -959,19 +1024,34 @@ def update_affiliate_route(affiliate_id: int, body: UpdateAffiliateRequest):
                 commission_bps=commission_bps,
                 deactivate=deactivate,
             )
+            after = _affiliate_row(session, affiliate_id)
+            record_audit(
+                session,
+                actor=admin,
+                action="affiliate.update",
+                target_type="affiliate",
+                target_id=affiliate_id,
+                before=before,
+                after=after,
+                request=request,
+            )
             session.commit()
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except AffiliateProgramError as e:
             raise _to_http(e) from e
-        return _affiliate_row(session, affiliate_id)
+        return after
 
 
 @superadmin_router.delete(
     "/{affiliate_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_affiliate_route(affiliate_id: int):
+def delete_affiliate_route(
+    affiliate_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
     """Hard-delete an affiliate, all their codes, and the click history.
 
     Referred clients survive — their ``referral_code_id`` becomes NULL via
@@ -982,7 +1062,17 @@ def delete_affiliate_route(affiliate_id: int):
     """
     with get_session() as session:
         try:
+            before = _affiliate_row(session, affiliate_id)
             affiliate_service.delete_affiliate(session, affiliate_id)
+            record_audit(
+                session,
+                actor=admin,
+                action="affiliate.delete",
+                target_type="affiliate",
+                target_id=affiliate_id,
+                before=before,
+                request=request,
+            )
             session.commit()
         except AffiliateProgramError as e:
             raise _to_http(e) from e

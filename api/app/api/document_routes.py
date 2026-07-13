@@ -16,6 +16,7 @@ from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import (
     acquire_crawl_lock,
+    clear_cancellation,
     get_crawl_progress,
     is_cancellation_requested,
     release_crawl_lock,
@@ -1082,6 +1083,12 @@ async def crawl_endpoint(
     # ``run_full_crawl``'s finally block, regardless of which process runs it.
     if not acquire_crawl_lock(client_id):
         raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
+
+    # Clear any leftover cancel flag from a PREVIOUS crawl before this one runs.
+    # Without this a stale flag (TTL ~27min) makes every new crawl instantly
+    # self-abort at the provider's pre-flight cancel check. Safe here: the lock
+    # is held, so no other crawl for this client is in flight.
+    clear_cancellation(client_id)
 
     # Publish an immediate "running" state so the UI's progress poll picks up
     # the job before the worker even starts. Seed started_at + max_pages so the

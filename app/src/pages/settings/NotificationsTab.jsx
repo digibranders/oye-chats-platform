@@ -3,6 +3,7 @@ import { Bell, BellOff, ShieldAlert, Loader2, Check } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../context/ToastContext';
 import { usePush } from '../../context/PushContext';
+import InstallAsAppCard from '../../components/InstallAsAppCard';
 
 /**
  * NotificationsTab — browser/desktop push enable–disable controls.
@@ -65,9 +66,10 @@ export default function NotificationsTab() {
     }
 
     return (
-        <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+        <div className="space-y-6">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
             <div className="flex items-start justify-between gap-4 mb-1">
-                <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 flex items-center gap-2">
+                <h2 className="text-base font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                     <Bell size={16} className="text-primary-600 dark:text-primary-400" />
                     Browser Notifications
                 </h2>
@@ -154,6 +156,9 @@ export default function NotificationsTab() {
                     </button>
                 </div>
             )}
+        </div>
+
+        <InstallAsAppCard />
         </div>
     );
 }

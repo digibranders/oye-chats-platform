@@ -105,7 +105,7 @@ export default function CommandPalette({ isOpen, onClose }) {
                         onClick={onClose}
                     />
                     <motion.div
-                        className="relative w-full max-w-lg bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-700 overflow-hidden"
+                        className="relative w-full max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-700 overflow-hidden"
                         variants={modalVariants}
                         initial="hidden"
                         animate="visible"

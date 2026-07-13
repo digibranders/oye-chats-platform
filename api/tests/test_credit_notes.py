@@ -1,10 +1,13 @@
 """Credit notes — CN series, proportional tax reversal, idempotency, wiring."""
 
 import os
+import threading
+import time
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import config
 from app.db.models import Client, Invoice
@@ -197,3 +200,81 @@ def test_issued_datetime_of_finalize(db, enabled):
     note = invoice_service.create_credit_note(db, orig, 100, provider_ref="rfnd_dt_1")
     assert note.issued_at is not None
     assert note.issued_at.tzinfo is not None or note.issued_at >= datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None)
+
+
+def test_concurrent_reversals_serialize_on_row_lock(pg_engine, db, enabled):
+    """Two DISTINCT reversal events for the SAME original invoice, processed by
+    genuinely overlapping transactions (not just sequential calls in one
+    session — see ``test_refund_then_dispute_cannot_over_reverse`` for that),
+    must not both read ``already_reversed`` as 0 and over-reverse.
+
+    Session A takes the row lock ``create_credit_note`` now takes, inserts its
+    reversal, and holds the transaction open (uncommitted) for a moment.
+    Session B's ``create_credit_note`` call — for the SAME original invoice —
+    must block on that lock rather than proceeding with a stale read, and only
+    resume once A commits, then correctly see A's reversal and clamp its own
+    to whatever's left."""
+    _seller(db)
+    orig = _finalized_invoice(db, "cn-race@test.example")
+    db.commit()
+
+    session_a = Session(pg_engine, autoflush=False)
+    session_b = Session(pg_engine, autoflush=False)
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_lock_and_reverse():
+        session_a.execute(select(Invoice.id).where(Invoice.id == orig.id).with_for_update())
+        note_a = Invoice(
+            client_id=orig.client_id,
+            subscription_id=orig.subscription_id,
+            bot_id=orig.bot_id,
+            amount_cents=89950,
+            currency=orig.currency,
+            status="issued",
+            razorpay_payment_id="rfnd_race_A",
+            invoice_type="credit_note",
+            credit_note_of_id=orig.id,
+            issued_at=datetime.now(UTC),
+        )
+        session_a.add(note_a)
+        session_a.flush()
+        lock_held.set()
+        release_lock.wait(timeout=5)
+        session_a.commit()
+
+    t = threading.Thread(target=hold_lock_and_reverse)
+    t.start()
+    try:
+        assert lock_held.wait(timeout=5), "session A never reached the lock"
+
+        # Give session B a moment to genuinely attempt (and block on) the lock
+        # before we release it, so the timing assertion below is meaningful.
+        def release_after_delay():
+            time.sleep(0.4)
+            release_lock.set()
+
+        threading.Thread(target=release_after_delay).start()
+
+        orig_b = session_b.get(Invoice, orig.id)
+        started = time.monotonic()
+        note_b = invoice_service.create_credit_note(session_b, orig_b, 179900, provider_ref="rfnd_race_B")
+        elapsed = time.monotonic() - started
+        session_b.commit()
+    finally:
+        t.join(timeout=5)
+
+    assert elapsed >= 0.35, "session B must block on session A's row lock, not race past it"
+
+    # Session A reversed 89,950 first; session B must see that and clamp its
+    # own reversal to the 89,950 still remaining — never over-reversing past
+    # the original invoice's 179,900.
+    assert note_b is not None
+    assert note_b.amount_cents == 89950
+    total = db.execute(
+        select(func.coalesce(func.sum(Invoice.amount_cents), 0)).where(Invoice.credit_note_of_id == orig.id)
+    ).scalar_one()
+    assert total == 179900
+
+    session_a.close()
+    session_b.close()

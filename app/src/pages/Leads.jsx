@@ -15,13 +15,13 @@ import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
     unqualified: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    mql: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
-    sal: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
+    mql: { label: 'MQL', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400' },
+    sal: { label: 'SAL', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' },
     sql: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
     // backward-compat aliases
     cold: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    warm: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
-    hot: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
+    warm: { label: 'MQL', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400' },
+    hot: { label: 'SAL', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' },
     qualified: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
 };
 
@@ -124,7 +124,7 @@ const BantScoreGauge = ({ score }) => {
     
     // Smooth floating point value for sub-pixel circle stroke offsets
     const dashOffset = circumference - (animatedScore / 100) * circumference;
-    const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f97316' : score >= 25 ? '#eab308' : '#94a3b8';
+    const color = score >= 75 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 25 ? '#a21caf' : '#94a3b8';
 
     return (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
@@ -411,7 +411,7 @@ export default function Leads() {
                     <button
                         onClick={handleMarkAllRead}
                         disabled={!hasUnreadLeads}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
                     >
                         <CheckCheck className="w-4 h-4" />
@@ -420,7 +420,7 @@ export default function Leads() {
                     <button
                         onClick={handleExport}
                         disabled={isExporting || leads.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
                     >
                         {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                         Export CSV
@@ -433,9 +433,9 @@ export default function Leads() {
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {[
                         { label: 'Total', value: stats.total, color: 'text-surface-900 dark:text-surface-100' },
-                        { label: 'Cold', value: stats.cold, color: 'text-sky-600 dark:text-sky-400' },
-                        { label: 'Warm', value: stats.warm, color: 'text-yellow-600 dark:text-yellow-400' },
-                        { label: 'Hot', value: stats.hot, color: 'text-orange-600 dark:text-orange-400' },
+                        { label: 'Cold', value: stats.cold, color: 'text-surface-500 dark:text-surface-400' },
+                        { label: 'Warm', value: stats.warm, color: 'text-primary-600 dark:text-primary-400' },
+                        { label: 'Hot', value: stats.hot, color: 'text-amber-600 dark:text-amber-400' },
                         { label: 'Qualified', value: stats.qualified, color: 'text-emerald-600 dark:text-emerald-400' },
                     ].map(s => (
                         <button
@@ -445,11 +445,11 @@ export default function Leads() {
                                 'p-4 rounded-xl border transition-all',
                                 (statusFilter === s.label.toLowerCase() || (!statusFilter && s.label === 'Total'))
                                     ? 'border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10 ring-1 ring-primary-200 dark:ring-primary-500/30'
-                                    : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600'
+                                    : 'border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600'
                             )}
                         >
                             <p className="text-[12px] font-medium text-surface-500 dark:text-surface-400">{s.label}</p>
-                            <p className={cn('text-2xl font-bold', s.color)}>{s.value}</p>
+                            <p className={cn('text-2xl font-bold tabular-nums', s.color)}>{s.value}</p>
                         </button>
                     ))}
                 </div>
@@ -466,7 +466,7 @@ export default function Leads() {
                         placeholder="Search by name, email, or location..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
                 </div>
                 <div className="relative sm:w-56">
@@ -474,7 +474,7 @@ export default function Leads() {
                         value={contactFilter}
                         onChange={(e) => setContactFilter(e.target.value)}
                         aria-label="Filter by contact type"
-                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
+                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
                     >
                         {CONTACT_FILTERS.map((opt) => {
                             const count = contactCounts[opt.value] ?? 0;
@@ -501,7 +501,7 @@ export default function Leads() {
                         <span className="text-sm font-medium text-primary-700 dark:text-primary-300">{selectedIds.size} selected</span>
                         <button
                             onClick={exportSelected}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--bg-card)] dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
                         >
                             <Download size={13} /> Export selected
                         </button>
@@ -516,7 +516,7 @@ export default function Leads() {
             </AnimatePresence>
 
             {/* Leads Table */}
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                 {isLoading ? (
                     <SkeletonTable rows={8} cols={6} />
                 ) : filtered.length === 0 ? (
@@ -549,12 +549,12 @@ export default function Leads() {
                                             : <Square size={15} className="text-surface-400 dark:text-surface-500" />}
                                     </button>
                                 </th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Contact</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Score</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Status</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Location</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Last Active</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Contact</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Score</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Status</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Location</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Last Active</th>
                                 <th className="px-4 py-3"></th>
                             </tr>
                         </thead>
@@ -564,7 +564,7 @@ export default function Leads() {
                                 return (
                                     <tr
                                         key={lead.session_id}
-                                        className="border-b border-surface-50 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
+                                        className="border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
                                     >
                                         <td className="px-4 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(lead.session_id); }}>
                                             {selectedIds.has(lead.session_id)
@@ -618,12 +618,12 @@ export default function Leads() {
                                                         className="h-full rounded-full transition-all"
                                                         style={{
                                                             width: `${lead.score}%`,
-                                                            backgroundColor: lead.score >= 75 ? '#22c55e' : lead.score >= 50 ? '#f97316' : lead.score >= 25 ? '#eab308' : '#94a3b8',
+                                                            backgroundColor: lead.score >= 75 ? '#10b981' : lead.score >= 50 ? '#f59e0b' : lead.score >= 25 ? '#a21caf' : '#94a3b8',
                                                         }}
                                                     />
                                                 </div>
                                                 <span
-                                                    className="text-[12px] font-bold text-surface-700 dark:text-surface-300"
+                                                    className="text-[12px] font-bold text-surface-700 dark:text-surface-300 tabular-nums"
                                                     title={`BANT: ${lead.bant_score ?? lead.score}${lead.behavioral_score ? ` + Behavioral: ${lead.behavioral_score}` : ''}`}
                                                 >
                                                     {lead.score}
@@ -698,11 +698,11 @@ export default function Leads() {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                            className="relative w-full max-w-lg bg-white dark:bg-surface-900 shadow-2xl overflow-y-auto"
+                            className="relative w-full max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl overflow-y-auto"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Drawer Header */}
-                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between">
+                            <div className="sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between">
                                 <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">Lead Detail</h2>
                                 <button onClick={() => { setSelectedLead(null); setLeadDetail(null); }} className="text-surface-400 hover:text-surface-600 dark:text-surface-500 dark:hover:text-surface-300">
                                     <X className="w-5 h-5" />
@@ -801,13 +801,13 @@ export default function Leads() {
                                                     <div key={key} className="bg-surface-50 dark:bg-surface-800 rounded-lg px-4 py-3">
                                                         <div className="flex items-center justify-between mb-1">
                                                             <span className="text-[12px] font-bold text-surface-600 dark:text-surface-300">{label}</span>
-                                                            <span className="text-[11px] font-bold text-surface-500 dark:text-surface-400">{dimScore}/25</span>
+                                                            <span className="text-[11px] font-bold text-surface-500 dark:text-surface-400 tabular-nums">{dimScore}/25</span>
                                                         </div>
                                                         <div className="w-full bg-surface-200 dark:bg-surface-700 rounded-full h-1.5 mb-1.5">
                                                             <div
                                                                 className={cn(
                                                                     'h-1.5 rounded-full transition-all',
-                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-sky-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
+                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-primary-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
                                                                 )}
                                                                 style={{ width: `${(dimScore / 25) * 100}%` }}
                                                             />
@@ -826,7 +826,7 @@ export default function Leads() {
                                                 <h4 className="text-[12px] font-bold text-surface-500 dark:text-surface-400 mb-2">Evidence Trail</h4>
                                                 <div className="space-y-2 max-h-48 overflow-y-auto">
                                                     {leadDetail.signals.map((s, i) => (
-                                                        <div key={i} className="bg-white dark:bg-surface-900 border border-surface-100 dark:border-surface-700 rounded-lg px-3 py-2">
+                                                        <div key={i} className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-100 dark:border-surface-700 rounded-lg px-3 py-2">
                                                             <div className="flex items-center gap-2 mb-1">
                                                                 <span className="text-[10px] font-bold uppercase text-surface-400 dark:text-surface-500">{s.dimension}</span>
                                                                 <span className={cn(
@@ -834,7 +834,7 @@ export default function Leads() {
                                                                     s.confidence === 'high'
                                                                         ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                                                                         : s.confidence === 'medium'
-                                                                            ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400'
+                                                                            ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400'
                                                                             : 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400'
                                                                 )}>{s.confidence}</span>
                                                                 <span className="text-[10px] text-surface-400 dark:text-surface-500 ml-auto">{s.score_before} → {s.score_after}</span>
@@ -972,7 +972,7 @@ export default function Leads() {
                                             <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 space-y-2">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-[12px] font-medium text-surface-600 dark:text-surface-400">Engagement Score</span>
-                                                    <span className="text-[12px] font-bold text-surface-900 dark:text-surface-100">{leadDetail.behavioral_score || 0}/20</span>
+                                                    <span className="text-[12px] font-bold text-surface-900 dark:text-surface-100 tabular-nums">{leadDetail.behavioral_score || 0}/20</span>
                                                 </div>
                                                 <div className="w-full bg-surface-200 dark:bg-surface-700 rounded-full h-1.5">
                                                     <div
@@ -981,12 +981,44 @@ export default function Leads() {
                                                             (leadDetail.behavioral_score || 0) >= 15
                                                                 ? 'bg-emerald-500'
                                                                 : (leadDetail.behavioral_score || 0) >= 8
-                                                                    ? 'bg-sky-500'
+                                                                    ? 'bg-primary-500'
                                                                     : 'bg-amber-400'
                                                         )}
                                                         style={{ width: `${Math.min(((leadDetail.behavioral_score || 0) / 20) * 100, 100)}%` }}
                                                     />
                                                 </div>
+                                                {leadDetail.behavioral?.page_url && (
+                                                    <div className="flex items-start gap-2 text-[12px]">
+                                                        <span className="text-surface-400 dark:text-surface-500 shrink-0">Page:</span>
+                                                        <span className="text-surface-700 dark:text-surface-300 break-all">
+                                                            {leadDetail.behavioral.page_url.length > 80
+                                                                ? leadDetail.behavioral.page_url.substring(0, 80) + '...'
+                                                                : leadDetail.behavioral.page_url}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {leadDetail.behavioral?.referrer && (
+                                                    <div className="flex items-start gap-2 text-[12px]">
+                                                        <span className="text-surface-400 dark:text-surface-500 shrink-0">Referrer:</span>
+                                                        <span className="text-surface-700 dark:text-surface-300 break-all">
+                                                            {leadDetail.behavioral.referrer.length > 80
+                                                                ? leadDetail.behavioral.referrer.substring(0, 80) + '...'
+                                                                : leadDetail.behavioral.referrer}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {leadDetail.behavioral?.utm_params && Object.keys(leadDetail.behavioral.utm_params).length > 0 && (
+                                                    <div className="text-[12px]">
+                                                        <span className="text-surface-400 dark:text-surface-500">UTM:</span>
+                                                        <div className="flex flex-wrap gap-1 mt-1">
+                                                            {Object.entries(leadDetail.behavioral.utm_params).map(([k, v]) => (
+                                                                <span key={k} className="px-2 py-0.5 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded text-[10px] text-surface-600 dark:text-surface-400">
+                                                                    {k}: {v}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 {(leadDetail.behavioral?.visit_count || 0) > 1 && (
                                                     <div className="flex items-center gap-2 text-[12px]">
                                                         <span className="text-surface-400 dark:text-surface-500">Return visitor:</span>
@@ -1035,13 +1067,13 @@ export default function Leads() {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 32, stiffness: 320 }}
-                            className="relative w-full max-w-md bg-white dark:bg-surface-900 shadow-2xl flex flex-col"
+                            className="relative w-full max-w-md bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl flex flex-col"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header: contact + meta + close. Mirrors the
                                 live-chat header so the two views feel like
                                 one product. */}
-                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
+                            <div className="sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
                                 <div className="flex items-start gap-3">
                                     <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center shrink-0">
                                         <MessageCircle className="w-4 h-4 text-primary-600 dark:text-primary-400" />

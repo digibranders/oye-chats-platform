@@ -88,7 +88,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                     exit="exit"
                 />
                 <motion.div
-                    className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-2xl border border-surface-200 dark:border-surface-700 overflow-hidden relative"
+                    className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-2xl border border-surface-200 dark:border-surface-700 overflow-hidden relative"
                     variants={cardVariants}
                     initial="hidden"
                     animate="visible"

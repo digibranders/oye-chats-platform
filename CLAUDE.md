@@ -151,11 +151,11 @@ User Question
 - **VisitorEvent** — Behavioral signals (page_view, return_visit, UTM)
 - **BotGrowthEvent** — Per-bot business events
 
-**Billing (Razorpay primary INR + Stripe fallback)**
+**Billing (Razorpay, INR — single rail)**
 - **Plan** — Tier definition (price, credits_per_month, included seats, feature_flags, provider IDs)
 - **Subscription** — status: trialing|active|past_due|canceled|paused|expired
 - **UsageRecord** — Per-period counters
-- **Invoice** — Synced from providers
+- **Invoice** — Issued by OyeChats (Razorpay-triggered)
 - **PaymentMethod** — Card / UPI / bank refs
 - **CreditLedger** — Append-only event-sourced credit balance; FIFO topup expiry via self-FK `grant_id`
 - **PricingConfig** — Super-admin tunable key/value (credit costs, kill switch)
@@ -291,8 +291,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | RAG pipeline | `api/app/services/rag_service.py` |
 | LLM service (LiteLLM router) | `api/app/services/llm_service.py` |
 | Live chat ConnectionManager | `api/app/services/live_chat_service.py` |
-| Billing (Stripe) | `api/app/services/billing_service.py` |
-| Razorpay (primary) | `api/app/services/razorpay_service.py` |
+| Razorpay (sole payment rail) | `api/app/services/razorpay_service.py` |
 | Credit ledger | `api/app/services/credit_service.py` |
 | Qualification (BANT/MEDDIC) | `api/app/services/qualification_service.py` |
 | Outbound webhooks (HMAC + retry) | `api/app/services/webhook_service.py` |
@@ -306,7 +305,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | WebSocket live chat | `api/app/api/ws_routes.py` |
 | Chat routes (SSE) | `api/app/api/chat_routes.py` |
 | Subscription / billing routes | `api/app/api/subscription_routes.py` |
-| Inbound Stripe + Razorpay webhooks | `api/app/api/webhook_billing_routes.py` |
+| Inbound Razorpay webhooks | `api/app/api/webhook_billing_routes.py` |
 | Gunicorn config | `api/gunicorn.conf.py` |
 | systemd units | `api/systemd/oyechats-api.service` · `oyechats-worker.service` |
 | Nginx config | `api/nginx/oyechats-api.conf` · `oyechats-locations.conf` |
@@ -340,7 +339,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Web Scraping | Spider.cloud (primary) + Jina Reader (fallback) | URL ingestion, HTTP-only (no local browser) |
 | File Storage | Cloudflare R2 (S3-compatible) | Env vars use `R2_` prefix; internal code module name is still `b2_service.py` for legacy reasons but the bucket is on Cloudflare R2 in production |
 | Email | Brevo (Sendinblue) | Transactional |
-| Payments | Razorpay (primary, INR) + Stripe (fallback) | Webhook idempotency via `processed_webhooks` |
+| Payments | Razorpay (INR) — single provider | Webhook idempotency via `processed_webhooks` |
 | Real-time | WebSocket (`ws_routes.py`) | Live chat bidirectional messaging |
 | Rate limiting | SlowAPI on Redis | Per-route + IP/key |
 | Observability | Langfuse + Sentry | **Two separate Langfuse projects**: "OyeChats Prod" (keys in GitHub Secrets) and "OyeChats Dev" (keys in local `.env`). Traces go to the matching project — no mixing. Toggle via `LANGFUSE_FORCE_DISABLE=true` if needed. |

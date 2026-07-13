@@ -94,9 +94,9 @@ export default function Dashboard() {
   const pieData = useMemo(() => {
     if (!leadStats) return [];
     return [
-      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'url(#gray-gradient)', fallbackColor: '#A6AFBC' },
-      { name: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'url(#blue-gradient)', fallbackColor: '#2EA8FF' },
-      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'url(#orange-gradient)', fallbackColor: '#FF7A00' },
+      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'url(#gray-gradient)', fallbackColor: '#94a3b8' },
+      { name: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'url(#blue-gradient)', fallbackColor: '#a21caf' },
+      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'url(#orange-gradient)', fallbackColor: '#f59e0b' },
     ].filter(d => d.value > 0);
   }, [leadStats]);
 
@@ -267,33 +267,27 @@ export default function Dashboard() {
       label: 'Upload documents',
       desc: 'Add to your knowledge base',
       to: '/knowledge',
-      gradient: 'from-violet-50 via-violet-50/60 to-indigo-50/40 dark:from-violet-500/20 dark:via-violet-500/10 dark:to-indigo-500/10',
-      ring: 'hover:border-violet-300 dark:hover:border-violet-500/50',
-      iconBg: 'bg-violet-100 dark:bg-violet-500/20',
-      iconColor: 'text-violet-600 dark:text-violet-300',
-      arrowColor: 'group-hover:text-violet-500 dark:group-hover:text-violet-300',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
+      iconColor: 'text-primary-600 dark:text-primary-400',
+      arrowColor: 'group-hover:text-primary-500 dark:group-hover:text-primary-400',
     },
     {
       icon: Palette,
       label: 'Customize appearance',
       desc: 'Brand your chatbot',
       to: '/chatbot?tab=appearance',
-      gradient: 'from-amber-50 via-amber-50/60 to-orange-50/40 dark:from-amber-500/20 dark:via-orange-500/10 dark:to-rose-500/10',
-      ring: 'hover:border-amber-300 dark:hover:border-amber-500/50',
-      iconBg: 'bg-amber-100 dark:bg-amber-500/20',
-      iconColor: 'text-amber-600 dark:text-amber-300',
-      arrowColor: 'group-hover:text-amber-500 dark:group-hover:text-amber-300',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
+      iconColor: 'text-primary-600 dark:text-primary-400',
+      arrowColor: 'group-hover:text-primary-500 dark:group-hover:text-primary-400',
     },
     {
       icon: Code2,
       label: 'Get embed code',
       desc: 'Add to your website',
       to: '/chatbot',
-      gradient: 'from-emerald-50 via-teal-50/60 to-sky-50/40 dark:from-emerald-500/20 dark:via-teal-500/10 dark:to-sky-500/10',
-      ring: 'hover:border-emerald-300 dark:hover:border-emerald-500/50',
-      iconBg: 'bg-emerald-100 dark:bg-emerald-500/20',
-      iconColor: 'text-emerald-600 dark:text-emerald-300',
-      arrowColor: 'group-hover:text-emerald-500 dark:group-hover:text-emerald-300',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
+      iconColor: 'text-primary-600 dark:text-primary-400',
+      arrowColor: 'group-hover:text-primary-500 dark:group-hover:text-primary-400',
     },
   ];
   const demoOpens = stats?.demo_opens ?? 0;
@@ -388,10 +382,8 @@ export default function Dashboard() {
             onClick={() => navigate(action.to)}
             className={cn(
               'relative flex items-center gap-3 p-4 rounded-xl border transition-all text-left group overflow-hidden',
-              'bg-gradient-to-br border-surface-200/80 dark:border-surface-800',
-              'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30',
-              action.gradient,
-              action.ring,
+              'bg-[var(--bg-card)] border-surface-200 dark:border-surface-800',
+              'hover:-translate-y-0.5 hover:shadow-md hover:border-primary-300 dark:hover:border-surface-700 dark:hover:shadow-black/30',
             )}
           >
             <div className={cn(
@@ -415,9 +407,9 @@ export default function Dashboard() {
           disabled={!selectedBot?.id}
           className={cn(
             'relative flex items-center gap-3 p-4 rounded-xl border transition-all text-left group overflow-hidden',
-            'bg-gradient-to-br from-fuchsia-50 via-fuchsia-50/60 to-primary-50/40 dark:from-fuchsia-500/20 dark:via-primary-500/10 dark:to-violet-500/10',
-            'border-surface-200/80 dark:border-surface-800',
-            'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30 hover:border-fuchsia-300 dark:hover:border-fuchsia-500/50',
+            'bg-[var(--bg-card)] dark:bg-surface-900',
+            'border-surface-200 dark:border-surface-800',
+            'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30 hover:border-primary-300 dark:hover:border-surface-700',
             !selectedBot?.id && 'opacity-60 cursor-not-allowed hover:translate-y-0 hover:border-surface-200 dark:hover:border-surface-800 hover:shadow-none',
           )}
         >
@@ -425,12 +417,12 @@ export default function Dashboard() {
             'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110 group-hover:rotate-3',
             copiedDemo
               ? 'bg-emerald-100 dark:bg-emerald-500/20'
-              : 'bg-fuchsia-100 dark:bg-fuchsia-500/20',
+              : 'bg-primary-50 dark:bg-primary-500/10',
           )}>
             {copiedDemo ? (
               <Check size={18} className="text-emerald-600 dark:text-emerald-300" />
             ) : (
-              <Link2 size={18} className="text-fuchsia-600 dark:text-fuchsia-300" />
+              <Link2 size={18} className="text-primary-600 dark:text-primary-400" />
             )}
           </div>
           <div className="flex-1 min-w-0">
@@ -442,7 +434,7 @@ export default function Dashboard() {
                 ? 'Loading demo traction...'
                 : `${demoOpens} opens from ${demoShares} shares`}
             </p>
-            <p className="mt-1 text-[11px] font-semibold text-fuchsia-600 dark:text-fuchsia-300">
+            <p className="mt-1 text-[11px] font-semibold text-primary-600 dark:text-primary-400">
               {demoOpenRateLabel}
             </p>
           </div>
@@ -450,7 +442,7 @@ export default function Dashboard() {
             'text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full shrink-0 transition-colors border',
             copiedDemo
               ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/15 dark:text-emerald-300 border-emerald-500/20 dark:border-emerald-400/30'
-              : 'bg-white/70 dark:bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-200/60 dark:border-fuchsia-400/30',
+              : 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-200/60 dark:border-primary-400/30',
           )}>
             {copiedDemo ? 'Copied' : 'Copy link'}
           </span>
@@ -462,7 +454,7 @@ export default function Dashboard() {
         {/* Lead Funnel Mini — locked on Free; renders the real chart on
             paid plans. The card chrome (icon, title) is reused so a plan
             upgrade visually swaps the body without a layout shift. */}
-        <div className="bg-white dark:bg-[#040B18] rounded-2xl border border-surface-200 dark:border-white/10 shadow-sm p-6">
+        <div className="bg-white dark:bg-[#18181b] rounded-2xl border border-surface-200 dark:border-white/10 shadow-sm p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className={cn(
               'w-9 h-9 rounded-xl flex items-center justify-center',
@@ -544,16 +536,16 @@ export default function Dashboard() {
                         </feMerge>
                       </filter>
                       <radialGradient id="blue-gradient" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#2EA8FF" />
-                        <stop offset="100%" stopColor="#007ecc" />
+                        <stop offset="0%" stopColor="#a21caf" />
+                        <stop offset="100%" stopColor="#86198f" />
                       </radialGradient>
                       <radialGradient id="orange-gradient" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#FF7A00" />
-                        <stop offset="100%" stopColor="#cc6200" />
+                        <stop offset="0%" stopColor="#f59e0b" />
+                        <stop offset="100%" stopColor="#d97706" />
                       </radialGradient>
                       <radialGradient id="gray-gradient" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#A6AFBC" />
-                        <stop offset="100%" stopColor="#7a8491" />
+                        <stop offset="0%" stopColor="#94a3b8" />
+                        <stop offset="100%" stopColor="#64748b" />
                       </radialGradient>
                     </defs>
                     <Pie
@@ -610,7 +602,7 @@ export default function Dashboard() {
                     >
                       {activeTooltip.cos < 0 && (
                         <div
-                          className="rounded-xl border border-white/10 bg-[#040B18]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
+                          className="rounded-xl border border-white/10 bg-[#18181b]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
                           style={{
                             boxShadow: '0 8px 20px rgba(0, 0, 0, 0.5)',
                           }}
@@ -653,19 +645,19 @@ export default function Dashboard() {
                         /* Arrow on the Left pointing Left */
                         <div 
                           className="w-0 h-0 border-t-[5px] border-t-transparent border-b-[5px] border-b-transparent border-r-[6px] shrink-0"
-                          style={{ borderRightColor: '#040B18' }}
+                          style={{ borderRightColor: '#18181b' }}
                         />
                       ) : (
                         /* Arrow on the Bottom pointing Down */
                         <div 
                           className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[6px] shrink-0"
-                          style={{ borderTopColor: '#040B18' }}
+                          style={{ borderTopColor: '#18181b' }}
                         />
                       )}
 
                       {activeTooltip.cos >= 0 && (
                         <div
-                          className="rounded-xl border border-white/10 bg-[#040B18]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
+                          className="rounded-xl border border-white/10 bg-[#18181b]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
                           style={{
                             boxShadow: '0 8px 20px rgba(0, 0, 0, 0.5)',
                           }}
@@ -708,9 +700,9 @@ export default function Dashboard() {
               </div>
               <div className="space-y-2 flex-1">
                 {[
-                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-[#A6AFBC]' },
-                  { label: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'bg-[#2EA8FF]' },
-                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-[#FF7A00]' },
+                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-[#94a3b8]' },
+                  { label: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'bg-primary-600' },
+                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-[#f59e0b]' },
                 ].map(item => (
                   <div key={item.label} className="flex items-center gap-2">
                     <div className={cn('w-2 h-2 rounded-full shrink-0', item.color)} />
@@ -734,7 +726,7 @@ export default function Dashboard() {
         </div>
 
         {/* Recent Activity Feed */}
-        <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-9 h-9 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
               <Activity size={18} className="text-primary-600 dark:text-primary-400" />
@@ -765,13 +757,13 @@ export default function Dashboard() {
                   <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0',
                     item.type === 'feedback'
                       ? item.positive ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-rose-50 dark:bg-rose-500/10'
-                      : 'bg-blue-50 dark:bg-blue-500/10'
+                      : 'bg-primary-50 dark:bg-primary-500/10'
                   )}>
                     {item.type === 'feedback'
                       ? item.positive
                         ? <ThumbsUp size={12} className="text-emerald-500" />
                         : <ThumbsDown size={12} className="text-rose-500" />
-                      : <Inbox size={12} className="text-blue-500 dark:text-blue-400" />
+                      : <Inbox size={12} className="text-primary-600 dark:text-primary-400" />
                     }
                   </div>
                   <div className="flex-1 min-w-0">
@@ -789,7 +781,7 @@ export default function Dashboard() {
       </motion.div>
 
       {/* Top Questions */}
-      <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
+      <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
         <div className="p-6 pb-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
             <TrendingUp size={20} className="text-primary-600 dark:text-primary-400" />

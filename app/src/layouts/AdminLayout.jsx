@@ -138,7 +138,7 @@ function AdminLayoutInner() {
   };
 
   return (
-    <div className="h-screen overflow-hidden bg-surface-50 dark:bg-surface-950 flex transition-colors duration-300">
+    <div className="h-screen overflow-hidden bg-canvas dark:bg-surface-950 flex transition-colors duration-300">
       {/* Mobile backdrop */}
       <AnimatePresence>
         {isMobile && isSidebarOpen && (
@@ -216,7 +216,7 @@ function AdminLayoutInner() {
         }}
         aria-label="Send feedback"
         title="Send feedback"
-        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#6d6bfa] to-[#3b32b3] shadow-[-6px_0_30px_rgba(99,102,241,0.5)] z-40 cursor-pointer"
+        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#a21caf] to-[#86198f] shadow-[-6px_0_30px_rgba(162,28,175,0.5)] z-40 cursor-pointer"
       >
         <MessageCircle size={20} className="text-white flex-shrink-0" />
         <span

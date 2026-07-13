@@ -173,7 +173,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 14, scale: 0.98 }}
                         transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative w-full max-w-md bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800"
+                        className="relative w-full max-w-md bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800"
                     >
                         <div className="flex items-start justify-between p-5 border-b border-surface-200 dark:border-surface-800">
                             <div className="flex items-start gap-3">
@@ -216,7 +216,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                     maxLength={20}
                                     className={cn(
                                         'w-full h-10 px-3 text-sm font-mono uppercase tracking-wider',
-                                        'bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
+                                        'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
                                         'border rounded-lg outline-none transition-colors',
                                         codeName.length === 0 || !codeChanged
                                             ? 'border-surface-200 dark:border-surface-700 focus:border-primary-400'
@@ -281,7 +281,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                                 onChange={(e) => setMyCommission(e.target.value)}
                                                 placeholder="0"
                                                 className={cn(
-                                                    'w-full h-10 pl-3 pr-8 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border rounded-lg outline-none transition-colors',
+                                                    'w-full h-10 pl-3 pr-8 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border rounded-lg outline-none transition-colors',
                                                     splitOverPool
                                                         ? 'border-rose-400/60 focus:border-rose-500'
                                                         : 'border-surface-200 dark:border-surface-700 focus:border-primary-400',
@@ -305,7 +305,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                                 onChange={(e) => setFriendReward(e.target.value)}
                                                 placeholder="0"
                                                 className={cn(
-                                                    'w-full h-10 pl-3 pr-8 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border rounded-lg outline-none transition-colors',
+                                                    'w-full h-10 pl-3 pr-8 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border rounded-lg outline-none transition-colors',
                                                     splitOverPool
                                                         ? 'border-rose-400/60 focus:border-rose-500'
                                                         : 'border-surface-200 dark:border-surface-700 focus:border-primary-400',

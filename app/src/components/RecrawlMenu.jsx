@@ -145,7 +145,7 @@ export default function RecrawlMenu({
             left: coords.left,
             width: POPOVER_WIDTH,
           }}
-          className="z-[9999] rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 shadow-xl overflow-hidden"
+          className="z-[9999] rounded-xl border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 shadow-xl overflow-hidden"
         >
             <button
               type="button"

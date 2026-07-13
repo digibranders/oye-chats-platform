@@ -665,7 +665,15 @@ def update_pricing_config(
             request=request,
         )
         session.commit()
-        return {"key": key, "value": body.value}
+    # Finding O2: the pricing/kill-switch config is read through a 60s in-memory
+    # cache. Without invalidating it here, a super-admin toggle (e.g. the credit
+    # kill switch) would take up to 60s to take effect — a fail-open window where
+    # deductions keep running after the switch is flipped on. Invalidate now so
+    # the change is immediate.
+    from app.services.credit_service import invalidate_pricing_cache
+
+    invalidate_pricing_cache()
+    return {"key": key, "value": body.value}
 
 
 @router.get("/feature-flags")
@@ -1202,7 +1210,7 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
             "category": "lead",
             "description": "Notifies the customer when a chat conversation crosses the BANT/MEDDIC qualification threshold.",
             "trigger": "qualification_service tier transition",
-            "metered": True,
+            "metered": False,
             "sender_fn": "send_qualified_lead_email",
         },
         {
@@ -1224,7 +1232,7 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
             "category": "live_chat",
             "description": "Apology + reschedule link sent when no operator picked up before the queue timeout.",
             "trigger": "live_chat_service queue timeout",
-            "metered": True,
+            "metered": False,
             "sender_fn": "send_unavailable_callback_email",
         },
         {
@@ -1235,7 +1243,7 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
             "category": "live_chat",
             "description": "Delivers a visitor's contact-form submission when the team is offline.",
             "trigger": "POST /offline-messages",
-            "metered": True,
+            "metered": False,
             "sender_fn": "send_offline_message_email",
         },
         {

@@ -39,7 +39,10 @@ def _wire(monkeypatch, bot_db, extractor_result):
     monkeypatch.setattr(orch, "crawl_website", fake_crawl)
     monkeypatch.setattr(orch, "get_session", fake_session)
     monkeypatch.setattr(orch, "fetch_recommended_colors", fake_extractor)
-    monkeypatch.setattr(orch, "extract_brand_tone", lambda *a, **k: None)
+    # ``extract_brand_tone`` was renamed to ``classify_brand_tone`` during
+    # the brand-tone-preset refactor. The name here matches the current
+    # llm_service export that crawl_orchestrator imports.
+    monkeypatch.setattr(orch, "classify_brand_tone", lambda *a, **k: None)
     monkeypatch.setattr(orch, "extract_company_context", lambda *a, **k: None)
     monkeypatch.setattr(
         orch,

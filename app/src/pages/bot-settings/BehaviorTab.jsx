@@ -105,7 +105,7 @@ export default function BehaviorTab({ draft, set, ent, advancedLocked, requestUp
                     </button>
                 </div>
             ) : (
-                <div className="bg-white dark:bg-surface-900 p-2 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm divide-y divide-surface-100 dark:divide-surface-800">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-2 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm divide-y divide-surface-100 dark:divide-surface-800">
                     {FEATURE_FLAGS.map((flag) => {
                         const { key, label, desc, default: dflt } = flag;
                         const FlagIcon = flag.icon;

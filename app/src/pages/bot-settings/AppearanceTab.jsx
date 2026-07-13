@@ -73,7 +73,7 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                                             />
                                             <div className="relative w-[100px]">
                                                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400 font-mono text-[10px]">#</span>
-                                                <div className="w-full h-8 pl-5 pr-2 text-[12px] font-mono text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md shadow-sm flex items-center">
+                                                <div className="w-full h-8 pl-5 pr-2 text-[12px] font-mono text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md shadow-sm flex items-center">
                                                     {color.replace('#', '').toUpperCase()}
                                                 </div>
                                             </div>
@@ -84,7 +84,7 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                                                 >Brand</button>
                                                 <button
                                                     onClick={() => set('user_bubble_color', color)}
-                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded hover:bg-blue-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded hover:bg-primary-500 hover:text-white transition-all uppercase tracking-wider leading-none"
                                                 >Bubble</button>
                                             </div>
                                         </div>
@@ -130,7 +130,7 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                                 onClick={() => set('avatar_type', opt.key)}
                                 className={`relative flex flex-col items-center gap-2 p-5 rounded-xl border-2 transition-all duration-200 ${isSelected
                                     ? 'border-emerald-500 bg-emerald-50/50 dark:bg-emerald-500/10 shadow-sm ring-1 ring-emerald-500/20'
-                                    : 'border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 bg-white dark:bg-surface-900'
+                                    : 'border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 bg-[var(--bg-card)] dark:bg-surface-900'
                                     }`}
                             >
                                 {isSelected && (
@@ -211,7 +211,7 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                             </div>
                         ) : (
                             <div className="w-full max-w-lg bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl p-4 flex items-center gap-4">
-                                <div className="w-14 h-14 rounded-xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center overflow-hidden flex-shrink-0 shadow-sm">
+                                <div className="w-14 h-14 rounded-xl bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center overflow-hidden flex-shrink-0 shadow-sm">
                                     <img src={draft.bot_logo} alt="avatar" className="w-full h-full object-cover" />
                                 </div>
                                 <div className="flex-1 min-w-0">
@@ -226,14 +226,14 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                                 <div className="flex items-center gap-2 flex-shrink-0">
                                     <button
                                         onClick={() => inputRef.current?.click()}
-                                        className="w-8 h-8 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-primary-400 hover:text-primary-500 transition-colors shadow-sm"
+                                        className="w-8 h-8 rounded-lg bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-primary-400 hover:text-primary-500 transition-colors shadow-sm"
                                         title="Replace image"
                                     >
                                         <Upload className="w-3.5 h-3.5" />
                                     </button>
                                     <button
                                         onClick={onRemoveLogo}
-                                        className="w-8 h-8 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-rose-400 hover:text-rose-500 dark:hover:border-rose-500 dark:hover:text-rose-400 text-surface-400 transition-colors shadow-sm"
+                                        className="w-8 h-8 rounded-lg bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-rose-400 hover:text-rose-500 dark:hover:border-rose-500 dark:hover:text-rose-400 text-surface-400 transition-colors shadow-sm"
                                         title="Remove image"
                                     >
                                         <Trash2 className="w-3.5 h-3.5" />
@@ -304,7 +304,7 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                                                         set('orb_color', '#' + val);
                                                     }
                                                 }}
-                                                className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                                                className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
                                             />
                                         </div>
                                     </div>

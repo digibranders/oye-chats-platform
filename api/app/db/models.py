@@ -221,8 +221,20 @@ class Bot(Base):
     name = Column(String, default="AI Assistant", server_default="AI Assistant")
     system_prompt = Column(Text, nullable=True)
     brand_tone = Column(Text, nullable=True)  # Auto-extracted or manually set brand voice/tone description
+    # Which brand-tone preset chip is active: a key from brand_tone.PRESET_KEYS,
+    # "custom" (text hand-edited away from any preset), or NULL (empty/never set).
+    # Descriptive metadata for the UI only — never fed to the prompt; rides along
+    # with brand_tone on crawl/detect writes. See app/services/brand_tone.py.
+    brand_tone_preset = Column(String, nullable=True)
     company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
     company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
+    # Names of auto-fillable fields the customer has edited by hand
+    # (subset of {"company_name", "company_description", "brand_tone"}). A field
+    # listed here is "locked" and the website crawl leaves it untouched; fields
+    # not listed are refreshed from the crawl. Clearing a field and saving
+    # removes it from this list, re-enabling auto-fill on the next crawl.
+    # Reconciled in ``bot_routes.update_bot`` and honored in ``crawl_orchestrator``.
+    manual_field_overrides = Column(JSONB, nullable=False, default=list, server_default=sqlalchemy.text("'[]'::jsonb"))
     website = Column(String, nullable=True)
     bot_logo = Column(Text, nullable=True)
     launcher_name = Column(String, default="Have Questions?", server_default="Have Questions?")
@@ -702,6 +714,13 @@ class Operator(Base):
     operator_api_key = Column(String, unique=True, index=True, nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
 
+    # Bot binding — one operator, one bot. See migration
+    # ``b1c7e9d3f2a5_operator_bot_one_to_one.py`` for the schema change and the
+    # backfill that picked each workspace's oldest bot for pre-existing rows.
+    # Live-chat routing scopes every assignment to this bot so an operator on
+    # Bot A never gets a Bot B conversation delivered.
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+
     # Role & department
     role = Column(String, default="operator", server_default="operator", nullable=False)  # owner|admin|operator
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
@@ -1158,11 +1177,25 @@ class Subscription(Base):
     # credit — never NULL so arithmetic stays simple.
     upgrade_credit_pending_cents = Column(Integer, default=0, server_default="0", nullable=False)
 
+    # Finding D: idempotency marker for an in-flight paid→paid upgrade checkout.
+    # Set on the OLD sub when execute_paid_upgrade mints the new (not-yet-local)
+    # Razorpay subscription; a sequential double-submit for the SAME target plan
+    # returns this existing checkout instead of minting a second sub (which would
+    # double-charge the first cycle). Cleared when the upgrade activates.
+    upgrade_pending_subscription_id = Column(String, nullable=True)
+    upgrade_pending_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+
     # Razorpay id of the SEPARATE per-seat add-on subscription. Kept distinct
     # from razorpay_subscription_id because Razorpay quantity multiplies the
     # whole plan amount — seats must be their own sub (P0-3).
     seat_addon_subscription_id = Column(String, nullable=True)
     seat_addon_quantity = Column(Integer, nullable=False, server_default="0")
+    # Finding A: extra seats DESIRED on a first purchase, awaiting mandate
+    # authorization. Entitlement (operator_quantity) is NOT granted until the
+    # seat add-on's ``activated`` webhook confirms the mandate — otherwise seats
+    # run free before Razorpay ever charges. NULL = nothing pending. Distinct
+    # from seat_addon_quantity (the AUTHORIZED/billed count).
+    seat_addon_pending_quantity = Column(Integer, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -1327,6 +1360,42 @@ class Invoice(Base):
     subscription = relationship("Subscription", back_populates="invoices")
 
 
+# Finding L: once an invoice is numbered it IS a legal document — its tax and
+# identity columns must never change. Immutability was previously convention-only
+# (finalize simply refused to re-run), so any later code path could still mutate a
+# frozen row and only arithmetic-inconsistent tampering would be caught by
+# reconciliation. This DB-session guard rejects mutation of every frozen column on
+# a numbered invoice, allowing ONLY delivery/lifecycle fields (PDF/email/e-invoice
+# registration/payment status). The finalize transition itself — invoice_number
+# going NULL→value in the same UPDATE — is allowed.
+_INVOICE_FROZEN_EXEMPT = frozenset(
+    {"pdf_url", "invoice_url", "emailed_at", "status", "irn", "signed_qr", "razorpay_invoice_id"}
+)
+
+
+@sqlalchemy.event.listens_for(Invoice, "before_update")
+def _reject_frozen_invoice_mutation(mapper, connection, target):  # noqa: ANN001
+    state = sqlalchemy.inspect(target)
+    # If invoice_number is being assigned in THIS update, it's the finalize
+    # transition (finalize writes the number + all tax columns together) — allow
+    # it. Enforcement only applies once a row is numbered and the number is NOT
+    # changing (i.e. a later edit to an already-finalized document).
+    if state.attrs.invoice_number.history.has_changes():
+        return
+    if target.invoice_number is None:
+        return  # never finalized (legacy row) — freely mutable
+    changed = [
+        col.key
+        for col in mapper.column_attrs
+        if col.key not in _INVOICE_FROZEN_EXEMPT and state.attrs[col.key].history.has_changes()
+    ]
+    if changed:
+        raise ValueError(
+            f"Invoice {target.invoice_number} is finalized; refusing to mutate "
+            f"frozen column(s): {', '.join(sorted(changed))}"
+        )
+
+
 class InvoiceCounter(Base):
     """Gapless per-FY invoice serial allocator.
 
@@ -1427,7 +1496,12 @@ class CreditLedger(Base):
         ).with_variant(String(), "sqlite"),
         nullable=False,
     )
-    reference_id = Column(Integer, nullable=True)  # chat_message_id, document_id, invoice_id, etc.
+    reference_id = Column(Integer, nullable=True)  # coarse AUDIT label: bot_id / document_id / invoice_id
+    # Finding H: opt-in, globally-unique idempotency token for a billable unit of
+    # work. Only the crawl ingestion path sets one today
+    # ("ingest:{client}:{bot}:{job}:{url_sha}"); NULL for every other/per-request
+    # deduction. Backed by a partial unique index (see __table_args__).
+    idempotency_key = Column(String, nullable=True)
     grant_id = Column(Integer, ForeignKey("credit_ledger.id", ondelete="SET NULL"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)  # only set on topup grants
     note = Column(Text, nullable=True)
@@ -1448,6 +1522,16 @@ class CreditLedger(Base):
         ),
         Index("ix_credit_ledger_grant_id", "grant_id"),
         Index("ix_credit_ledger_reference_id", "reference_id"),
+        # Finding H: back the opt-in idempotency guard in check_and_deduct with a
+        # partial unique index so a race that slips the app-level check still fails
+        # closed. One deduction row per key; NULL keys (every legacy/per-request
+        # deduction) are exempt, so existing callers are unaffected.
+        Index(
+            "uq_credit_ledger_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=sqlalchemy.text("idempotency_key IS NOT NULL AND delta < 0"),
+        ),
     )
 
 

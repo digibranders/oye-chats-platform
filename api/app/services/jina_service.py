@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from app.config import JINA_API_KEY, JINA_READER_URL
+from app.services.crawler_service import CrawlCancelled, is_cancellation_requested
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,10 @@ async def fetch_urls(
     they can't abort the fetch."""
     if not urls:
         return _empty()
+    # Honor a cancel requested before we start spending (mirrors spider_service).
+    if client_id is not None and is_cancellation_requested(client_id):
+        logger.info("Jina fetch_urls aborted before start (cancel requested) client=%s", client_id)
+        raise CrawlCancelled({"results": [], "recommended_colors": []})
 
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=_TIMEOUT)
@@ -81,6 +86,10 @@ async def fetch_urls(
     sem = asyncio.Semaphore(runtime_config.get_jina_fetch_concurrency())
 
     async def _fetch_and_report(url: str) -> dict | None:
+        # Short-circuit not-yet-started fetches once a cancel lands so the gather
+        # drains within one page (see spider_service for the full rationale).
+        if client_id is not None and is_cancellation_requested(client_id):
+            return None
         page = await _fetch_one(client, url, sem)
         if on_page is not None:
             with contextlib.suppress(Exception):
@@ -98,6 +107,9 @@ async def fetch_urls(
 
     results = [page for page in fetched if page]  # gather preserves order
     logger.info("jina_fallback client=%s pages=%d/%d", client_id, len(results), len(urls))
+    if client_id is not None and is_cancellation_requested(client_id):
+        logger.info("Jina fetch_urls cancelled mid-flight: kept %d scraped pages (client=%s)", len(results), client_id)
+        raise CrawlCancelled({"results": results, "recommended_colors": []})
     return {
         "results": results,
         "recommended_colors": [],

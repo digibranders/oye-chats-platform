@@ -12,6 +12,7 @@ from app.core.metrics import (
     increment_metric_counter_by,
 )
 from app.services import runtime_config
+from app.services.brand_tone import BRAND_TONE_PRESETS, PRESET_KEYS
 
 # Client-side timeout for non-streaming LLM calls (seconds). Without it a hung
 # upstream socket blocks the /chat threadpool worker forever and never trips the
@@ -343,55 +344,94 @@ def generate_response_checked(
     )
 
 
-def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:
-    """Analyze scraped website content and extract a concise brand tone description.
+def classify_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:
+    """Classify scraped website content into the closest brand-tone preset key.
 
-    Returns a short tone description (e.g., "Professional and friendly, uses simple language")
-    or None if extraction fails.
+    Returns a key from :data:`brand_tone.PRESET_KEYS` (e.g. ``"professional"``)
+    or ``None`` when the content is empty, extraction fails, or the model returns
+    something off-menu. Callers leave the bot's tone untouched on ``None``.
 
-    Uses the gate-tier model (AR-10): a pure classification/summarization task
-    with no customer-facing generation quality bar, identical in shape to the
-    relevance-gate judging work already proven adequate on this cheaper tier.
-    No cross-provider fallback — matches the gate's own single-model contract
-    and the try/except below already fails safe (returns None) on any error.
+    Uses the gate-tier model (AR-10): a constrained single-label classification,
+    the same cheap-tier judging shape as the relevance gate. No cross-provider
+    fallback — the try/except below fails safe (returns None) on any error.
     """
     if not content_sample.strip():
         return None
     try:
         _model = runtime_config.get_gate_model()
-        prompt = f"""Analyze this website content and describe the brand's communication tone in 1-2 sentences.
+        menu = "\n".join(f"- {p['key']}: {p['label']}" for p in BRAND_TONE_PRESETS)
+        prompt = f"""Classify the brand's communication tone from this website content \
+into exactly ONE of these presets. Consider formality, personality, vocabulary, and energy.
 
-Focus on: formality level (formal/casual/mixed), personality (friendly/authoritative/playful/neutral), vocabulary complexity (simple/technical/mixed), and overall voice.
-
-Example outputs:
-- "Professional and approachable. Uses simple language with a warm, helpful tone."
-- "Technical and authoritative. Industry jargon is common, formal sentence structure."
-- "Casual and playful. Short sentences, conversational, uses humor."
+Presets (return the key on the left):
+{menu}
 
 Website content:
 {content_sample[:3000]}
 
-Return ONLY the tone description, nothing else."""
+Return ONLY the single preset key (e.g. "professional"), nothing else."""
 
         kwargs: dict = {
             "model": _model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 100,
-            "metadata": metadata or {"generation_name": "brand-tone-extraction"},
+            "max_tokens": 10,
+            "metadata": metadata or {"generation_name": "brand-tone-classification"},
         }
         _apply_model_family_kwargs(kwargs, _model)
-        with langfuse_generation("brand-tone-extraction", model=_model, prompt=prompt) as gen:
+        with langfuse_generation("brand-tone-classification", model=_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
-            tone = (response.choices[0].message.content or "").strip()
-            gen.record_litellm(response, output=tone)
-        if tone and len(tone) < 500:
-            logger.info(f"Brand tone extracted: {tone[:80]}...")
-            return tone
+            raw = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=raw)
+        # Normalize: strip quotes/punctuation/whitespace, lowercase; accept only a known key.
+        key = raw.strip().strip("\"'`.").lower()
+        if key in PRESET_KEYS:
+            logger.info("Brand tone classified: %s", key)
+            return key
+        logger.warning("Brand tone classification returned off-menu value: %r", raw)
         return None
     except Exception as e:
-        logger.warning(f"Brand tone extraction failed (non-blocking): {e}")
+        logger.warning(f"Brand tone classification failed (non-blocking): {e}")
+        return None
+
+
+def generate_tone_sample(brand_tone: str, question: str, *, metadata: dict | None = None) -> str | None:
+    """Generate a 1-2 sentence sample bot reply written in ``brand_tone``.
+
+    Powers the admin "Preview voice" button so the customer can hear how the bot
+    will sound before saving. Returns the sample string, or ``None`` on empty
+    input / any error (caller maps ``None`` to a 503). Gate-tier model.
+    """
+    if not brand_tone.strip() or not question.strip():
+        return None
+    try:
+        _model = runtime_config.get_gate_model()
+        prompt = f"""You are a website support chatbot. Reply to the visitor's message in 1-2 short \
+sentences, strictly matching this brand voice:
+
+BRAND VOICE: {brand_tone[:500]}
+
+Visitor: {question[:200]}
+
+Return ONLY the reply text, no quotes or preamble."""
+
+        kwargs: dict = {
+            "model": _model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 80,
+            "metadata": metadata or {"generation_name": "brand-tone-preview"},
+        }
+        _apply_model_family_kwargs(kwargs, _model)
+        with langfuse_generation("brand-tone-preview", model=_model, prompt=prompt) as gen:
+            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
+            response = litellm.completion(**kwargs)
+            sample = (response.choices[0].message.content or "").strip().strip('"')
+            gen.record_litellm(response, output=sample)
+        return sample[:400] if sample else None
+    except Exception as e:
+        logger.warning(f"Brand tone preview failed (non-blocking): {e}")
         return None
 
 
@@ -401,7 +441,7 @@ def extract_company_context(content_sample: str, *, metadata: dict | None = None
     Returns ``{"name": "Acme Corp", "description": "Acme Corp is a ..."}``
     or *None* if extraction fails.
 
-    Uses the gate-tier model (AR-10) — see :func:`extract_brand_tone` for the
+    Uses the gate-tier model (AR-10) — see :func:`classify_brand_tone` for the
     rationale; identical shape of task, identical fix.
     """
     if not content_sample.strip():

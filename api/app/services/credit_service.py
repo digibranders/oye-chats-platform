@@ -218,10 +218,31 @@ def invalidate_pricing_cache() -> None:
         _pricing_cache_loaded_at = 0.0
 
 
+# Fail-closed default when an action's credit cost is missing or malformed:
+# charge (at least) 1 rather than defaulting to 0 (free), which would silently
+# leak revenue on a typo'd/unpriced action or a non-numeric config value (§5).
+_DEFAULT_CREDIT_COST = 1
+
+
 def get_credit_cost(session: Session, action: str) -> int:
-    """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``)."""
+    """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``).
+
+    Fails CLOSED: an unknown action or a non-numeric config value yields
+    ``_DEFAULT_CREDIT_COST`` (not 0/free) and is logged, so pricing gaps surface
+    as a charge rather than a silent free ride.
+    """
     pricing = get_pricing(session)
-    return int(pricing.get(f"credit_cost.{action}", 0))
+    raw = pricing.get(f"credit_cost.{action}", _DEFAULT_CREDIT_COST)
+    try:
+        return max(int(raw), 0)
+    except (TypeError, ValueError):
+        logger.warning(
+            "credit_cost.%s is non-numeric (%r) — failing closed to %d",
+            action,
+            raw,
+            _DEFAULT_CREDIT_COST,
+        )
+        return _DEFAULT_CREDIT_COST
 
 
 def is_kill_switch_active(session: Session) -> bool:
@@ -245,11 +266,36 @@ def _scope_clause(client_id: int, bot_id: int | None):
 
 
 def get_balance(session: Session, client_id: int, bot_id: int | None = None) -> int:
-    """Return the current balance for the given ledger scope."""
-    return int(
+    """Return the current SPENDABLE balance for the given ledger scope.
+
+    Equals the raw delta sum MINUS the still-unconsumed remainder of top-up grants
+    that have passed their expiry but which the daily sweep hasn't zeroed yet
+    (finding O3). Without this subtraction the balance would overstate what the
+    FIFO allocator — which skips expired grants — can actually spend, causing the
+    same "short allocation" / stuck-balance divergence finding E fixed for refunds
+    (up to one sweep interval). The overhang is 0 in the common case (nothing
+    expired-and-unswept), so this stays cheap.
+    """
+    total = int(
         session.scalar(select(func.coalesce(func.sum(CreditLedger.delta), 0)).where(*_scope_clause(client_id, bot_id)))
         or 0
     )
+    now = datetime.now(UTC)
+    expired = (
+        session.execute(
+            select(CreditLedger).where(
+                *_scope_clause(client_id, bot_id),
+                CreditLedger.delta > 0,
+                CreditLedger.reason == "topup",
+                CreditLedger.expires_at.is_not(None),
+                CreditLedger.expires_at <= now,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    overhang = sum(max(int(g.delta) - _consumed_against(session, g.id), 0) for g in expired)
+    return total - overhang
 
 
 def _consumed_against(session: Session, grant_id: int) -> int:
@@ -280,18 +326,24 @@ def _grants_for(
     Order:
       1. ``plan_grant`` first (use-it-or-lose-it; consume before top-ups).
       2. ``topup`` next, oldest ``expires_at`` first.
-      3. ``manual_adjust`` last (treated as topup-like but with no expiry).
+      3. ``refund`` alongside topups (no expiry; sorts after dated topups).
+      4. ``manual_adjust`` last (treated as topup-like but with no expiry).
+
+    ``refund`` MUST be included (finding E): ``get_balance`` sums every positive
+    delta, so an allocatable set that excluded refunds left the customer with a
+    positive-but-unspendable balance. Invariant: ``get_balance`` equals what this
+    allocator can consume.
     """
     stmt = select(CreditLedger).where(
         *_scope_clause(client_id, bot_id),
         CreditLedger.delta > 0,
-        CreditLedger.reason.in_(("plan_grant", "topup", "manual_adjust")),
+        CreditLedger.reason.in_(("plan_grant", "topup", "manual_adjust", "refund")),
     )
     if only_unexpired:
         now = datetime.now(UTC)
         stmt = stmt.where((CreditLedger.expires_at.is_(None)) | (CreditLedger.expires_at > now))
     stmt = stmt.order_by(
-        text("CASE reason WHEN 'plan_grant' THEN 0 WHEN 'topup' THEN 1 ELSE 2 END"),
+        text("CASE reason WHEN 'plan_grant' THEN 0 WHEN 'topup' THEN 1 WHEN 'refund' THEN 1 ELSE 2 END"),
         CreditLedger.expires_at.asc().nulls_last(),
         CreditLedger.created_at.asc(),
     )
@@ -353,6 +405,7 @@ def check_and_deduct(
     reason: str,
     reference_id: int | None = None,
     bot_id: int | None = None,
+    idempotency_key: str | None = None,
 ) -> int:
     """Atomically deduct ``amount`` credits, allocating FIFO within one scope.
 
@@ -360,6 +413,25 @@ def check_and_deduct(
     Returns the new balance. Raises :class:`InsufficientCredits` if the scope
     does not have enough credits, or :class:`KillSwitchActive` if global
     deductions are paused.
+
+    ``idempotency_key`` (finding H): an OPT-IN, globally-unique token identifying
+    one billable unit of work. Only the crawl ingestion path passes one today —
+    ``ingest:{client_id}:{bot_id}:{crawl_job_id}:{url_sha}`` (see
+    ``pipeline.batch_web_ingestion``); the visitor ``/chat`` path deliberately
+    does NOT (a client-held key there is a free-chat vector). When supplied, a
+    retry / re-queued ARQ job carrying the same key is a no-op — the existing
+    deduction stands and the current balance is returned. ``reference_id`` remains
+    a coarse AUDIT label (bot/doc id) and does NOT drive idempotency; callers that
+    pass no key keep the exact prior behaviour (charge per call). A partial unique
+    index on ``idempotency_key`` backs the app-level check against a lost race.
+
+    This is intended for TRUSTED server-side callers (background jobs), NOT for
+    untrusted/visitor-facing endpoints: a caller that can freely hold the key
+    constant across distinct billable events would get them for free. Callers
+    MUST namespace the key to include the ledger scope (client/bot) so two
+    different scopes can never mint the same key — that makes the cross-scope
+    unique-index race unreachable; same-scope retries are serialised by the
+    advisory lock and caught by the check below.
     """
     if amount <= 0:
         return get_balance(session, client_id, bot_id)
@@ -368,6 +440,41 @@ def check_and_deduct(
         raise KillSwitchActive("Credit deductions are temporarily halted")
 
     _acquire_client_lock(session, client_id, bot_id)
+
+    # Idempotency (finding H): short-circuit if a deduction with this key already
+    # exists. Runs under the advisory lock so two concurrent retries can't both
+    # pass. Keys are globally unique (namespaced by caller), so the lookup is not
+    # scope-restricted — a stray cross-scope collision should surface, not silently
+    # double-charge.
+    if idempotency_key is not None:
+        prior = session.execute(
+            select(CreditLedger.reason, func.coalesce(func.sum(-CreditLedger.delta), 0))
+            .where(CreditLedger.idempotency_key == idempotency_key, CreditLedger.delta < 0)
+            .group_by(CreditLedger.reason)
+        ).all()
+        if prior:
+            # Defense-in-depth: a key is meant to be 1:1 with a fixed billable
+            # unit. If it's ever reused for a DIFFERENT amount/reason, skipping
+            # silently could leak value — so fail loud in the log rather than
+            # quietly no-op a larger charge. (Not currently reachable: every key
+            # is server-derived and 1:1 with its work unit.)
+            prior_reason, prior_amount = prior[0]
+            if len(prior) > 1 or int(prior_amount) != amount or prior_reason != reason:
+                logger.warning(
+                    "credit_service: idempotency_key=%s reused with a different unit "
+                    "(prior reason=%s amount=%s; now reason=%s amount=%s) — skipping anyway",
+                    idempotency_key,
+                    prior_reason,
+                    prior_amount,
+                    reason,
+                    amount,
+                )
+            else:
+                logger.info(
+                    "credit_service: idempotent skip — deduction for key=%s already recorded",
+                    idempotency_key,
+                )
+            return get_balance(session, client_id, bot_id)
 
     available = get_balance(session, client_id, bot_id)
     if available < amount:
@@ -389,6 +496,9 @@ def check_and_deduct(
                 reason=reason,
                 reference_id=reference_id,
                 grant_id=grant.id,
+                # Stamp the key only on the FIRST chunk so the partial unique
+                # index (one row per key) isn't violated by a multi-grant split.
+                idempotency_key=idempotency_key if remaining == amount else None,
             )
         )
         remaining -= take
@@ -599,6 +709,13 @@ def expire_old_topups(session: Session) -> int:
 
     total_expired = 0
     for grant in expired_grants:
+        # Finding O1: take the per-scope advisory lock BEFORE reading consumption.
+        # Reading `consumed` first and locking afterwards is a TOCTOU — a
+        # concurrent deduction landing between the read and the lock would leave
+        # `unused` stale and over-sweep the grant (expiring credits the customer
+        # just spent). Locking first serialises against check_and_deduct so the
+        # consumption read below is stable.
+        _acquire_client_lock(session, grant.client_id, grant.bot_id)
         consumed = _consumed_against(session, grant.id)
         already_expired = int(
             session.scalar(
@@ -612,7 +729,6 @@ def expire_old_topups(session: Session) -> int:
         unused = grant.delta - consumed - already_expired
         if unused <= 0:
             continue
-        _acquire_client_lock(session, grant.client_id, grant.bot_id)
         session.add(
             CreditLedger(
                 client_id=grant.client_id,
@@ -657,6 +773,35 @@ def grant_for_subscription(
         bot_id=subscription.bot_id,
         reference_id=reference_id,
     )
+
+
+def _backfill_plan_grant_reference(session: Session, subscription: Subscription, invoice_id: int) -> None:
+    """Link the most recent un-referenced plan_grant in scope to ``invoice_id``.
+
+    Only ever touches a row whose ``reference_id`` is still NULL, so it can
+    never clobber a real, already-correct link — at most it fills in the one
+    gap left by an activation-time grant that predates its invoice (see the
+    caller). Scoped by client + bot exactly like every other grant/clawback
+    lookup so a per-bot subscription's backfill can't reach the account pool
+    (or vice versa).
+    """
+    grant = (
+        session.execute(
+            select(CreditLedger)
+            .where(
+                *_scope_clause(subscription.client_id, subscription.bot_id),
+                CreditLedger.reason == "plan_grant",
+                CreditLedger.reference_id.is_(None),
+            )
+            .order_by(CreditLedger.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if grant is not None:
+        grant.reference_id = invoice_id
+        session.flush()
 
 
 def grant_subscription_period_once(
@@ -725,8 +870,41 @@ def grant_subscription_period_once(
     if (
         period_end is not None
         and subscription.last_granted_period_end is not None
-        and subscription.last_granted_period_end == period_end
+        and period_end <= subscription.last_granted_period_end
     ):
+        # Monotonic, not exact-equality: any period at or before the marker is
+        # already granted. A strict ``==`` check is exploitable — the
+        # superadmin dead-letter "replay failed webhook" tool re-dispatches an
+        # event by its original (never-committed) id, so an OLDER period's
+        # charged event that failed and got dead-lettered can be replayed
+        # AFTER a newer period's grant already advanced the marker past it.
+        # ``==`` would treat that stale replay as a fresh, ungranted period —
+        # granting a second time for a period the customer already burned
+        # credits against, and regressing the marker backward so the very
+        # next legitimate replay (or the real event, if it also redelivers)
+        # can trigger yet another grant. ``<=`` makes the marker monotonic:
+        # the old event now correctly no-ops instead of regressing anything.
+        #
+        # The grant for this period already happened — almost always at
+        # ``subscription.activated``, which runs before any Invoice exists and
+        # so calls ``grant_for_subscription`` with no ``reference_id`` (see
+        # ``_handle_subscription_activated``). The invoice for that same charge
+        # only shows up later via ``subscription.charged``, by which point this
+        # no-op branch is all that runs — the reference never gets attached.
+        # Without it, ``clawback_refund`` on that invoice can't find its exact
+        # grant and falls back to "most recent grant in scope", which on a
+        # multi-period-old chargeback claws back a LATER period's still-in-use
+        # credits instead of the (already fully consumed / long expired) grant
+        # the refund actually paid for. Backfill it here, the first time an
+        # invoice_id becomes available for an already-granted period.
+        #
+        # Only backfill on an EXACT period match. ``_backfill_plan_grant_reference``
+        # links whatever the most recent un-referenced plan_grant is — correct when
+        # this event's period is the same one that grant belongs to, but a stale
+        # replay of an OLDER period (period_end < marker, the new ``<=`` case above)
+        # could otherwise misattribute ITS invoice onto a newer, unrelated grant.
+        if invoice_id is not None and period_end == subscription.last_granted_period_end:
+            _backfill_plan_grant_reference(session, subscription, invoice_id)
         return False
 
     reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
@@ -871,9 +1049,11 @@ def reverse_refund_clawback(
     mirroring positive row against the SAME ``grant_id`` — restoring the grant's
     remaining balance and keeping :func:`get_balance_breakdown` accurate.
 
-    Idempotency is the caller's responsibility (a ``refund_failed:<id>`` marker
-    in ``processed_webhooks``); given that, re-running is still safe because the
-    restore is keyed on the original clawback rows. Returns total credits restored.
+    NOT self-idempotent (finding O4): re-running finds the same original clawback
+    rows and writes ANOTHER mirroring positive, double-restoring the credits.
+    Idempotency is therefore the CALLER's responsibility — a ``refund_failed:<id>``
+    marker in ``processed_webhooks`` must gate this so it runs at most once per
+    failed refund. Returns total credits restored.
     """
     _acquire_client_lock(session, client_id, bot_id)
     clawback_rows = (

@@ -39,7 +39,7 @@ export default function LeadsTab({ draft, set }) {
                     AI will subtly ask qualifying questions (Budget, Authority, Need, Timeline) when the user shows buying intent.
                 </p>
             </div>
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
                 <div>
                     <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable BANT Qualification</h4>
                     <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">Qualify leads automatically during chat.</p>
@@ -61,7 +61,7 @@ export default function LeadsTab({ draft, set }) {
                 </p>
             </div>
 
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
                 <div>
                     <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable Lead Form</h4>
                     <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">New visitors fill out a form before chatting.</p>
@@ -73,7 +73,7 @@ export default function LeadsTab({ draft, set }) {
             </div>
 
             {draft.lead_form_enabled && (
-                <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-3">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-3">
                     <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Form Fields</h4>
                     <p className="text-[12px] text-surface-500 dark:text-surface-400">Select which fields to show and mark as required.</p>
                     {['name', 'email', 'phone', 'company'].map((fieldName) => {
@@ -133,13 +133,13 @@ export default function LeadsTab({ draft, set }) {
                 </p>
             </div>
 
-            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                 <div className="space-y-2">
                     <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">
                         Notification Emails
                     </label>
                     <div
-                        className="min-h-[42px] w-full flex flex-wrap gap-1.5 px-2.5 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus-within:border-primary-400 transition-colors cursor-text"
+                        className="min-h-[42px] w-full flex flex-wrap gap-1.5 px-2.5 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-[var(--bg-card)] dark:bg-surface-900 focus-within:border-primary-400 transition-colors cursor-text"
                         onClick={() => document.getElementById('notif-email-input')?.focus()}
                     >
                         {notificationEmails.map((email) => (

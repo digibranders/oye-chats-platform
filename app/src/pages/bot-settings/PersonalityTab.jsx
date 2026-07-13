@@ -1,11 +1,11 @@
-import { Sparkles, MessageSquareText, Building2 } from 'lucide-react';
+import { Sparkles, MessageSquareText, Building2, Wand2, PencilLine, Loader2, Volume2 } from 'lucide-react';
 
 const SECTION_HEADER_BASE = 'text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2';
 const SECTION_SUBTITLE = 'text-[13px] text-surface-500 dark:text-surface-400 mt-0.5';
-const CARD = 'bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4';
+const CARD = 'bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4';
 const FIELD_LABEL = 'text-[13px] font-bold text-surface-700 dark:text-surface-300';
-const FIELD_INPUT = 'w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500';
-const FIELD_TEXTAREA = 'w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500 resize-y';
+const FIELD_INPUT = 'w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500';
+const FIELD_TEXTAREA = 'w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500 resize-y';
 const FIELD_HELP = 'text-[11px] text-surface-400';
 
 // Mirror the backend field length caps (api/app/api/bot_routes.py UpdateBotRequest)
@@ -14,6 +14,42 @@ const MAX_SYSTEM_PROMPT = 2000;
 const MAX_BRAND_TONE = 500;
 const MAX_COMPANY_NAME = 100;
 const MAX_COMPANY_DESCRIPTION = 1000;
+
+/**
+ * AutoFillHint — explains the crawl auto-fill state of a field so the customer
+ * understands when a website re-crawl will change it. Three states:
+ *   • locked  — the field is in `manual_field_overrides` (user hand-edited it);
+ *               a re-crawl leaves it alone until they clear + save.
+ *   • auto    — non-empty but not locked; came from (or refreshes with) the crawl.
+ *   • empty   — nothing yet; the next crawl fills it in.
+ *
+ * @param {{ field: string, value: string, overrides: string[] }} props
+ */
+function AutoFillHint({ field, value, overrides }) {
+    const locked = overrides.includes(field);
+    const hasValue = (value || '').trim().length > 0;
+
+    let Icon = Wand2;
+    let text = 'Auto-fills from your website content the next time it’s crawled.';
+    let cls = 'text-primary-500 dark:text-primary-400';
+
+    if (locked) {
+        Icon = PencilLine;
+        text = 'Manually set — kept as-is when your website is re-crawled. Clear this field and save to re-enable auto-fill.';
+        cls = 'text-amber-600 dark:text-amber-400';
+    } else if (hasValue) {
+        Icon = Wand2;
+        text = 'Auto-filled from your website. Edit it to keep your version on future crawls.';
+        cls = 'text-primary-500 dark:text-primary-400';
+    }
+
+    return (
+        <p className={`flex items-start gap-1.5 text-[11px] ${cls}`}>
+            <Icon className="w-3 h-3 mt-[1px] shrink-0" />
+            <span>{text}</span>
+        </p>
+    );
+}
 
 /**
  * PersonalityTab — AI personality + company identity.
@@ -25,7 +61,33 @@ const MAX_COMPANY_DESCRIPTION = 1000;
  *
  * @param {{ draft: object, set: (field: string, value: unknown) => void }} props
  */
-export default function PersonalityTab({ draft, set }) {
+export default function PersonalityTab({
+    draft,
+    set,
+    brandTonePresets = [],
+    onDetectTone,
+    detectingTone = false,
+    onPreviewTone,
+    previewingTone = false,
+    tonePreviewSample = '',
+    canDetectTone = false,
+    isBotManager = true,
+}) {
+    const overrides = Array.isArray(draft.manual_field_overrides) ? draft.manual_field_overrides : [];
+
+    // Selecting a chip fills the tone text with its canonical description and
+    // records the preset key. Editing the text away from any preset marks it
+    // "custom" (empty text clears the selection entirely).
+    const selectPreset = (preset) => {
+        set('brand_tone', preset.text);
+        set('brand_tone_preset', preset.key);
+    };
+    const onToneTextChange = (value) => {
+        set('brand_tone', value);
+        const matched = brandTonePresets.find((p) => p.text === value);
+        set('brand_tone_preset', value.trim() === '' ? null : matched ? matched.key : 'custom');
+    };
+
     return (
         <div className="space-y-6 animate-fade-in">
             {/* System Prompt */}
@@ -60,20 +122,73 @@ export default function PersonalityTab({ draft, set }) {
 
             {/* Brand Tone */}
             <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
-                <h3 className={SECTION_HEADER_BASE}>
-                    <MessageSquareText className="w-4 h-4 text-primary-500" />
-                    Brand Tone
-                </h3>
-                <p className={SECTION_SUBTITLE}>
-                    Describe the voice and tone the bot should use (e.g. professional, playful, concise).
-                </p>
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <h3 className={SECTION_HEADER_BASE}>
+                            <MessageSquareText className="w-4 h-4 text-primary-500" />
+                            Brand Tone
+                        </h3>
+                        <p className={SECTION_SUBTITLE}>
+                            Pick a preset or write your own. The bot uses this to match your brand&apos;s voice.
+                        </p>
+                    </div>
+                    {onDetectTone && (
+                        <button
+                            type="button"
+                            onClick={onDetectTone}
+                            disabled={!isBotManager || !canDetectTone || detectingTone}
+                            title={canDetectTone ? 'Detect tone from your crawled website' : 'Crawl your website first'}
+                            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 h-8 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-[12px] font-medium text-surface-700 dark:text-surface-200 hover:bg-surface-50 dark:hover:bg-surface-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            {detectingTone ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-500" />
+                            ) : (
+                                <Sparkles className="w-3.5 h-3.5 text-primary-500" />
+                            )}
+                            {detectingTone ? 'Detecting…' : 'Detect from website'}
+                        </button>
+                    )}
+                </div>
             </div>
             <div className={CARD}>
+                {/* Preset chips */}
+                {brandTonePresets.length > 0 && (
+                    <div className="space-y-2">
+                        <label className={FIELD_LABEL}>Tone presets</label>
+                        <div className="flex flex-wrap gap-2">
+                            {brandTonePresets.map((preset) => {
+                                const active = draft.brand_tone_preset === preset.key;
+                                return (
+                                    <button
+                                        key={preset.key}
+                                        type="button"
+                                        onClick={() => selectPreset(preset)}
+                                        disabled={!isBotManager}
+                                        title={preset.text}
+                                        className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors disabled:cursor-not-allowed ${
+                                            active
+                                                ? 'bg-primary-500 border-primary-500 text-white'
+                                                : 'bg-[var(--bg-card)] dark:bg-surface-900 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-300 hover:border-primary-400'
+                                        }`}
+                                    >
+                                        {preset.label}
+                                    </button>
+                                );
+                            })}
+                            {draft.brand_tone_preset === 'custom' && (
+                                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
+                                    <PencilLine className="w-3 h-3" /> Custom
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <div className="space-y-2">
                     <label className={FIELD_LABEL}>Brand Voice &amp; Tone</label>
                     <textarea
                         value={draft.brand_tone}
-                        onChange={(e) => set('brand_tone', e.target.value)}
+                        onChange={(e) => onToneTextChange(e.target.value)}
                         maxLength={MAX_BRAND_TONE}
                         rows={3}
                         placeholder="e.g. Warm and approachable, with a touch of humor. Avoid jargon."
@@ -85,7 +200,38 @@ export default function PersonalityTab({ draft, set }) {
                             {(draft.brand_tone || '').length}/{MAX_BRAND_TONE}
                         </span>
                     </div>
+                    <AutoFillHint field="brand_tone" value={draft.brand_tone} overrides={overrides} />
                 </div>
+
+                {/* Voice preview */}
+                {onPreviewTone && (
+                    <div className="space-y-2 border-t border-surface-100 dark:border-surface-800 pt-3">
+                        <button
+                            type="button"
+                            onClick={onPreviewTone}
+                            disabled={previewingTone || !(draft.brand_tone || '').trim()}
+                            className="inline-flex items-center gap-1.5 px-2.5 h-8 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-[12px] font-medium text-surface-700 dark:text-surface-200 hover:bg-surface-50 dark:hover:bg-surface-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            {previewingTone ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-500" />
+                            ) : (
+                                <Volume2 className="w-3.5 h-3.5 text-primary-500" />
+                            )}
+                            {previewingTone ? 'Generating…' : 'Preview voice'}
+                        </button>
+                        {tonePreviewSample && (
+                            <div className="flex items-start gap-2">
+                                <div className="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-500/15 flex items-center justify-center shrink-0">
+                                    <Sparkles className="w-3 h-3 text-primary-500" />
+                                </div>
+                                <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-surface-100 dark:bg-surface-800 px-3 py-2 text-[13px] text-surface-700 dark:text-surface-200">
+                                    {tonePreviewSample}
+                                </div>
+                            </div>
+                        )}
+                        <p className={FIELD_HELP}>A sample reply in this voice. Uses your unsaved text, so tweak and preview freely.</p>
+                    </div>
+                )}
             </div>
 
             {/* Company Info */}
@@ -110,6 +256,7 @@ export default function PersonalityTab({ draft, set }) {
                         className={FIELD_INPUT}
                     />
                     <p className={FIELD_HELP}>The name of your business or brand.</p>
+                    <AutoFillHint field="company_name" value={draft.company_name} overrides={overrides} />
                 </div>
 
                 <div className="space-y-2">
@@ -128,6 +275,7 @@ export default function PersonalityTab({ draft, set }) {
                             {(draft.company_description || '').length}/{MAX_COMPANY_DESCRIPTION}
                         </span>
                     </div>
+                    <AutoFillHint field="company_description" value={draft.company_description} overrides={overrides} />
                 </div>
             </div>
         </div>

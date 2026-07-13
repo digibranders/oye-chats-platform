@@ -132,6 +132,37 @@ def execute_paid_upgrade(
     """
     from app.services import razorpay_service
 
+    # Finding D: idempotent upgrade. A sequential double-submit (click → modal →
+    # close → click again) must not mint a SECOND Razorpay subscription — both
+    # first cycles would charge. lock_client_for_billing only serialises
+    # CONCURRENT requests, not a sequential re-submit. If an upgrade to the SAME
+    # target plan is already in flight on this sub, return its existing checkout.
+    # A different target plan supersedes the stale pending (its unauthorised
+    # Razorpay sub never charges and Razorpay expires it).
+    if sub.upgrade_pending_subscription_id and sub.upgrade_pending_plan_id == new_plan.id:
+        reused = razorpay_service.rebuild_upgrade_checkout(
+            sub.upgrade_pending_subscription_id, client, new_plan, billing_cycle
+        )
+        if reused is not None:
+            logger.info(
+                "Reusing pending upgrade checkout %s for client %s → plan %s",
+                sub.upgrade_pending_subscription_id,
+                client.id,
+                new_plan.slug,
+            )
+            return reused
+        # The pending checkout was abandoned and is no longer authorizable — clear
+        # the stale marker and fall through to mint a fresh one (M3), so the
+        # customer isn't stranded with a dead checkout.
+        logger.info(
+            "Pending upgrade checkout %s for client %s is dead; re-minting",
+            sub.upgrade_pending_subscription_id,
+            client.id,
+        )
+        sub.upgrade_pending_subscription_id = None
+        sub.upgrade_pending_plan_id = None
+        session.flush()
+
     # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
     # the activation webhook will call ``reset_monthly_plan_credits`` before
     # granting the new allowance, so reading the breakdown later would return 0.
@@ -160,6 +191,13 @@ def execute_paid_upgrade(
     )
     payload.setdefault("rollover_credits", rollover_credits)
     payload["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id
+
+    # Finding D: record the in-flight checkout so a sequential re-submit for the
+    # same target plan reuses it instead of minting another sub. Cleared at
+    # activation (apply_pending_proration).
+    sub.upgrade_pending_subscription_id = payload.get("subscription_id")
+    sub.upgrade_pending_plan_id = new_plan.id
+    session.flush()
 
     logger.info(
         "Upgrade queued: client=%s %s → %s, rollover=%d credits",
@@ -306,6 +344,34 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     # customer notification below.
     old_plan_name = sub.plan.name if sub.plan else "your previous plan"
 
+    # The operator-seat add-on is a SEPARATE Razorpay subscription (P0-3).
+    # Nothing else in the scheduled-downgrade path (``schedule_paid_downgrade``,
+    # the cancelled-webhook path, or the cron backstop that calls this function)
+    # ever cancels it, so left alone it survives the cutover as an orphan —
+    # still billing the now-defunct old mandate forever. Cancel it here and
+    # carry the seat count forward via the new subscription's Razorpay notes;
+    # ``_handle_subscription_activated`` re-creates it on the new subscription
+    # once that activation webhook lands, so the customer's paid seats aren't
+    # silently dropped by the plan change.
+    carried_seats = int(sub.seat_addon_quantity or 0) if sub.seat_addon_subscription_id else 0
+    if sub.seat_addon_subscription_id:
+        try:
+            razorpay_service.cancel_seat_addon(session, sub)
+        except Exception:
+            logger.error(
+                "Seat add-on cancel FAILED for subscription %s (seat add-on %s, client %s) "
+                "during scheduled-downgrade promotion — the old seat add-on mandate is "
+                "STILL LIVE at Razorpay and will keep debiting the customer on top of the "
+                "new subscription. Needs manual reconciliation.",
+                sub.id,
+                sub.seat_addon_subscription_id,
+                client.id if client else None,
+                exc_info=True,
+            )
+            carried_seats = (
+                0  # unknown gateway state — don't compound it by re-creating a seat count we can't confirm was cleared
+            )
+
     # Mark the old sub finalized first so the partial-unique index on
     # (client_id, status in active|trialing|past_due) doesn't trip when
     # ``_handle_subscription_activated`` later inserts the new row. This
@@ -325,7 +391,10 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
         client,
         new_plan,
         billing_cycle,
-        extra_notes={"prev_razorpay_subscription_id": sub.razorpay_subscription_id or ""},
+        extra_notes={
+            "prev_razorpay_subscription_id": sub.razorpay_subscription_id or "",
+            "carried_seat_count": str(carried_seats),
+        },
     )
     payload["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id
     payload["status"] = "scheduled_change_promoted"
@@ -375,6 +444,7 @@ def apply_pending_proration(
     session: Session,
     new_sub: Subscription,
     prev_razorpay_subscription_id: str | None,
+    live_remaining: int | None = None,
 ) -> int:
     """Re-grant the old plan's unused credits onto the new sub as a top-up.
 
@@ -385,6 +455,14 @@ def apply_pending_proration(
     amount, then zeros the column so re-runs of the activation webhook
     don't double-credit.
 
+    ``live_remaining`` (finding F): the customer's ACTUAL unused plan credits at
+    activation, captured before the new period's reset. The pending figure was
+    snapshotted at *click* time; the old plan stays live until the mandate is
+    authorized, so the customer keeps burning credits in between. Clamping to the
+    live remaining stops us re-granting more than they actually had left (a
+    5,000 snapshot spent down to 3,000 must roll over 3,000, not 5,000). When
+    omitted (legacy callers) the raw snapshot is used, preserving prior behaviour.
+
     Returns the credit amount applied (0 when there was nothing pending).
     """
     if not prev_razorpay_subscription_id:
@@ -393,12 +471,26 @@ def apply_pending_proration(
     old_sub = session.scalars(
         select(Subscription).where(Subscription.razorpay_subscription_id == prev_razorpay_subscription_id)
     ).first()
-    if old_sub is None or not old_sub.upgrade_credit_pending_cents:
+    if old_sub is None:
+        return 0
+
+    # Finding D: the upgrade has activated, so the in-flight checkout is spent —
+    # clear the pending marker unconditionally (even when there were no rollover
+    # credits) so it never strands a future upgrade to the same plan.
+    old_sub.upgrade_pending_subscription_id = None
+    old_sub.upgrade_pending_plan_id = None
+
+    if not old_sub.upgrade_credit_pending_cents:
+        session.flush()
         return 0
 
     credit_amount = int(old_sub.upgrade_credit_pending_cents)
+    if live_remaining is not None:
+        credit_amount = max(0, min(credit_amount, int(live_remaining)))
     old_sub.upgrade_credit_pending_cents = 0
     session.flush()
+    if credit_amount <= 0:
+        return 0
 
     credit_service.grant_topup(
         session,

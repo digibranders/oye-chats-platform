@@ -17,6 +17,7 @@ import { getAuthItem } from '../utils/authStorage';
 import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useBotContext } from '../context/BotContext';
 import useEntitlements from '../hooks/useEntitlements';
 import CannedResponses from './CannedResponses';
 import { getAuthState } from '../utils/auth';
@@ -31,6 +32,10 @@ export default function TeamManagement() {
     const { showToast } = useToast();
     const { requestUpgrade } = useUpgradeModal();
     const { entitlements: ent } = useEntitlements();
+    // Sidebar bot list — used to resolve operator.bot_id → bot_name as a
+    // fallback when the operators API row lacks the denormalized name (e.g.
+    // after a bot rename that hasn't propagated to the row yet).
+    const { bots } = useBotContext();
     // Live-chat-derived team features (operators, departments, canned
     // responses) are all bundled behind the `live_chat` plan feature. Free
     // plans render the team page so users can SEE the surface, but every
@@ -327,7 +332,7 @@ export default function TeamManagement() {
     // ── Helpers ──────────────────────────────────────────────────────────────
     const roleIcon = (role) => {
         if (role === 'owner') return <Shield size={14} className="text-amber-500" />;
-        if (role === 'admin') return <Shield size={14} className="text-sky-500 dark:text-sky-400" />;
+        if (role === 'admin') return <Shield size={14} className="text-primary-500 dark:text-primary-400" />;
         return <User size={14} className="text-surface-400 dark:text-surface-500" />;
     };
 
@@ -512,7 +517,7 @@ export default function TeamManagement() {
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -8 }}
-                                className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-5"
+                                className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-5"
                             >
                                 <div className="flex items-center justify-between mb-4">
                                     <div>
@@ -580,11 +585,12 @@ export default function TeamManagement() {
                     </AnimatePresence>
 
                     {/* Operators Table */}
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
                         <table className="w-full">
                             <thead>
                                 <tr className="border-b border-surface-100 dark:border-surface-800">
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Operator</th>
+                                    <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Bot</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Role</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Department</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Status</th>
@@ -608,6 +614,15 @@ export default function TeamManagement() {
                                                         <p className="text-xs text-surface-500 dark:text-surface-400">{operator.email}</p>
                                                     </div>
                                                 </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-sm text-surface-700 dark:text-surface-300">
+                                                {/* Each operator is bound to exactly one bot at invite time
+                                                    (``Operator.bot_id``, one-to-one). ``bot_name`` is the
+                                                    denormalized display value the operators API returns
+                                                    alongside the row; when it's missing (e.g. an older row
+                                                    or a bot rename that hasn't refetched yet) fall back to
+                                                    the bots list we already have in memory. */}
+                                                {operator.bot_name || bots.find(b => b.id === operator.bot_id)?.name || '—'}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-1.5">
@@ -654,7 +669,7 @@ export default function TeamManagement() {
                                         <AnimatePresence>
                                             {editingOperator?.id === operator.id && (
                                                 <tr key={`edit-${operator.id}`}>
-                                                    <td colSpan={isBotManager ? 6 : 5} className="px-0 py-0">
+                                                    <td colSpan={isBotManager ? 7 : 6} className="px-0 py-0">
                                                         <motion.div
                                                             initial={{ opacity: 0, height: 0 }}
                                                             animate={{ opacity: 1, height: 'auto' }}
@@ -726,7 +741,7 @@ export default function TeamManagement() {
                                 ))}
                                 {operators.length === 0 && (
                                     <tr>
-                                        <td colSpan={isBotManager ? 6 : 5} className="px-4 py-12 text-center text-surface-400 dark:text-surface-500">
+                                        <td colSpan={isBotManager ? 7 : 6} className="px-4 py-12 text-center text-surface-400 dark:text-surface-500">
                                             <Headphones size={32} className="mx-auto mb-2 opacity-50" />
                                             <p className="font-medium">No operators yet</p>
                                             <p className="text-xs mt-1">Create operators to handle live chat conversations.</p>
@@ -772,7 +787,7 @@ export default function TeamManagement() {
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -8 }}
-                                className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-5"
+                                className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-5"
                             >
                                 <div className="flex items-center justify-between mb-4">
                                     <h3 className="font-bold text-surface-900 dark:text-surface-50">New Department</h3>
@@ -798,11 +813,11 @@ export default function TeamManagement() {
                             const deptOperators = operators.filter(a => a.department_id === dept.id);
                             const isEditing = editingDept?.id === dept.id;
                             return (
-                                <div key={dept.id} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden">
+                                <div key={dept.id} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
                                     <div className="p-4 flex items-center justify-between">
                                         <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-sky-50 dark:bg-sky-900/30 flex items-center justify-center shrink-0">
-                                                <Building2 size={18} className="text-sky-600 dark:text-sky-400" />
+                                            <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center shrink-0">
+                                                <Building2 size={18} className="text-primary-600 dark:text-primary-400" />
                                             </div>
                                             <div>
                                                 <h3 className="font-semibold text-surface-900 dark:text-surface-50 text-sm">{dept.name}</h3>
@@ -856,7 +871,7 @@ export default function TeamManagement() {
                                                     {/* Per-department business hours — replaces the workspace-wide
                                                         Settings → Business Hours section so Sales (9-6) and Support
                                                         (24/7) can coexist. Saves on form submit alongside name+desc. */}
-                                                    <div className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-4 mb-4">
+                                                    <div className="rounded-xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-4 mb-4">
                                                         <BusinessHoursEditor
                                                             value={editDeptForm.business_hours}
                                                             onChange={(next) => setEditDeptForm(p => ({ ...p, business_hours: next }))}

@@ -1,75 +1,38 @@
-"""Email notification service using Brevo (formerly Sendinblue) transactional API."""
+"""Email notification service using Brevo (formerly Sendinblue) transactional API.
+
+Every email is rendered from the shared design system in ``email_design`` (monochrome +
+single-indigo-accent, dark-mode hardened for Outlook). All 19 senders build raw HTML in
+code and dispatch through ``send_email_async`` — there are no server-side Brevo saved
+templates in the send path anymore, so the design lives in one place and the gallery
+(``scripts/build_email_gallery``) renders these same functions.
+"""
 
 import asyncio
 import base64
 import contextlib
-import html
 import json
 import logging
-import re
-from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.config import (
     APP_URL,
     BRAND_NAME,
-    BRAND_TAGLINE_FOOTER,
     BREVO_API_KEY,
     EMAIL_ENABLED,
     EMAIL_FROM_ADDRESS,
     EMAIL_FROM_NAME,
-    MARKETING_URL,
     SUPPORT_EMAIL,
 )
+from app.services import email_design as ed
+from app.services.email_design import button, code_box, esc, h1, info_table, link, p, shell, strong
 
 logger = logging.getLogger(__name__)
 
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
 
-
-# ── Credit metering ──
-#
-# Customer-facing emails (lead alerts, BANT notifications, offline-message
-# digests) deduct 1 credit per send. System emails (auth OTPs, operator pings,
-# password resets, visitor confirmations) are always free. Call-sites that
-# trigger customer-facing emails should call ``meter_customer_email`` BEFORE
-# invoking the relevant ``send_*_email`` function and bail out if it returns
-# ``False`` — the customer is out of credits.
-#
-# We deliberately keep the metering at call-sites (not inside the send_*
-# functions) because (a) those functions are fire-and-forget and don't have a
-# DB session in scope, and (b) the call-site has the ``client_id`` already.
-
-
-def meter_customer_email(session, client_id: int, *, reference_id: int | None = None) -> bool:
-    """Charge 1 credit for a customer-facing email send.
-
-    Returns ``True`` if the credit was deducted (caller may proceed to send),
-    or ``False`` if the client is out of credits or the kill switch is on
-    (caller should skip the send and log).
-    """
-    from app.services import credit_service
-
-    cost = credit_service.get_credit_cost(session, "email_send")
-    if cost <= 0:
-        return True
-    try:
-        credit_service.check_and_deduct(
-            session,
-            client_id,
-            cost,
-            reason="email_send",
-            reference_id=reference_id,
-        )
-        return True
-    except credit_service.InsufficientCredits:
-        logger.warning("Customer email skipped for client %s: out of credits", client_id)
-        return False
-    except credit_service.KillSwitchActive:
-        logger.warning("Customer email skipped for client %s: kill switch active", client_id)
-        return False
+_SUPPORT_LINK = link(esc(SUPPORT_EMAIL), f"mailto:{SUPPORT_EMAIL}")
 
 
 def _capture_email_failure(exc: Exception, **tags) -> None:
@@ -77,7 +40,6 @@ def _capture_email_failure(exc: Exception, **tags) -> None:
 
     Fire-and-forget daemon threads otherwise lose these exceptions entirely
     — logger.error is not enough because no one reads app logs proactively.
-    Sentry is where ops actually sees failures.
     """
     with contextlib.suppress(Exception):
         import sentry_sdk
@@ -89,12 +51,7 @@ def _capture_email_failure(exc: Exception, **tags) -> None:
 
 
 def _extract_brevo_error(exc: Exception) -> str:
-    """Extract the human-readable reason from a Brevo API failure.
-
-    Brevo returns a JSON body like {"code": "invalid_parameter", "message": "..."}
-    on errors. The old code caught the exception and logged str(exc) which only
-    shows the HTTP status — the actual reason lived unread in the response body.
-    """
+    """Extract the human-readable reason from a Brevo API failure."""
     if isinstance(exc, HTTPError):
         try:
             body = exc.read().decode("utf-8", errors="replace")
@@ -112,8 +69,10 @@ def _extract_brevo_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-# ── Brevo Template IDs (created 2026-04-09) ──────────────────────────────────
-# Manage templates at: https://app.brevo.com/templates/listing
+# ── Brevo Template IDs (legacy) ──────────────────────────────────────────────
+# Retained for the super-admin template catalogue + backward compatibility. The
+# send path no longer uses saved templates — every email renders in code — but
+# the IDs still exist in the Brevo account.
 TEMPLATE_PASSWORD_RESET = 57
 TEMPLATE_QUALIFIED_LEAD = 60
 TEMPLATE_HANDOFF_REQUEST = 61
@@ -121,6 +80,9 @@ TEMPLATE_MISSED_CALLBACK = 62
 TEMPLATE_OFFLINE_MESSAGE = 58
 TEMPLATE_CHAT_TRANSCRIPT = 63
 TEMPLATE_VISITOR_CONFIRMATION = 59
+
+
+# ── Brevo transport ──────────────────────────────────────────────────────────
 
 
 def _send_brevo_email(
@@ -132,24 +94,13 @@ def _send_brevo_email(
     sender_name: str | None = None,
     attachments: list[dict] | None = None,
 ) -> bool:
-    """Send an email via Brevo transactional API using raw HTML. Returns True on success.
-
-    Args:
-        to_email: Recipient email address.
-        subject: Email subject line.
-        html_body: Full HTML content (used for complex dynamic emails).
-        reply_to: Optional Reply-To address (for branded "via OyeChats" emails).
-        sender_name: Optional override for the sender display name.
-    """
+    """Send an email via Brevo transactional API using raw HTML. Returns True on success."""
     if not EMAIL_ENABLED:
-        logger.debug("Email not sent (Brevo not configured)")
+        logger.warning("Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s subject=%s", to_email, subject)
         return False
 
     email_payload: dict = {
-        "sender": {
-            "name": sender_name or EMAIL_FROM_NAME,
-            "email": EMAIL_FROM_ADDRESS,
-        },
+        "sender": {"name": sender_name or EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
         "to": [{"email": to_email}],
         "subject": subject,
         "htmlContent": html_body,
@@ -161,18 +112,12 @@ def _send_brevo_email(
         email_payload["attachment"] = attachments
 
     payload = json.dumps(email_payload).encode("utf-8")
-
     req = Request(
         BREVO_API_URL,
         data=payload,
-        headers={
-            "accept": "application/json",
-            "content-type": "application/json",
-            "api-key": BREVO_API_KEY,
-        },
+        headers={"accept": "application/json", "content-type": "application/json", "api-key": BREVO_API_KEY},
         method="POST",
     )
-
     try:
         with urlopen(req, timeout=10) as resp:
             logger.info(f"Email sent to {to_email} | subject={subject} | status={resp.status}")
@@ -194,61 +139,33 @@ def _send_brevo_template(
 ) -> bool:
     """Send an email via a Brevo saved template with dynamic params. Returns True on success.
 
-    Args:
-        to_email: Recipient email address.
-        template_id: Brevo template ID (see TEMPLATE_* constants above).
-        params: Dict of template variable values (mapped to {{params.*}} in the template).
-        reply_to: Optional Reply-To address.
-        sender_name: Optional override for the sender display name.
+    Legacy transport. The current send path renders HTML in code and does not call this;
+    it is kept for the worker's ``task_send_template_email`` and any external callers.
     """
     if not EMAIL_ENABLED:
-        # Promoted from DEBUG to WARN — silent skips were invisible in prod,
-        # making "email never arrived" an unexplained mystery. A single WARN
-        # per send is acceptable noise; if it's too much, the fix is to set
-        # BREVO_API_KEY, not silence the log.
         logger.warning(
-            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s",
-            to_email,
-            template_id,
+            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s", to_email, template_id
         )
         return False
 
-    # When using templateId, Brevo uses the template's own verified sender.
-    # We omit the sender override to avoid failures from unverified addresses.
-    # reply_to is still forwarded so visitors can reply to the brand email.
-    email_payload: dict = {
-        "to": [{"email": to_email}],
-        "templateId": template_id,
-        "params": params,
-    }
+    email_payload: dict = {"to": [{"email": to_email}], "templateId": template_id, "params": params}
     if reply_to:
         email_payload["replyTo"] = {"email": reply_to}
 
     payload = json.dumps(email_payload).encode("utf-8")
-
     req = Request(
         BREVO_API_URL,
         data=payload,
-        headers={
-            "accept": "application/json",
-            "content-type": "application/json",
-            "api-key": BREVO_API_KEY,
-        },
+        headers={"accept": "application/json", "content-type": "application/json", "api-key": BREVO_API_KEY},
         method="POST",
     )
-
     try:
         with urlopen(req, timeout=10) as resp:
             logger.info(f"Template email sent to {to_email} | template_id={template_id} | status={resp.status}")
             return True
     except Exception as e:
         reason = _extract_brevo_error(e)
-        logger.warning(
-            "Brevo template email failed | to=%s template_id=%s reason=%s",
-            to_email,
-            template_id,
-            reason,
-        )
+        logger.warning("Brevo template email failed | to=%s template_id=%s reason=%s", to_email, template_id, reason)
         _capture_email_failure(e, kind="template", to=to_email, template_id=template_id, reason=reason)
         return False
 
@@ -264,11 +181,9 @@ def send_email_async(
 ):
     """Fire-and-forget raw HTML email. Non-blocking.
 
-    When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable).
-    Otherwise uses thread pool / threading fallback (fire-and-forget).
-
-    ``attachments`` uses the Brevo format [{"content": <base64>, "name": ...}];
-    it is JSON-serializable so it rides through the ARQ job args unchanged.
+    When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable). Otherwise uses a
+    thread-pool / threading fallback. ``attachments`` uses the Brevo format and is
+    JSON-serializable so it rides through the ARQ job args unchanged.
     """
     from app.worker.enqueue import WORKER_ENABLED
 
@@ -300,11 +215,7 @@ def send_template_async(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Fire-and-forget Brevo template email. Non-blocking.
-
-    When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable).
-    Otherwise uses thread pool / threading fallback (fire-and-forget).
-    """
+    """Fire-and-forget Brevo template email (legacy transport). Non-blocking."""
     from app.worker.enqueue import WORKER_ENABLED
 
     if WORKER_ENABLED:
@@ -333,7 +244,7 @@ def send_template_to_multiple(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Send a Brevo template email to multiple recipients. Non-blocking."""
+    """Send a Brevo template email to multiple recipients (legacy). Non-blocking."""
     for email_addr in recipients:
         send_template_async(email_addr, template_id, params, reply_to=reply_to, sender_name=sender_name)
 
@@ -346,7 +257,7 @@ def send_email_to_multiple(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Send the same raw HTML email to multiple recipients (one API call per recipient). Non-blocking."""
+    """Send the same raw HTML email to multiple recipients (one API call per recipient)."""
     for email_addr in recipients:
         send_email_async(email_addr, subject, html_body, reply_to=reply_to, sender_name=sender_name)
 
@@ -354,28 +265,19 @@ def send_email_to_multiple(
 def get_notification_recipients(bot, event_type: str) -> list[str]:
     """Resolve notification email recipients for a given event type.
 
-    Resolution chain (first non-empty wins):
-    1. bot.notification_emails[event_type] (per-event override)
-    2. bot.notification_emails["default"]  (default list)
-    3. bot.notification_email              (legacy single/comma-separated)
-    4. Empty list
+    Resolution chain (first non-empty wins): per-event override → default list →
+    legacy comma-separated single field → empty list.
     """
     ne = bot.notification_emails
     if isinstance(ne, dict):
-        # Per-event override
         event_list = ne.get(event_type)
         if isinstance(event_list, list) and event_list:
             return [e.strip() for e in event_list if e and e.strip()]
-
-        # Default list
         default_list = ne.get("default")
         if isinstance(default_list, list) and default_list:
             return [e.strip() for e in default_list if e and e.strip()]
-
-    # Legacy fallback — comma-separated single field
     if bot.notification_email:
         return [e.strip() for e in bot.notification_email.split(",") if e.strip()]
-
     return []
 
 
@@ -384,506 +286,17 @@ def _branded_sender_name(bot_name: str) -> str:
     return f"{bot_name} via {BRAND_NAME}"
 
 
-def _brand_wordmark(*, color: str = "#0f0f1a") -> str:
-    """Render the configured brand name as a single-color wordmark.
-
-    Uses the caller-supplied ink color for the entire name so the
-    wordmark reads as one word (matches the brand's visual identity —
-    the logo mark carries the color accent, the wordmark stays neutral).
-    Brand name is HTML-escaped so custom values can't break markup.
-    """
-    return f'<span style="color:{color};">{html.escape(BRAND_NAME)}</span>'
+def _first_name(name: str | None) -> str:
+    return esc(name.split()[0]) if name and name.split() else "there"
 
 
-def _copyright_year() -> int:
-    """Current year in UTC. Computed per-render so long-running processes don't go stale."""
-    return datetime.now(UTC).year
+def _mailto(addr: str) -> str:
+    """A mailto link whose visible text is the (escaped) address."""
+    safe = esc(addr)
+    return link(safe, f"mailto:{addr}") if addr else "&#8212;"
 
 
-# ── Template Helpers ──
-
-
-def _esc(value: str | None) -> str:
-    """HTML-escape a user-supplied value for safe inclusion in email templates."""
-    return html.escape(str(value)) if value else "&#8212;"
-
-
-def _md_to_html(text: str) -> str:
-    """Convert basic markdown formatting to HTML (applied after HTML-escaping).
-
-    Handles: **bold**, *italic*, _italic_, inline `code`.
-    Safe to call on already-escaped strings — only processes markdown markers.
-    """
-    # Bold: **text** → <strong>text</strong>
-    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text, flags=re.DOTALL)
-    # Italic: *text* (but not ** which was already consumed above)
-    text = re.sub(r"\*([^*\n]+?)\*", r"<em>\1</em>", text)
-    # Italic: _text_ (word-boundary aware to avoid breaking snake_case)
-    text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<em>\1</em>", text)
-    # Inline code: `text` → <code> styled span
-    text = re.sub(
-        r"`([^`]+)`",
-        r'<span style="font-family:\'Courier New\',Courier,monospace;'
-        r'background-color:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:13px;">\1</span>',
-        text,
-    )
-    return text
-
-
-# ── Brand & Design Tokens ──
-#
-# Single source of truth for email styling. Update here once and every email
-# helper picks up the new value on next send. Light-mode locked: dark-mode
-# clients are explicitly opted out via color-scheme metadata + [data-ogsc]/
-# [data-ogsb] overrides set in _html_doc().
-
-_FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-_EMOJI_FONT_STACK = "'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"
-
-# Brand
-_BRAND_PRIMARY = "#4f46e5"  # Indigo — logo accent, default CTA
-_BRAND_PRIMARY_DARK = "#3730a3"  # Hover/contrast
-
-# Ink (text) palette
-_INK_900 = "#0f0f1a"  # Headings
-_INK_700 = "#1f2937"  # Strong body
-_INK_500 = "#4b5563"  # Body text
-_INK_400 = "#6b7280"  # Labels
-_INK_300 = "#9ca3af"  # Muted / footer
-
-# Surfaces
-_SURFACE_PAGE = "#f3f4fb"
-_SURFACE_CARD = "#ffffff"
-_SURFACE_FOOTER = "#ffffff"
-_RULE = "#e8e8f0"
-
-
-_BRAND_LOGO_URL = f"{MARKETING_URL}/logo.png"
-
-
-def _email_header() -> str:
-    """Branded header row — real favicon logo + wordmark lockup, centered.
-
-    Loads the marketing site's official favicon (the same mark used on
-    ``oyechats.com``) as an ``<img>`` and pairs it with the CamelCase
-    wordmark. Renders inside a centered table so both cells sit on the
-    same baseline in every client (Gmail, Outlook, Apple Mail). If the
-    recipient blocks images the wordmark still carries the brand.
-    """
-    return (
-        f"<tr>"
-        f'<td style="background-color:{_SURFACE_CARD};border-radius:20px 20px 0 0;'
-        f'padding:30px 40px 26px 40px;text-align:center;">'
-        f'<a href="{MARKETING_URL}" style="text-decoration:none;display:inline-block;line-height:1;">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
-        f' style="margin:0 auto;">'
-        f"<tr>"
-        f'<td valign="middle" style="vertical-align:middle;line-height:0;">'
-        f'<img src="{_BRAND_LOGO_URL}" width="32" height="32"'
-        f' alt="{html.escape(BRAND_NAME)} logo"'
-        f' style="display:block;width:32px;height:32px;border:0;outline:none;'
-        f'text-decoration:none;border-radius:7px;" />'
-        f"</td>"
-        f'<td width="10" style="width:10px;font-size:0;line-height:0;">&nbsp;</td>'
-        f'<td valign="middle" style="vertical-align:middle;">'
-        f'<span style="font-family:{_FONT_STACK};font-size:24px;font-weight:800;'
-        f'letter-spacing:-0.5px;line-height:1;">'
-        f"{_brand_wordmark(color=_INK_900)}"
-        f"</span>"
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-        f"</a>"
-        f"</td>"
-        f"</tr>"
-    )
-
-
-def _email_footer(*, visitor: bool) -> str:
-    """Footer row inside the body card — brand row, link row, legal row.
-
-    Two variants, selected by the ``visitor`` flag:
-
-    - Operator footer (visitor=False): View Dashboard · Help Center · Contact
-    - Visitor footer (visitor=True):   Visit <Brand> · Privacy
-
-    All URLs and labels resolve from ``app.config`` (``MARKETING_URL``,
-    ``APP_URL``, ``SUPPORT_EMAIL``, ``BRAND_NAME``). Copyright year is
-    computed at render time so long-running processes never go stale.
-    """
-    safe_brand = html.escape(BRAND_NAME)
-
-    if visitor:
-        link_row = (
-            f'<a href="{MARKETING_URL}"'
-            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Visit {safe_brand}</a>'
-            f'<span style="color:{_INK_300};">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>'
-            f'<a href="{MARKETING_URL}/privacy"'
-            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Privacy</a>'
-        )
-    else:
-        link_row = (
-            f'<a href="{APP_URL}"'
-            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">View Dashboard</a>'
-            f'<span style="color:{_INK_300};">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>'
-            f'<a href="{MARKETING_URL}/help"'
-            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Help Center</a>'
-            f'<span style="color:{_INK_300};">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>'
-            f'<a href="mailto:{SUPPORT_EMAIL}"'
-            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Contact Support</a>'
-        )
-
-    return (
-        # Footer row — sits inside the same card as the body, separated only by
-        # a 1px hairline rule. Bottom corners pick up the card's border-radius.
-        f"<tr>"
-        f'<td class="oc-footer oc-pad-x" style="background-color:{_SURFACE_FOOTER};'
-        f"border-top:1px solid {_RULE};border-radius:0 0 20px 20px;"
-        f'padding:26px 40px;text-align:center;">'
-        # Brand row — small logo lockup
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
-        f' style="margin:0 auto 6px auto;">'
-        f"<tr>"
-        f'<td valign="middle" style="vertical-align:middle;line-height:0;">'
-        f'<img src="{_BRAND_LOGO_URL}" width="22" height="22"'
-        f' alt="{safe_brand} logo"'
-        f' style="display:block;width:22px;height:22px;border:0;outline:none;'
-        f'text-decoration:none;border-radius:5px;" />'
-        f"</td>"
-        f'<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>'
-        f'<td valign="middle" style="vertical-align:middle;">'
-        f'<a href="{MARKETING_URL}" style="text-decoration:none;display:block;line-height:1;">'
-        f'<span style="font-family:{_FONT_STACK};font-size:14px;font-weight:800;'
-        f'letter-spacing:-0.3px;line-height:1;">'
-        f"{_brand_wordmark(color=_INK_900)}"
-        f"</span>"
-        f"</a>"
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-        # Tagline
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:10px;'
-        f"font-weight:700;letter-spacing:0.14em;text-transform:uppercase;"
-        f'color:{_INK_300};">{html.escape(BRAND_TAGLINE_FOOTER)}</p>'
-        # Hairline divider
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="60"'
-        f' align="center" style="margin:0 auto 14px auto;">'
-        f'<tr><td style="border-top:1px solid {_RULE};font-size:0;line-height:0;">&nbsp;</td></tr>'
-        f"</table>"
-        # Link row
-        f'<p style="margin:0 0 10px 0;font-family:{_FONT_STACK};font-size:12px;'
-        f'color:{_INK_400};line-height:1.5;">{link_row}</p>'
-        # Legal row — year computed per render
-        f'<p style="margin:0;font-family:{_FONT_STACK};font-size:11px;'
-        f'color:{_INK_300};line-height:1.5;">'
-        f"&copy; {_copyright_year()} {safe_brand}. All rights reserved."
-        f"</p>"
-        f"</td>"
-        f"</tr>"
-    )
-
-
-def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
-    """Wrap email body in a full HTML document with header, footer, and email meta tags.
-
-    Light-mode locked: every email opts out of dark-mode rendering via
-    color-scheme metadata, [data-ogsc]/[data-ogsb] selectors (Outlook.com),
-    and explicit background-color on every surface.
-
-    Args:
-        preheader: Hidden preview text shown in email client inbox listings.
-        body_inner: The main card HTML to render inside the email body.
-        visitor: When True, renders a visitor-safe footer (no "View Dashboard" link).
-                 Set to True for emails sent to website visitors (transcript, confirmation).
-    """
-    preheader_html = (
-        f'<span style="display:none;font-size:1px;color:{_SURFACE_PAGE};max-height:0;'
-        f'overflow:hidden;mso-hide:all;">{html.escape(preheader)}&zwnj;</span>'
-        if preheader
-        else ""
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="X-UA-Compatible" content="IE=edge">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light only">
-<title>{html.escape(BRAND_NAME)}</title>
-<!--[if mso]>
-<xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch><o:AllowPNG/></o:OfficeDocumentSettings></xml>
-<![endif]-->
-<style>
-  :root {{ color-scheme: light only; supported-color-schemes: light; }}
-  html, body {{ color-scheme: light only; }}
-  /* Outlook.com / Office 365 dark-mode override — keep light surfaces light */
-  [data-ogsc] body, [data-ogsb] body {{ background-color: {_SURFACE_PAGE} !important; }}
-  [data-ogsc] .oc-card, [data-ogsb] .oc-card {{ background-color: {_SURFACE_CARD} !important; }}
-  [data-ogsc] .oc-footer, [data-ogsb] .oc-footer {{ background-color: {_SURFACE_FOOTER} !important; }}
-  [data-ogsc] .oc-ink-900 {{ color: {_INK_900} !important; }}
-  [data-ogsc] .oc-ink-500 {{ color: {_INK_500} !important; }}
-  [data-ogsc] .oc-ink-300 {{ color: {_INK_300} !important; }}
-  /* Mobile tightening */
-  @media only screen and (max-width: 600px) {{
-    .oc-pad-x {{ padding-left: 24px !important; padding-right: 24px !important; }}
-    .oc-h1 {{ font-size: 22px !important; }}
-  }}
-</style>
-</head>
-<body style="margin:0;padding:0;background-color:{_SURFACE_PAGE};color-scheme:light only;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
-{preheader_html}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:{_SURFACE_PAGE};">
-  <tr>
-    <td align="center" style="padding:40px 16px;">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;">
-
-        <!-- Unified card: header + content + footer in a single rounded card -->
-        <tr>
-          <td class="oc-card" style="background-color:{_SURFACE_CARD};border-radius:20px;border:1px solid {_RULE};">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-              {_email_header()}
-              <tr>
-                <td style="background-color:{_SURFACE_CARD};padding:0 0 36px 0;">
-                  {body_inner}
-                </td>
-              </tr>
-              {_email_footer(visitor=visitor)}
-            </table>
-          </td>
-        </tr>
-
-      </table>
-    </td>
-  </tr>
-</table>
-</body>
-</html>"""
-
-
-def _base_template(
-    title: str,
-    content: str,
-    *,
-    preheader: str = "",
-    accent_color: str = _BRAND_PRIMARY,
-    accent_bg: str = "#eef2ff",
-    accent_border: str = "#a5b4fc",
-    accent_icon: str = "",
-    category: str = "",
-    overline: str = "",
-    visitor: bool = False,
-) -> str:
-    """Build a premium email card with accent bar, icon tile, title, and content.
-
-    Args:
-        title: Card heading text (no emoji — use accent_icon for the tile).
-        content: Inner HTML content block.
-        preheader: Hidden inbox preview text.
-        accent_color: Top accent bar, overline label, and CTA color.
-        accent_bg: Icon tile background color.
-        accent_border: Icon tile inner-ring color.
-        accent_icon: Emoji for the icon tile (skipped if empty).
-        category: Small uppercase label shown below the icon tile.
-        overline: Small uppercase label shown above the h1 heading.
-        visitor: When True, renders a visitor-safe footer (no "View Dashboard" link).
-    """
-    # Accent stripe + soft halo (halo hidden from Outlook via MSO conditional)
-    accent_bar_html = (
-        f"\n    <!-- Accent stripe -->"
-        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f'\n      <tr><td style="height:5px;background-color:{accent_color};font-size:0;line-height:0;">&nbsp;</td></tr>'
-        f"\n    </table>"
-        f"\n    <!--[if !mso]><!-->"
-        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f'\n      <tr><td style="height:28px;background-color:{_SURFACE_CARD};'
-        f"background-image:linear-gradient(to bottom,rgba({_hex_to_rgba(accent_color)},0.12),"
-        f'rgba({_hex_to_rgba(accent_color)},0));font-size:0;line-height:0;">&nbsp;</td></tr>'
-        f"\n    </table>"
-        f"\n    <!--<![endif]-->"
-    )
-
-    # Icon tile (64×64 rounded-square — feels like an app icon).
-    # Category label sits in its own full-width row so it never wraps.
-    icon_html = ""
-    if accent_icon:
-        category_row = (
-            f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-            f'\n      <tr><td align="center" style="padding:14px 40px 0 40px;text-align:center;">'
-            f'<span style="font-family:{_FONT_STACK};font-size:10px;font-weight:700;'
-            f"letter-spacing:0.16em;text-transform:uppercase;color:{accent_color};"
-            f'white-space:nowrap;">{category}</span>'
-            f"</td></tr>"
-            f"\n    </table>"
-            if category
-            else ""
-        )
-        icon_html = (
-            f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-            f'\n      <tr><td align="center" style="padding:0 40px;">'
-            f'\n        <table role="presentation" cellpadding="0" cellspacing="0" border="0">'
-            f'\n          <tr><td width="64" height="64" align="center" valign="middle"'
-            f' style="width:64px;height:64px;border-radius:18px;background-color:{accent_bg};'
-            f"border:1px solid {accent_border};font-size:30px;text-align:center;vertical-align:middle;"
-            f'font-family:{_EMOJI_FONT_STACK};line-height:64px;">'
-            f"{accent_icon}</td></tr>"
-            f"\n        </table>"
-            f"\n      </td></tr>"
-            f"\n    </table>"
-            f"{category_row}"
-        )
-
-    # Overline label above h1
-    overline_html = (
-        f'\n      <tr><td class="oc-pad-x" style="padding:22px 40px 0 40px;text-align:center;">'
-        f'<p style="margin:0;font-family:{_FONT_STACK};font-size:11px;font-weight:700;'
-        f'letter-spacing:0.16em;text-transform:uppercase;color:{accent_color};">'
-        f"{overline}</p></td></tr>"
-        if overline
-        else ""
-    )
-
-    heading_top_pad = "8px" if overline else ("20px" if accent_icon else "36px")
-
-    card_html = (
-        f"{accent_bar_html}"
-        f"\n    <!-- Card content -->"
-        f"{icon_html}"
-        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f"{overline_html}"
-        f'\n      <tr><td class="oc-pad-x" style="padding:{heading_top_pad} 40px 0 40px;text-align:center;">'
-        f'<h1 class="oc-h1 oc-ink-900" style="margin:0;font-family:{_FONT_STACK};'
-        f'font-size:26px;font-weight:800;color:{_INK_900};line-height:1.25;letter-spacing:-0.4px;">'
-        f"{title}</h1>"
-        f"</td></tr>"
-        f"\n    </table>"
-        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f'\n      <tr><td class="oc-pad-x" style="padding:18px 40px 0 40px;">'
-        f"\n        {content}"
-        f"\n      </td></tr>"
-        f"\n    </table>"
-    )
-
-    return _html_doc(preheader, card_html, visitor=visitor)
-
-
-def _hex_to_rgba(hex_color: str) -> str:
-    """Convert a 6-digit hex color to an 'R,G,B' string for use in rgba() CSS values.
-
-    Returns "0,0,0" for any non-hex input (e.g. a Brevo `{{ params.accent_color }}`
-    placeholder when this helper is called during static-template generation) so
-    the halo gradient gracefully degrades to invisible without raising.
-    """
-    if not hex_color or not hex_color.startswith("#") or len(hex_color) != 7:
-        return "0,0,0"
-    h = hex_color.lstrip("#")
-    try:
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    except ValueError:
-        return "0,0,0"
-    return f"{r},{g},{b}"
-
-
-def _info_row(label: str, value: str) -> str:
-    """Single key-value row for use inside _info_table."""
-    return (
-        f"<tr>"
-        f'<td style="padding:10px 16px 10px 0;font-family:{_FONT_STACK};'
-        f"font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:{_INK_400};"
-        f'white-space:nowrap;vertical-align:top;width:110px;">{label}</td>'
-        f'<td class="oc-ink-900" style="padding:10px 0;font-family:{_FONT_STACK};'
-        f'font-size:14px;font-weight:500;color:{_INK_900};vertical-align:top;line-height:1.5;">{value}</td>'
-        f"</tr>"
-    )
-
-
-def _info_table(rows: list[str], *, bg: str, border_color: str) -> str:
-    """Grouped info card with colored background and border.
-
-    Args:
-        rows: List of HTML <tr> strings (from _info_row).
-        bg: Background color hex.
-        border_color: Border color hex.
-    """
-    rows_html = "".join(rows)
-    return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        f'style="background-color:{bg};border:1px solid {border_color};border-radius:14px;'
-        f'margin-bottom:18px;">'
-        f'<tr><td style="padding:10px 20px 6px 20px;">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f"{rows_html}"
-        f"</table>"
-        f"</td></tr>"
-        f"</table>"
-    )
-
-
-def _cta_button(text: str, url: str, *, color: str = _BRAND_PRIMARY) -> str:
-    """Outlook-compatible full-width pill CTA button.
-
-    Args:
-        text: Button label (an arrow suffix → is appended automatically).
-        url: Destination URL.
-        color: Button background color.
-    """
-    label = f"{text} &#8594;"
-    return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:24px;">'
-        f"<tr>"
-        f'<td align="center" style="border-radius:100px;background-color:{color};">'
-        f'<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" '
-        f'href="{url}" style="height:54px;v-text-anchor:middle;width:460px;" arcsize="50%" '
-        f'stroke="f" fillcolor="{color}"><w:anchorlock/><center style="color:#ffffff;font-family:sans-serif;font-size:15px;font-weight:700;">'
-        f"{label}</center></v:roundrect><![endif]-->"
-        f"<!--[if !mso]><!-->"
-        f'<a href="{url}" style="display:block;background-color:{color};color:#ffffff;'
-        f"font-family:{_FONT_STACK};"
-        f"font-size:15px;font-weight:700;text-decoration:none;text-align:center;"
-        f'padding:16px 32px;border-radius:100px;letter-spacing:0.02em;line-height:1;">{label}</a>'
-        f"<!--<![endif]-->"
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-    )
-
-
-def _alert_box(text: str, *, bg: str, border_color: str, text_color: str) -> str:
-    """Inline alert/notice box with left accent border."""
-    return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        f'style="margin-bottom:18px;">'
-        f"<tr>"
-        f'<td style="background-color:{bg};border:1px solid {border_color};'
-        f'border-left:4px solid {border_color};border-radius:0 12px 12px 0;padding:14px 18px;">'
-        f'<p style="margin:0;font-family:{_FONT_STACK};'
-        f'font-size:14px;color:{text_color};line-height:1.6;">{text}</p>'
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-    )
-
-
-def _body_text(text: str, *, color: str = _INK_500) -> str:
-    """Standard body paragraph."""
-    return (
-        f'<p class="oc-ink-500" style="margin:0 0 16px 0;font-family:{_FONT_STACK};'
-        f'font-size:15px;color:{color};line-height:1.7;">{text}</p>'
-    )
-
-
-def _section_label(text: str) -> str:
-    """Small uppercase section label above an info block."""
-    return (
-        f'<p style="margin:0 0 8px 0;font-family:{_FONT_STACK};'
-        f"font-size:10px;font-weight:700;text-transform:uppercase;"
-        f'letter-spacing:0.14em;color:{_INK_400};">{text}</p>'
-    )
-
-
-# ── Email Templates ──
+# ── Lead / live-chat emails (customer & operator facing) ─────────────────────
 
 
 def send_qualified_lead_email(
@@ -895,60 +308,52 @@ def send_qualified_lead_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send email when a lead reaches a BANT qualification tier (Brevo template #60).
+    """Send email when a lead reaches a BANT qualification tier."""
+    tier_upper = (tier or "sql").upper()
+    tier_label = {"MQL": "Marketing Qualified Lead", "SQL": "Sales Qualified Lead"}.get(
+        tier_upper, f"{tier_upper} Lead"
+    )
+    chip_kind = "success" if tier_upper == "SQL" else "warning"
+    safe_bot = esc(bot_name)
+    contact = contact or {}
 
-    Args:
-        notification_email: Recipient address.
-        bot_name: Name of the bot that captured the lead.
-        bant: Dict with BANT fields (bant_need, bant_budget, bant_authority, bant_timeline).
-        contact: Optional visitor contact info (name, email, phone, company).
-        tier: Qualification tier — "mql" or "sql" (default "sql").
-        reply_to: Optional Reply-To address for branded emails.
-    """
-    tier_upper = tier.upper()
-    tier_labels: dict[str, str] = {
-        "MQL": "Marketing Qualified Lead",
-        "SQL": "Sales Qualified Lead",
-    }
-    tier_label = tier_labels.get(tier_upper, f"{tier_upper} Lead")
-    # Per-tier accent so the Brevo template can stay tier-aware:
-    # SQL — green (celebration), MQL — amber (early signal).
-    if tier_upper == "SQL":
-        badge_bg, badge_color = "#dcfce7", "#166534"
-        accent_color, accent_bg, accent_border = "#10b981", "#ecfdf5", "#6ee7b7"
-    else:
-        badge_bg, badge_color = "#fef9c3", "#854d0e"
-        accent_color, accent_bg, accent_border = "#f59e0b", "#fffbeb", "#fcd34d"
-
-    params: dict = {
-        "bot_name": _esc(bot_name),
-        "tier": tier_upper,
-        "tier_label": tier_label,
-        "badge_bg": badge_bg,
-        "badge_color": badge_color,
-        # Tier-driven accent palette (referenced by the Brevo template)
-        "accent_color": accent_color,
-        "accent_bg": accent_bg,
-        "accent_border": accent_border,
-        # BANT — use em-dash for missing fields so template rows always render
-        "bant_need": _esc(bant.get("bant_need")) if bant.get("bant_need") else "&#8212;",
-        "bant_budget": _esc(bant.get("bant_budget")) if bant.get("bant_budget") else "&#8212;",
-        "bant_authority": _esc(bant.get("bant_authority")) if bant.get("bant_authority") else "&#8212;",
-        "bant_timeline": _esc(bant.get("bant_timeline")) if bant.get("bant_timeline") else "&#8212;",
-        # Contact — empty string if not provided
-        "contact_name": _esc(contact.get("name")) if contact and contact.get("name") else "&#8212;",
-        "contact_email": _esc(contact.get("email")) if contact and contact.get("email") else "&#8212;",
-        "contact_phone": _esc(contact.get("phone")) if contact and contact.get("phone") else "&#8212;",
-        "contact_company": _esc(contact.get("company")) if contact and contact.get("company") else "&#8212;",
-    }
-
-    sender = _branded_sender_name(bot_name)
-    send_template_async(
+    inner = (
+        h1("New qualified lead")
+        + p(
+            f"A visitor on {strong(safe_bot)} has reached {esc(tier_label)} status. They match your "
+            f"qualification criteria. &nbsp;{ed.chip(tier_upper, chip_kind)}"
+        )
+        + ed.section_label("Qualification (BANT)")
+        + info_table(
+            [
+                ("Need", esc(bant.get("bant_need"))),
+                ("Budget", esc(bant.get("bant_budget"))),
+                ("Authority", esc(bant.get("bant_authority"))),
+                ("Timeline", esc(bant.get("bant_timeline"))),
+            ]
+        )
+        + ed.section_label("Contact")
+        + info_table(
+            [
+                ("Name", esc(contact.get("name"))),
+                ("Email", _mailto(contact.get("email"))),
+                ("Phone", esc(contact.get("phone"))),
+                ("Company", esc(contact.get("company"))),
+            ]
+        )
+        + button("View lead in dashboard", f"{APP_URL}/leads")
+    )
+    html_body = shell(
+        subject=f"New {tier_upper} lead from {bot_name}",
+        preheader=f"New {tier_upper} lead from {bot_name}.",
+        inner=inner,
+    )
+    send_email_async(
         notification_email,
-        TEMPLATE_QUALIFIED_LEAD,
-        params,
+        f"New {tier_upper} lead from {bot_name}",
+        html_body,
         reply_to=reply_to,
-        sender_name=sender,
+        sender_name=_branded_sender_name(bot_name),
     )
 
 
@@ -960,42 +365,81 @@ def send_handoff_request_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send email when a visitor requests live agent support (Brevo template #61)."""
-    params: dict = {
-        "bot_name": _esc(bot_name),
-        "contact_name": _esc(contact.get("name")) if contact and contact.get("name") else "Unknown",
-        "contact_email": _esc(contact.get("email")) if contact and contact.get("email") else "&#8212;",
-        "reason": _esc(reason) if reason else "No reason provided",
-    }
-
-    sender = _branded_sender_name(bot_name)
-    send_template_async(
+    """Send email when a visitor requests live agent support."""
+    safe_bot = esc(bot_name)
+    contact = contact or {}
+    inner = (
+        h1("A visitor wants to chat")
+        + p(
+            f"A visitor on {strong(safe_bot)} is requesting to speak with a live team member. "
+            f"They&rsquo;re waiting in the queue right now."
+        )
+        + ed.section_label("Visitor")
+        + info_table(
+            [
+                ("Name", esc(contact.get("name")) if contact.get("name") else "Unknown"),
+                ("Email", _mailto(contact.get("email"))),
+                ("Reason", esc(reason) if reason else "No reason provided"),
+            ]
+        )
+        + ed.alert(
+            "Visitors typically wait less than 60 seconds before abandoning a live-chat queue. "
+            "Please respond promptly.",
+            "warning",
+        )
+        + button("Accept request", f"{APP_URL}/support")
+    )
+    html_body = shell(
+        subject=f"{contact.get('name') or 'A visitor'} is waiting to chat on {bot_name}",
+        preheader=f"A visitor is waiting in your live-chat queue on {bot_name}.",
+        inner=inner,
+    )
+    send_email_async(
         notification_email,
-        TEMPLATE_HANDOFF_REQUEST,
-        params,
+        f"{contact.get('name') or 'A visitor'} is waiting to chat on {bot_name}",
+        html_body,
         reply_to=reply_to,
-        sender_name=sender,
+        sender_name=_branded_sender_name(bot_name),
     )
 
 
 def send_unavailable_callback_email(
     notification_email: str, bot_name: str, contact: dict, *, reply_to: str | None = None
 ):
-    """Send email when no agent was available and visitor left contact details (Brevo template #62)."""
-    params: dict = {
-        "bot_name": _esc(bot_name),
-        "contact_name": _esc(contact.get("name")),
-        "contact_email": _esc(contact.get("email")),
-        "contact_phone": _esc(contact.get("phone")) if contact.get("phone") else "&#8212;",
-    }
-
-    sender = _branded_sender_name(bot_name)
-    send_template_async(
+    """Send email when no agent was available and visitor left contact details."""
+    safe_bot = esc(bot_name)
+    inner = (
+        h1("Follow up with a visitor")
+        + p(
+            f"{strong('No agent was available')} when a visitor on {strong(safe_bot)} requested live support. "
+            f"They left their contact details so you can follow up."
+        )
+        + ed.alert(
+            "Reach out within the next hour for the best chance of converting this missed "
+            "connection into a qualified conversation.",
+            "danger",
+        )
+        + ed.section_label("Visitor")
+        + info_table(
+            [
+                ("Name", esc(contact.get("name"))),
+                ("Email", _mailto(contact.get("email"))),
+                ("Phone", esc(contact.get("phone"))),
+            ]
+        )
+        + button("Follow up now", f"{APP_URL}/leads")
+    )
+    html_body = shell(
+        subject=f"Missed live-chat request from {bot_name}",
+        preheader=f"A visitor requested support on {bot_name} while no agent was available.",
+        inner=inner,
+    )
+    send_email_async(
         notification_email,
-        TEMPLATE_MISSED_CALLBACK,
-        params,
+        f"Missed live-chat request from {bot_name}",
+        html_body,
         reply_to=reply_to,
-        sender_name=sender,
+        sender_name=_branded_sender_name(bot_name),
     )
 
 
@@ -1008,1022 +452,301 @@ def send_offline_message_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send email when a visitor leaves an offline message (Brevo template #58)."""
-    params: dict = {
-        "bot_name": _esc(bot_name),
-        "visitor_name": _esc(visitor_name),
-        "visitor_email": _esc(visitor_email),
-        "message_preview": _esc(message_preview),
-    }
-
-    sender = _branded_sender_name(bot_name)
-    send_template_async(
+    """Send email when a visitor leaves an offline message."""
+    safe_bot = esc(bot_name)
+    inner = (
+        h1("New offline message")
+        + p(f"A visitor on {strong(safe_bot)} left a message while no agent was available.")
+        + ed.section_label("From")
+        + info_table(
+            [
+                ("Name", esc(visitor_name)),
+                ("Email", _mailto(visitor_email)),
+            ]
+        )
+        + ed.section_label("Message")
+        + ed.quote(esc(message_preview))
+        + button("View &amp; reply", f"{APP_URL}/support")
+    )
+    html_body = shell(
+        subject=f"New offline message from {bot_name}",
+        preheader=f"New message from {visitor_name} on {bot_name} — reply when you're back.",
+        inner=inner,
+    )
+    send_email_async(
         notification_email,
-        TEMPLATE_OFFLINE_MESSAGE,
-        params,
+        f"New offline message from {bot_name}",
+        html_body,
         reply_to=reply_to,
-        sender_name=sender,
+        sender_name=_branded_sender_name(bot_name),
     )
 
 
+# ── Authentication & account emails ──────────────────────────────────────────
+
+
 def send_password_reset_email(to_email: str, otp: str):
-    """Send a password reset OTP email (Brevo template #57)."""
-    send_template_async(
+    """Send a password reset OTP email."""
+    inner = (
+        h1("Reset your password")
+        + p("We received a request to reset the password on your account. Enter the code below to choose a new one.")
+        + code_box(otp)
+        + ed.alert(
+            f"This code expires in {strong('15 minutes')}. Never share it — "
+            f"{esc(BRAND_NAME)} staff will never ask for it.",
+            "warning",
+        )
+        + p("Didn&rsquo;t request this? You can safely ignore this email; your password stays the same.")
+    )
+    send_email_async(
         to_email,
-        TEMPLATE_PASSWORD_RESET,
-        {"otp": _esc(otp)},
+        f"Your {BRAND_NAME} password reset code",
+        shell(
+            subject=f"Your {BRAND_NAME} password reset code",
+            preheader="Your password reset code — expires in 15 minutes.",
+            inner=inner,
+        ),
     )
 
 
 def send_verification_otp_email(to_email: str, name: str, otp: str) -> None:
-    """Send a 6-digit email verification code via Brevo (raw HTML — no dedicated template yet)."""
-    safe_name = _esc(name or "there")
-    safe_otp = _esc(otp)
-
-    html = f"""
-<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
-  <div style="background:#2563eb;padding:28px 32px;border-radius:8px 8px 0 0">
-    <h1 style="color:#fff;margin:0;font-size:22px">Verify your email</h1>
-  </div>
-  <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
-    <p style="margin:0 0 16px">Hi {safe_name},</p>
-    <p style="margin:0 0 24px;color:#6b7280">
-      Thanks for signing up for OyeChats. Use the code below to verify your email address.
-      The code expires in <strong>15 minutes</strong>.
-    </p>
-    <div style="background:#f3f4f6;border-radius:8px;padding:20px 32px;text-align:center;margin-bottom:24px">
-      <span style="font-size:36px;font-weight:700;letter-spacing:10px;color:#111827;font-family:monospace">{safe_otp}</span>
-    </div>
-    <p style="margin:0;font-size:13px;color:#9ca3af">
-      If you didn&apos;t create an OyeChats account, you can safely ignore this email.
-    </p>
-  </div>
-</div>
-"""
-
+    """Send a 6-digit email verification code."""
+    inner = (
+        h1("Verify your email")
+        + p(
+            f"Hi {_first_name(name)}, thanks for signing up. Enter the code below to verify your "
+            f"email address and finish setting up your account."
+        )
+        + code_box(otp)
+        + p(
+            f"This code expires in {strong('15 minutes')}. If you didn&rsquo;t create an "
+            f"{esc(BRAND_NAME)} account, you can safely ignore this email."
+        )
+    )
     send_email_async(
-        to_email=to_email,
-        subject="Your OyeChats verification code",
-        html_body=html,
+        to_email,
+        f"Your {BRAND_NAME} verification code",
+        shell(
+            subject=f"Your {BRAND_NAME} verification code",
+            preheader="Your verification code — expires in 15 minutes.",
+            inner=inner,
+        ),
     )
 
 
 def send_email_change_otp(to_email: str, name: str, otp: str) -> None:
     """Send a 6-digit code to a client's *new* email to confirm an email-change request."""
-    safe_name = _esc(name or "there")
-    safe_otp = _esc(otp)
-
-    html = f"""
-<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
-  <div style="background:#2563eb;padding:28px 32px;border-radius:8px 8px 0 0">
-    <h1 style="color:#fff;margin:0;font-size:22px">Confirm your new email</h1>
-  </div>
-  <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
-    <p style="margin:0 0 16px">Hi {safe_name},</p>
-    <p style="margin:0 0 24px;color:#6b7280">
-      You asked to change the email address on your OyeChats account to this address.
-      Enter the code below to confirm the change. It expires in <strong>15 minutes</strong>.
-    </p>
-    <div style="background:#f3f4f6;border-radius:8px;padding:20px 32px;text-align:center;margin-bottom:24px">
-      <span style="font-size:36px;font-weight:700;letter-spacing:10px;color:#111827;font-family:monospace">{safe_otp}</span>
-    </div>
-    <p style="margin:0;font-size:13px;color:#9ca3af">
-      If you didn&apos;t request this, you can safely ignore this email — your account email will not change.
-    </p>
-  </div>
-</div>
-"""
-
+    inner = (
+        h1("Confirm your new email")
+        + p(
+            f"Hi {_first_name(name)}, you asked to change the email on your {esc(BRAND_NAME)} account to "
+            f"this address. Enter the code below to confirm the change."
+        )
+        + code_box(otp)
+        + p(
+            f"This code expires in {strong('15 minutes')}. If this wasn&rsquo;t you, you can ignore this "
+            f"email — your account email won&rsquo;t change."
+        )
+    )
     send_email_async(
-        to_email=to_email,
-        subject="Confirm your new OyeChats email address",
-        html_body=html,
+        to_email,
+        f"Confirm your new {BRAND_NAME} email address",
+        shell(
+            subject=f"Confirm your new {BRAND_NAME} email address",
+            preheader="Confirm your new email address — code expires in 15 minutes.",
+            inner=inner,
+        ),
     )
 
 
 def send_email_change_requested_notice(to_email: str, name: str, new_email: str) -> None:
-    """Notify a client's *current* (old) email that an email change was requested.
-
-    Fire-and-forget security tripwire: lets the account owner catch an
-    unauthorized change attempt even though this address isn't the one
-    holding the confirmation OTP.
-    """
-    safe_name = _esc(name or "there")
-    safe_new_email = _esc(new_email)
-
-    html = f"""
-<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
-  <div style="background:#111827;padding:28px 32px;border-radius:8px 8px 0 0">
-    <h1 style="color:#fff;margin:0;font-size:22px">Email change requested</h1>
-  </div>
-  <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
-    <p style="margin:0 0 16px">Hi {safe_name},</p>
-    <p style="margin:0 0 16px;color:#6b7280">
-      Someone requested to change the login email on your OyeChats account to
-      <strong>{safe_new_email}</strong>. The change only takes effect once that
-      address confirms a verification code — this inbox stays the login email
-      until then.
-    </p>
-    <p style="margin:0;font-size:13px;color:#9ca3af">
-      If this wasn&apos;t you, please reset your password immediately and contact
-      support@oyechats.com.
-    </p>
-  </div>
-</div>
-"""
-
+    """Notify a client's *current* (old) email that an email change was requested."""
+    inner = (
+        h1("Email change requested")
+        + p(
+            f"Hi {_first_name(name)}, someone requested to change the login email on your "
+            f"{esc(BRAND_NAME)} account to {strong(esc(new_email))}."
+        )
+        + p(
+            "The change only takes effect once that address confirms a verification code — this "
+            "inbox stays your login email until then."
+        )
+        + ed.alert(
+            f"If this wasn&rsquo;t you, {link('reset your password', APP_URL + '/reset')} immediately "
+            f"and contact {_SUPPORT_LINK}.",
+            "danger",
+        )
+    )
     send_email_async(
-        to_email=to_email,
-        subject="Email change requested on your OyeChats account",
-        html_body=html,
+        to_email,
+        f"Email change requested on your {BRAND_NAME} account",
+        shell(
+            subject=f"Email change requested on your {BRAND_NAME} account",
+            preheader="A change to your login email was requested.",
+            inner=inner,
+        ),
     )
 
 
-# ── Visitor-Facing Email Templates ──
+# ── Visitor-facing emails ────────────────────────────────────────────────────
 
 
-def send_transcript_email(
-    to_email: str,
-    bot_name: str,
-    messages: list[dict],
-    *,
-    reply_to: str | None = None,
-):
-    """Send a formatted chat transcript to the visitor's email.
-
-    Args:
-        to_email: Recipient (visitor) email address.
-        bot_name: Display name of the bot.
-        messages: List of dicts with keys: role ("user"|"bot"|"operator"|"system"), content, created_at (optional ISO str).
-        reply_to: Optional Reply-To address for branded emails.
-    """
-    role_labels = {
-        "user": "You",
-        "bot": _esc(bot_name),
-        "operator": "Support Agent",
-        "system": "System",
+def send_transcript_email(to_email: str, bot_name: str, messages: list[dict], *, reply_to: str | None = None):
+    """Send a formatted chat transcript to the visitor's email."""
+    safe_bot = esc(bot_name)
+    role_labels = {"user": "You", "bot": safe_bot, "operator": "Support Agent", "system": "System"}
+    # Distinct light tints per role (flatten to neutral in dark via oc-fill).
+    tints = {
+        "user": (ed.FILL, ed.INK700),
+        "bot": (ed.ACCENT_TINT, "#3730a3"),
+        "operator": ("#ecfdf3", "#065f46"),
     }
 
-    message_rows: list[str] = []
+    rows: list[str] = []
     for msg in messages:
         role = msg.get("role", "bot")
-        text = _md_to_html(_esc(msg.get("content") or msg.get("text", "")))
-        label = role_labels.get(role, _esc(bot_name))
-        timestamp = msg.get("created_at", "")
+        text = ed.md_to_html(esc(msg.get("content") or msg.get("text", "")))
+        label = role_labels.get(role, safe_bot)
+        ts = str(msg.get("created_at", ""))
+        time_str = ts.split("T")[1][:5] if "T" in ts else ts[:5]
+        time_html = (
+            f'<span style="font-weight:400;color:{ed.INK300};">&nbsp;&middot;&nbsp;{esc(time_str)}</span>'
+            if time_str
+            else ""
+        )
 
-        # Format timestamp to HH:MM
-        time_str = ""
-        if timestamp:
-            ts = str(timestamp)
-            time_str = ts.split("T")[1][:5] if "T" in ts else ts[:5]
-
-        time_html = f'&nbsp;<span style="font-size:11px;color:#9ca3af;">{_esc(time_str)}</span>' if time_str else ""
-
-        # System messages: centered italic with dashed dividers
         if role == "system":
-            message_rows.append(
-                f'<tr><td style="padding:4px 0 10px 0;">'
-                f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-                f'<tr><td style="padding:0 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-                f'<tr><td style="border-top:1px dashed #cbd5e1;font-size:0;line-height:0;">&nbsp;</td></tr>'
-                f"</table></td></tr>"
-                f'<tr><td style="padding:6px 0;text-align:center;">'
-                f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-                f'font-size:12px;color:#94a3b8;font-style:italic;">{text}</span>'
-                f"</td></tr>"
-                f'<tr><td style="padding:0 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-                f'<tr><td style="border-top:1px dashed #cbd5e1;font-size:0;line-height:0;">&nbsp;</td></tr>'
-                f"</table></td></tr>"
-                f"</table></td></tr>"
+            rows.append(
+                f'<tr><td style="padding:4px 0 12px 0;text-align:center;">'
+                f'<span class="oc-muted" style="font-family:{ed.FONT};font-size:12px;color:{ed.INK300};'
+                f'font-style:italic;">{text}</span></td></tr>'
             )
             continue
 
-        is_user = role == "user"
-        # Distinct tints per role
-        bubble_bg = "#dbeafe" if is_user else ("#d1fae5" if role == "operator" else "#ede9fe")
-        bubble_color = "#1e40af" if is_user else ("#065f46" if role == "operator" else "#4c1d95")
-        label_color = "#1d4ed8" if is_user else ("#059669" if role == "operator" else "#6d28d9")
-        # Table-based bubble (email-safe, no flexbox)
-        if is_user:
-            bubble_row = (
-                f'<tr><td style="padding:0 0 12px 0;">'
-                f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-                f"<tr>"
-                f'<td style="text-align:right;">'
-                f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-                f'font-size:11px;font-weight:700;color:{label_color};">{label}</span>'
-                f"&nbsp;<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-                f'font-size:10px;color:#94a3b8;">{time_html}</span><br>'
-                f'<span style="display:inline-block;background-color:{bubble_bg};border-radius:16px 16px 4px 16px;'
-                f"padding:10px 14px;margin-top:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-                f"Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:{bubble_color};line-height:1.6;"
-                f'white-space:pre-wrap;word-break:break-word;max-width:80%;text-align:left;">{text}</span>'
-                f"</td>"
-                f"</tr>"
-                f"</table>"
-                f"</td></tr>"
-            )
-        else:
-            bubble_row = (
-                f'<tr><td style="padding:0 0 12px 0;">'
-                f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-                f'font-size:11px;font-weight:700;color:{label_color};">{label}</span>'
-                f"&nbsp;<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-                f'font-size:10px;color:#94a3b8;">{time_html}</span><br>'
-                f'<span style="display:inline-block;background-color:{bubble_bg};border-radius:16px 16px 16px 4px;'
-                f"padding:10px 14px;margin-top:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-                f"Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:{bubble_color};line-height:1.6;"
-                f'white-space:pre-wrap;word-break:break-word;max-width:80%;">{text}</span>'
-                f"</td></tr>"
-            )
-
-        message_rows.append(bubble_row)
-
-    messages_html = "".join(message_rows)
-
-    transcript_box = (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        f'style="background-color:#f8f9fc;border:1px solid #e8eaf0;border-radius:16px;margin-bottom:20px;">'
-        f'<tr><td style="padding:24px 20px;">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f"{messages_html}"
-        f"</table>"
-        f"</td></tr></table>"
-    )
-
-    footer_note = (
-        f'<p style="margin:0;font-family:{_FONT_STACK};'
-        f'font-size:12px;color:#94a3b8;text-align:center;">'
-        f'This transcript was sent from <strong style="color:#6b7280;">{_esc(bot_name)}</strong>'
-        f" via {html.escape(BRAND_NAME)}</p>"
-    )
-
-    content = (
-        _body_text(
-            f"Here is a full transcript of your conversation with "
-            f'<strong style="color:#0f0f1a;">{_esc(bot_name)}</strong>.'
+        bg, tc = tints.get(role, (ed.FILL, ed.INK700))
+        rows.append(
+            f'<tr><td style="padding:0 0 14px 0;">'
+            f'<p class="oc-muted" style="margin:0 0 4px 0;font-family:{ed.FONT};font-size:11px;'
+            f'font-weight:700;color:{ed.INK400};">{label}{time_html}</p>'
+            f'<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td class="oc-fill oc-fill-text" style="background-color:{bg};border-radius:10px;'
+            f"padding:11px 15px;font-family:{ed.FONT};font-size:14px;color:{tc};line-height:1.6;"
+            f'white-space:pre-wrap;">{text}</td></tr></table></td></tr>'
         )
-        + transcript_box
-        + footer_note
-    )
 
-    sender = _branded_sender_name(bot_name)
-    # Transcript uses raw HTML (Brevo template #63 is visual reference only —
-    # message bubbles are too dynamic for simple text params).
+    transcript = (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'class="oc-fill oc-rule" style="background-color:{ed.FILL};border:1px solid {ed.RULE};'
+        f'border-radius:10px;margin:0 0 18px 0;"><tr><td style="padding:18px 20px;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f"{''.join(rows)}</table></td></tr></table>"
+    )
+    inner = (
+        h1("Your chat transcript")
+        + p(f"Here&rsquo;s a full transcript of your conversation with {strong(safe_bot)}.")
+        + transcript
+        + p(f"Sent from {safe_bot} via {esc(BRAND_NAME)}.")
+    )
     send_email_async(
         to_email,
         f"Chat Transcript — {bot_name}",
-        _base_template(
-            "Your Chat Transcript",
-            content,
-            preheader=f"Your conversation with {bot_name} — full transcript",
-            accent_color="#8b5cf6",
-            accent_bg="#f5f3ff",
-            accent_border="#c4b5fd",
-            accent_icon="\U0001f4ac",
-            category="Conversation Summary",
-            overline="Full Transcript",
+        shell(
+            subject=f"Chat Transcript — {bot_name}",
+            preheader=f"Your conversation with {bot_name} — full transcript.",
+            inner=inner,
             visitor=True,
         ),
         reply_to=reply_to,
-        sender_name=sender,
+        sender_name=_branded_sender_name(bot_name),
     )
 
 
 def send_visitor_confirmation_email(
-    to_email: str,
-    company_name: str,
-    visitor_name: str,
-    *,
-    reply_to: str | None = None,
+    to_email: str, company_name: str, visitor_name: str, *, reply_to: str | None = None
 ):
-    """Send a confirmation email to the visitor after they submit an offline message.
-
-    Args:
-        to_email: Visitor's email address.
-        company_name: The customer's business name — appears in the body and
-            subject as "Thank you for contacting {company_name}". Callers should
-            pass ``Bot.company_name`` (the brand behind the website the widget
-            is embedded on) and fall back to ``Bot.name`` only if it's unset.
-        visitor_name: Visitor's name for personalization.
-        reply_to: Optional Reply-To address (brand email) so visitor can reply directly.
-    """
-    safe_visitor = _esc(visitor_name) or "there"
-    safe_company = _esc(company_name) or _esc(BRAND_NAME)
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<p style="margin:0 0 18px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Hi {safe_visitor},"
-        f"</p>"
-        f'<p style="margin:0 0 18px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Thank you for contacting {safe_company}. We&rsquo;ve received your "
-        f"message, and our team has been notified. We&rsquo;ll get back to you "
-        f"as soon as possible."
-        f"</p>"
-        f'<p style="margin:0 0 4px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Thank you,"
-        f"</p>"
-        f'<p style="margin:0 0 24px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_900};line-height:1.55;font-weight:600;">'
-        f"Team {safe_company}"
-        f"</p>"
-        f"</td></tr>"
+    """Send a confirmation email to the visitor after they submit an offline message."""
+    safe_company = esc(company_name) if company_name else esc(BRAND_NAME)
+    inner = (
+        h1("We got your message")
+        + p(f"Hi {esc(visitor_name) if visitor_name else 'there'},")
+        + p(
+            f"Thanks for reaching out to {strong(safe_company)}. We&rsquo;ve received your message and "
+            f"our team has been notified. Someone will get back to you shortly."
+        )
+        + ed.alert("Message received — no action needed on your end. We&rsquo;ll be in touch by email.", "success")
+        + p("You can reply directly to this email if you have anything to add.")
     )
-
-    html_body = _html_doc(
-        preheader=f"Thank you for contacting {safe_company}. We'll be in touch soon.",
-        body_inner=body_inner,
-        visitor=True,
-    )
-
-    sender = _branded_sender_name(company_name or BRAND_NAME)
     send_email_async(
         to_email,
         f"Thank you for contacting {company_name or BRAND_NAME}",
-        html_body,
+        shell(
+            subject=f"Thank you for contacting {company_name or BRAND_NAME}",
+            preheader=f"Thanks {visitor_name or 'there'} — your message was received.",
+            inner=inner,
+            visitor=True,
+        ),
         reply_to=reply_to,
-        sender_name=sender,
+        sender_name=_branded_sender_name(company_name or BRAND_NAME),
     )
 
 
-# ── Affiliate program emails ─────────────────────────────────────────────
-# Two transactional templates, composed as raw HTML through the shared
-# ``_html_doc`` wrapper rather than via Brevo template IDs. Reason: the
-# affiliate program is internal, low-volume, and self-contained — going
-# through Brevo's template editor adds friction without buying anything.
-#
-# Both emails follow the same skeleton: short headline, two short
-# paragraphs, single primary CTA button. No metering — these are
-# operational emails, not customer-billed sends.
-
-
-def _affiliate_cta_button(href: str, label: str) -> str:
-    """Pill-shaped CTA button matching the brand palette.
-
-    Wrapped in a full-width outer table so it behaves as a block-level
-    element in email clients — prevents the ``align="left"`` inner table
-    from floating and letting following paragraph text wrap next to it.
-    """
-    safe_href = html.escape(href, quote=True)
-    return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
-        f' width="100%" style="width:100%;border-collapse:collapse;">'
-        f"<tr>"
-        f'<td align="left" style="padding:0;">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
-        f"<tr>"
-        f'<td align="center" style="border-radius:10px;background-color:{_BRAND_PRIMARY};">'
-        f'<a href="{safe_href}"'
-        f' style="display:inline-block;padding:12px 22px;font-family:{_FONT_STACK};'
-        f"font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;"
-        f'border-radius:10px;letter-spacing:0.01em;">'
-        f"{html.escape(label)}"
-        f"</a>"
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-    )
+# ── Affiliate emails ─────────────────────────────────────────────────────────
 
 
 def send_affiliate_welcome_email(to_email: str, name: str | None = None) -> None:
-    """Email an existing OyeChats customer that they're now an affiliate.
-
-    Triggered from the super-admin invite endpoint when the target email
-    already has a ``clients`` row — they don't need a magic link, they just
-    need to know to log in and check ``/affiliate``. Fire-and-forget.
-    """
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-    dashboard_url = f"{APP_URL.rstrip('/')}/affiliate"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"You&rsquo;re now an OyeChats affiliate"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Hi {safe_name} — you&rsquo;ve just been enrolled in the OyeChats "
-        f"affiliate program. You can now create referral codes, share them "
-        f"anywhere, and track how each one performs from your dashboard."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Open the affiliate dashboard to create your first code:"
-        f"</p>"
-        f"{_affiliate_cta_button(dashboard_url, 'Open my affiliate dashboard')}"
-        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Need help? Reply to this email or write to "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader="You can now create referral codes and earn from every signup.",
-        body_inner=body_inner,
-        visitor=False,
+    """Email an existing customer that they're now an affiliate."""
+    inner = (
+        h1(f"You&rsquo;re now an {esc(BRAND_NAME)} affiliate")
+        + p(
+            f"Hi {_first_name(name)} — you&rsquo;ve just been enrolled in the {esc(BRAND_NAME)} affiliate "
+            f"program. You can now create referral codes, share them anywhere, and track how each one "
+            f"performs from your dashboard."
+        )
+        + button("Open my affiliate dashboard", f"{APP_URL}/affiliate")
+        + p(f"Need help? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
     )
     send_email_async(
         to_email,
         f"You’re now an {BRAND_NAME} affiliate",
-        html_body,
+        shell(
+            subject=f"You’re now an {BRAND_NAME} affiliate",
+            preheader="Create referral codes and earn from every signup.",
+            inner=inner,
+        ),
     )
 
 
-def send_affiliate_invite_email(
-    to_email: str,
-    accept_url: str,
-    *,
-    expires_in_days: int = 14,
-) -> None:
-    """Email a magic link to a non-customer who's been invited as an affiliate.
-
-    ``accept_url`` already carries the raw token (e.g.
-    ``https://app.oyechats.com/affiliate-invite?token=...``). We do not
-    persist the raw token here; it's emailed once and lives only in this
-    email body. If the recipient loses the email, super admin revokes the
-    invite and sends a new one.
-    """
-    safe_url = html.escape(accept_url, quote=True)
-    expiry_phrase = f"{expires_in_days} day" if expires_in_days == 1 else f"{expires_in_days} days"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"You&rsquo;ve been invited to {html.escape(BRAND_NAME)} Partners"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"OyeChats Partners is a hand-picked group earning recurring commission "
-        f"on every customer they bring to the platform. We&rsquo;d like you to "
-        f"join."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Click below to accept. If you already have an OyeChats account, "
-        f"you&rsquo;ll sign in and the Affiliate menu will appear in your "
-        f"sidebar. New here? You can create an account in the same flow. "
-        f"This link expires in "
-        f'<strong style="color:{_INK_900};">{html.escape(expiry_phrase)}</strong>.'
-        f"</p>"
-        f"{_affiliate_cta_button(accept_url, 'Accept your Partners invite')}"
-        f'<p style="margin:24px 0 8px 0;font-family:{_FONT_STACK};font-size:12px;'
-        f'color:{_INK_300};line-height:1.55;word-break:break-all;">'
-        f"If the button doesn&rsquo;t work, paste this link into your browser:"
-        f"</p>"
-        f'<p style="margin:0 0 16px 0;font-family:{_FONT_STACK};font-size:12px;'
-        f'color:{_INK_500};line-height:1.5;word-break:break-all;">'
-        f'<a href="{safe_url}" style="color:{_BRAND_PRIMARY};text-decoration:none;">{safe_url}</a>'
-        f"</p>"
-        f'<p style="margin:16px 0 0 0;font-family:{_FONT_STACK};font-size:12px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Didn&rsquo;t expect this email? You can safely ignore it — the invite "
-        f"will expire and no account will be created."
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader=f"Accept your Partners invite. Link expires in {expiry_phrase}.",
-        body_inner=body_inner,
-        visitor=False,
+def send_affiliate_invite_email(to_email: str, accept_url: str, *, expires_in_days: int = 14) -> None:
+    """Email a magic link to a non-customer invited as an affiliate."""
+    expiry = f"{expires_in_days} day" if expires_in_days == 1 else f"{expires_in_days} days"
+    inner = (
+        h1(f"You&rsquo;ve been invited to {esc(BRAND_NAME)} Partners")
+        + p(
+            f"{esc(BRAND_NAME)} Partners is a hand-picked group earning recurring commission on every "
+            f"customer they bring to the platform. We&rsquo;d like you to join."
+        )
+        + p(
+            f"Click below to accept. If you already have an account you&rsquo;ll sign in and the Affiliate "
+            f"menu appears in your sidebar. New here? You can create an account in the same flow. This link "
+            f"expires in {strong(esc(expiry))}."
+        )
+        + button("Accept your Partners invite", accept_url)
+        + p("If the button doesn&rsquo;t work, paste this link into your browser:", top=8)
+        + f'<p class="oc-link" style="margin:0 0 16px 0;font-family:{ed.FONT};font-size:13px;'
+        f'color:{ed.ACCENT};word-break:break-all;line-height:1.5;">{link(esc(accept_url), accept_url)}</p>'
+        + p(
+            "Didn&rsquo;t expect this? You can safely ignore it — the invite will expire and no account will be created."
+        )
     )
     send_email_async(
         to_email,
         f"You’re invited to {BRAND_NAME} Partners",
-        html_body,
-    )
-
-
-def send_trial_welcome_email(
-    to_email: str,
-    *,
-    name: str | None,
-    trial_end: datetime,
-    credits: int,
-    duration_days: int,
-) -> None:
-    """Welcome email fired the moment a customer registers and lands on the
-    14-day trial.
-
-    Day-0 in the email cadence (see PR4 for the day-7 / day-11 / day-13 /
-    day-14 follow-ups). Best-effort send — the registration endpoint never
-    blocks on this and swallows transport failures so a Brevo outage can't
-    take signup down with it.
-
-    Content priorities, in order:
-
-    1. Confirm the trial is active and state the exact end date (no
-       ambiguous "in 14 days" phrasing — the timestamp is authoritative).
-    2. Quote the credit allowance so the prospect knows the cap.
-    3. One primary CTA to the dashboard. Quick-start tips inline rather
-       than a separate "what now?" email so day-0 carries its weight.
-    """
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-    dashboard_url = APP_URL.rstrip("/")
-    knowledge_url = f"{dashboard_url}/knowledge"
-    chatbot_url = f"{dashboard_url}/chatbot"
-    billing_url = f"{dashboard_url}/billing"
-
-    # Render the deadline in a forgiving, date-only format so timezone
-    # drift between sender and recipient doesn't make the email lie.
-    end_human = trial_end.strftime("%B %-d, %Y")
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"Welcome to {html.escape(BRAND_NAME)}, {safe_name} &mdash; your "
-        f"{duration_days}-day free trial is live"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"You&rsquo;ve got <strong>{credits:,} credits</strong> to spend "
-        f"however you like &mdash; chats, URL crawls, document uploads. "
-        f"Your trial runs until "
-        f'<strong style="color:{_INK_900};">{html.escape(end_human)}</strong>. '
-        f"No card on file, no auto-charge."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Pop the dashboard open and let&rsquo;s get your first bot answering "
-        f"customer questions:"
-        f"</p>"
-        f"{_affiliate_cta_button(dashboard_url, 'Open my dashboard')}"
-        f'<p style="margin:28px 0 12px 0;font-family:{_FONT_STACK};font-size:13px;'
-        f"font-weight:600;color:{_INK_900};letter-spacing:0.02em;"
-        f'text-transform:uppercase;">'
-        f"A 3-step path to your first chat"
-        f"</p>"
-        f'<ol style="margin:0 0 8px 0;padding-left:20px;font-family:{_FONT_STACK};'
-        f'font-size:14px;color:{_INK_500};line-height:1.65;">'
-        f"<li>"
-        f'<a href="{html.escape(knowledge_url, quote=True)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;font-weight:600;">'
-        f"Upload your knowledge base"
-        f"</a> &mdash; PDFs, docs, or just paste your website URL and we crawl it."
-        f"</li>"
-        f"<li>"
-        f'<a href="{html.escape(chatbot_url, quote=True)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;font-weight:600;">'
-        f"Style the widget"
-        f"</a> &mdash; colors, logo, welcome message, all of it."
-        f"</li>"
-        f"<li>"
-        f'<a href="{html.escape(chatbot_url, quote=True)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;font-weight:600;">'
-        f"Drop the script tag"
-        f"</a> on your site &mdash; one line of HTML and you&rsquo;re live."
-        f"</li>"
-        f"</ol>"
-        f'<p style="margin:28px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Love what you see before day {duration_days}? "
-        f'<a href="{html.escape(billing_url, quote=True)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">Pick a plan any time</a> '
-        f"to keep your bot live past the trial. Stuck on something? Just "
-        f"reply to this email or write to "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader=(
-            f"You’ve got {credits:,} credits and {duration_days} days to "
-            f"build the bot that answers your customers’ questions."
+        shell(
+            subject=f"You’re invited to {BRAND_NAME} Partners",
+            preheader=f"Accept your Partners invite. Link expires in {expiry}.",
+            inner=inner,
         ),
-        body_inner=body_inner,
-        visitor=False,
     )
-    try:
-        send_email_async(
-            to_email,
-            f"Welcome to {BRAND_NAME} — your {duration_days}-day trial is live",
-            html_body,
-        )
-    except Exception as exc:
-        # Registration must not fail because of a transport glitch. The
-        # day-1 nudge cron (PR4) acts as a soft retry — if the customer
-        # never gets day-0 they still get day-1.
-        local, _, domain = to_email.partition("@")
-        redacted = f"{local[:1]}***@{domain}" if local and domain else "***"
-        logger.warning("trial_welcome_email_failed for %s: %s", redacted, exc)
-        _capture_email_failure(exc, event="trial_welcome", email=to_email)
-
-
-# ── Trial lifecycle cadence (PR4) ─────────────────────────────────────────
-#
-# Four touchpoints fired by the worker crons in ``app.worker.tasks``:
-#
-# * ``trial_day_7``   — midpoint check-in, celebrates activation
-# * ``trial_days_left`` — parameterised "X days remaining" warning
-#                        (used for day-11 and day-13 fires)
-# * ``trial_ended``   — day-14, asks for plan + card; quotes the
-#                        15-day data-retention window
-# * ``trial_data_deleted`` — final notification after the retention
-#                        window lapses and the worker has purged
-#                        bots / documents / sessions
-#
-# Each helper swallows transport failures the same way ``send_trial_welcome_email``
-# does. The cron records its own ``trial_emails_sent`` marker only after
-# the helper returns; a Brevo blip therefore lets the next cron tick
-# retry instead of pretending the email landed.
-
-
-def _trial_redact(to_email: str) -> str:
-    local, _, domain = to_email.partition("@")
-    return f"{local[:1]}***@{domain}" if local and domain else "***"
-
-
-def _trial_cta_button(href: str, label: str) -> str:
-    """Trial-cadence emails share the affiliate pill — the design system has
-    one primary CTA shape and this is it."""
-    return _affiliate_cta_button(href, label)
-
-
-def send_trial_day_7_email(
-    to_email: str,
-    *,
-    name: str | None,
-    days_remaining: int,
-    plan_name: str,
-) -> None:
-    """Halfway-through nudge. Tone: encouraging, not salesy."""
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-    dashboard_url = APP_URL.rstrip("/")
-    billing_url = f"{dashboard_url}/billing"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"You&rsquo;re halfway through your {html.escape(plan_name)} trial, {safe_name}"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Quick check-in &mdash; you&rsquo;ve got "
-        f'<strong style="color:{_INK_900};">{days_remaining} days left</strong>. '
-        f"If your bot is live and answering visitors, you&rsquo;re ahead of the curve. "
-        f"If you haven&rsquo;t uploaded knowledge or dropped the script tag yet, "
-        f"this is the week to do it."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Open the dashboard to see your stats or finish the setup:"
-        f"</p>"
-        f"{_trial_cta_button(dashboard_url, 'Open my dashboard')}"
-        f'<p style="margin:28px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Already sold? "
-        f'<a href="{html.escape(billing_url, quote=True)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">Pick a plan</a> '
-        f"any time &mdash; conversion preserves your bot, documents, and chat history."
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader=f"Halfway through your trial — {days_remaining} days left.",
-        body_inner=body_inner,
-        visitor=False,
-    )
-    try:
-        send_email_async(
-            to_email,
-            f"You’re halfway through your {BRAND_NAME} trial",
-            html_body,
-        )
-    except Exception as exc:
-        logger.warning("trial_day_7_email_failed for %s: %s", _trial_redact(to_email), exc)
-        _capture_email_failure(exc, event="trial_day_7", email=to_email)
-
-
-def send_trial_days_left_email(
-    to_email: str,
-    *,
-    name: str | None,
-    days_remaining: int,
-    plan_name: str,
-) -> None:
-    """Urgency reminder fired at day-11 (3 left) and day-13 (1 left)."""
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-    dashboard_url = APP_URL.rstrip("/")
-    billing_url = f"{dashboard_url}/billing"
-
-    # Tone scales with urgency — 1 day left is the "tomorrow" frame.
-    if days_remaining <= 1:
-        headline = f"Your {html.escape(plan_name)} trial ends tomorrow"
-        body_lead = (
-            f"Heads up &mdash; your trial wraps up in about "
-            f'<strong style="color:{_INK_900};">{days_remaining} day</strong>. '
-            f"After that your widget will switch to its offline message until you pick a plan."
-        )
-        subject = f"Your {BRAND_NAME} trial ends tomorrow"
-    else:
-        headline = f"{days_remaining} days left in your {html.escape(plan_name)} trial"
-        body_lead = (
-            f"You&rsquo;ve got "
-            f'<strong style="color:{_INK_900};">{days_remaining} days</strong> '
-            f"to keep evaluating. If you&rsquo;d like your bot to stay live without a gap, "
-            f"pick a plan before the trial ends."
-        )
-        subject = f"{days_remaining} days left in your {BRAND_NAME} trial"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"Hi {safe_name} &mdash; {headline.lower()}"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"{body_lead}"
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Your knowledge base, settings, and chat history are kept safe for "
-        f"15 days after the trial ends &mdash; nothing is lost if you decide later."
-        f"</p>"
-        f"{_trial_cta_button(billing_url, 'Pick a plan')}"
-        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Questions about pricing? Reply to this email or write to "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader=f"{days_remaining} day{'s' if days_remaining != 1 else ''} left in your trial.",
-        body_inner=body_inner,
-        visitor=False,
-    )
-    try:
-        send_email_async(to_email, subject, html_body)
-    except Exception as exc:
-        logger.warning(
-            "trial_days_left_email_failed for %s (days=%s): %s",
-            _trial_redact(to_email),
-            days_remaining,
-            exc,
-        )
-        _capture_email_failure(exc, event="trial_days_left", email=to_email, days_remaining=days_remaining)
-
-
-def send_trial_ended_email(
-    to_email: str,
-    *,
-    name: str | None,
-    plan_name: str,
-    data_retention_until: datetime,
-) -> None:
-    """Fired the moment the expiry cron flips status to ``trial_expired``."""
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-    billing_url = f"{APP_URL.rstrip('/')}/billing"
-    retention_human = data_retention_until.strftime("%B %-d, %Y")
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"Your {html.escape(plan_name)} trial has ended"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Hi {safe_name} &mdash; your trial of "
-        f'<strong style="color:{_INK_900};">{html.escape(plan_name)}</strong> '
-        f"wrapped up today. Your bot is now showing its offline message to visitors. "
-        f"Pick a plan and your bot is back online within a minute."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Your knowledge base, settings, and chat history are kept safe until "
-        f'<strong style="color:{_INK_900};">{html.escape(retention_human)}</strong>. '
-        f"After that date, the workspace is permanently deleted."
-        f"</p>"
-        f"{_trial_cta_button(billing_url, 'Choose a plan to reactivate')}"
-        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback &mdash; "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader=(f"Your trial has ended. Reactivate by {retention_human} to keep your bot and data."),
-        body_inner=body_inner,
-        visitor=False,
-    )
-    try:
-        send_email_async(
-            to_email,
-            f"Your {BRAND_NAME} trial has ended — pick a plan to keep your bot live",
-            html_body,
-        )
-    except Exception as exc:
-        logger.warning("trial_ended_email_failed for %s: %s", _trial_redact(to_email), exc)
-        _capture_email_failure(exc, event="trial_ended", email=to_email)
-
-
-def send_trial_data_deleted_email(
-    to_email: str,
-    *,
-    name: str | None,
-) -> None:
-    """Sent after the hard-delete cron purges the workspace.
-
-    No CTA — at this point the customer's account is deactivated. Brief,
-    factual, leaves the door open for sign-up later.
-    """
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"Your {html.escape(BRAND_NAME)} workspace has been deleted"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Hi {safe_name} &mdash; as scheduled, we&rsquo;ve permanently deleted the "
-        f"bots, documents, and chat history from your trial workspace. Nothing is "
-        f"recoverable from this account."
-        f"</p>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"If you ever want to give {html.escape(BRAND_NAME)} another look, you can "
-        f"start fresh any time &mdash; no hard feelings."
-        f"</p>"
-        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Questions? Reply to this email or write to "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader="Your trial workspace has been permanently deleted.",
-        body_inner=body_inner,
-        visitor=False,
-    )
-    try:
-        send_email_async(
-            to_email,
-            f"Your {BRAND_NAME} workspace has been deleted",
-            html_body,
-        )
-    except Exception as exc:
-        logger.warning("trial_data_deleted_email_failed for %s: %s", _trial_redact(to_email), exc)
-        _capture_email_failure(exc, event="trial_data_deleted", email=to_email)
-
-
-def send_downgrade_reauth_email(
-    to_email: str,
-    *,
-    name: str | None,
-    old_plan_name: str,
-    new_plan_name: str,
-    reauth_url: str,
-) -> None:
-    """Tell the customer their scheduled downgrade cutover needs a new mandate.
-
-    Razorpay's Update Subscription API is blocked for UPI, so a scheduled
-    plan change cancels the old mandate at the period end and requires the
-    customer to re-authorize a fresh mandate for the lower plan. Without this
-    email the customer would be silently stranded with no active subscription
-    and no path back (NB-3). ``reauth_url`` is the Razorpay hosted checkout
-    ``short_url`` for the newly created lower-plan subscription.
-    """
-    safe_name = _esc((name or "").split()[0]) if name else "there"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"One quick step to finish your switch to {html.escape(new_plan_name)}"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Hi {safe_name} &mdash; your billing cycle on "
-        f'<strong style="color:{_INK_900};">{html.escape(old_plan_name)}</strong> '
-        f"has ended and your scheduled move to "
-        f'<strong style="color:{_INK_900};">{html.escape(new_plan_name)}</strong> is ready. '
-        f"Because your payments run on a UPI mandate, we can&rsquo;t change the plan on the "
-        f"existing mandate &mdash; you&rsquo;ll need to authorize a new one for the lower plan."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"It takes under a minute. Until you confirm, your account stays paused "
-        f"on the new plan &mdash; so please complete it soon to keep your bot live."
-        f"</p>"
-        f"{_trial_cta_button(reauth_url, f'Authorize {new_plan_name}')}"
-        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"Changed your mind, or need a hand? Reply to this email or write to "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
-    )
-
-    html_body = _html_doc(
-        preheader=(f"Authorize your new {new_plan_name} mandate to finish the switch and keep your bot live."),
-        body_inner=body_inner,
-        visitor=False,
-    )
-    try:
-        send_email_async(
-            to_email,
-            f"Action needed: confirm your switch to {new_plan_name}",
-            html_body,
-        )
-    except Exception as exc:
-        logger.warning("downgrade_reauth_email_failed for %s: %s", to_email, exc)
-        _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
-
-
-def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | None = None) -> None:
-    """Send the customer their finalized invoice/receipt with the PDF attached.
-
-    Called from the PDF-rendering sweep (worker.tasks.task_render_invoice_pdfs)
-    only when INVOICE_EMAILS_ENABLED — shadow mode never emails. ``pdf_bytes``
-    (the freshly rendered PDF) is attached to the email; the download link is
-    kept as a fallback for clients that strip attachments.
-    """
-    import html as _html
-
-    from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
-
-    doc_label = {"tax_invoice": "Tax invoice", "credit_note": "Credit note"}.get(invoice.invoice_type, "Receipt")
-    # Same Indian-grouped formatting as the PDF so the two documents agree.
-    amount = _fmt_invoice_inr(invoice.amount_cents)
-    rows = [
-        _info_row(f"{doc_label} no.", _html.escape(invoice.invoice_number)),
-        _info_row("Amount", amount),
-    ]
-    is_credit_note = invoice.invoice_type == "credit_note"
-    if invoice.total_tax_minor:
-        rows.append(
-            _info_row("GST reversed" if is_credit_note else "GST included", _fmt_invoice_inr(invoice.total_tax_minor))
-        )
-    seller_name = _html.escape((invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME)
-    lead = (
-        f"<p>Your refund has been processed. The credit note from {seller_name} is ready.</p>"
-        if is_credit_note
-        else f"<p>Thank you for your payment. Your {doc_label.lower()} from {seller_name} is ready.</p>"
-    )
-    content = (
-        lead + _info_table(rows, bg="#f8fafc", border_color="#e2e8f0") + _cta_button(f"Download {doc_label}", pdf_url)
-    )
-    html = _base_template(
-        f"Your {doc_label.lower()} is ready",
-        content,
-        preheader=f"{doc_label} {invoice.invoice_number} — {amount}",
-        category="Billing",
-    )
-
-    attachments: list[dict] | None = None
-    if pdf_bytes:
-        # Invoice numbers contain slashes (e.g. "DB/26-27/000001") which are
-        # invalid in a filename — flatten to a safe attachment name.
-        safe_number = str(invoice.invoice_number or invoice.id).replace("/", "-")
-        attachments = [
-            {
-                "content": base64.b64encode(pdf_bytes).decode("ascii"),
-                "name": f"{safe_number}.pdf",
-            }
-        ]
-
-    send_email_async(
-        to_email,
-        f"{doc_label} {invoice.invoice_number} from {seller_name}",
-        html,
-        attachments=attachments,
-    )
-
-
-# ── Operator invite ─────────────────────────────────────────────────────────
-# Magic-link invite to join a workspace as an operator. Composed as raw HTML
-# through the same ``_html_doc`` wrapper as the affiliate invite — same
-# rationale (low volume, self-contained, no Brevo template needed).
 
 
 def send_operator_invite_email(
@@ -2034,51 +757,361 @@ def send_operator_invite_email(
     inviter_name: str | None,
     expires_in_days: int = 7,
 ) -> None:
-    """Email a magic link inviting the recipient to join ``workspace_name`` as an operator.
+    """Magic-link invite for a new operator to join ``workspace_name``.
 
-    ``accept_url`` must include the plaintext invite token in its path or
-    query string — the airlock page uses it to resolve the invite. The link
-    is single-use in effect (once accepted the token no longer resolves to a
-    ``pending`` invite).
+    ``accept_url`` carries the plaintext invite token (path or query) —
+    ``invite_service.accept_invite`` matches it back against the pending
+    row. Single-use in effect: once accepted, the token no longer
+    resolves to a pending invite, so a resend goes through a new URL.
+
+    Templating matches ``send_affiliate_invite_email`` so both invites
+    read the same to the recipient (heading + explainer + button +
+    fallback link + safe-to-ignore note).
     """
-    safe_workspace = _esc(workspace_name)
-    inviter_snippet = f"{_esc(inviter_name)} has invited you" if inviter_name else "You&rsquo;ve been invited"
-
-    body_inner = (
-        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
-        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
-        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
-        f"You&rsquo;ve been invited to {safe_workspace}"
-        f"</h1>"
-        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"{inviter_snippet} to join <strong>{safe_workspace}</strong> on "
-        f"{BRAND_NAME} as an operator. Once you accept, you&rsquo;ll be able "
-        f"to take live chats and help their visitors from your dashboard."
-        f"</p>"
-        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
-        f'color:{_INK_500};line-height:1.55;">'
-        f"Click below to accept &mdash; the link is valid for "
-        f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}."
-        f"</p>"
-        f"{_affiliate_cta_button(accept_url, 'Accept invitation')}"
-        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
-        f'color:{_INK_300};line-height:1.55;">'
-        f"If you didn&rsquo;t expect this invite, you can safely ignore this email. "
-        f"Questions? Reply here or write to "
-        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
-        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
-        f"</p>"
-        f"</td></tr>"
+    expiry = f"{expires_in_days} day" if expires_in_days == 1 else f"{expires_in_days} days"
+    safe_workspace = esc(workspace_name)
+    inviter_snippet = (
+        f"{esc(inviter_name)} has invited you"
+        if inviter_name
+        else "You&rsquo;ve been invited"
     )
-
-    html_body = _html_doc(
-        preheader=f"Accept your invite to join {workspace_name} on {BRAND_NAME}.",
-        body_inner=body_inner,
-        visitor=False,
+    inner = (
+        h1(f"You&rsquo;ve been invited to {safe_workspace}")
+        + p(
+            f"{inviter_snippet} to join {strong(safe_workspace)} on {esc(BRAND_NAME)} as an operator. "
+            f"Once you accept you&rsquo;ll be able to take live chats and support their visitors from your dashboard."
+        )
+        + p(f"Click below to accept. This link expires in {strong(esc(expiry))}.")
+        + button("Accept invitation", accept_url)
+        + p("If the button doesn&rsquo;t work, paste this link into your browser:", top=8)
+        + f'<p class="oc-link" style="margin:0 0 16px 0;font-family:{ed.FONT};font-size:13px;'
+        f'color:{ed.ACCENT};word-break:break-all;line-height:1.5;">{link(esc(accept_url), accept_url)}</p>'
+        + p(
+            "Didn&rsquo;t expect this? You can safely ignore it — the invite will expire and no account will be created."
+        )
     )
     send_email_async(
         to_email,
         f"You’ve been invited to join {workspace_name} on {BRAND_NAME}",
-        html_body,
+        shell(
+            subject=f"You’ve been invited to join {workspace_name} on {BRAND_NAME}",
+            preheader=f"Accept your invite to join {workspace_name}. Link expires in {expiry}.",
+            inner=inner,
+        ),
     )
+
+
+# ── Trial lifecycle emails ───────────────────────────────────────────────────
+
+
+def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, credits: int, duration_days: int) -> None:
+    """Day-0 welcome email fired the moment a customer lands on the trial."""
+    end_human = trial_end.strftime("%B %-d, %Y")
+    inner = (
+        h1(f"Welcome to {esc(BRAND_NAME)}, {_first_name(name)}")
+        + p(
+            f"Your {strong(f'{duration_days}-day free trial')} is live. You&rsquo;ve got "
+            f"{strong(f'{credits:,} credits')} to spend however you like — chats, URL crawls, document "
+            f"uploads. Your trial runs until {strong(esc(end_human))}. No card on file, no auto-charge."
+        )
+        + button("Open my dashboard", APP_URL)
+        + ed.divider()
+        + ed.section_label("A 3-step path to your first chat")
+        + ed.steps(
+            [
+                f"{link('Upload your knowledge base', APP_URL + '/knowledge')} — PDFs, docs, or paste your website URL and we crawl it.",
+                f"{link('Style the widget', APP_URL + '/chatbot')} — colors, logo, welcome message.",
+                f"{link('Drop the script tag', APP_URL + '/chatbot')} on your site — one line of HTML and you&rsquo;re live.",
+            ]
+        )
+        + p(f"Stuck on something? Just reply to this email or write to {_SUPPORT_LINK}.")
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Welcome to {BRAND_NAME} — your {duration_days}-day trial is live",
+            shell(
+                subject=f"Welcome to {BRAND_NAME} — your {duration_days}-day trial is live",
+                preheader=f"You've got {credits:,} credits and {duration_days} days to build your bot.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("trial_welcome_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_welcome", email=to_email)
+
+
+def send_trial_day_7_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
+    """Halfway-through nudge."""
+    inner = (
+        h1(f"You&rsquo;re halfway through your trial, {_first_name(name)}")
+        + p(
+            f"Quick check-in — you&rsquo;ve got {strong(f'{days_remaining} days left')}. If your bot is live "
+            f"and answering visitors, you&rsquo;re ahead of the curve. If you haven&rsquo;t uploaded knowledge "
+            f"or dropped the script tag yet, this is the week to do it."
+        )
+        + button("Open my dashboard", APP_URL)
+        + p(
+            f"Already sold? {link('Pick a plan', APP_URL + '/billing')} any time — conversion preserves your "
+            f"bot, documents, and chat history.",
+            top=8,
+        )
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"You’re halfway through your {BRAND_NAME} trial",
+            shell(
+                subject=f"You’re halfway through your {BRAND_NAME} trial",
+                preheader=f"Halfway through your trial — {days_remaining} days left.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("trial_day_7_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_day_7", email=to_email)
+
+
+def send_trial_days_left_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
+    """Urgency reminder fired at day-11 (3 left) and day-13 (1 left)."""
+    safe_plan = esc(plan_name)
+    if days_remaining <= 1:
+        headline = f"your {safe_plan} trial ends tomorrow"
+        lead = (
+            f"Heads up — your trial wraps up in about {strong(f'{days_remaining} day')}. After that your "
+            f"widget will switch to its offline message until you pick a plan."
+        )
+        subject = f"Your {BRAND_NAME} trial ends tomorrow"
+    else:
+        headline = f"{days_remaining} days left in your {safe_plan} trial"
+        lead = (
+            f"You&rsquo;ve got {strong(f'{days_remaining} days')} to keep evaluating. If you&rsquo;d like your "
+            f"bot to stay live without a gap, pick a plan before the trial ends."
+        )
+        subject = f"{days_remaining} days left in your {BRAND_NAME} trial"
+
+    inner = (
+        h1(f"Hi {_first_name(name)} — {headline}")
+        + p(lead)
+        + p(
+            "Your knowledge base, settings, and chat history are kept safe for 15 days after the trial "
+            "ends — nothing is lost if you decide later."
+        )
+        + button("Pick a plan", f"{APP_URL}/billing")
+        + p(f"Questions about pricing? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    try:
+        send_email_async(
+            to_email,
+            subject,
+            shell(
+                subject=subject,
+                preheader=f"{days_remaining} day{'s' if days_remaining != 1 else ''} left in your trial.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("trial_days_left_email_failed for %s (days=%s): %s", _redact(to_email), days_remaining, exc)
+        _capture_email_failure(exc, event="trial_days_left", email=to_email, days_remaining=days_remaining)
+
+
+def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, data_retention_until) -> None:
+    """Fired the moment the expiry cron flips status to trial_expired."""
+    safe_plan = esc(plan_name)
+    retention_human = data_retention_until.strftime("%B %-d, %Y")
+    inner = (
+        h1("Your trial has ended")
+        + p(
+            f"Hi {_first_name(name)} — your trial of {strong(safe_plan)} wrapped up today. Your bot is now "
+            f"showing its offline message to visitors. Pick a plan and it&rsquo;s back online within a minute."
+        )
+        + ed.alert(
+            f"Your knowledge base, settings, and chat history are kept safe until "
+            f"{strong(esc(retention_human))}. After that date, the workspace is permanently deleted.",
+            "warning",
+        )
+        + button("Choose a plan to reactivate", f"{APP_URL}/billing")
+        + p(f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback — {_SUPPORT_LINK}.", top=8)
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Your {BRAND_NAME} trial has ended — pick a plan to keep your bot live",
+            shell(
+                subject=f"Your {BRAND_NAME} trial has ended — pick a plan to keep your bot live",
+                preheader=f"Reactivate by {retention_human} to keep your bot and data.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("trial_ended_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_ended", email=to_email)
+
+
+def send_trial_data_deleted_email(to_email: str, *, name: str | None) -> None:
+    """Sent after the hard-delete cron purges the workspace."""
+    inner = (
+        h1("Your workspace has been deleted")
+        + p(
+            f"Hi {_first_name(name)} — as scheduled, we&rsquo;ve permanently deleted the bots, documents, "
+            f"and chat history from your trial workspace. Nothing is recoverable from this account."
+        )
+        + p(
+            f"If you ever want to give {esc(BRAND_NAME)} another look, you can start fresh any time — no hard feelings."
+        )
+        + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.")
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Your {BRAND_NAME} workspace has been deleted",
+            shell(
+                subject=f"Your {BRAND_NAME} workspace has been deleted",
+                preheader="Your trial workspace has been permanently deleted.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("trial_data_deleted_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_data_deleted", email=to_email)
+
+
+# ── Billing emails ───────────────────────────────────────────────────────────
+
+
+def send_downgrade_reauth_email(
+    to_email: str, *, name: str | None, old_plan_name: str, new_plan_name: str, reauth_url: str
+) -> None:
+    """Tell the customer their scheduled downgrade cutover needs a new mandate."""
+    safe_old, safe_new = esc(old_plan_name), esc(new_plan_name)
+    inner = (
+        h1(f"One step to finish your switch to {safe_new}")
+        + p(
+            f"Hi {_first_name(name)} — your billing cycle on {strong(safe_old)} has ended and your scheduled "
+            f"move to {strong(safe_new)} is ready. Because your payments run on a UPI mandate, we can&rsquo;t "
+            f"change the plan on the existing mandate — you&rsquo;ll need to authorize a new one for the lower plan."
+        )
+        + ed.alert(
+            "It takes under a minute. Until you confirm, your account stays paused on the new plan — "
+            "please complete it soon to keep your bot live.",
+            "warning",
+        )
+        + button(f"Authorize {safe_new}", reauth_url)
+        + p(f"Changed your mind, or need a hand? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Action needed: confirm your switch to {new_plan_name}",
+            shell(
+                subject=f"Action needed: confirm your switch to {new_plan_name}",
+                preheader=f"Authorize your new {new_plan_name} mandate to keep your bot live.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("downgrade_reauth_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
+
+
+def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, reauth_url: str) -> None:
+    """Tell the customer their operator seats need a fresh mandate after a plan
+    change (finding A follow-up).
+
+    A plan cutover cancels the old seat add-on mandate and mints a new one, which
+    — like the plan itself — must be re-authorized before it charges (and before
+    the seats are re-entitled). This emails the hosted re-auth link so carried
+    seats aren't silently suspended with no path back.
+    """
+    seats = f"{seat_count} extra seat{'s' if seat_count != 1 else ''}"
+    inner = (
+        h1("Re-authorize your operator seats")
+        + p(
+            f"Hi {_first_name(name)} — after your recent plan change, your {strong(seats)} moved to a new "
+            f"payment mandate. Because seats bill on their own UPI mandate, you&rsquo;ll need to authorize it "
+            f"once more so your team keeps its seats."
+        )
+        + ed.alert(
+            "It takes under a minute. Until you confirm, the extra seats stay paused — please complete it soon.",
+            "warning",
+        )
+        + button("Authorize my seats", reauth_url)
+        + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    try:
+        send_email_async(
+            to_email,
+            "Action needed: re-authorize your operator seats",
+            shell(
+                subject="Action needed: re-authorize your operator seats",
+                preheader="Authorize your seat mandate to keep your team's seats active.",
+                inner=inner,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("seat_reauth_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="seat_reauth", email=to_email)
+
+
+def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | None = None) -> None:
+    """Send the customer their finalized invoice/receipt with the PDF attached."""
+    from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
+
+    doc_label = {"tax_invoice": "Tax invoice", "credit_note": "Credit note"}.get(invoice.invoice_type, "Receipt")
+    is_credit_note = invoice.invoice_type == "credit_note"
+    amount = _fmt_invoice_inr(invoice.amount_cents)
+    seller_raw = (invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME
+    seller_name = esc(seller_raw)  # for HTML body
+
+    rows = [(f"{doc_label} no.", esc(invoice.invoice_number))]
+    if invoice.total_tax_minor:
+        rows.append(
+            (
+                "GST reversed" if is_credit_note else "GST included",
+                _fmt_invoice_inr(invoice.total_tax_minor),
+            )
+        )
+
+    lead = (
+        f"Your refund has been processed. The credit note from {strong(seller_name)} is ready."
+        if is_credit_note
+        else f"Thank you for your payment. Your {doc_label.lower()} from {strong(seller_name)} is ready — "
+        f"the PDF is attached to this email."
+    )
+    hero = (
+        f'<p class="oc-muted" style="margin:0 0 4px 0;font-family:{ed.FONT};font-size:12px;font-weight:600;'
+        f'letter-spacing:0.06em;text-transform:uppercase;color:{ed.INK400};">'
+        f"{'Refund amount' if is_credit_note else 'Amount paid'}</p>"
+        f'<p class="oc-h" style="margin:0 0 20px 0;font-family:{ed.FONT};font-size:34px;font-weight:700;'
+        f'color:{ed.INK900};letter-spacing:-0.6px;">{amount}</p>'
+    )
+    inner = (
+        h1(f"Your {doc_label.lower()} is ready")
+        + p(lead)
+        + hero
+        + info_table(rows, right=True)
+        + button(f"Download {doc_label}", pdf_url)
+        + p("A copy is attached as a PDF. The download link stays valid for 30 days.", top=8)
+    )
+
+    attachments: list[dict] | None = None
+    if pdf_bytes:
+        # Invoice numbers contain slashes (e.g. "DB/26-27/000001") — flatten to a safe filename.
+        safe_number = str(invoice.invoice_number or invoice.id).replace("/", "-")
+        attachments = [{"content": base64.b64encode(pdf_bytes).decode("ascii"), "name": f"{safe_number}.pdf"}]
+
+    send_email_async(
+        to_email,
+        f"{doc_label} {invoice.invoice_number} from {seller_raw}",
+        shell(
+            subject=f"{doc_label} {invoice.invoice_number} from {seller_raw}",
+            preheader=f"{doc_label} {invoice.invoice_number} — {amount}",
+            inner=inner,
+        ),
+        attachments=attachments,
+    )
+
+
+def _redact(to_email: str) -> str:
+    local, _, domain = to_email.partition("@")
+    return f"{local[:1]}***@{domain}" if local and domain else "***"

@@ -4,11 +4,21 @@ import os
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import update as _sa_update
 
 from app import config
 from app.db.models import Client, Invoice
 from app.services import invoice_reports, invoice_service
 from app.services.seller_profile_service import save_seller_profile
+
+
+def _raw_tamper(db, inv, **cols):
+    """Mutate a finalized invoice at the DB level, bypassing the ORM immutability
+    guard (finding L). Models the out-of-band edits / corruption that the
+    reconciliation anomaly detector exists to catch."""
+    db.execute(_sa_update(Invoice).where(Invoice.id == inv.id).values(**cols))
+    db.expire(inv)
+
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
 
@@ -96,8 +106,7 @@ def test_rows_exclude_legacy_receipts_and_other_months(db, enabled):
     # Move a numbered doc out of the window.
     other = _finalized(db, "rep-aug@test.example", pay_ref="pay-aug")
     _, window_end = invoice_reports.month_window_utc(THIS_MONTH)
-    other.issued_at = window_end  # first instant of the NEXT month
-    db.flush()
+    _raw_tamper(db, other, issued_at=window_end)  # first instant of the NEXT month
 
     report = invoice_reports.gstr_document_rows(db, THIS_MONTH)
     numbers = {r["invoice_number"] for r in report}
@@ -137,11 +146,11 @@ def test_anomaly_refund_without_credit_note(db, enabled):
 def test_anomaly_stuck_pdfs_and_broken_totals(db, enabled):
     _seller(db)
     stuck = _finalized(db, "rep-stuck@test.example")
-    stuck.issued_at = datetime(2026, 7, 1, tzinfo=UTC)  # long past the sweep interval
+    _raw_tamper(db, stuck, issued_at=datetime(2026, 7, 1, tzinfo=UTC))  # long past the sweep interval
     broken = _finalized(db, "rep-broken@test.example", pay_ref="pay-broken")
-    # Simulate a corrupted row (should be impossible — that's the point).
-    broken.total_tax_minor = broken.total_tax_minor + 1
-    db.flush()
+    # Simulate a corrupted row via raw SQL — the ORM guard (finding L) now makes
+    # this impossible through normal code; reconciliation is the backstop.
+    _raw_tamper(db, broken, total_tax_minor=broken.total_tax_minor + 1)
 
     anomalies = invoice_reports.reconciliation_anomalies(db)
     assert any(r["id"] == stuck.id for r in anomalies["pdfs_pending"])

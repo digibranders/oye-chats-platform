@@ -188,7 +188,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                           {profile.role}
                         </span>
                       )}
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#2E2A72] text-white border border-indigo-500/20 shadow-sm shrink-0">
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-700 text-white border border-primary-500/20 shadow-sm shrink-0">
                         {entitlements?.planName || 'Free'} Plan
                       </span>
                     </div>

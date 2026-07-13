@@ -414,6 +414,7 @@ def batch_web_ingestion(
     embed_progress_cb: Callable[[int, int], None] | None = None,
     crawl_started_at: float | None = None,
     force_reingest: bool = False,
+    crawl_job_id: str | None = None,
 ) -> dict:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
@@ -441,6 +442,14 @@ def batch_web_ingestion(
             website regardless of what actually changed. Standard+ delta-mode
             leaves this False so the dedup skip continues to make unchanged
             pages free.
+        crawl_job_id: Stable id of the enclosing crawl job (the ARQ ``job_id``),
+            constant across a job's retries but fresh per user-initiated crawl.
+            When set (and ``cost_per_page`` > 0), each page's deduction carries a
+            per-(job, url) idempotency key so an ARQ retry of a partially-charged
+            crawl never re-charges pages it already billed (finding H) — even in
+            ``force_reingest`` mode where the content dedup that normally makes a
+            re-run free is deliberately bypassed. ``None`` (non-ARQ callers) keeps
+            per-page charging exactly as before.
 
     Returns:
         ``{"chunks": int, "pages_charged": int, "credits_deducted": int,
@@ -598,6 +607,17 @@ def batch_web_ingestion(
                 # we never end up with chunks-without-charge or charge-without-
                 # chunks if the worker dies between the two operations.
                 if cost_per_page > 0:
+                    # Per-(job, url) idempotency (finding H): a retry of this
+                    # crawl job re-runs the same URL with the same key, so the
+                    # second charge is a no-op. Keyed on URL (not loop index)
+                    # because the content-dedup skip can shift indices between
+                    # attempts; the URL is the page's stable identity. Scope
+                    # (client/bot) is embedded so keys never collide across
+                    # ledgers. Absent job id → per-page charging as before.
+                    idem_key = None
+                    if crawl_job_id:
+                        url_hash = hashlib.sha256(boundary["url"].encode("utf-8")).hexdigest()[:24]
+                        idem_key = f"ingest:{client_id}:{ledger_bot_id}:{crawl_job_id}:{url_hash}"
                     credit_service.check_and_deduct(
                         session,
                         client_id,
@@ -605,6 +625,7 @@ def batch_web_ingestion(
                         reason=deduct_reason,
                         reference_id=deduct_reference_id,
                         bot_id=ledger_bot_id,
+                        idempotency_key=idem_key,
                     )
                 session.commit()
                 total += count

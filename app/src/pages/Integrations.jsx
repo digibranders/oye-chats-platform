@@ -107,7 +107,7 @@ function EmailChipInput({ emails, onChange, placeholder = 'Type email and press 
     return (
         <div>
             <div
-                className="flex flex-wrap items-center gap-1.5 min-h-[42px] px-3 py-2 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm cursor-text focus-within:ring-2 focus-within:ring-primary-500/20 focus-within:border-primary-500 transition-all"
+                className="flex flex-wrap items-center gap-1.5 min-h-[42px] px-3 py-2 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm cursor-text focus-within:ring-2 focus-within:ring-primary-500/20 focus-within:border-primary-500 transition-all"
                 onClick={() => inputRef.current?.focus()}
             >
                 {emails.map((email) => (
@@ -242,7 +242,7 @@ function EmailSettings() {
     return (
         <div className="space-y-6 max-w-3xl">
             {/* Section 1: Sender Identity */}
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-5">
                     <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center">
                         <Mail size={20} className="text-primary-600 dark:text-primary-400" />
@@ -276,7 +276,7 @@ function EmailSettings() {
             </div>
 
             {/* Section 2: Notification Recipients */}
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100 mb-4">Notification Recipients</h3>
 
                 <div className="space-y-4">
@@ -331,7 +331,7 @@ function EmailSettings() {
             </div>
 
             {/* Section 3: Email Toggles */}
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100 mb-4">Email Notifications</h3>
 
                 <div className="space-y-4">
@@ -456,7 +456,7 @@ function MeetingsSettings() {
 
     const loading = botsLoading || !selectedBot;
 
-    const inputClass = "w-full px-3.5 py-2.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
+    const inputClass = "w-full px-3.5 py-2.5 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
 
     if (loading) {
         return (
@@ -468,7 +468,7 @@ function MeetingsSettings() {
 
     return (
         <div className="space-y-6 max-w-3xl">
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-5">
                     <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center">
                         <Calendar size={20} className="text-primary-600 dark:text-primary-400" />

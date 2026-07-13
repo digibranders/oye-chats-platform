@@ -104,6 +104,8 @@ async def task_crawl_and_ingest(
         concurrency=concurrency,
         ordered_urls=ordered_urls,
         force_reingest=force_reingest,
+        # Stable across ARQ retries → per-page charge idempotency (finding H).
+        crawl_job_id=ctx.get("job_id"),
     )
 
 
@@ -129,6 +131,10 @@ async def task_ingest_web_batch(
 
     logger.info("task_ingest_web_batch: client_id=%d, pages=%d, bot_id=%s", client_id, len(pages), bot_id)
 
+    # ARQ stamps a stable job_id that survives retries — use it as the crawl
+    # idempotency scope so a retried batch never re-charges pages it billed on
+    # the first attempt (finding H).
+    crawl_job_id = ctx.get("job_id")
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
@@ -139,6 +145,7 @@ async def task_ingest_web_batch(
             cost_per_page=cost_per_page,
             deduct_reason=deduct_reason,
             deduct_reference_id=deduct_reference_id,
+            crawl_job_id=crawl_job_id,
         ),
     )
 
@@ -1827,6 +1834,44 @@ async def task_invoice_reconciliation_alert(ctx: dict) -> int:
                 {k: [r["invoice_number"] or r["id"] for r in v] for k, v in anomalies.items() if v},
             )
         return total
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
+
+
+async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
+    """Daily cron: cancel operator-seat add-ons whose parent subscription is gone.
+
+    The seat add-on (P0-3) is a separate Razorpay subscription. The cancel,
+    plan-cutover, and scheduled-downgrade paths all cancel it best-effort and
+    only log on failure, and the cutover re-create is an external call a
+    rolled-back activation can strand — any of which leaves an orphan billing
+    a churned/plan-changed customer ₹499/seat/month forever. This sweep
+    reconciles the gateway against local state, auto-cancels each orphan, and
+    surfaces the outcome loudly (error → Sentry). Returns the number cancelled.
+    """
+    import asyncio
+
+    from app import config
+    from app.db.session import get_session
+    from app.services import seat_addon_reports
+
+    if not config.RAZORPAY_ENABLED:
+        return 0
+
+    def _run() -> int:
+        with get_session() as session:
+            result = seat_addon_reports.reconcile_orphaned_seat_addons(session)
+            session.commit()
+        cancelled = result["cancelled"]
+        failed = result["failed"]
+        if cancelled or failed:
+            logger.error(
+                "orphaned seat add-on reconciliation: cancelled=%s failed=%s",
+                cancelled,
+                failed,
+            )
+        return len(cancelled)
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)

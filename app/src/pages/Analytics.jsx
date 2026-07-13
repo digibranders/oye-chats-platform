@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { TrendingUp, Activity, BarChart3, Zap, MessageSquare, Star, CheckCircle2, XCircle, Target, Users } from 'lucide-react';
 import {
-    AreaChart,
-    Area,
     BarChart,
     Bar,
     XAxis,
@@ -10,18 +8,16 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    RadialBarChart,
-    RadialBar,
     PieChart,
     Pie,
     Cell,
-    Legend,
 } from 'recharts';
 import { motion } from 'framer-motion';
 import { getActivityStats, getTopQuestions, getRatingsSummary, getResolutionSummary, getLeadStats } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
+import { AreaTrendChart, CHART_COLORS } from '../components/ui/charts';
 import StatCard from '../components/ui/StatCard';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
@@ -135,9 +131,9 @@ export default function Analytics({ embedded = false }) {
     const CustomTooltip = ({ active, payload, label }) => {
         if (active && payload && payload.length) {
             return (
-                <div className="bg-white dark:bg-surface-800 p-3 border border-surface-200 dark:border-surface-700 shadow-xl rounded-xl">
+                <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-3 border border-surface-200 dark:border-surface-700 shadow-xl rounded-xl">
                     <p className="text-surface-500 dark:text-surface-400 font-medium text-xs mb-1">{label}</p>
-                    <p className="font-bold text-lg text-surface-900 dark:text-white">{payload[0].value} <span className="text-sm font-normal text-surface-500 dark:text-surface-400">messages</span></p>
+                    <p className="font-bold text-lg text-surface-900 dark:text-white tabular-nums">{payload[0].value} <span className="text-sm font-normal text-surface-500 dark:text-surface-400">messages</span></p>
                 </div>
             );
         }
@@ -201,8 +197,8 @@ export default function Analytics({ embedded = false }) {
                 <motion.div variants={fadeUp} className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
                         { label: 'Total Leads', value: leadStats.total || 0, icon: Users, color: 'text-surface-700 dark:text-surface-200' },
-                        { label: 'MQL', value: leadStats.warm || leadStats.mql || 0, icon: Target, color: 'text-sky-600 dark:text-sky-400' },
-                        { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, icon: TrendingUp, color: 'text-orange-500 dark:text-orange-400' },
+                        { label: 'MQL', value: leadStats.warm || leadStats.mql || 0, icon: Target, color: 'text-primary-600 dark:text-primary-400' },
+                        { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, icon: TrendingUp, color: 'text-amber-600 dark:text-amber-400' },
                         { label: 'SQL (Qualified)', value: leadStats.qualified || leadStats.sql || 0, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400' },
                     ].map(s => (
                         <StatCard key={s.label} icon={s.icon} label={s.label} value={s.value} />
@@ -212,7 +208,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Messages Tab — BarChart */}
             {activeTab === 'messages' && (
-                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                         <div>
                             <h2 className="text-lg font-bold text-surface-900 dark:text-white flex items-center gap-2">
@@ -241,11 +237,11 @@ export default function Analytics({ embedded = false }) {
                     ) : (
                         <ResponsiveContainer width="100%" height={300}>
                             <BarChart data={filteredData} margin={{ top: 16, right: 5, left: -15, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" strokeOpacity={0.4} />
-                                <XAxis dataKey="displayDate" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} dy={8} />
-                                <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} width={35} />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Bar dataKey="messages" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_COLORS.grid} />
+                                <XAxis dataKey="displayDate" tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} dy={8} />
+                                <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} width={35} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(162,28,175,0.05)' }} />
+                                <Bar dataKey="messages" fill={CHART_COLORS.primary} radius={[4, 4, 0, 0]} maxBarSize={40} />
                             </BarChart>
                         </ResponsiveContainer>
                     )}
@@ -255,7 +251,7 @@ export default function Analytics({ embedded = false }) {
             {/* Leads Tab — Funnel + BANT distribution */}
             {activeTab === 'leads' && (
                 <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
                             <Target size={16} className="text-emerald-500" /> Lead Stage Distribution
                         </h2>
@@ -263,15 +259,15 @@ export default function Analytics({ embedded = false }) {
                             <ResponsiveContainer width="100%" height={220}>
                                 <BarChart layout="vertical" data={[
                                     { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, fill: '#94a3b8' },
-                                    { name: 'MQL', value: leadStats.warm || leadStats.mql || 0, fill: '#38bdf8' },
-                                    { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, fill: '#f97316' },
-                                    { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0, fill: '#22c55e' },
+                                    { name: 'MQL', value: leadStats.warm || leadStats.mql || 0, fill: CHART_COLORS.primary },
+                                    { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, fill: CHART_COLORS.amber },
+                                    { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0, fill: CHART_COLORS.emerald },
                                 ]} margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-                                    <XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} />
-                                    <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} width={70} />
+                                    <XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} />
+                                    <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} width={70} />
                                     <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px' }} />
                                     <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={24}>
-                                        {[{ fill: '#94a3b8' }, { fill: '#38bdf8' }, { fill: '#f97316' }, { fill: '#22c55e' }].map((e, i) => (
+                                        {[{ fill: '#94a3b8' }, { fill: CHART_COLORS.primary }, { fill: CHART_COLORS.amber }, { fill: CHART_COLORS.emerald }].map((e, i) => (
                                             <Cell key={i} fill={e.fill} />
                                         ))}
                                     </Bar>
@@ -279,7 +275,7 @@ export default function Analytics({ embedded = false }) {
                             </ResponsiveContainer>
                         ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No lead data</div>}
                     </div>
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
                             <CheckCircle2 size={16} className="text-primary-500" /> Conversion Funnel
                         </h2>
@@ -287,14 +283,14 @@ export default function Analytics({ embedded = false }) {
                             <div className="space-y-3">
                                 {[
                                     { label: 'Total Leads', value: leadStats.total, pct: 100, color: 'bg-surface-400 dark:bg-surface-500' },
-                                    { label: 'MQL+', value: (leadStats.warm || 0) + (leadStats.hot || 0) + (leadStats.qualified || 0), pct: Math.round(((((leadStats.warm || 0) + (leadStats.hot || 0) + (leadStats.qualified || 0)) / leadStats.total) * 100)), color: 'bg-sky-400' },
-                                    { label: 'SAL+', value: (leadStats.hot || 0) + (leadStats.qualified || 0), pct: Math.round(((((leadStats.hot || 0) + (leadStats.qualified || 0)) / leadStats.total) * 100)), color: 'bg-orange-400' },
+                                    { label: 'MQL+', value: (leadStats.warm || 0) + (leadStats.hot || 0) + (leadStats.qualified || 0), pct: Math.round(((((leadStats.warm || 0) + (leadStats.hot || 0) + (leadStats.qualified || 0)) / leadStats.total) * 100)), color: 'bg-primary-400' },
+                                    { label: 'SAL+', value: (leadStats.hot || 0) + (leadStats.qualified || 0), pct: Math.round(((((leadStats.hot || 0) + (leadStats.qualified || 0)) / leadStats.total) * 100)), color: 'bg-amber-400' },
                                     { label: 'SQL', value: leadStats.qualified || 0, pct: Math.round(((leadStats.qualified || 0) / leadStats.total) * 100), color: 'bg-emerald-500' },
                                 ].map(row => (
                                     <div key={row.label}>
                                         <div className="flex justify-between text-xs mb-1">
                                             <span className="text-surface-600 dark:text-surface-300 font-medium">{row.label}</span>
-                                            <span className="text-surface-500 dark:text-surface-400">{row.value} ({row.pct}%)</span>
+                                            <span className="text-surface-500 dark:text-surface-400 tabular-nums">{row.value} ({row.pct}%)</span>
                                         </div>
                                         <div className="h-2 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
                                             <motion.div className={cn('h-full rounded-full', row.color)} initial={{ width: 0 }} animate={{ width: `${row.pct}%` }} transition={{ duration: 0.8, delay: 0.1 }} />
@@ -310,7 +306,7 @@ export default function Analytics({ embedded = false }) {
             {/* Satisfaction Tab — Radial rings */}
             {activeTab === 'satisfaction' && (
                 <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-1 flex items-center gap-2">
                             <Star size={16} className="text-amber-500" /> Rating Distribution
                         </h2>
@@ -331,19 +327,19 @@ export default function Analytics({ embedded = false }) {
                                             <div className="flex-1 h-4 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
                                                 <motion.div className={cn('h-full rounded-full', barColor)} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7, delay: 0.1 }} />
                                             </div>
-                                            <span className="text-xs font-medium text-surface-500 dark:text-surface-400 w-10 text-right shrink-0">{pct}%</span>
+                                            <span className="text-xs font-medium text-surface-500 dark:text-surface-400 w-10 text-right shrink-0 tabular-nums">{pct}%</span>
                                         </div>
                                     );
                                 })}
                                 <div className="pt-2 border-t border-surface-100 dark:border-surface-800 flex items-baseline gap-1.5">
-                                    <span className="text-3xl font-bold text-surface-900 dark:text-white">{ratingsSummary.avg}</span>
+                                    <span className="text-3xl font-bold text-surface-900 dark:text-white tabular-nums">{ratingsSummary.avg}</span>
                                     <span className="text-sm text-surface-400">/ 5</span>
                                     <span className="text-xs text-surface-400 ml-1">({ratingsSummary.total} ratings)</span>
                                 </div>
                             </div>
                         ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No ratings yet</div>}
                     </div>
-                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                         <h2 className="text-base font-bold text-surface-900 dark:text-white mb-1 flex items-center gap-2">
                             <CheckCircle2 size={16} className="text-emerald-500" /> Resolution Rate
                         </h2>
@@ -384,7 +380,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Overview Tab — Original charts */}
             {(embedded || activeTab === 'overview') && (<>
-            <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+            <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <div>
                         <h2 className="text-lg font-bold text-surface-900 dark:text-white flex items-center gap-2">
@@ -422,26 +418,18 @@ export default function Analytics({ embedded = false }) {
                         <p className="text-surface-500 text-sm">No activity data yet</p>
                     </div>
                 ) : (
-                    <ResponsiveContainer width="100%" height={300}>
-                        <AreaChart data={filteredData} margin={{ top: 16, right: 5, left: -15, bottom: 0 }}>
-                            <defs>
-                                <linearGradient id="colorMessages" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />
-                                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                                </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" strokeOpacity={0.5} />
-                            <XAxis dataKey="displayDate" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} dy={8} />
-                            <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} width={35} />
-                            <Tooltip content={<CustomTooltip />} />
-                            <Area type="monotone" dataKey="messages" stroke="#6366f1" strokeWidth={2} fill="url(#colorMessages)" dot={false} activeDot={{ r: 5, fill: '#6366f1', stroke: '#fff', strokeWidth: 2 }} />
-                        </AreaChart>
-                    </ResponsiveContainer>
+                    <AreaTrendChart
+                        data={filteredData}
+                        dataKey="messages"
+                        xKey="displayDate"
+                        height={300}
+                        valueFormatter={(v) => `${v?.toLocaleString?.() ?? v} messages`}
+                    />
                 )}
             </motion.div>
 
             {/* Top Questions */}
-            <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+            <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                 <div className="flex items-center gap-2 mb-5">
                     <div className="w-9 h-9 rounded-lg bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
                         <MessageSquare size={18} className="text-primary-600 dark:text-primary-400" />
@@ -499,7 +487,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Customer Satisfaction (post-chat ratings) */}
             {(isLoading || (ratingsSummary && ratingsSummary.total > 0)) && (
-                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                     <div className="flex items-center gap-2 mb-5">
                         <div className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
                             <Star size={18} className="text-amber-500 dark:text-amber-400" />
@@ -561,7 +549,7 @@ export default function Analytics({ embedded = false }) {
 
             {/* Resolution Rate (post-chat survey) */}
             {(isLoading || (resolutionSummary && resolutionSummary.total > 0)) && (
-                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                <motion.div variants={fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                     <div className="flex items-center gap-2 mb-5">
                         <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
                             <CheckCircle2 size={18} className="text-emerald-500 dark:text-emerald-400" />
@@ -572,7 +560,7 @@ export default function Analytics({ embedded = false }) {
                         </div>
                         {!isLoading && resolutionSummary?.rate != null && (
                             <div className="ml-auto flex items-baseline gap-1">
-                                <span className="text-3xl font-bold text-surface-900 dark:text-white">{resolutionSummary.rate}%</span>
+                                <span className="text-3xl font-bold text-surface-900 dark:text-white tabular-nums">{resolutionSummary.rate}%</span>
                                 <span className="ml-2 text-xs text-surface-400">({resolutionSummary.total} response{resolutionSummary.total !== 1 ? 's' : ''})</span>
                             </div>
                         )}
@@ -590,7 +578,7 @@ export default function Analytics({ embedded = false }) {
                                     <CheckCircle2 size={14} className="text-emerald-500 dark:text-emerald-400" />
                                     <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">Resolved</span>
                                 </div>
-                                <span className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{resolutionSummary?.resolved ?? 0}</span>
+                                <span className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">{resolutionSummary?.resolved ?? 0}</span>
                                 {resolutionSummary?.total > 0 && (
                                     <span className="text-xs text-emerald-500 dark:text-emerald-400/70 ml-1.5">
                                         ({Math.round((resolutionSummary.resolved / resolutionSummary.total) * 100)}%)
@@ -602,7 +590,7 @@ export default function Analytics({ embedded = false }) {
                                     <XCircle size={14} className="text-rose-500 dark:text-rose-400" />
                                     <span className="text-xs font-medium text-rose-700 dark:text-rose-400">Unresolved</span>
                                 </div>
-                                <span className="text-2xl font-bold text-rose-700 dark:text-rose-400">{resolutionSummary?.unresolved ?? 0}</span>
+                                <span className="text-2xl font-bold text-rose-700 dark:text-rose-400 tabular-nums">{resolutionSummary?.unresolved ?? 0}</span>
                                 {resolutionSummary?.total > 0 && (
                                     <span className="text-xs text-rose-500 dark:text-rose-400/70 ml-1.5">
                                         ({Math.round((resolutionSummary.unresolved / resolutionSummary.total) * 100)}%)

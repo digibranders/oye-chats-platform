@@ -1,73 +1,39 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo } from 'react';
 
 const ThemeContext = createContext();
 
 const STORAGE_KEY = 'admin_theme_mode';
-const VALID_MODES = ['system', 'light', 'dark'];
 
-function getSystemTheme() {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-function readStoredMode() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return VALID_MODES.includes(stored) ? stored : 'system';
-  } catch {
-    return 'system';
-  }
-}
-
-function resolveTheme(mode) {
-  return mode === 'system' ? getSystemTheme() : mode;
-}
-
+/**
+ * ThemeProvider — light-only.
+ *
+ * Dark mode is intentionally disabled for now. The provider forces the light
+ * theme on every mount: it strips any `.dark` class off <html>, pins
+ * `color-scheme: light`, and clears any stored dark/system preference so a
+ * returning user never lands in dark. The `dark:` utility classes throughout
+ * the app are left in place (dormant) so dark mode can be re-enabled later by
+ * restoring the previous toggle logic — no markup changes required.
+ *
+ * The context API (`theme`, `mode`, `setMode`) is preserved so existing
+ * consumers keep working; `setMode` is a no-op while light-only.
+ */
 export function ThemeProvider({ children }) {
-  const [mode, setModeState] = useState(readStoredMode);
-  const [theme, setTheme] = useState(() => resolveTheme(readStoredMode()));
-
-  const applyTheme = useCallback((nextTheme) => {
+  useEffect(() => {
     const root = document.documentElement;
-    if (nextTheme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    root.style.colorScheme = nextTheme;
-  }, []);
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [applyTheme, theme]);
-
-  useEffect(() => {
-    setTheme(resolveTheme(mode));
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode !== 'system') return;
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e) => setTheme(e.matches ? 'dark' : 'light');
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, [mode]);
-
-  const setMode = useCallback((next) => {
-    if (!VALID_MODES.includes(next)) return;
+    root.classList.remove('dark');
+    root.style.colorScheme = 'light';
     try {
-      if (next === 'system') {
-        localStorage.removeItem(STORAGE_KEY);
-      } else {
-        localStorage.setItem(STORAGE_KEY, next);
-      }
+      localStorage.removeItem(STORAGE_KEY);
     } catch {
-      // localStorage may be unavailable (private mode); fall through.
+      // localStorage may be unavailable (private mode) — non-fatal.
     }
-    setModeState(next);
   }, []);
 
-  const value = useMemo(() => ({ theme, mode, setMode }), [theme, mode, setMode]);
+  const value = useMemo(
+    () => ({ theme: 'light', mode: 'light', setMode: () => {} }),
+    []
+  );
 
   return (
     <ThemeContext.Provider value={value}>

@@ -57,17 +57,17 @@ const TIER_META = {
         label: 'Unqualified',
         sublabel: 'Cold leads, nurturing required',
         icon: Snowflake,
-        accent: 'text-slate-500 dark:text-slate-400',
-        chip: 'bg-slate-500/10 text-slate-600 dark:text-slate-300',
+        accent: 'text-surface-500 dark:text-surface-400',
+        chip: 'bg-surface-400/10 text-surface-600 dark:text-surface-300',
         dot: '#94a3b8',
     },
     mql: {
         label: 'MQL',
         sublabel: 'Marketing qualified',
         icon: Flame,
-        accent: 'text-sky-600 dark:text-sky-400',
-        chip: 'bg-sky-500/10 text-sky-600 dark:text-sky-300',
-        dot: '#38bdf8',
+        accent: 'text-primary-600 dark:text-primary-400',
+        chip: 'bg-primary-500/10 text-primary-600 dark:text-primary-300',
+        dot: '#a21caf',
     },
     sal: {
         label: 'SAL',
@@ -110,12 +110,12 @@ const FRAMEWORK_OPTIONS = [
 const META_KEYS = new Set(['framework', 'thresholds', 'conversation_order', 'decay', 'behavioral_config']);
 
 const FUNNEL_STAGES = [
-    { key: 'total_visitors', label: 'Visitors', sublabel: 'Site visits', icon: Users, color: '#64748b' },
-    { key: 'engaged', label: 'Engaged', sublabel: 'Started conversation', icon: Activity, color: '#0ea5e9' },
-    { key: 'mql', label: 'MQL', sublabel: 'Marketing qualified', icon: Flame, color: '#6366f1' },
+    { key: 'total_visitors', label: 'Visitors', sublabel: 'Site visits', icon: Users, color: '#94a3b8' },
+    { key: 'engaged', label: 'Engaged', sublabel: 'Started conversation', icon: Activity, color: '#f0abfc' },
+    { key: 'mql', label: 'MQL', sublabel: 'Marketing qualified', icon: Flame, color: '#a21caf' },
     { key: 'sal', label: 'SAL', sublabel: 'Sales accepted', icon: Target, color: '#f59e0b' },
     { key: 'sql', label: 'SQL', sublabel: 'Sales qualified', icon: Trophy, color: '#10b981' },
-    { key: 'meetings_booked', label: 'Meetings', sublabel: 'Calendar booked', icon: Calendar, color: '#22d3ee' },
+    { key: 'meetings_booked', label: 'Meetings', sublabel: 'Calendar booked', icon: Calendar, color: '#86198f' },
 ];
 
 const cloneConfig = (value) => JSON.parse(JSON.stringify(value));
@@ -207,7 +207,7 @@ function KpiInfoButton({ text, label }) {
             >
                 <Info className="w-3.5 h-3.5" />
             </button>
-            <div className="pointer-events-none absolute z-20 right-0 top-full mt-2 w-64 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 px-3 py-2 text-[11px] font-medium text-surface-600 dark:text-surface-300 shadow-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+            <div className="pointer-events-none absolute z-20 right-0 top-full mt-2 w-64 rounded-lg border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 px-3 py-2 text-[11px] font-medium text-surface-600 dark:text-surface-300 shadow-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                 {text}
             </div>
         </div>
@@ -255,7 +255,7 @@ function ScoreGauge({ score }) {
     const circ = Math.PI * radius;
     const offset = circ - (clamped / 100) * circ;
 
-    const color = clamped >= 75 ? '#10b981' : clamped >= 55 ? '#f59e0b' : clamped >= 30 ? '#6366f1' : '#64748b';
+    const color = clamped >= 75 ? '#10b981' : clamped >= 55 ? '#f59e0b' : clamped >= 30 ? '#a21caf' : '#94a3b8';
     const tier = clamped >= 75 ? 'SQL' : clamped >= 55 ? 'SAL' : clamped >= 30 ? 'MQL' : 'Cold';
 
     return (
@@ -263,8 +263,8 @@ function ScoreGauge({ score }) {
             <svg viewBox="0 0 200 120" className="w-full h-full">
                 <defs>
                     <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="#64748b" />
-                        <stop offset="33%" stopColor="#6366f1" />
+                        <stop offset="0%" stopColor="#94a3b8" />
+                        <stop offset="33%" stopColor="#a21caf" />
                         <stop offset="66%" stopColor="#f59e0b" />
                         <stop offset="100%" stopColor="#10b981" />
                     </linearGradient>
@@ -308,7 +308,7 @@ function TierCard({ tierKey, count, total, delay = 0 }) {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay, ease: [0.16, 1, 0.3, 1] }}
-            className="relative rounded-xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-5 transition-colors hover:border-surface-300 dark:hover:border-surface-700"
+            className="relative rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 shadow-sm p-5 transition-colors hover:border-surface-300 dark:hover:border-surface-700"
         >
             <div className="flex items-start justify-between mb-4">
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${meta.chip}`}>
@@ -395,7 +395,7 @@ function ConversionFlow({ counts }) {
 
 function HeroStat({ label, value, sub, icon: Icon, accent = 'text-primary-400', tooltip }) {
     return (
-        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-4">
+        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 shadow-sm p-4">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     {Icon && <Icon size={14} className={accent} />}
@@ -464,7 +464,7 @@ function ScorecardTab() {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                className="rounded-xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-6"
+                className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 shadow-sm p-6"
             >
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 items-center">
                     <div className="space-y-4">
@@ -694,7 +694,7 @@ function ConfigurationTab() {
 
     return (
         <div className="space-y-6">
-            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-5 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-[11px] font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400 mb-2">Select Bot</label>
@@ -761,7 +761,7 @@ function ConfigurationTab() {
                         if (!d) return null;
                         const label = d.label || toLabel(dim);
                         return (
-                            <div key={dim} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+                            <div key={dim} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
                                 {/* ── Card header ─────────────────────────────── */}
                                 <div className="flex items-center gap-4 px-5 py-4 border-b border-surface-100 dark:border-surface-800 bg-surface-50/60 dark:bg-surface-800/40">
                                     {/* Title */}
@@ -771,7 +771,7 @@ function ConfigurationTab() {
                                                 type="text"
                                                 value={label}
                                                 onChange={(e) => updateDimensionName(dim, e.target.value)}
-                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                             />
                                         ) : (
                                             <h3 className="text-base font-bold text-surface-900 dark:text-surface-50 truncate">{label}</h3>
@@ -787,7 +787,7 @@ function ConfigurationTab() {
                                             max={100}
                                             value={d.weight ?? 0}
                                             onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
-                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                         />
                                         <span className="text-[11px] text-surface-400 dark:text-surface-500">/100</span>
                                     </div>
@@ -899,7 +899,7 @@ function ConfigurationTab() {
                         );
                     })}
 
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-5 space-y-4">
                         <h3 className="text-base font-bold text-surface-900 dark:text-surface-50">Thresholds</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             {[
@@ -922,7 +922,7 @@ function ConfigurationTab() {
                         </div>
                     </div>
 
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-5 space-y-4">
                         <div className="flex items-center justify-between">
                             <h3 className="text-base font-bold text-surface-900 dark:text-surface-50">Score Decay</h3>
                             <button
@@ -1047,7 +1047,7 @@ function FunnelVisualization({ stages, maxValue }) {
                                         className="absolute top-1/2 -translate-y-1/2 text-[12.5px] font-semibold tabular-nums"
                                         style={{
                                             left: stage.value > 0 ? `calc(${width}% + 10px)` : '12px',
-                                            color: stage.value > 0 ? stage.color : 'rgb(100 116 139)',
+                                            color: stage.value > 0 ? stage.color : 'rgb(167 159 140)',
                                         }}
                                     >
                                         {stage.value.toLocaleString()}
@@ -1167,11 +1167,11 @@ function FunnelTab() {
                 <>
                     {/* KPI bar */}
                     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                        <HeroStat label="Visitors" value={visitors.toLocaleString()} sub="Top of funnel" icon={Users} accent="text-slate-400" />
-                        <HeroStat label="Engagement" value={`${engagementRate.toFixed(1)}%`} sub={`${engaged.toLocaleString()} engaged`} icon={Activity} accent="text-sky-400" />
-                        <HeroStat label="MQL rate" value={`${mqlRate.toFixed(1)}%`} sub={`${mql.toLocaleString()} qualified`} icon={Flame} accent="text-indigo-400" tooltip={KPI_INFO.mql} />
+                        <HeroStat label="Visitors" value={visitors.toLocaleString()} sub="Top of funnel" icon={Users} accent="text-surface-400" />
+                        <HeroStat label="Engagement" value={`${engagementRate.toFixed(1)}%`} sub={`${engaged.toLocaleString()} engaged`} icon={Activity} accent="text-primary-400" />
+                        <HeroStat label="MQL rate" value={`${mqlRate.toFixed(1)}%`} sub={`${mql.toLocaleString()} qualified`} icon={Flame} accent="text-primary-400" tooltip={KPI_INFO.mql} />
                         <HeroStat label="SQL rate" value={`${sqlRate.toFixed(1)}%`} sub={`${sql.toLocaleString()} sales-ready`} icon={Trophy} accent="text-emerald-400" tooltip={KPI_INFO.sql} />
-                        <HeroStat label="Meeting rate" value={`${meetingRate.toFixed(1)}%`} sub={`${meetings.toLocaleString()} booked`} icon={Calendar} accent="text-cyan-400" />
+                        <HeroStat label="Meeting rate" value={`${meetingRate.toFixed(1)}%`} sub={`${meetings.toLocaleString()} booked`} icon={Calendar} accent="text-primary-400" />
                     </div>
 
                     {/* Funnel visualization */}
@@ -1179,10 +1179,10 @@ function FunnelTab() {
                         initial={{ opacity: 0, y: 12 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                        className="relative overflow-hidden rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-6"
+                        className="relative overflow-hidden rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 shadow-sm p-6"
                     >
                         <div className="mb-5">
-                            <p className="text-sm font-semibold text-surface-900 dark:text-surface-50">Visitor → Meeting funnel</p>
+                            <p className="text-base font-bold text-surface-900 dark:text-surface-50">Visitor → Meeting funnel</p>
                             <p className="text-[11px] text-surface-500 dark:text-surface-400 mt-0.5">Each stage shows volume, conversion rate from previous stage, and drop-off</p>
                         </div>
                         <div className="flex items-center gap-4 px-1 pb-3 mb-1 border-b border-surface-200 dark:border-surface-800 text-[10px] font-semibold uppercase tracking-widest text-surface-500 dark:text-surface-400">

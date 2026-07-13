@@ -28,7 +28,7 @@ export default function GeneralTab({ draft, set }) {
                     onChange={(e) => set('bot_name', e.target.value)}
                     maxLength={40}
                     placeholder="e.g. AI Assistant, Support Bot..."
-                    className="w-full max-w-lg h-10 px-3 rounded-md border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
+                    className="w-full max-w-lg h-10 px-3 rounded-md border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
                 />
             </div>
 
@@ -49,7 +49,7 @@ export default function GeneralTab({ draft, set }) {
                     onChange={(e) => set('launcher_name', e.target.value)}
                     maxLength={50}
                     placeholder="e.g. Have Questions?"
-                    className="w-full max-w-lg h-10 px-3 rounded-md border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
+                    className="w-full max-w-lg h-10 px-3 rounded-md border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
                 />
             </div>
         </div>

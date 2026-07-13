@@ -160,7 +160,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
                     'disabled:opacity-60 disabled:cursor-not-allowed',
                     featured
                       ? 'border-primary-500/50 bg-primary-50/50 dark:bg-primary-500/5 hover:border-primary-500'
-                      : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600',
+                      : 'border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600',
                   )}
                 >
                   {pack.badge && (

@@ -33,6 +33,10 @@ IST = ZoneInfo("Asia/Kolkata")
 # collide with it. Credit notes (Phase 5) will use "CN".
 RECEIPT_SERIES_PREFIX = "RCT"
 
+# Rule 46(f): recipient name + address are mandatory on a B2C (unregistered)
+# tax invoice at or above this taxable value. ₹50,000 in paise.
+_RULE46F_B2C_THRESHOLD_PAISE = 5_000_000
+
 
 def request_pdf_render_soon() -> None:
     """Nudge the worker to render freshly finalized invoice PDFs now.
@@ -162,7 +166,13 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     buyer_state = buyer.billing_state_code if buyer else None
     buyer_country = buyer.billing_country if buyer else None
     kind = supply_kind(seller.state_code, buyer_state, buyer_country)
-    issued = datetime.now(UTC)
+    # Finding G: date the document (and its FY serial bucket) from the actual
+    # payment instant, not the wall-clock at finalize. A charge captured at
+    # 23:59 IST on 31 Mar but finalized after midnight must still be numbered
+    # and dated in the old FY / GSTR period. Fall back to period_end, then now.
+    issued = invoice.paid_at or invoice.period_end or datetime.now(UTC)
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=UTC)
 
     if seller.gst_enabled:
         breakup = compute_tax(
@@ -204,6 +214,27 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     # full Rule-46 line (HSN/SAC, qty, per-line taxable) from the header fields
     # above. Enrich this list if multi-line invoices (plan + overage) are added.
     invoice.line_items = [{"description": invoice.description, "amount_minor": invoice.amount_cents}]
+
+    # Rule 46(f): a tax invoice to an UNREGISTERED (B2C) recipient for a taxable
+    # value of ₹50,000 or more MUST carry the recipient's name and address. We
+    # cannot block issuance (that would leave the customer with no invoice at
+    # all), so we flag it loudly for follow-up capture when the buyer record
+    # lacks those details (the PDF otherwise falls back to a bare "Customer").
+    if invoice.invoice_type == "tax_invoice":
+        snap = invoice.buyer_snapshot or {}
+        is_b2c = not (snap.get("gstin") or "").strip()
+        if is_b2c and int(invoice.amount_cents or 0) >= _RULE46F_B2C_THRESHOLD_PAISE:
+            has_name = bool((snap.get("legal_name") or snap.get("name") or "").strip())
+            has_address = bool((snap.get("billing_address") or "").strip())
+            if not (has_name and has_address):
+                logger.warning(
+                    "Rule 46(f): high-value B2C tax invoice %s (₹%.2f) is missing recipient "
+                    "%s — capture buyer details for GST compliance.",
+                    invoice.invoice_number,
+                    int(invoice.amount_cents or 0) / 100,
+                    "name and address" if not (has_name or has_address) else ("name" if not has_name else "address"),
+                )
+
     session.flush()
     return True
 
@@ -269,6 +300,19 @@ def create_credit_note(
     )
     if existing is not None:
         return existing
+
+    # Serialize reversals against the SAME original invoice with a row lock.
+    # Without this, two independent reversal events for the same invoice —
+    # e.g. a partial refund and a dispute-lost chargeback delivered by
+    # separate, overlapping webhook transactions — can each read
+    # ``already_reversed`` before either commits, both see 0 already
+    # reversed, and both issue a full-amount credit note: over-reversing the
+    # document's tax beyond what it ever collected. The second caller blocks
+    # here until the first's transaction commits, then correctly observes
+    # its credit note in the sum below. ``provider_ref`` idempotency (the
+    # ``existing`` check above) only covers exact-replay of the SAME event;
+    # it does not protect against two DISTINCT events racing each other.
+    session.execute(select(Invoice.id).where(Invoice.id == original.id).with_for_update())
 
     # Reversals can never exceed the invoiced consideration CUMULATIVELY —
     # Razorpay caps refunds at the captured amount, but a partial refund

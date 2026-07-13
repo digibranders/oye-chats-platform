@@ -227,17 +227,17 @@ function copyFor(view, planName) {
 const THEMES = {
   info: {
     container:
-      'border-blue-200 bg-blue-50 text-blue-950 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100',
-    iconBg: 'bg-blue-100 dark:bg-blue-500/20',
-    iconColor: 'text-blue-600 dark:text-blue-300',
-    headline: 'text-blue-950 dark:text-blue-50',
-    body: 'text-blue-900/80 dark:text-blue-100/80',
+      'border-primary-200 bg-primary-50 text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-100',
+    iconBg: 'bg-primary-100 dark:bg-primary-500/20',
+    iconColor: 'text-primary-600 dark:text-primary-300',
+    headline: 'text-primary-900 dark:text-primary-50',
+    body: 'text-primary-900/80 dark:text-primary-100/80',
     button:
-      'bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-500 ' +
-      'dark:bg-blue-500 dark:hover:bg-blue-400',
+      'bg-primary-600 text-white hover:bg-primary-700 focus-visible:ring-primary-500 ' +
+      'dark:bg-primary-500 dark:hover:bg-primary-400',
     dismiss:
-      'text-blue-700 hover:bg-blue-100 focus-visible:ring-blue-500 ' +
-      'dark:text-blue-200 dark:hover:bg-blue-500/20',
+      'text-primary-700 hover:bg-primary-100 focus-visible:ring-primary-500 ' +
+      'dark:text-primary-200 dark:hover:bg-primary-500/20',
   },
   warning: {
     container:

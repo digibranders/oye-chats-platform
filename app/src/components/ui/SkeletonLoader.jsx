@@ -24,7 +24,7 @@ export function SkeletonText({ lines = 3, width = 'w-32', height = 'h-4', classN
 
 export function SkeletonCard({ className }) {
   return (
-    <div className={cn('rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-6', className)}>
+    <div className={cn('rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-6', className)}>
       <div className="space-y-4">
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-8 w-20" />
@@ -55,7 +55,7 @@ export function SkeletonTable({ rows = 5, cols = 4 }) {
 
 export function SkeletonChart({ className }) {
   return (
-    <div className={cn('rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 p-6', className)}>
+    <div className={cn('rounded-2xl border border-surface-200 dark:border-surface-800 bg-[var(--bg-card)] dark:bg-surface-900 p-6', className)}>
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <Skeleton className="h-5 w-40" />

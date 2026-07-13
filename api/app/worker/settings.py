@@ -40,6 +40,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_process_webhook_retries,
     task_promote_scheduled_downgrades,
     task_prune_stale_events,
+    task_reconcile_orphaned_seat_addons,
     task_reembed_document,
     task_render_invoice_pdfs,
     task_renew_due_subscriptions,
@@ -142,6 +143,7 @@ class WorkerSettings:
         task_reembed_document,
         task_render_invoice_pdfs,
         task_invoice_reconciliation_alert,
+        task_reconcile_orphaned_seat_addons,
         task_auto_recrawl_sweep,
         task_auto_recrawl_bot,
         task_prune_stale_events,
@@ -180,6 +182,11 @@ class WorkerSettings:
         # Invoice anomaly sweep — daily at 01:00 UTC, after the midnight
         # billing crons have settled.
         cron(task_invoice_reconciliation_alert, hour=1, minute=0),
+        # Orphaned seat-add-on sweep — daily at 01:20 UTC, offset from the
+        # invoice anomaly sweep. Cancels ₹499/seat add-on subscriptions whose
+        # parent plan is gone (best-effort inline cancels that failed, or a
+        # cutover re-create stranded by a rolled-back activation).
+        cron(task_reconcile_orphaned_seat_addons, hour=1, minute=20),
         # Auto-recrawl sweep — hourly at :05. Fires ``task_auto_recrawl_bot``
         # for every bot whose ``next_recrawl_at`` has elapsed. Offset from
         # the :00/:30 webhook / heartbeat crons and the :01/… invoice-PDF

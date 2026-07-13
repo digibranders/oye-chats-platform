@@ -751,6 +751,52 @@ export const updateClientSettings = async (settings, botId) => {
 };
 
 /**
+ * Fetch the curated brand-tone preset catalog (chips + prefill text).
+ * @returns {Promise<Array<{key: string, label: string, text: string}>>}
+ */
+export const getBrandTonePresets = async () => {
+    try {
+        const response = await api.get('/bots/brand-tone-presets');
+        return Array.isArray(response.data?.presets) ? response.data.presets : [];
+    } catch (error) {
+        console.error('API Error fetching brand tone presets:', error);
+        throw buildApiError(error, 'Failed to load brand tone presets');
+    }
+};
+
+/**
+ * Re-classify a bot's brand tone from its already-crawled content (no re-crawl).
+ * Writes the detected preset + text on the server and unlocks the field.
+ * @param {number} botId
+ * @returns {Promise<{brand_tone: string, brand_tone_preset: string}>}
+ */
+export const detectBrandTone = async (botId) => {
+    try {
+        const response = await api.post(`/bots/${botId}/brand-tone/detect`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error detecting brand tone:', error);
+        throw buildApiError(error, 'Failed to detect brand tone');
+    }
+};
+
+/**
+ * Generate a 1-2 sentence sample bot reply in the given (unsaved) tone.
+ * @param {number} botId
+ * @param {string} brandTone - the current draft tone text
+ * @returns {Promise<{sample: string}>}
+ */
+export const previewBrandTone = async (botId, brandTone) => {
+    try {
+        const response = await api.post(`/bots/${botId}/brand-tone/preview`, { brand_tone: brandTone });
+        return response.data;
+    } catch (error) {
+        console.error('API Error previewing brand tone:', error);
+        throw buildApiError(error, 'Failed to preview brand tone');
+    }
+};
+
+/**
  * Uploads a logo file to Backblaze B2 via the backend.
  * @param {File} file - The image file to upload
  * @returns {Promise<Object>} The API response with the public URL
