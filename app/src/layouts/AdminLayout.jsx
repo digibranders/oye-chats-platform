@@ -6,12 +6,11 @@ import { submitPlatformFeedback } from '../services/api';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
-import OnboardingWizard from '../components/OnboardingWizard';
 import TrialBanner from '../components/TrialBanner';
 import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
 import { PushProvider, usePush } from '../context/PushContext';
-import { BotProvider, useBotContext } from '../context/BotContext';
+import { BotProvider } from '../context/BotContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
 
@@ -32,7 +31,6 @@ function AdminLayoutInner() {
   });
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < MD_BREAKPOINT);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackTab, setFeedbackTab] = useState('send');
   const [feedbackHighlightId, setFeedbackHighlightId] = useState(null);
@@ -46,7 +44,6 @@ function AdminLayoutInner() {
   const handleFeedbackSubmit = async (payload) => {
     await submitPlatformFeedback(payload);
   };
-  const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -109,13 +106,6 @@ function AdminLayoutInner() {
   useEffect(() => {
     localStorage.setItem('sidebar_open', String(isSidebarOpen));
   }, [isSidebarOpen]);
-
-  useEffect(() => {
-    const isOperator = localStorage.getItem('auth_type') === 'operator';
-    if (!isOperator && !botsLoading && !botsError && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
-      setShowOnboarding(true); // eslint-disable-line react-hooks/set-state-in-effect -- one-time init from external state (localStorage)
-    }
-  }, [botsLoading, botsError, bots.length]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -197,13 +187,6 @@ function AdminLayoutInner() {
       </div>
 
       <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
-
-      {showOnboarding && (
-        <OnboardingWizard
-          onComplete={() => setShowOnboarding(false)}
-          onRefreshBots={refreshBots}
-        />
-      )}
 
       {/* Floating right-edge feedback tab */}
       <button
