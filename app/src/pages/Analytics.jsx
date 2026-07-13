@@ -240,7 +240,7 @@ export default function Analytics({ embedded = false }) {
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_COLORS.grid} />
                                 <XAxis dataKey="displayDate" tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} dy={8} />
                                 <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: CHART_COLORS.axis, fontSize: 11 }} width={35} />
-                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(47,92,255,0.05)' }} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(162,28,175,0.05)' }} />
                                 <Bar dataKey="messages" fill={CHART_COLORS.primary} radius={[4, 4, 0, 0]} maxBarSize={40} />
                             </BarChart>
                         </ResponsiveContainer>

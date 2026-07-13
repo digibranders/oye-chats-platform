@@ -70,7 +70,7 @@ export default function LiveChatRequestBanner() {
                     {/* Outer glow */}
                     <motion.div
                         className="absolute -inset-1 rounded-2xl opacity-40 blur-xl pointer-events-none"
-                        style={{ background: 'linear-gradient(135deg, #3d66ff, #6084ff, #3d66ff)' }}
+                        style={{ background: 'linear-gradient(135deg, #a21caf, #d946ef, #a21caf)' }}
                         animate={{ opacity: hovered ? 0.55 : 0.3 }}
                         transition={{ duration: 0.3 }}
                     />
@@ -79,8 +79,8 @@ export default function LiveChatRequestBanner() {
                     <div
                         className="relative rounded-2xl overflow-hidden backdrop-blur-xl"
                         style={{
-                            background: 'linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(15, 20, 50, 0.97))',
-                            border: '1px solid rgba(61, 102, 255, 0.2)',
+                            background: 'linear-gradient(145deg, rgba(24, 18, 28, 0.95), rgba(30, 16, 36, 0.97))',
+                            border: '1px solid rgba(162, 28, 175, 0.2)',
                             boxShadow: '0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
                         }}
                     >
@@ -88,7 +88,7 @@ export default function LiveChatRequestBanner() {
                         <motion.div
                             className="h-[2px] rounded-full"
                             style={{
-                                background: 'linear-gradient(90deg, #3d66ff, #6084ff)',
+                                background: 'linear-gradient(90deg, #a21caf, #d946ef)',
                                 transformOrigin: 'left',
                             }}
                             initial={{ scaleX: 1 }}
@@ -137,8 +137,8 @@ export default function LiveChatRequestBanner() {
                                     whileTap={{ scale: 0.97 }}
                                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-[7px] rounded-lg text-[12px] font-semibold text-white transition-all focus:outline-none focus:ring-2 focus:ring-primary-400/50"
                                     style={{
-                                        background: 'linear-gradient(135deg, #3d66ff, #2348d6)',
-                                        boxShadow: '0 2px 12px rgba(61, 102, 255, 0.35)',
+                                        background: 'linear-gradient(135deg, #a21caf, #86198f)',
+                                        boxShadow: '0 2px 12px rgba(162, 28, 175, 0.35)',
                                     }}
                                 >
                                     <MessageSquareText size={13} />

@@ -1,9 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * Branded chart primitives (Shopeers-grade, cobalt/ivory theme).
+ * Branded chart primitives (Shopeers-grade, violet/paper theme).
  *
  * These wrap Recharts with the OyeChats design tokens so every chart across
- * the app reads as one system: cobalt line + soft gradient fill, dashed
+ * the app reads as one system: violet line + soft gradient fill, dashed
  * comparison series, tabular-num tooltips, muted grid. Import these instead
  * of hand-rolling Recharts per page.
  *
@@ -18,16 +18,16 @@ import {
 } from 'recharts';
 import { cn } from '../../lib/utils';
 
-// Brand palette for data-viz. Primary = cobalt; series scale for multi-line.
+// Brand palette for data-viz. Primary = violet; series scale for multi-line.
 export const CHART_COLORS = {
-  primary: '#2f5cff',
-  primarySoft: '#97b0ff',
+  primary: '#a21caf',
+  primarySoft: '#f0abfc',
   emerald: '#10b981',
   amber: '#f59e0b',
   rose: '#f43f5e',
   grid: 'rgba(16,24,40,0.06)',
   axis: '#a79f8c',
-  series: ['#2f5cff', '#10b981', '#f59e0b', '#97b0ff', '#f43f5e'],
+  series: ['#a21caf', '#10b981', '#f59e0b', '#f0abfc', '#f43f5e'],
 };
 
 const AXIS_TICK = { fontSize: 11, fill: CHART_COLORS.axis, fontWeight: 500 };
@@ -53,7 +53,7 @@ export function BrandTooltip({ active, payload, label, valueFormatter }) {
 }
 
 /**
- * Area trend chart — cobalt line + soft gradient fill, optional dashed
+ * Area trend chart — violet line + soft gradient fill, optional dashed
  * comparison series (compareKey).
  */
 export function AreaTrendChart({
@@ -100,7 +100,7 @@ export function AreaTrendChart({
   );
 }
 
-/** Bar chart with one highlighted (cobalt) bar; the rest muted. */
+/** Bar chart with one highlighted (violet) bar; the rest muted. */
 export function MiniBarChart({
   data = [],
   dataKey = 'value',
@@ -115,10 +115,10 @@ export function MiniBarChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
           <XAxis dataKey={xKey} tick={AXIS_TICK} tickLine={false} axisLine={false} dy={6} />
-          <Tooltip content={<BrandTooltip valueFormatter={valueFormatter} />} cursor={{ fill: 'rgba(47,92,255,0.05)' }} />
+          <Tooltip content={<BrandTooltip valueFormatter={valueFormatter} />} cursor={{ fill: 'rgba(162,28,175,0.05)' }} />
           <Bar dataKey={dataKey} radius={[6, 6, 0, 0]} maxBarSize={30}>
             {data.map((_, i) => (
-              <Cell key={i} fill={i === highlightIndex ? CHART_COLORS.primary : 'rgba(47,92,255,0.14)'} />
+              <Cell key={i} fill={i === highlightIndex ? CHART_COLORS.primary : 'rgba(162,28,175,0.14)'} />
             ))}
           </Bar>
         </BarChart>

@@ -288,38 +288,38 @@ export default function NotificationBell() {
                                             <ellipse cx="80" cy="98" rx="28" ry="8" fill="#000000" fillOpacity="0.3" filter="url(#shadow-blur)" />
                                             
                                             {/* Sparkles / Stars */}
-                                            <path d="M55,46 Q55,52 49,52 Q55,52 55,58 Q55,52 61,52 Q55,52 55,46 Z" fill="#3d66ff" />
-                                            <circle cx="68" cy="42" r="1.5" fill="#6084ff" />
-                                            <circle cx="81" cy="48" r="1.5" fill="#6084ff" opacity="0.8" />
-                                            <circle cx="106" cy="35" r="1.5" fill="#6084ff" opacity="0.6" />
+                                            <path d="M55,46 Q55,52 49,52 Q55,52 55,58 Q55,52 61,52 Q55,52 55,46 Z" fill="#a21caf" />
+                                            <circle cx="68" cy="42" r="1.5" fill="#d946ef" />
+                                            <circle cx="81" cy="48" r="1.5" fill="#d946ef" opacity="0.8" />
+                                            <circle cx="106" cy="35" r="1.5" fill="#d946ef" opacity="0.6" />
 
                                             {/* Inside Back Left Wall */}
-                                            <polygon points="50,68 80,53 80,75 50,90" fill="#0F162B" />
+                                            <polygon points="50,68 80,53 80,75 50,90" fill="#1B0F26" />
                                             {/* Inside Back Right Wall */}
-                                            <polygon points="80,53 110,68 110,90 80,75" fill="#161E38" />
+                                            <polygon points="80,53 110,68 110,90 80,75" fill="#241531" />
 
                                             {/* Flap Back Left (folding out/up) */}
-                                            <polygon points="50,68 80,53 65,45 35,60" fill="#202A54" />
+                                            <polygon points="50,68 80,53 65,45 35,60" fill="#33204F" />
                                             {/* Flap Back Right (folding out/up) */}
-                                            <polygon points="80,53 110,68 125,60 95,45" fill="#283568" />
+                                            <polygon points="80,53 110,68 125,60 95,45" fill="#402863" />
 
                                             {/* Curved dotted flight path */}
-                                            <path d="M80,72 C88,77 101,70 102,56 C103,46 95,43 100,31" stroke="#3d66ff" strokeWidth="1.5" strokeDasharray="3 3" strokeLinecap="round" opacity="0.8" />
+                                            <path d="M80,72 C88,77 101,70 102,56 C103,46 95,43 100,31" stroke="#a21caf" strokeWidth="1.5" strokeDasharray="3 3" strokeLinecap="round" opacity="0.8" />
 
                                             {/* Box Left Side Outer */}
-                                            <polygon points="50,68 80,83 80,105 50,90" fill="#1B2544" />
+                                            <polygon points="50,68 80,83 80,105 50,90" fill="#2B1940" />
                                             {/* Box Right Side Outer */}
-                                            <polygon points="80,83 110,68 110,90 80,105" fill="#252F5A" />
+                                            <polygon points="80,83 110,68 110,90 80,105" fill="#392556" />
 
                                             {/* Flap Front Left (folding out/down) */}
-                                            <polygon points="50,68 80,83 65,91 35,76" fill="#3D4B84" />
+                                            <polygon points="50,68 80,83 65,91 35,76" fill="#5B3D80" />
                                             {/* Flap Front Right (folding out/down) */}
-                                            <polygon points="80,83 110,68 125,76 95,91" fill="#313E75" />
+                                            <polygon points="80,83 110,68 125,76 95,91" fill="#4C3170" />
 
                                             {/* Paper Airplane (Launching) */}
                                             <g transform="translate(96, 20) rotate(-10)">
-                                                <path d="M0,8 L16,0 L11,14 L8,9 Z" fill="#3d66ff" />
-                                                <path d="M8,9 L11,14 L11,9 Z" fill="#2348d6" />
+                                                <path d="M0,8 L16,0 L11,14 L8,9 Z" fill="#a21caf" />
+                                                <path d="M8,9 L11,14 L11,9 Z" fill="#86198f" />
                                             </g>
                                         </svg>
                                         <p className="text-[16px] font-bold text-surface-900 dark:text-white mb-2 text-center">

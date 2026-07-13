@@ -421,7 +421,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                 onClick={() => setDropdownOpen(!dropdownOpen)}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl bg-[var(--bg-card)] dark:bg-surface-900/80 border border-surface-200 dark:border-surface-800 shadow-sm hover:border-surface-300 dark:hover:border-surface-700 transition-all text-left group"
               >
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-400 flex items-center justify-center flex-shrink-0 shadow-[0_3px_8px_rgba(47,92,255,0.28)]">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-400 flex items-center justify-center flex-shrink-0 shadow-[0_3px_8px_rgba(162,28,175,0.28)]">
                   <Bot size={15} className="text-white" />
                 </div>
                 <div className="min-w-0 flex-1">

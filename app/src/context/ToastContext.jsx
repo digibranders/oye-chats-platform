@@ -53,9 +53,9 @@ const TYPE_STYLES = {
     },
     info: {
         icon: Info,
-        iconWrap: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
-        accent: 'bg-sky-500',
-        ring: 'ring-sky-500/20 dark:ring-sky-400/20',
+        iconWrap: 'bg-primary-100 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400',
+        accent: 'bg-primary-500',
+        ring: 'ring-primary-500/20 dark:ring-primary-400/20',
         label: 'Info',
     },
     loading: {

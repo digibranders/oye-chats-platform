@@ -67,7 +67,7 @@ const TIER_META = {
         icon: Flame,
         accent: 'text-primary-600 dark:text-primary-400',
         chip: 'bg-primary-500/10 text-primary-600 dark:text-primary-300',
-        dot: '#3d66ff',
+        dot: '#a21caf',
     },
     sal: {
         label: 'SAL',
@@ -111,11 +111,11 @@ const META_KEYS = new Set(['framework', 'thresholds', 'conversation_order', 'dec
 
 const FUNNEL_STAGES = [
     { key: 'total_visitors', label: 'Visitors', sublabel: 'Site visits', icon: Users, color: '#94a3b8' },
-    { key: 'engaged', label: 'Engaged', sublabel: 'Started conversation', icon: Activity, color: '#97b0ff' },
-    { key: 'mql', label: 'MQL', sublabel: 'Marketing qualified', icon: Flame, color: '#2f5cff' },
+    { key: 'engaged', label: 'Engaged', sublabel: 'Started conversation', icon: Activity, color: '#f0abfc' },
+    { key: 'mql', label: 'MQL', sublabel: 'Marketing qualified', icon: Flame, color: '#a21caf' },
     { key: 'sal', label: 'SAL', sublabel: 'Sales accepted', icon: Target, color: '#f59e0b' },
     { key: 'sql', label: 'SQL', sublabel: 'Sales qualified', icon: Trophy, color: '#10b981' },
-    { key: 'meetings_booked', label: 'Meetings', sublabel: 'Calendar booked', icon: Calendar, color: '#2348d6' },
+    { key: 'meetings_booked', label: 'Meetings', sublabel: 'Calendar booked', icon: Calendar, color: '#86198f' },
 ];
 
 const cloneConfig = (value) => JSON.parse(JSON.stringify(value));
@@ -255,7 +255,7 @@ function ScoreGauge({ score }) {
     const circ = Math.PI * radius;
     const offset = circ - (clamped / 100) * circ;
 
-    const color = clamped >= 75 ? '#10b981' : clamped >= 55 ? '#f59e0b' : clamped >= 30 ? '#3d66ff' : '#94a3b8';
+    const color = clamped >= 75 ? '#10b981' : clamped >= 55 ? '#f59e0b' : clamped >= 30 ? '#a21caf' : '#94a3b8';
     const tier = clamped >= 75 ? 'SQL' : clamped >= 55 ? 'SAL' : clamped >= 30 ? 'MQL' : 'Cold';
 
     return (
@@ -264,7 +264,7 @@ function ScoreGauge({ score }) {
                 <defs>
                     <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
                         <stop offset="0%" stopColor="#94a3b8" />
-                        <stop offset="33%" stopColor="#3d66ff" />
+                        <stop offset="33%" stopColor="#a21caf" />
                         <stop offset="66%" stopColor="#f59e0b" />
                         <stop offset="100%" stopColor="#10b981" />
                     </linearGradient>

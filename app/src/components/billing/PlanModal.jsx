@@ -41,7 +41,7 @@ const ACCENTS = {
     },
     primary: {
         rail:       'border-surface-200 dark:border-surface-700 hover:border-primary-300 dark:hover:border-primary-500/40',
-        railActive: 'border-primary-500 dark:border-primary-500/70 bg-primary-50/70 dark:bg-primary-500/10 shadow-[0_0_0_3px_rgba(47,92,255,0.18)]',
+        railActive: 'border-primary-500 dark:border-primary-500/70 bg-primary-50/70 dark:bg-primary-500/10 shadow-[0_0_0_3px_rgba(162,28,175,0.18)]',
         chip:       'bg-primary-100 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300',
         cta:        'bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-700 hover:to-primary-600 text-white',
     },

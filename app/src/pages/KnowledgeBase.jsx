@@ -658,7 +658,7 @@ export default function KnowledgeBase() {
   const fileTypeIcon = (name) => {
     const ext = name.split('.').pop().toLowerCase();
     if (ext === 'pdf') return 'bg-rose-50 dark:bg-rose-500/10 text-rose-500';
-    if (ext === 'docx') return 'bg-sky-50 dark:bg-sky-500/10 text-sky-500';
+    if (ext === 'docx') return 'bg-primary-50 dark:bg-primary-500/10 text-primary-500';
     return 'bg-surface-100 dark:bg-surface-800 text-surface-500';
   };
 

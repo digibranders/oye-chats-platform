@@ -84,7 +84,7 @@ const BantScoreGauge = ({ score }) => {
     
     // Smooth floating point value for sub-pixel circle stroke offsets
     const dashOffset = circumference - (animatedScore / 100) * circumference;
-    const color = score >= 75 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 25 ? '#3d66ff' : '#94a3b8';
+    const color = score >= 75 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 25 ? '#a21caf' : '#94a3b8';
 
     return (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
@@ -559,7 +559,7 @@ export default function Leads() {
                                                         className="h-full rounded-full transition-all"
                                                         style={{
                                                             width: `${lead.score}%`,
-                                                            backgroundColor: lead.score >= 75 ? '#10b981' : lead.score >= 50 ? '#f59e0b' : lead.score >= 25 ? '#3d66ff' : '#94a3b8',
+                                                            backgroundColor: lead.score >= 75 ? '#10b981' : lead.score >= 50 ? '#f59e0b' : lead.score >= 25 ? '#a21caf' : '#94a3b8',
                                                         }}
                                                     />
                                                 </div>
