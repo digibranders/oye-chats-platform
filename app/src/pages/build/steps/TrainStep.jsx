@@ -4,6 +4,8 @@ import { useCrawl } from '../../../context/CrawlContext';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
 import { discoverCrawlUrls, recordActivationEvent } from '../../../services/api';
+import { Button } from '../../../components/ui/Button';
+import Progress from '../../../components/ui/Progress';
 
 function normalizeUrl(url) {
     const t = (url || '').trim();
@@ -135,20 +137,18 @@ export default function TrainStep({ onDone }) {
         if (crawl.status === 'done') {
             const trained = crawl.result?.pages_processed ?? crawl.pagesCrawled ?? 0;
             return (
-                <div className="flex flex-col gap-4">
-                    <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
-                        <Check size={18} className="text-emerald-500" />
-                        <p className="text-sm font-medium text-surface-800 dark:text-surface-100">
+                <div className="flex flex-col gap-5">
+                    <div className="flex items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-50 dark:bg-emerald-900/15 px-4 py-3.5">
+                        <span className="w-7 h-7 rounded-full grid place-items-center bg-emerald-500 text-white shrink-0">
+                            <Check size={15} strokeWidth={3} />
+                        </span>
+                        <p className="text-sm font-medium text-[var(--text)]">
                             Trained on {trained} page{trained === 1 ? '' : 's'} from {host}.
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => onDone?.()}
-                        className="self-start inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-primary-500 text-white hover:bg-primary-600"
-                    >
+                    <Button size="lg" className="self-start" onClick={() => onDone?.()}>
                         Continue to testing <ArrowRight size={16} />
-                    </button>
+                    </Button>
                 </div>
             );
         }
@@ -156,36 +156,22 @@ export default function TrainStep({ onDone }) {
             return (
                 <div className="flex flex-col gap-4">
                     <p className="text-sm text-rose-500">{crawl.error || 'Training did not finish. You can try again.'}</p>
-                    <button
-                        type="button"
-                        onClick={() => setStarted(false)}
-                        className="self-start inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-surface-300 dark:border-surface-700"
-                    >
+                    <Button variant="outline" size="md" className="self-start" onClick={() => setStarted(false)}>
                         <RefreshCw size={15} /> Back to pages
-                    </button>
+                    </Button>
                 </div>
             );
         }
         const denom = crawl.discoveredTotal || total || 0;
         const pages = crawl.pagesCrawled || 0;
-        const pct = denom ? Math.min(100, Math.round((pages / denom) * 100)) : null;
         return (
             <div className="flex flex-col gap-4">
                 <div className="flex items-center gap-3">
                     <Loader2 size={18} className="animate-spin text-primary-500" />
-                    <p className="text-sm font-medium text-surface-800 dark:text-surface-100">
-                        {crawl.phase || 'Training your agent…'}
-                    </p>
+                    <p className="text-sm font-medium text-[var(--text)]">{crawl.phase || 'Training your agent…'}</p>
                 </div>
-                {pct !== null && (
-                    <div className="h-2 rounded-full bg-surface-200 dark:bg-surface-800 overflow-hidden">
-                        <div
-                            className="h-full bg-primary-500 transition-[width] duration-500 motion-reduce:transition-none"
-                            style={{ width: `${pct}%` }}
-                        />
-                    </div>
-                )}
-                <p className="font-mono text-xs text-surface-400 dark:text-surface-500 truncate">
+                {denom > 0 && <Progress value={pages} max={denom} color="primary" size="md" />}
+                <p className="font-mono text-xs text-[var(--text-muted)] truncate">
                     {pages}
                     {denom ? ` / ${denom}` : ''} pages{crawl.currentUrl ? ` · ${crawl.currentUrl}` : ''}
                 </p>
@@ -196,10 +182,10 @@ export default function TrainStep({ onDone }) {
     // ---- Discovering ----
     if (discovering) {
         return (
-            <div className="min-h-[200px] flex flex-col items-center justify-center gap-3 text-surface-500 dark:text-surface-400">
+            <div className="min-h-[200px] flex flex-col items-center justify-center gap-3 text-[var(--text-muted)]">
                 <Loader2 size={22} className="animate-spin text-primary-500" />
                 <p className="text-sm">
-                    Scanning <span className="font-mono text-surface-700 dark:text-surface-200">{host}</span> for pages…
+                    Scanning <span className="font-mono text-[var(--text-secondary)]">{host}</span> for pages…
                 </p>
             </div>
         );
@@ -210,13 +196,9 @@ export default function TrainStep({ onDone }) {
         return (
             <div className="flex flex-col gap-4">
                 <p className="text-sm text-rose-500">{discoverError}</p>
-                <button
-                    type="button"
-                    onClick={retry}
-                    className="self-start inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-surface-300 dark:border-surface-700"
-                >
+                <Button variant="outline" size="md" className="self-start" onClick={retry}>
                     <RefreshCw size={15} /> Try again
-                </button>
+                </Button>
             </div>
         );
     }
@@ -227,41 +209,31 @@ export default function TrainStep({ onDone }) {
         <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2.5 text-sm">
                 <Globe size={16} className="text-primary-500 shrink-0" />
-                <span className="text-surface-800 dark:text-surface-100">
+                <span className="text-[var(--text)]">
                     Found <span className="font-semibold">{total}</span> page{total === 1 ? '' : 's'} on{' '}
-                    <span className="font-mono text-surface-600 dark:text-surface-300">{host}</span>. Pick which to train on.
+                    <span className="font-mono text-[var(--text-secondary)]">{host}</span>. Pick which to train on.
                 </span>
             </div>
 
-            <div className="max-h-64 overflow-y-auto rounded-xl border border-surface-200 dark:border-surface-800 divide-y divide-surface-100 dark:divide-surface-800/60">
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)] divide-y divide-[var(--border)]">
                 {urls.map((u) => (
-                    <label
-                        key={u}
-                        className="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer hover:bg-surface-50 dark:hover:bg-surface-900/60"
-                    >
+                    <label key={u} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[var(--bg-muted)]/50">
                         <input
                             type="checkbox"
                             checked={selected.has(u)}
                             onChange={() => toggle(u)}
                             className="accent-primary-500 w-4 h-4"
                         />
-                        <span className="font-mono text-xs text-surface-600 dark:text-surface-300 truncate">{pathOf(u)}</span>
+                        <span className="font-mono text-xs text-[var(--text-secondary)] truncate">{pathOf(u)}</span>
                     </label>
                 ))}
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">
-                <button
-                    type="button"
-                    onClick={startTraining}
-                    disabled={selectedCount === 0}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                <Button size="lg" onClick={startTraining} disabled={selectedCount === 0}>
                     Start training on {selectedCount} page{selectedCount === 1 ? '' : 's'} <ArrowRight size={16} />
-                </button>
-                <span className="font-mono text-[11px] text-surface-400 dark:text-surface-500">
-                    only pages you keep are crawled · uses crawl credits
-                </span>
+                </Button>
+                <span className="font-mono text-[11px] text-[var(--text-muted)]">only pages you keep are crawled · uses crawl credits</span>
             </div>
         </div>
     );
