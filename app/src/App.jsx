@@ -40,7 +40,6 @@ import Integrations from './pages/Integrations';
 import Billing from './pages/Billing';
 import AffiliateDashboard from './pages/AffiliateDashboard';
 import BuildStudio from './pages/build/BuildStudio';
-import StudioProviders from './pages/build/StudioProviders';
 
 // Components
 import AccessDenied from './components/AccessDenied';
@@ -182,21 +181,6 @@ function App() {
                         element={<LegacyAffiliateAcceptRedirect />}
                     />
 
-                    {/* Build Studio — a dedicated full-screen guided onboarding
-                        mode, mounted OUTSIDE AdminLayout (no sidebar/topbar).
-                        Re-declares its own provider stack via StudioProviders
-                        since it lives outside the "/" subtree. */}
-                    <Route
-                        path="/build"
-                        element={
-                            <ProtectedRoute>
-                                <StudioProviders>
-                                    <BuildStudio />
-                                </StudioProviders>
-                            </ProtectedRoute>
-                        }
-                    />
-
                     {/* App Routes (root) */}
                     {/* CrawlProvider wraps the authenticated admin tree so the
                         floating GlobalCrawlIndicator survives every page
@@ -232,6 +216,10 @@ function App() {
                                 />
                             }
                         />
+                        {/* Build Studio — the guided onboarding flow, mounted
+                            INSIDE AdminLayout so it shares the app's sidebar +
+                            contextual top bar. */}
+                        <Route path="build" element={<ClientOnlyPage pageName="Set up your agent"><BuildStudio /></ClientOnlyPage>} />
                         <Route path="knowledge" element={<ClientOnlyPage pageName="Sources"><KnowledgeBase /></ClientOnlyPage>} />
                         <Route path="insights" element={<ClientOnlyPage pageName="Insights"><Insights /></ClientOnlyPage>} />
                         <Route path="leads" element={<ClientOnlyPage pageName="Leads"><Leads /></ClientOnlyPage>} />

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
-import OyeChatsMark from '../../components/OyeChatsMark';
+import PageHeader from '../../components/PageHeader';
 import { Button } from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
@@ -125,39 +125,34 @@ export default function BuildStudio() {
     };
 
     return (
-        <MotionConfig reducedMotion="user">
-            <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
-                {/* App bar */}
-                <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--bg-card)]/80 backdrop-blur-md">
-                    <div className="max-w-6xl mx-auto px-6 h-16 flex items-center gap-3">
-                        <OyeChatsMark size={30} />
-                        <div className="leading-tight">
-                            <div className="font-semibold tracking-tight">Build Studio</div>
-                            <div className="text-[11px] text-[var(--text-muted)]">Set up your AI agent</div>
-                        </div>
-                        <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                            <Badge variant="soft" color="success" size="sm" dot>
-                                Progress saved
-                            </Badge>
-                            <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
-                                Skip to dashboard
-                            </Button>
-                        </div>
+        <>
+            <PageHeader
+                crumbs={[
+                    { label: 'Home', to: '/' },
+                    { label: 'Set up your agent' },
+                ]}
+                title="Set up your agent"
+                actions={
+                    <div className="flex items-center gap-2 sm:gap-3">
+                        <Badge variant="soft" color="success" size="sm" dot>
+                            Progress saved
+                        </Badge>
+                        <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+                            Skip to dashboard
+                        </Button>
                     </div>
-                </header>
-
+                }
+            />
+            <MotionConfig reducedMotion="user">
                 {/* Stepper */}
-                <div className="border-b border-[var(--border)] bg-[var(--bg-card)]/40">
-                    <div className="max-w-2xl mx-auto px-6 py-5">
-                        <Stepper current={current} onStep={goTo} />
-                    </div>
+                <div className="max-w-2xl mx-auto pt-1 pb-8">
+                    <Stepper current={current} onStep={goTo} />
                 </div>
 
                 {/* Body */}
-                <div className="flex-1">
-                    <div className="max-w-6xl mx-auto px-6 py-8 sm:py-10 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] gap-10 lg:gap-14 items-start">
-                        {/* Guide column */}
-                        <div className="flex flex-col gap-6 min-h-[420px]">
+                <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] gap-10 lg:gap-14 items-start pb-6">
+                    {/* Guide column */}
+                    <div className="flex flex-col gap-6 min-h-[420px]">
                             <div>
                                 <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)] mb-1.5">
                                     Step {current + 1} of {MILESTONES.length}
@@ -206,8 +201,7 @@ export default function BuildStudio() {
                             <LiveAgentPreview previewColor={previewColor} />
                         </div>
                     </div>
-                </div>
-            </div>
-        </MotionConfig>
+            </MotionConfig>
+        </>
     );
 }
