@@ -21,6 +21,7 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
 import useEntitlements from '../hooks/useEntitlements';
 import CannedResponses from './CannedResponses';
+import PageHeader from '../components/PageHeader';
 import { getAuthState } from '../utils/auth';
 import { cn } from '../lib/utils';
 
@@ -377,11 +378,8 @@ export default function TeamManagement() {
     const getDeptName = (deptId) => departments.find(d => d.id === deptId)?.name ?? '—';
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50">Team Management</h1>
-                <p className="text-surface-500 dark:text-surface-400 text-sm mt-1">Manage your operators and departments for live chat support.</p>
-            </div>
+        <div className="space-y-6 -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Team Management' }]} title="Team Management" />
 
             {/* Tabs */}
             <div className="flex gap-1 bg-surface-100 dark:bg-surface-800 rounded-xl p-1 w-fit">

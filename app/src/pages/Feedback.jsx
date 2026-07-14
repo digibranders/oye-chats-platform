@@ -5,7 +5,7 @@ import { ThumbsUp, ThumbsDown, MessageSquare, ChevronDown, ChevronUp, Download, 
 import { LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { useBotContext } from '../context/BotContext';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 
@@ -139,35 +139,38 @@ export default function Feedback({ embedded = false }) {
             className="space-y-6"
         >
             {!embedded && (
-                <div className="flex items-center justify-between">
-                    <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />
-                    <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1 bg-surface-100 dark:bg-surface-800 rounded-lg p-0.5">
-                            {DATE_FILTERS.map(df => (
+                <PageHeader
+                    crumbs={[{ label: 'Home', to: '/' }, { label: 'Response Feedback' }]}
+                    title="Response Feedback"
+                    actions={(
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 bg-surface-100 dark:bg-surface-800 rounded-lg p-0.5">
+                                {DATE_FILTERS.map(df => (
+                                    <button
+                                        key={df.days}
+                                        onClick={() => setDateFilter(df.days)}
+                                        className={cn(
+                                            'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                                            dateFilter === df.days
+                                                ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm'
+                                                : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200'
+                                        )}
+                                    >
+                                        {df.label}
+                                    </button>
+                                ))}
+                            </div>
+                            {feedback.length > 0 && (
                                 <button
-                                    key={df.days}
-                                    onClick={() => setDateFilter(df.days)}
-                                    className={cn(
-                                        'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
-                                        dateFilter === df.days
-                                            ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm'
-                                            : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200'
-                                    )}
+                                    onClick={() => exportFeedbackCsv(filtered)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                                 >
-                                    {df.label}
+                                    <Download size={13} /> Export CSV
                                 </button>
-                            ))}
+                            )}
                         </div>
-                        {feedback.length > 0 && (
-                            <button
-                                onClick={() => exportFeedbackCsv(filtered)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
-                            >
-                                <Download size={13} /> Export CSV
-                            </button>
-                        )}
-                    </div>
-                </div>
+                    )}
+                />
             )}
 
             {error && (

@@ -10,6 +10,7 @@ import useEntitlements from '../hooks/useEntitlements';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import StatCard from '../components/ui/StatCard';
 import SetupChecklist from '../components/SetupChecklist';
+import PageHeader from '../components/PageHeader';
 import { cn } from '../lib/utils';
 import { getAuthItem } from '../utils/authStorage';
 
@@ -295,8 +296,12 @@ export default function Dashboard() {
       variants={stagger}
       initial="initial"
       animate="animate"
-      className="space-y-6"
+      className="space-y-6 -mt-2"
     >
+      {/* Publishes "Home › Overview" into the top bar. The personalized
+          greeting below is a welcome banner, not a duplicate page title. */}
+      <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Overview' }]} title="Overview" />
+
       {/* Setup guide — self-hides once the account is fully set up or dismissed.
           Reflects real state (bot created, sources trained, live-chat enabled). */}
       <SetupChecklist bots={bots} selectedBot={selectedBot} botsLoading={botsLoading} />

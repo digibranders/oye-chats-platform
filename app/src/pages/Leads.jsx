@@ -6,7 +6,7 @@ import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv, markLeadViewed, 
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { cn, formatVisitorLocation } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { Lock, Crown, ArrowRight } from 'lucide-react';
 import useEntitlements from '../hooks/useEntitlements';
@@ -404,29 +404,32 @@ export default function Leads() {
     );
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-                <PageHeader title="Leads" subtitle="Track and qualify your sales leads with BANT scoring" />
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={handleMarkAllRead}
-                        disabled={!hasUnreadLeads}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
-                    >
-                        <CheckCheck className="w-4 h-4" />
-                        Mark all as read
-                    </button>
-                    <button
-                        onClick={handleExport}
-                        disabled={isExporting || leads.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
-                    >
-                        {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                        Export CSV
-                    </button>
-                </div>
-            </div>
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'Leads' }]}
+                title="Leads"
+                actions={(
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleMarkAllRead}
+                            disabled={!hasUnreadLeads}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
+                        >
+                            <CheckCheck className="w-4 h-4" />
+                            Mark all as read
+                        </button>
+                        <button
+                            onClick={handleExport}
+                            disabled={isExporting || leads.length === 0}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
+                        >
+                            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                            Export CSV
+                        </button>
+                    </div>
+                )}
+            />
 
             {/* Stats Cards */}
             {stats && (
@@ -1208,8 +1211,8 @@ export default function Leads() {
  */
 function LockedLeadsPage({ onUpgrade }) {
     return (
-        <div className="flex flex-col gap-6">
-            <PageHeader title="Leads" subtitle="Capture, qualify, and route every visitor" />
+        <div className="flex flex-col gap-6 -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Leads' }]} title="Leads" />
             <button
                 type="button"
                 onClick={onUpgrade}

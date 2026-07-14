@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, CheckCircle2, ChevronDown, ChevronUp, Copy, Loader2, Pencil, Plus, Send, Trash2, Webhook as WebhookIcon } from 'lucide-react';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 import { useBotContext } from '../context/BotContext';
@@ -283,15 +283,19 @@ export default function Webhooks({ embedded = false }) {
     return (
         <div className="space-y-4 animate-fade-in">
             {!embedded && (
-                <PageHeader title="Webhooks" subtitle="Push lead and qualification events to your CRM or backend">
-                    <button
-                        onClick={openCreateModal}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors"
-                    >
-                        <Plus className="w-4 h-4" />
-                        Add Webhook
-                    </button>
-                </PageHeader>
+                <PageHeader
+                    crumbs={[{ label: 'Home', to: '/' }, { label: 'Webhooks' }]}
+                    title="Webhooks"
+                    actions={(
+                        <button
+                            onClick={openCreateModal}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors"
+                        >
+                            <Plus className="w-4 h-4" />
+                            Add Webhook
+                        </button>
+                    )}
+                />
             )}
             {embedded && (
                 <div className="flex items-center justify-between">

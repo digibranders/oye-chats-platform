@@ -14,7 +14,7 @@ import { useNavigate } from 'react-router-dom';
 import { Lock, Sparkles } from 'lucide-react';
 import { getAuthItem } from '../utils/authStorage';
 import { formatVisitorLocation } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
 import { useConfirm } from '../context/ConfirmContext';
@@ -1374,11 +1374,11 @@ export default function LiveChat({ embedded = false }) {
 
     return (
         <div
-            className={`flex flex-col h-full ${embedded ? '' : 'animate-fade-in'}`}
+            className={`flex flex-col h-full ${embedded ? '' : 'animate-fade-in -mt-2'}`}
         >
             {/* Top bar: agent name + status toggle */}
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
-                {!embedded && <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />}
+                {!embedded && <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Live Chat' }]} title="Live Chat" />}
                 <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-between' : ''}`}>
                     {operatorName && <span className="text-sm text-surface-500 dark:text-surface-400">{operatorName}</span>}
                     {connectionLost && (

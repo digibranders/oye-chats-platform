@@ -28,7 +28,7 @@ import {
   changeOperatorSeats,
   cancelScheduledChange,
 } from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -506,39 +506,42 @@ export default function Billing() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 -mt-2">
       <PageHeader
+        crumbs={[{ label: 'Home', to: '/' }, { label: 'Billing' }]}
         title="Billing"
-        subtitle="Plan, credits, top-ups, and operator seats all in one place."
-      >
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => loadAll({ silent: true })}
-          disabled={loading || refreshing}
-        >
-          {refreshing ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="w-3.5 h-3.5" />
-          )}
-          Refresh
-        </Button>
-        {topupAllowed ? (
-          <Button size="sm" onClick={() => setTopupOpen(true)} disabled={loading}>
-            <CreditCoin className="w-3.5 h-3.5" />
-            Buy more credits
-          </Button>
-        ) : (
-          // Free: route to plan upgrade flow instead of top up. Same CTA
-          // slot so the page layout doesn't shift; only the label and
-          // handler change.
-          <Button size="sm" onClick={() => setPlanOpen(true)} disabled={loading}>
-            <Sparkles className="w-3.5 h-3.5" />
-            Upgrade to Starter
-          </Button>
+        actions={(
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => loadAll({ silent: true })}
+              disabled={loading || refreshing}
+            >
+              {refreshing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              Refresh
+            </Button>
+            {topupAllowed ? (
+              <Button size="sm" onClick={() => setTopupOpen(true)} disabled={loading}>
+                <CreditCoin className="w-3.5 h-3.5" />
+                Buy more credits
+              </Button>
+            ) : (
+              // Free: route to plan upgrade flow instead of top up. Same CTA
+              // slot so the page layout doesn't shift; only the label and
+              // handler change.
+              <Button size="sm" onClick={() => setPlanOpen(true)} disabled={loading}>
+                <Sparkles className="w-3.5 h-3.5" />
+                Upgrade to Starter
+              </Button>
+            )}
+          </>
         )}
-      </PageHeader>
+      />
 
       {/* Trial-upgrade banner — the "you decided to pay, here's the button"
           surface for both in-trial (nudge before deadline) and trial-expired

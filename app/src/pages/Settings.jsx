@@ -1,7 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { User, Shield, Bell, Palette, Briefcase, Headphones, CodeXml } from 'lucide-react';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import ProfileTab from './settings/ProfileTab';
 import SecurityTab from './settings/SecurityTab';
 import NotificationsTab from './settings/NotificationsTab';
@@ -37,8 +37,8 @@ export default function Settings() {
     const Active = active.Component;
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Settings" subtitle="Account & workspace preferences" />
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Settings' }]} title="Settings" />
 
             <div className="flex flex-col md:flex-row gap-6">
                 <nav

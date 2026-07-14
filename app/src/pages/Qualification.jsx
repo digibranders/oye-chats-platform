@@ -39,7 +39,7 @@ import {
 } from 'recharts';
 import { useSearchParams } from 'react-router-dom';
 import Tabs from '../components/ui/Tabs';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonChart } from '../components/ui/SkeletonLoader';
 import { useBotContext } from '../context/BotContext';
@@ -1204,8 +1204,8 @@ export default function Qualification() {
     const [activeTab, setActiveTab] = useState(initialTab);
 
     return (
-        <div className="space-y-5 animate-fade-in">
-            <PageHeader title="Qualification" subtitle="Configure qualification frameworks and review lead metrics" />
+        <div className="space-y-5 animate-fade-in -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Qualification' }]} title="Qualification" />
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
             {activeTab === 'scorecard' && <ScorecardTab />}
             {activeTab === 'configuration' && <ConfigurationTab />}

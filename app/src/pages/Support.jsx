@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Headphones, Inbox } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import Tabs from '../components/ui/Tabs';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import LiveChatStatusPill from '../components/LiveChatStatusPill';
 import LiveChat from './LiveChat';
 import OfflineMessages from './OfflineMessages';
@@ -79,9 +79,9 @@ export default function Support() {
   };
 
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className="flex flex-col h-full gap-4 -mt-2">
       <div className="flex-shrink-0">
-        <PageHeader title="Support" subtitle="Manage live conversations and offline messages" />
+        <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Support' }]} title="Support" />
         {/* Live chat readiness — shows the empty-state nudge for workspaces
             with zero operators, or the operator-online count once configured.
             Hidden on Free because the surface it talks about is locked; the

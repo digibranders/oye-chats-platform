@@ -6,7 +6,7 @@ import { getVisitorsData, getChatHistory } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { CHART_COLORS } from '../components/ui/charts';
 
@@ -107,8 +107,8 @@ export default function Users({ embedded = false }) {
     }
 
     return (
-        <div className={cn('space-y-6', !embedded && 'animate-fade-in')}>
-            {!embedded && <PageHeader title="Conversations" subtitle="See who's chatting and what they're asking" />}
+        <div className={cn('space-y-6', !embedded && 'animate-fade-in -mt-2')}>
+            {!embedded && <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Conversations' }]} title="Conversations" />}
 
             {/* Search */}
             <div className="flex flex-wrap items-center gap-3">
