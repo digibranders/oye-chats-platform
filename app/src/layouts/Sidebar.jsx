@@ -27,7 +27,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const authState = getAuthState();
-  const { currentRole: workspaceRole, currentWorkspaceName } = useWorkspace();
+  const { currentRole: workspaceRole } = useWorkspace();
   // Role source of truth: legacy X-Operator-Key sessions read from
   // ``getAuthState().isOperator``; new client-authed sessions get their role
   // from the WorkspaceContext (which tracks whether the currently-active
@@ -390,11 +390,11 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
               animate={{ opacity: 1, x: 0 }}
               className="text-[15px] font-bold text-surface-900 dark:text-white tracking-tight"
             >
-              {/* Workspace-aware label — the active workspace's display
-                  name comes from WorkspaceContext so switching updates
-                  the sidebar header instantly. Falls back to the cached
-                  company_name (owned workspace) and finally to OyeChats. */}
-              {currentWorkspaceName || localStorage.getItem('company_name') || 'OyeChats'}
+              {/* Product brand wordmark. The sidebar masthead is OyeChats'
+                  own brand — not the workspace/account name (the user's
+                  identity lives in the profile menu, and workspace switching
+                  in the bot selector below). */}
+              OyeChats
             </motion.span>
           )}
         </div>
