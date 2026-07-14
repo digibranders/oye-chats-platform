@@ -379,7 +379,7 @@ export default function TeamManagement() {
 
     return (
         <div className="space-y-6 -mt-2">
-            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Team Management' }]} title="Team Management" />
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Team' }]} title="Team" />
 
             {/* Tabs */}
             <div className="flex gap-1 bg-surface-100 dark:bg-surface-800 rounded-xl p-1 w-fit">
