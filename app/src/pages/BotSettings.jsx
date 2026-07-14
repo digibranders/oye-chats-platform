@@ -94,7 +94,7 @@ const WIDGET_FONT_STACK =
  * active-tab state. Each tab under `pages/bot-settings/` is a presentational +
  * field-binding component receiving `{ draft, set, ent, ... }`.
  */
-export default function BotSettings({ embedded = false }) {
+export default function BotSettings() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
     const { isBotManager } = getAuthState();
@@ -518,9 +518,8 @@ export default function BotSettings({ embedded = false }) {
 
     const tabProps = { draft, set, ent };
 
-    // Page-level actions. Defined once so the Save button is never duplicated:
-    // in the standalone view they live in the contextual app bar (PageHeader
-    // `actions`); in the embedded view they stay inline beside the tab strip.
+    // Page-level actions rendered in the contextual app bar (PageHeader
+    // `actions`). Defined as elements so the Save-button markup lives once.
     const previewButton = (
         <button
             type="button"
@@ -562,7 +561,7 @@ export default function BotSettings({ embedded = false }) {
     );
 
     return (
-        <div className={`max-w-6xl mx-auto space-y-6 animate-fade-in pb-20${embedded ? '' : ' -mt-2'}`}>
+        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20 -mt-2">
             {/* Error Toast */}
             {saveError && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 animate-fade-in">
@@ -574,20 +573,19 @@ export default function BotSettings({ embedded = false }) {
                 </div>
             )}
 
-            {/* Contextual app-bar header (standalone only). The embedded variant
-                — mounted inside Chatbot's Appearance tab — renders no PageHeader
-                and keeps its inline Save button below. */}
-            {!embedded && (
-                <PageHeader
-                    crumbs={[{ label: 'Home', to: '/' }, { label: 'My Bots', to: '/chatbot' }, { label: 'Bot Settings' }]}
-                    title="Bot Settings"
-                    actions={<>{previewButton}{saveButton}</>}
-                />
-            )}
+            {/* Contextual app-bar header. Published unconditionally: this editor
+                is mounted inside Chatbot's Appearance tab, so it owns the top-bar
+                breadcrumb (Home › My Bots › Bot Settings) plus the Save + Preview
+                actions in the sticky action row. */}
+            <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'My Bots', to: '/chatbot' }, { label: 'Bot Settings' }]}
+                title="Bot Settings"
+                actions={<>{previewButton}{saveButton}</>}
+            />
 
             {/* Read-only access note — preserved from the old hero for viewers
                 who can't edit this bot. */}
-            {!embedded && !isBotManager && (
+            {!isBotManager && (
                 <p className="text-sm text-surface-500 dark:text-surface-400">
                     You have read-only access to this bot configuration.
                 </p>
@@ -667,10 +665,6 @@ export default function BotSettings({ embedded = false }) {
                         );
                     })}
                 </div>
-
-                {/* Embedded variant keeps Save inline; the standalone variant
-                    moves it into the contextual app bar (PageHeader actions). */}
-                {embedded && saveButton}
             </div>
 
             <div className="flex flex-col lg:flex-row gap-8 items-start w-full">

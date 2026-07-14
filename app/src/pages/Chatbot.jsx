@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getAuthState } from '../utils/auth';
-import { Plus, Loader2, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Plus, Loader2, AlertCircle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -10,7 +10,7 @@ import {
     getBotDemoUrl,
     trackDemoShareClick,
 } from '../services/api';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import BotCard from './my-bots/BotCard';
 import InstallDrawer from './my-bots/InstallDrawer';
@@ -101,35 +101,27 @@ export default function Chatbot() {
     };
 
     if (botTab === 'appearance') {
-        return (
-            <div className="space-y-4 animate-fade-in">
-                <div>
-                    <button
-                        onClick={() => setSearchParams({}, { replace: true })}
-                        className="flex items-center gap-1.5 text-[13px] font-medium text-surface-400 dark:text-surface-500 hover:text-surface-700 dark:hover:text-surface-200 transition-colors mb-2"
-                    >
-                        <ArrowLeft size={14} />
-                        My Bots
-                    </button>
-                    <PageHeader title="Bot Settings" subtitle="Configure your chatbot's personality, appearance, and behavior" />
-                </div>
-                <BotSettings embedded />
-            </div>
-        );
+        // BotSettings publishes its own contextual header (Home › My Bots ›
+        // Bot Settings) into the top bar, with Save + Preview in the sticky
+        // action row. The "My Bots" breadcrumb is the back affordance, so no
+        // hero, subtitle, or separate back-link is rendered here.
+        return <BotSettings />;
     }
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="My Bots" subtitle="Manage your chatbot instances">
-                {isBotManager && (
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'My Bots' }]}
+                title="My Bots"
+                actions={isBotManager ? (
                     <button
                         onClick={openCreate}
                         className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-md"
                     >
                         <Plus size={16} /> Add Chatbot
                     </button>
-                )}
-            </PageHeader>
+                ) : null}
+            />
 
             {loading ? (
                 <div className="flex flex-col items-center py-16 text-surface-400 dark:text-surface-500">
