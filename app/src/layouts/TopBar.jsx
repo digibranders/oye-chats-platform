@@ -133,7 +133,14 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   // Mounted-flag prevents a state update after the menu closes if the network
   // request is still in flight — avoids the React "set state on unmounted" warn.
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // Set true on (re)mount, false on unmount. Registering only the cleanup left
+  // mountedRef stuck at false after StrictMode's mount→unmount→remount cycle,
+  // which then blocked setProfile — so the profile dropdown stayed "—" while
+  // the Settings › Profile tab (which uses a plain cancelled flag) worked.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Sync operator online/offline status in real time
   useEffect(() => {
