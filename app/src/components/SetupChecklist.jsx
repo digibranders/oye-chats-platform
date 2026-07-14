@@ -177,6 +177,11 @@ export default function SetupChecklist({ bots, selectedBot, botsLoading }) {
   // Nothing to show while the very first bot list is still loading, or once the
   // account is fully set up.
   if (!hasBot && botsLoading) return null;
+  // While a bot exists but its training state isn't known yet (getDocuments
+  // still in flight), render nothing. Otherwise the checklist flashes in with
+  // "Train" incomplete and then vanishes a moment later once docs load for an
+  // already-set-up account — the flicker seen when returning to Overview.
+  if (hasBot && docCount === null) return null;
   if (allDone) return null;
 
   // Dismissed mid-setup (only once a bot exists) — offer a quiet way back.
