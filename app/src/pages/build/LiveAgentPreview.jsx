@@ -11,9 +11,9 @@ const EASE = [0.16, 1, 0.3, 1];
  * it shows a calm empty state; once created it renders a real chat-window mock
  * in the bot's own brand colour with its greeting.
  */
-export default function LiveAgentPreview() {
+export default function LiveAgentPreview({ previewColor }) {
     const { selectedBot } = useBotContext();
-    const brand = selectedBot?.primary_color || '#d946ef';
+    const brand = previewColor || selectedBot?.primary_color || '#d946ef';
     const name = selectedBot?.launcher_name || selectedBot?.name || 'Your agent';
     const initial = (name.trim()[0] || 'A').toUpperCase();
     const greeting = selectedBot?.widget_welcome_message || `Hi! I'm ${name} 👋 How can I help you today?`;

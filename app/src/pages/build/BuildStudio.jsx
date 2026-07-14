@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
@@ -8,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { MILESTONES, milestoneIndex } from './studioMilestones';
 import CreateStep from './steps/CreateStep';
 import TrainStep from './steps/TrainStep';
+import AppearanceStep from './steps/AppearanceStep';
 import LiveAgentPreview from './LiveAgentPreview';
 
 const EASE = [0.16, 1, 0.3, 1];
@@ -82,9 +84,12 @@ export default function BuildStudio() {
     const [params, setParams] = useSearchParams();
     const current = milestoneIndex(params.get('m'));
     const milestone = MILESTONES[current];
+    // Live override so the Appearance step can recolour the preview in real time.
+    const [previewColor, setPreviewColor] = useState(null);
 
     const goTo = (i) => {
         const clamped = Math.max(0, Math.min(MILESTONES.length - 1, i));
+        setPreviewColor(null);
         setParams({ m: MILESTONES[clamped].key });
     };
     const goNext = () => goTo(current + 1);
@@ -95,6 +100,8 @@ export default function BuildStudio() {
                 return <CreateStep onCreated={goNext} />;
             case 'train':
                 return <TrainStep onDone={goNext} />;
+            case 'appearance':
+                return <AppearanceStep onDone={goNext} onPreviewColor={setPreviewColor} />;
             default:
                 return (
                     <div className="flex flex-col gap-5">
@@ -190,7 +197,7 @@ export default function BuildStudio() {
 
                         {/* Live preview column */}
                         <div className="w-full lg:sticky lg:top-28">
-                            <LiveAgentPreview />
+                            <LiveAgentPreview previewColor={previewColor} />
                         </div>
                     </div>
                 </div>
