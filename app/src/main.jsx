@@ -2,8 +2,17 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
 import { ThemeProvider } from './context/ThemeContext.jsx'
+import { isSessionExpired, clearAuthStorage } from './utils/authStorage'
 import './index.css'
 import App from './App.jsx'
+
+// Enforce the absolute session expiry once, before the app reads auth state.
+// Auth lives in localStorage (shared across tabs); "Remember me" controls how
+// long it lasts. An expired session is wiped here so ProtectedRoute treats the
+// user as logged out and routes to /login on this load.
+if (isSessionExpired()) {
+  clearAuthStorage();
+}
 
 // Initialize Sentry error tracking (opt-in via env var)
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
