@@ -206,7 +206,7 @@ export default function ForgotPassword() {
                         type="email" required tabIndex={1}
                         className={cn(
                           'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
-                          'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                          'border-surface-200 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                           'outline-none transition-all text-sm placeholder:text-surface-400'
                         )}
                         placeholder="you@company.com"
@@ -249,7 +249,7 @@ export default function ForgotPassword() {
                         type="text" required tabIndex={1}
                         className={cn(
                           'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
-                          'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                          'border-surface-200 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                           'outline-none transition-all text-sm placeholder:text-surface-400 font-mono tracking-widest'
                         )}
                         placeholder="000000"
@@ -277,7 +277,7 @@ export default function ForgotPassword() {
                         type={showPassword ? 'text' : 'password'} required tabIndex={2}
                         className={cn(
                           'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white text-surface-900',
-                          'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                          'border-surface-200 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                           'outline-none transition-all text-sm placeholder:text-surface-400'
                         )}
                         placeholder="New password"

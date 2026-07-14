@@ -26,7 +26,7 @@ import { cn } from '../lib/utils';
 
 const ROLES = ['operator', 'admin', 'owner'];
 
-const inputCls = 'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 text-sm outline-none focus:border-primary-500 dark:focus:border-primary-400 transition-colors';
+const inputCls = 'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 text-sm outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] transition-colors';
 
 export default function TeamManagement() {
     const { isOperator, isBotManager } = getAuthState();

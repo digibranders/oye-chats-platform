@@ -14,8 +14,8 @@ const Input = forwardRef(({ className, icon: Icon, suffix, error, ...props }, re
           Icon ? 'pl-10' : 'pl-3.5',
           suffix ? 'pr-10' : 'pr-3.5',
           error
-            ? 'border-rose-400 dark:border-rose-500 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500'
-            : 'border-surface-200 dark:border-surface-700 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 hover:border-surface-300 dark:hover:border-surface-600',
+            ? 'border-rose-400 dark:border-rose-500 focus:ring-1 focus:ring-rose-500/20 focus:border-rose-500'
+            : 'border-surface-200 dark:border-surface-700 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] dark:focus:border-[var(--focus)] hover:border-surface-300 dark:hover:border-surface-600',
           className
         )}
         {...props}

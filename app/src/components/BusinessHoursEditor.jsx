@@ -57,7 +57,7 @@ function Toggle({ checked, onChange, disabled, id }) {
             onClick={() => onChange(!checked)}
             className={cn(
                 'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-900',
+                'focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-900',
                 'disabled:cursor-not-allowed disabled:opacity-50',
                 checked ? 'bg-primary-600' : 'bg-surface-300 dark:bg-surface-700'
             )}
@@ -124,7 +124,7 @@ export default function BusinessHoursEditor({ value, onChange, disabled = false 
                             className={cn(
                                 'text-sm border border-surface-200 dark:border-surface-600 rounded-lg px-3 py-1.5',
                                 'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
-                                'focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                'focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] dark:focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                                 'max-w-xs'
                             )}
                         >
@@ -166,7 +166,7 @@ export default function BusinessHoursEditor({ value, onChange, disabled = false 
                                                         days: { ...h.days, [key]: { ...day, start: e.target.value } },
                                                     }))
                                                 }
-                                                className="text-xs border border-surface-200 dark:border-surface-600 rounded-lg px-2 py-1 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500/30"
+                                                className="text-xs border border-surface-200 dark:border-surface-600 rounded-lg px-2 py-1 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)]"
                                             />
                                             <span className="text-surface-400 dark:text-surface-500 text-xs">to</span>
                                             <input
@@ -179,7 +179,7 @@ export default function BusinessHoursEditor({ value, onChange, disabled = false 
                                                         days: { ...h.days, [key]: { ...day, end: e.target.value } },
                                                     }))
                                                 }
-                                                className="text-xs border border-surface-200 dark:border-surface-600 rounded-lg px-2 py-1 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500/30"
+                                                className="text-xs border border-surface-200 dark:border-surface-600 rounded-lg px-2 py-1 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)]"
                                             />
                                         </div>
                                     ) : (

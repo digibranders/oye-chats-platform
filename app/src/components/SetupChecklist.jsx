@@ -187,7 +187,7 @@ export default function SetupChecklist({ bots, selectedBot, botsLoading }) {
         initial="initial"
         animate="animate"
         onClick={resume}
-        className="flex w-full items-center gap-2 rounded-xl border border-dashed border-surface-300 dark:border-surface-700 bg-surface-50/60 dark:bg-surface-900/40 px-4 py-2.5 text-sm font-medium text-surface-600 dark:text-surface-300 transition-colors hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
+        className="flex w-full items-center gap-2 rounded-xl border border-dashed border-surface-300 dark:border-surface-700 bg-surface-50/60 dark:bg-surface-900/40 px-4 py-2.5 text-sm font-medium text-surface-600 dark:text-surface-300 transition-colors hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
       >
         <Sparkles size={15} className="text-primary-500" />
         Resume setup — {completed} of {total} steps done
@@ -238,7 +238,7 @@ export default function SetupChecklist({ bots, selectedBot, botsLoading }) {
           <button
             onClick={hide}
             aria-label="Hide setup guide"
-            className="flex-none rounded-lg p-1.5 text-surface-400 transition-colors hover:bg-surface-100 hover:text-surface-600 dark:text-surface-500 dark:hover:bg-surface-800 dark:hover:text-surface-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
+            className="flex-none rounded-lg p-1.5 text-surface-400 transition-colors hover:bg-surface-100 hover:text-surface-600 dark:text-surface-500 dark:hover:bg-surface-800 dark:hover:text-surface-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
           >
             <X size={16} />
           </button>
@@ -303,7 +303,7 @@ export default function SetupChecklist({ bots, selectedBot, botsLoading }) {
                   {step.ack && (
                     <button
                       onClick={() => setAck(step.ack)}
-                      className="hidden rounded-lg px-2 py-1 text-xs font-medium text-surface-500 transition-colors hover:text-primary-600 dark:text-surface-400 dark:hover:text-primary-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 sm:inline-block"
+                      className="hidden rounded-lg px-2 py-1 text-xs font-medium text-surface-500 transition-colors hover:text-primary-600 dark:text-surface-400 dark:hover:text-primary-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] sm:inline-block"
                     >
                       Mark done
                     </button>
@@ -312,7 +312,7 @@ export default function SetupChecklist({ bots, selectedBot, botsLoading }) {
                     onClick={() => goTo(step)}
                     disabled={step.locked}
                     className={cn(
-                      'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                      'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                       isNext
                         ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700'
                         : 'border border-surface-200 text-surface-700 hover:bg-surface-50 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800',

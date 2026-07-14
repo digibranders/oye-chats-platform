@@ -21,7 +21,7 @@ function Toggle({ checked, onChange, disabled = false }) {
             disabled={disabled}
             onClick={() => onChange(!checked)}
             className={cn(
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
                 'dark:focus-visible:ring-offset-surface-900',
                 checked ? 'bg-primary-600' : 'bg-surface-300 dark:bg-surface-700',
             )}
@@ -456,7 +456,7 @@ function MeetingsSettings() {
 
     const loading = botsLoading || !selectedBot;
 
-    const inputClass = "w-full px-3.5 py-2.5 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
+    const inputClass = "w-full px-3.5 py-2.5 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
 
     if (loading) {
         return (

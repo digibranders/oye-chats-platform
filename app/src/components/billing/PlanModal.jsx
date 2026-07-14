@@ -632,7 +632,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
                 // shorter than "Standard" in the rail.
                 'relative w-full text-left rounded-xl border px-4 py-3.5 min-h-[88px]',
                 'transition-colors duration-200 group',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                 isSelected ? accent.railActive : accent.rail + ' bg-[var(--bg-card)] dark:bg-surface-900',
             )}
         >
@@ -800,7 +800,7 @@ function FocusedPlan({
                             disabled={submitting || isDeadCta}
                             className={cn(
                                 'w-full inline-flex items-center justify-center gap-2 h-12 rounded-xl font-semibold text-[14px] transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                                'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                                 'disabled:opacity-60 disabled:cursor-not-allowed',
                                 isSecondary
                                     ? 'border border-surface-200 dark:border-surface-700 bg-transparent text-surface-700 dark:text-surface-200 hover:bg-surface-50 dark:hover:bg-surface-800'
@@ -916,7 +916,7 @@ function ReferralBlock({ referral }) {
                                 'flex-1 rounded-lg border px-3 py-1.5 text-sm font-mono tracking-widest uppercase',
                                 'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-surface-50',
                                 'placeholder:text-surface-400 dark:placeholder:text-surface-500 placeholder:font-sans placeholder:tracking-normal',
-                                'focus:outline-none focus:ring-2 focus:ring-primary-500/40',
+                                'focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)]',
                                 'disabled:opacity-60 disabled:cursor-not-allowed',
                                 status === 'invalid'
                                     ? 'border-red-400 dark:border-red-500'
@@ -929,7 +929,7 @@ function ReferralBlock({ referral }) {
                             disabled={!input.trim() || status === 'applying'}
                             className={cn(
                                 'shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                                'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                                 'disabled:opacity-50 disabled:cursor-not-allowed',
                                 'bg-primary-600 text-white hover:bg-primary-700',
                             )}

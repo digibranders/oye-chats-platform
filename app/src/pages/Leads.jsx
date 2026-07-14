@@ -466,7 +466,7 @@ export default function Leads() {
                         placeholder="Search by name, email, or location..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
                 </div>
                 <div className="relative sm:w-56">
@@ -474,7 +474,7 @@ export default function Leads() {
                         value={contactFilter}
                         onChange={(e) => setContactFilter(e.target.value)}
                         aria-label="Filter by contact type"
-                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
+                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] cursor-pointer"
                     >
                         {CONTACT_FILTERS.map((opt) => {
                             const count = contactCounts[opt.value] ?? 0;
@@ -758,7 +758,7 @@ export default function Leads() {
                                             value={tagInput}
                                             onChange={(e) => setTagInput(e.target.value)}
                                             onKeyDown={(e) => { if (e.key === 'Enter') { saveTags(selectedLead, tagInput); setTagInput(''); } }}
-                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400"
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-[var(--focus)]"
                                         />
                                         <p className="text-[10px] text-surface-400">Press Enter to save · stored on this device only</p>
                                     </div>
@@ -779,7 +779,7 @@ export default function Leads() {
                                             placeholder="Add a note about this lead..."
                                             value={noteInput}
                                             onChange={(e) => setNoteInput(e.target.value)}
-                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400 resize-none"
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-[var(--focus)] resize-none"
                                         />
                                         <button
                                             onClick={() => { saveNote(selectedLead); setNoteInput(''); }}

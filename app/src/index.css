@@ -164,7 +164,14 @@
   --text: var(--color-surface-900);
   --text-secondary: var(--color-surface-500);
   --text-muted: var(--color-surface-400);
-  --ring: var(--color-primary-600);
+  /* ── Focus — a calm indigo, intentionally OFF the volt-violet brand so the
+     focus indicator reads as a system affordance rather than more brand color.
+     `--focus` = the solid hairline border/outline; `--focus-ring` = the soft
+     glow. Single source of truth: every focus ring in the app routes through
+     these two tokens (see the focus-* utilities in components). */
+  --focus: #6366f1;                        /* indigo-500 */
+  --focus-ring: rgba(99, 102, 241, 0.28);  /* soft indigo glow */
+  --ring: var(--focus);
   --sidebar-bg: #ffffff;                   /* white sidebar rail (Minecloud) */
   --sidebar-border: var(--color-surface-200);
 }
@@ -179,7 +186,9 @@
   --text: var(--color-surface-50);
   --text-secondary: var(--color-surface-400);
   --text-muted: var(--color-surface-500);
-  --ring: var(--color-primary-400);
+  --focus: #818cf8;                        /* indigo-400 — lighter for dark surfaces */
+  --focus-ring: rgba(129, 140, 248, 0.32);
+  --ring: var(--focus);
   --sidebar-bg: #050505;
   --sidebar-border: var(--color-surface-800);
 }

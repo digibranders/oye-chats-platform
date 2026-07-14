@@ -278,7 +278,7 @@ export default function VerifyEmail() {
                   'outline-none transition-all',
                   digit
                     ? 'border-primary-500 ring-2 ring-primary-500/20'
-                    : 'border-surface-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20',
+                    : 'border-surface-200 focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)]',
                 )}
                 disabled={isVerifying}
                 aria-label={`Digit ${i + 1}`}

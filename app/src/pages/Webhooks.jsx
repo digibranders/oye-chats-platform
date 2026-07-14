@@ -379,7 +379,7 @@ export default function Webhooks({ embedded = false }) {
                                 setSelectedWebhookId(e.target.value ? Number(e.target.value) : null);
                                 setDeliveryPage(1);
                             }}
-                            className="text-sm border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-500"
+                            className="text-sm border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)]"
                         >
                             <option value="">Select webhook</option>
                             {webhooks.map((webhook) => (
@@ -571,7 +571,7 @@ export default function Webhooks({ embedded = false }) {
                                 value={formUrl}
                                 onChange={(e) => setFormUrl(e.target.value)}
                                 placeholder="https://your-crm.com/webhooks/oyechats"
-                                className="w-full px-3 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm focus:outline-none focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                className="w-full px-3 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm focus:outline-none focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                 disabled={isSubmitting || !!newSecret}
                             />
                         </div>
