@@ -760,7 +760,7 @@ export default function Leads() {
                                             onKeyDown={(e) => { if (e.key === 'Enter') { saveTags(selectedLead, tagInput); setTagInput(''); } }}
                                             className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400"
                                         />
-                                        <p className="text-[10px] text-surface-400">Press Enter to save</p>
+                                        <p className="text-[10px] text-surface-400">Press Enter to save · stored on this device only</p>
                                     </div>
 
                                     {/* Notes */}
@@ -788,6 +788,7 @@ export default function Leads() {
                                         >
                                             Save note
                                         </button>
+                                        <p className="text-[10px] text-surface-400">Saved on this device only — not synced to your team.</p>
                                     </div>
 
                                     {/* BANT Breakdown */}

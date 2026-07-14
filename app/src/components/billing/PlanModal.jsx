@@ -1295,9 +1295,15 @@ function buildFeatureList(plan) {
     const out = [];
     const credits = plan.credits_per_month;
     const seats = plan.included_operator_seats || 0;
-    // Prefer USD seat price; fall back to INR cents for legacy rows.
-    const seatCents = plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0;
-    const sym = '$';
+    // Prefer USD seat price; fall back to INR cents for legacy rows. The
+    // symbol MUST match the currency of the amount we actually picked —
+    // hardcoding '$' rendered a rupee legacy price as "$X". Tie the symbol to
+    // the source field so the two can never disagree.
+    const hasUsdSeat = plan.extra_seat_price_usd_cents != null;
+    const seatCents = hasUsdSeat
+        ? plan.extra_seat_price_usd_cents
+        : (plan.extra_seat_price_cents ?? 0);
+    const sym = hasUsdSeat ? '$' : '₹';
 
     // Plan-aware crawl limits — read from ``plan.limits`` first (source of
     // truth once the migration has run), then fall back to the per-slug
