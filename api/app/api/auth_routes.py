@@ -353,6 +353,12 @@ class CurrentUserResponse(BaseModel):
     bot_count: int
     is_superadmin: bool = False
     is_online: bool = False
+    # Email-verification + onboarding-wizard state. For clients these mirror
+    # the columns on their own account; for operators they reflect the
+    # workspace owner's account (the client they belong to), since operators
+    # don't have their own verification/onboarding lifecycle.
+    is_verified: bool = False
+    onboarding_complete: bool = False
     role: str | None = None  # operator role; None for clients
     # Affiliate-program membership — derived from the affiliates table.
     # ``True`` only when an active (non-deactivated) row exists for the
@@ -430,6 +436,11 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
                 bot_count=int(bot_count or 0),
                 is_superadmin=False,
                 is_online=bool(operator.is_online),
+                # Reflect the workspace owner's account state — operators act
+                # inside a client's workspace and share its verification /
+                # onboarding status rather than owning their own.
+                is_verified=bool(owner_client.is_verified) if owner_client else False,
+                onboarding_complete=bool(owner_client.onboarding_complete) if owner_client else False,
                 role=operator.role,
             )
 
@@ -473,6 +484,8 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             bot_count=int(bot_count or 0),
             is_superadmin=bool(client.is_superadmin),
             is_online=bool(is_online),
+            is_verified=bool(client.is_verified),
+            onboarding_complete=bool(client.onboarding_complete),
             role=None,
             is_affiliate=affiliate_row is not None,
             affiliate_id=affiliate_row.id if affiliate_row else None,

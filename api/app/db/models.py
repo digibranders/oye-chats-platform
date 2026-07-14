@@ -64,6 +64,12 @@ class Client(Base):
     email_otp = Column(String, nullable=True)
     email_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # First-run onboarding wizard completion. Starts False for every new
+    # account (both email/password and OAuth signups) and flips True once the
+    # user finishes the dashboard's guided setup. The admin app reads this off
+    # /auth/me to decide whether to route into the onboarding flow.
+    onboarding_complete = Column(Boolean, default=False, server_default="false", nullable=False)
+
     # Password reset fields
     reset_otp = Column(String, nullable=True)
     reset_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
