@@ -145,7 +145,11 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
               const shownCurrency = isInr
                 ? 'INR'
                 : (pack.display_currency || pack.currency || 'USD').toUpperCase();
-              const featured = (pack.bonus_pct || 0) >= 20;
+              // Highlight only the single badged pack (e.g. "BEST VALUE") so
+              // the tinted fill always matches the badge. Tying it to bonus_pct
+              // instead filled two cards while only one was badged — reading as
+              // an inconsistent, accidental highlight.
+              const featured = !!pack.badge;
               const submitting = submittingPack === amount;
               const perK = pricePerKCredits(shownAmount, pack.credits);
               return (
