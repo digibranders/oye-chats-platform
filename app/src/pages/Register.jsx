@@ -36,6 +36,10 @@ export default function Register() {
   const [termsHighlight, setTermsHighlight] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Email/password is the secondary signup path — revealed behind a "Continue
+  // with email" disclosure so Google SSO stays the primary call-to-action.
+  // Auto-expanded when an email is pre-filled (invite airlock round-trip).
+  const [showEmailForm, setShowEmailForm] = useState(Boolean(_initialEmail));
   const termsCheckboxRef = useRef(null);
   const navigate = useNavigate();
   // Affiliate invite round-trip — see Login.jsx for the rationale. New
@@ -310,13 +314,97 @@ export default function Register() {
             />
           </div>
 
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-1 h-px bg-surface-200" />
-            <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
-            <div className="flex-1 h-px bg-surface-200" />
-          </div>
+          {/* Terms/Privacy agreement — kept ALWAYS visible (not tucked inside
+              the collapsible email form) because it gates the PRIMARY Google
+              button too. Google is a full-page redirect, so the gate runs on
+              click via onBlockedClick, which scrolls to and highlights this
+              checkbox; it must stay mounted for that to work. */}
+          <label className="flex items-start gap-2.5 mb-4 cursor-pointer group">
+            <div className="relative flex items-center justify-center mt-0.5 flex-shrink-0">
+              <input
+                ref={termsCheckboxRef}
+                type="checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => {
+                  setAgreedToTerms(e.target.checked);
+                  if (e.target.checked) {
+                    setTermsHighlight(false);
+                    setError('');
+                  }
+                }}
+                className={cn(
+                  'peer appearance-none w-4 h-4 border rounded bg-white',
+                  'checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-1 transition-all cursor-pointer',
+                  termsHighlight
+                    ? 'border-rose-500 ring-2 ring-rose-500/40'
+                    : 'border-surface-300 focus:ring-[var(--focus-ring)]'
+                )}
+                tabIndex={0}
+              />
+              <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <span className={cn('text-xs leading-relaxed', termsHighlight ? 'text-rose-600' : 'text-surface-500')}>
+              {termsHighlight && <span className="font-semibold">Terms required — </span>}
+              I agree to the{' '}
+              <a
+                href="https://oyechats.com/legal/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                tabIndex={-1}
+                onClick={(e) => e.stopPropagation()}
+                className="text-primary-600 hover:text-primary-700"
+              >
+                Terms
+              </a>{' '}
+              and{' '}
+              <a
+                href="https://oyechats.com/legal/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                tabIndex={-1}
+                onClick={(e) => e.stopPropagation()}
+                className="text-primary-600 hover:text-primary-700"
+              >
+                Privacy Policy
+              </a>.
+            </span>
+          </label>
 
-          <form onSubmit={handleRegister} className="space-y-3.5">
+          {/* Secondary email/password path, disclosed on demand. All fields
+              and handlers are unchanged; only the Terms gate was lifted out
+              (above) so it stays reachable while collapsed. */}
+          {!showEmailForm ? (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailForm(true)}
+                className={cn(
+                  'w-full py-2.5 rounded-xl border border-surface-200 bg-white text-surface-700',
+                  'font-medium text-sm hover:bg-surface-50 transition-colors',
+                  'flex items-center justify-center gap-2'
+                )}
+                tabIndex={0}
+              >
+                <Mail size={16} className="text-surface-400" />
+                Continue with email
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or sign up with email</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
+
+              <form onSubmit={handleRegister} className="space-y-3.5">
             <div>
               <label className="block text-[13px] font-medium text-surface-600 mb-1.5">Full name</label>
               <div className="relative group">
@@ -441,59 +529,6 @@ export default function Register() {
               )}
             </div>
 
-            <label className="flex items-start gap-2.5 pt-1 cursor-pointer group">
-              <div className="relative flex items-center justify-center mt-0.5 flex-shrink-0">
-                <input
-                  ref={termsCheckboxRef}
-                  type="checkbox"
-                  checked={agreedToTerms}
-                  onChange={(e) => {
-                    setAgreedToTerms(e.target.checked);
-                    if (e.target.checked) {
-                      setTermsHighlight(false);
-                      setError('');
-                    }
-                  }}
-                  className={cn(
-                    'peer appearance-none w-4 h-4 border rounded bg-white',
-                    'checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-1 transition-all cursor-pointer',
-                    termsHighlight
-                      ? 'border-rose-500 ring-2 ring-rose-500/40'
-                      : 'border-surface-300 focus:ring-[var(--focus-ring)]'
-                  )}
-                  tabIndex={8}
-                />
-                <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <span className={cn('text-xs leading-relaxed', termsHighlight ? 'text-rose-600' : 'text-surface-500')}>
-                {termsHighlight && <span className="font-semibold">Terms required — </span>}
-                I agree to the{' '}
-                <a
-                  href="https://oyechats.com/legal/terms"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  tabIndex={-1}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-primary-600 hover:text-primary-700"
-                >
-                  Terms
-                </a>{' '}
-                and{' '}
-                <a
-                  href="https://oyechats.com/legal/privacy"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  tabIndex={-1}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-primary-600 hover:text-primary-700"
-                >
-                  Privacy Policy
-                </a>.
-              </span>
-            </label>
-
             <button
               type="submit" disabled={isLoading || !agreedToTerms}
               className={cn(
@@ -505,7 +540,9 @@ export default function Register() {
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
             </button>
-          </form>
+              </form>
+            </>
+          )}
 
           <p className="text-center text-sm text-surface-500 mt-6">
             Already have an account?{' '}

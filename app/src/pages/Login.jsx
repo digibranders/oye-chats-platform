@@ -31,6 +31,11 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  // Email/password is the secondary sign-in path — kept behind a "Continue
+  // with email" disclosure so Google SSO stays the primary call-to-action.
+  // Auto-expanded when an email is pre-filled (invite airlock round-trip) so
+  // invitees see the form directly instead of an extra click.
+  const [showEmailForm, setShowEmailForm] = useState(Boolean(_initialEmail));
   const navigate = useNavigate();
   // Affiliate invite round-trip: if the user arrived via the Partners
   // invite landing page, we route them back there after login so the
@@ -292,10 +297,11 @@ export default function Login() {
             </motion.div>
           )}
 
-          {/* Google OAuth — same backend endpoint as the signup page. The
-              button hides itself if /auth/google/status returns enabled=false,
-              so misconfigured envs degrade gracefully. */}
-          <div className="mb-5">
+          {/* Google OAuth — the PRIMARY sign-in path. Same backend endpoint
+              as the signup page; the button hides itself if
+              /auth/google/status returns enabled=false, so misconfigured envs
+              degrade gracefully. */}
+          <div className="mb-4">
             {/* Preserve the deep-link ``next`` (e.g. ``/invite/<token>``)
                 so a Google sign-in from the invite airlock lands the user
                 BACK on the airlock to accept, not on the dashboard root.
@@ -310,13 +316,39 @@ export default function Login() {
             />
           </div>
 
-          <div className="flex items-center gap-3 mb-5">
-            <div className="flex-1 h-px bg-surface-200" />
-            <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
-            <div className="flex-1 h-px bg-surface-200" />
-          </div>
+          {/* Secondary email/password path, disclosed on demand so Google
+              stays the visual primary. All handlers, "Remember me", the
+              forgot-password link and error handling are unchanged. */}
+          {!showEmailForm ? (
+            <>
+              <div className="flex items-center gap-3 my-5">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailForm(true)}
+                className={cn(
+                  'w-full py-2.5 rounded-xl border border-surface-200 bg-white text-surface-700',
+                  'font-medium text-sm hover:bg-surface-50 transition-colors',
+                  'flex items-center justify-center gap-2'
+                )}
+                tabIndex={0}
+              >
+                <Mail size={16} className="text-surface-400" />
+                Continue with email
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or continue with email</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
+              <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
                 Email address
@@ -410,7 +442,9 @@ export default function Login() {
                 </>
               )}
             </button>
-          </form>
+              </form>
+            </>
+          )}
 
           <p className="text-center text-sm text-surface-500 mt-8">
             Don&apos;t have an account?{' '}
