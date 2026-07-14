@@ -10,6 +10,7 @@ import { MILESTONES, milestoneIndex } from './studioMilestones';
 import CreateStep from './steps/CreateStep';
 import TrainStep from './steps/TrainStep';
 import AppearanceStep from './steps/AppearanceStep';
+import GoLiveStep from './steps/GoLiveStep';
 import LiveAgentPreview from './LiveAgentPreview';
 
 const EASE = [0.16, 1, 0.3, 1];
@@ -102,6 +103,8 @@ export default function BuildStudio() {
                 return <TrainStep onDone={goNext} />;
             case 'appearance':
                 return <AppearanceStep onDone={goNext} onPreviewColor={setPreviewColor} />;
+            case 'golive':
+                return <GoLiveStep />;
             default:
                 return (
                     <div className="flex flex-col gap-5">
