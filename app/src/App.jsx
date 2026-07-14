@@ -39,6 +39,8 @@ import TeamManagement from './pages/TeamManagement';
 import Integrations from './pages/Integrations';
 import Billing from './pages/Billing';
 import AffiliateDashboard from './pages/AffiliateDashboard';
+import BuildStudio from './pages/build/BuildStudio';
+import StudioProviders from './pages/build/StudioProviders';
 
 // Components
 import AccessDenied from './components/AccessDenied';
@@ -172,6 +174,21 @@ function App() {
                     <Route
                         path="/affiliate-accept"
                         element={<LegacyAffiliateAcceptRedirect />}
+                    />
+
+                    {/* Build Studio — a dedicated full-screen guided onboarding
+                        mode, mounted OUTSIDE AdminLayout (no sidebar/topbar).
+                        Re-declares its own provider stack via StudioProviders
+                        since it lives outside the "/" subtree. */}
+                    <Route
+                        path="/build"
+                        element={
+                            <ProtectedRoute>
+                                <StudioProviders>
+                                    <BuildStudio />
+                                </StudioProviders>
+                            </ProtectedRoute>
+                        }
                     />
 
                     {/* App Routes (root) */}
