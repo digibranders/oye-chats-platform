@@ -70,7 +70,7 @@ function summarizeHours(bh) {
 }
 
 const queueInputCls =
-    'w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 disabled:opacity-60 disabled:cursor-not-allowed';
+    'w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] disabled:opacity-60 disabled:cursor-not-allowed';
 
 /**
  * Settings → Live Chat — central hub for live-chat availability config.

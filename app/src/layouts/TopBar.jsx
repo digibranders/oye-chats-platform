@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar, Sun, Moon, ChevronRight } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { cn } from '../lib/utils';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { usePageHeader } from '../context/PageHeaderContext';
 import WorkspacePill from './WorkspacePill';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
@@ -10,6 +12,60 @@ import Avatar from '../components/ui/Avatar';
 import NotificationBell from '../components/NotificationBell';
 import { getCurrentUser } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
+import { useTheme } from '../context/ThemeContext';
+
+// Animated Light ⇄ Dark switch. Two states only (System lives in
+// Settings › Appearance): a sliding thumb whose sun/moon icon morphs as it
+// crosses the track. Toggling from 'system' resolves to an explicit choice.
+function ThemeToggle() {
+  const { theme, setMode } = useTheme();
+  const isDark = theme === 'dark';
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={isDark}
+      aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      onClick={() => setMode(isDark ? 'light' : 'dark')}
+      className={cn(
+        'relative inline-flex h-7 w-[52px] shrink-0 items-center rounded-full p-1 transition-colors duration-300',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus)] focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-950',
+        isDark ? 'bg-surface-800' : 'bg-amber-100',
+      )}
+    >
+      {/* Faint destination hint on the far side of the track */}
+      <Sun
+        size={12}
+        className={cn('absolute left-1.5 transition-opacity duration-300', isDark ? 'text-surface-500 opacity-70' : 'opacity-0')}
+      />
+      <Moon
+        size={12}
+        className={cn('absolute right-1.5 transition-opacity duration-300', isDark ? 'opacity-0' : 'text-amber-400 opacity-70')}
+      />
+      {/* Sliding thumb with a morphing icon */}
+      <motion.span
+        initial={false}
+        animate={{ x: isDark ? 24 : 0 }}
+        transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+        className="relative z-10 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm"
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={isDark ? 'moon' : 'sun'}
+            initial={{ rotate: -90, opacity: 0, scale: 0.5 }}
+            animate={{ rotate: 0, opacity: 1, scale: 1 }}
+            exit={{ rotate: 90, opacity: 0, scale: 0.5 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center justify-center"
+          >
+            {isDark ? <Moon size={12} className="text-indigo-500" /> : <Sun size={12} className="text-amber-500" />}
+          </motion.span>
+        </AnimatePresence>
+      </motion.span>
+    </button>
+  );
+}
 
 // Format an ISO timestamp as e.g. "Joined May 4, 2026". Returns "—" on bad input
 // so a fetch hiccup or pre-2024 row never renders the profile dropdown blank.
@@ -24,6 +80,42 @@ function _formatJoinedDate(iso) {
   }
 }
 
+// Renders the page-published breadcrumb trail INTO the top bar. The last entry
+// is the page title, deliberately emphasized (font-semibold) beyond a normal
+// crumb since it doubles as the page heading; earlier entries with a `to`
+// become links. Non-last crumbs/separators reuse Breadcrumbs.jsx tokens and
+// mobile behavior so migrated and un-migrated pages read identically. Assumes
+// `crumbs` is non-empty (callers guard first).
+function ContextualCrumbs({ crumbs }) {
+  return (
+    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
+      {crumbs.map((crumb, index) => {
+        const isLast = index === crumbs.length - 1;
+        const key = crumb.to || `${crumb.label}-${index}`;
+        return (
+          <span key={key} className="flex items-center gap-1.5">
+            {index > 0 && (
+              <ChevronRight size={14} className="text-surface-600 dark:text-surface-300 hidden sm:inline" />
+            )}
+            {isLast ? (
+              <span aria-current="page" className="font-semibold text-surface-900 dark:text-surface-100">{crumb.label}</span>
+            ) : crumb.to ? (
+              <Link
+                to={crumb.to}
+                className="text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 transition-colors hidden sm:inline"
+              >
+                {crumb.label}
+              </Link>
+            ) : (
+              <span className="text-surface-400 dark:text-surface-500 hidden sm:inline">{crumb.label}</span>
+            )}
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenSearch }) {
   const navigate = useNavigate();
   const adminName = getAuthItem('admin_name') || 'Admin';
@@ -32,11 +124,23 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const [_profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
   const { entitlements } = useEntitlements();
+  // Contextual app-bar state published by the current page via <PageHeader/>.
+  // Empty `crumbs` means the page hasn't migrated yet → fall back to the
+  // location-derived <Breadcrumbs/> so nothing breaks.
+  const { crumbs, actions } = usePageHeader();
+  const hasCrumbs = Array.isArray(crumbs) && crumbs.length > 0;
   const [isOnline, setIsOnline] = useState(() => localStorage.getItem('operator_is_online') === 'true');
   // Mounted-flag prevents a state update after the menu closes if the network
   // request is still in flight — avoids the React "set state on unmounted" warn.
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // Set true on (re)mount, false on unmount. Registering only the cleanup left
+  // mountedRef stuck at false after StrictMode's mount→unmount→remount cycle,
+  // which then blocked setProfile — so the profile dropdown stayed "—" while
+  // the Settings › Profile tab (which uses a plain cancelled flag) worked.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Sync operator online/offline status in real time
   useEffect(() => {
@@ -103,6 +207,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   }, [showUserMenu]);
 
   return (
+    <>
     <header className="h-14 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
       {/* Left */}
       <div className="flex items-center gap-2 md:gap-3 min-w-0">
@@ -125,7 +230,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
               when there's only one workspace (nowhere to switch). */}
           <WorkspacePill />
           <div className="min-w-0 truncate">
-            <Breadcrumbs />
+            {hasCrumbs ? <ContextualCrumbs crumbs={crumbs} /> : <Breadcrumbs />}
           </div>
         </div>
       </div>
@@ -151,6 +256,9 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         >
           <Search size={16} />
         </button>
+
+        {/* Theme toggle — light / dark / system */}
+        <ThemeToggle />
 
         {/* Notification bell — left of the profile avatar */}
         <NotificationBell />
@@ -252,6 +360,16 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
           </AnimatePresence>
         </div>
       </div>
-  </header>
+    </header>
+
+      {/* Slim contextual action row — only rendered when the current page
+          publishes `actions` (e.g. a Save button). Sticks directly beneath the
+          56px main bar and stacks below it (z-10 < z-20). */}
+      {actions && (
+        <div className="h-12 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-end gap-2 sticky top-14 z-10 transition-colors">
+          {actions}
+        </div>
+      )}
+    </>
   );
 }

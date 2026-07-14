@@ -201,7 +201,7 @@ function KpiInfoButton({ text, label }) {
         <div className="relative group">
             <button
                 type="button"
-                className="inline-flex items-center justify-center w-4 h-4 rounded-full text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 focus:outline-none focus:ring-2 focus:ring-primary-400/60 transition-colors"
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] transition-colors"
                 title={text}
                 aria-label={label}
             >
@@ -702,7 +702,7 @@ function ConfigurationTab() {
                             <select
                                 value={selectedBotId || ''}
                                 onChange={(e) => setSelectedBotId(Number(e.target.value))}
-                                className="w-full appearance-none px-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100"
+                                className="w-full appearance-none px-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] dark:text-surface-100"
                             >
                                 <option value="" disabled>Choose a bot...</option>
                                 {bots.map((bot) => (
@@ -719,7 +719,7 @@ function ConfigurationTab() {
                                 <select
                                     value={selectedFramework}
                                     onChange={(e) => handleFrameworkChange(e.target.value)}
-                                    className="w-full appearance-none px-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100"
+                                    className="w-full appearance-none px-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] dark:text-surface-100"
                                 >
                                     {FRAMEWORK_OPTIONS.map((opt) => (
                                         <option key={opt.key} value={opt.key}>{opt.label}</option>
@@ -771,7 +771,7 @@ function ConfigurationTab() {
                                                 type="text"
                                                 value={label}
                                                 onChange={(e) => updateDimensionName(dim, e.target.value)}
-                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                             />
                                         ) : (
                                             <h3 className="text-base font-bold text-surface-900 dark:text-surface-50 truncate">{label}</h3>
@@ -787,7 +787,7 @@ function ConfigurationTab() {
                                             max={100}
                                             value={d.weight ?? 0}
                                             onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
-                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                         />
                                         <span className="text-[11px] text-surface-400 dark:text-surface-500">/100</span>
                                     </div>
@@ -837,7 +837,7 @@ function ConfigurationTab() {
                                                         value={opt.label}
                                                         onChange={(e) => updateOption(dim, idx, 'label', e.target.value)}
                                                         placeholder="Option label"
-                                                        className="px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                        className="px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                                     />
                                                     <input
                                                         type="number"
@@ -845,7 +845,7 @@ function ConfigurationTab() {
                                                         max={100}
                                                         value={opt.score}
                                                         onChange={(e) => updateOption(dim, idx, 'score', e.target.value)}
-                                                        className="w-full px-2 py-2 text-sm font-semibold text-center bg-surface-50 dark:bg-surface-800/80 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                        className="w-full px-2 py-2 text-sm font-semibold text-center bg-surface-50 dark:bg-surface-800/80 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                                     />
                                                     <button
                                                         type="button"
@@ -890,7 +890,7 @@ function ConfigurationTab() {
                                                 value={d.cta_prompt || ''}
                                                 onChange={(e) => updateDimension(dim, 'cta_prompt', e.target.value)}
                                                 placeholder="CTA prompt text shown to the visitor"
-                                                className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                             />
                                         )}
                                     </div>
@@ -915,7 +915,7 @@ function ConfigurationTab() {
                                         max={100}
                                         value={config.thresholds?.[key] ?? 0}
                                         onChange={(e) => updateThreshold(key, e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                     />
                                 </div>
                             ))}
@@ -944,7 +944,7 @@ function ConfigurationTab() {
                                         min={0}
                                         value={config.decay?.timeline_decay_per_30d ?? 0}
                                         onChange={(e) => updateDecay('timeline_decay_per_30d', e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                     />
                                 </div>
                                 <div>
@@ -954,7 +954,7 @@ function ConfigurationTab() {
                                         min={0}
                                         value={config.decay?.need_decay_per_30d ?? 0}
                                         onChange={(e) => updateDecay('need_decay_per_30d', e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:text-surface-100"
                                     />
                                 </div>
                             </div>

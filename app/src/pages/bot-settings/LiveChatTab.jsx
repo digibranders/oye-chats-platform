@@ -53,7 +53,7 @@ export default function LiveChatTab({ draft, set }) {
                         onChange={(e) => set('welcome_title', e.target.value)}
                         maxLength={80}
                         placeholder="Hi there 👋"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">Main heading shown on the welcome screen.</p>
                 </div>
@@ -65,7 +65,7 @@ export default function LiveChatTab({ draft, set }) {
                         onChange={(e) => set('welcome_subtitle', e.target.value)}
                         maxLength={120}
                         placeholder="How can we help you today?"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">Subtitle shown below the welcome title.</p>
                 </div>
@@ -96,7 +96,7 @@ export default function LiveChatTab({ draft, set }) {
                         onChange={(e) => set('waiting_message', e.target.value)}
                         maxLength={200}
                         placeholder="Connecting you to support..."
-                        className="w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg placeholder:text-surface-400 dark:placeholder:text-surface-500 transition-shadow focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/15"
+                        className="w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg placeholder:text-surface-400 dark:placeholder:text-surface-500 transition-shadow focus:outline-none focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)]"
                     />
                 </div>
                 <div className="space-y-1.5">
@@ -106,7 +106,7 @@ export default function LiveChatTab({ draft, set }) {
                         <select
                             value={draft.handoff_delay_seconds}
                             onChange={(e) => set('handoff_delay_seconds', Number(e.target.value))}
-                            className="appearance-none w-full h-10 pl-3 pr-9 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg transition-shadow focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/15"
+                            className="appearance-none w-full h-10 pl-3 pr-9 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg transition-shadow focus:outline-none focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)]"
                         >
                             <option value={0}>Immediately</option>
                             <option value={2}>After 2 seconds</option>
@@ -132,7 +132,7 @@ export default function LiveChatTab({ draft, set }) {
                         onChange={(e) => set('offline_message', e.target.value)}
                         maxLength={200}
                         placeholder="We'll be right back! Leave a message and we'll follow up shortly."
-                        className="w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg placeholder:text-surface-400 dark:placeholder:text-surface-500 transition-shadow focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/15"
+                        className="w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg placeholder:text-surface-400 dark:placeholder:text-surface-500 transition-shadow focus:outline-none focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)]"
                     />
                 </div>
             </div>
@@ -158,7 +158,7 @@ export default function LiveChatTab({ draft, set }) {
                         value={draft.live_chat_queue_timeout_seconds}
                         onChange={(e) => set('live_chat_queue_timeout_seconds', Number(e.target.value))}
                         placeholder="20"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">How long a visitor waits for an operator before timing out (20 seconds default).</p>
                 </div>
@@ -172,7 +172,7 @@ export default function LiveChatTab({ draft, set }) {
                         value={draft.live_chat_max_queue_size}
                         onChange={(e) => set('live_chat_max_queue_size', Number(e.target.value))}
                         placeholder="10"
-                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
+                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-[var(--focus)] dark:placeholder:text-surface-500"
                     />
                     <p className="text-[11px] text-surface-400">Maximum number of visitors that can wait in the live-chat queue at once (10 default).</p>
                 </div>

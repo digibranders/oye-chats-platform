@@ -17,6 +17,7 @@ import { cn, formatVisitorLocation } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
+import { useConfirm } from '../context/ConfirmContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -186,6 +187,7 @@ const parseHistoryMessage = (m, i) => {
 
 export default function LiveChat({ embedded = false }) {
     const { bots, selectedBot, loading: botsLoading } = useBotContext();
+    const confirm = useConfirm();
 
     // Core operator state
     const [isOnline, setIsOnline] = useState(false);
@@ -198,6 +200,12 @@ export default function LiveChat({ embedded = false }) {
     const navigateRouter = useNavigate();
     const [operatorName, setOperatorName] = useState('');
     const [duplicateTabDetected, setDuplicateTabDetected] = useState(false);
+    // Multi-action confirm modal for flows that need more than a simple
+    // yes/no (e.g. the "no operator row yet" path offers "take chats" vs
+    // "invite an operator"). The shared ``useConfirm`` context only renders
+    // a single confirm CTA, so this local state powers the multi-CTA modal
+    // in the JSX below.
+    const [confirmModal, setConfirmModal] = useState(null);
     // operatorId is needed for owner accounts (auth_type='client') to pin REST calls
     // to the exact operator record rather than using the fragile .limit(1) DB fallback.
     const operatorIdRef = useRef(
@@ -283,9 +291,6 @@ export default function LiveChat({ embedded = false }) {
     // Holds the latest handleSelectChat so keyboard-shortcut listener can call
     // it without re-binding the document keydown handler on every render.
     const handleSelectChatRef = useRef(null);
-
-    // Custom confirmation modal (replaces window.confirm)
-    const [confirmModal, setConfirmModal] = useState(null); // { title, message, onConfirm }
 
     // Chat history cache: session_id → messages array (avoids re-fetching on every click)
     const chatHistoryCacheRef = useRef({});
@@ -1345,7 +1350,7 @@ export default function LiveChat({ embedded = false }) {
         }
     };
 
-    const handleToggleStatus = () => {
+    const handleToggleStatus = async () => {
         // Plan-feature gate: if the customer's plan doesn't include live chat,
         // surface the upgrade modal instead of letting them go online. The
         // backend would 403 the toggle anyway — this short-circuits to a
@@ -1358,12 +1363,13 @@ export default function LiveChat({ embedded = false }) {
             return;
         }
         if (isOnline && activeChats.length > 0) {
-            setConfirmModal({
-                title: 'Go Offline',
-                message: `You have ${activeChats.length} active chat(s). Going offline will disconnect them. Continue?`,
-                onConfirm: () => { setConfirmModal(null); executeToggleStatus(); },
+            const ok = await confirm({
+                title: 'Go offline?',
+                description: `You have ${activeChats.length} active chat(s). Going offline will disconnect them.`,
+                confirmLabel: 'Go offline',
+                tone: 'danger',
             });
-            return;
+            if (!ok) return;
         }
         executeToggleStatus();
     };
@@ -2232,7 +2238,15 @@ export default function LiveChat({ embedded = false }) {
                                             Transfer
                                         </button>
                                         <button
-                                            onClick={() => { if (window.confirm(`End chat with ${currentVisitorName}?`)) handleCloseChat(selectedChat); }}
+                                            onClick={async () => {
+                                                const ok = await confirm({
+                                                    title: 'End this chat?',
+                                                    description: `The conversation with ${currentVisitorName} will be closed.`,
+                                                    confirmLabel: 'End chat',
+                                                    tone: 'danger',
+                                                });
+                                                if (ok) handleCloseChat(selectedChat);
+                                            }}
                                             className="px-3 py-1.5 text-[12px] font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors"
                                         >
                                             End Chat
@@ -2240,7 +2254,7 @@ export default function LiveChat({ embedded = false }) {
                                         <button
                                             onClick={() => setShowRightPanel(p => !p)}
                                             aria-label={showRightPanel ? 'Hide info panel' : 'Show info panel'}
-                                            className="p-1.5 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary-300"
+                                            className="p-1.5 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-lg transition-colors focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                         >
                                             {showRightPanel
                                                 ? <ChevronRight className="w-4 h-4" />
@@ -2390,7 +2404,7 @@ export default function LiveChat({ embedded = false }) {
                                             }}
                                             onPaste={handleOperatorPaste}
                                             placeholder="Type your reply... (/ for quick replies)"
-                                            className="flex-1 px-4 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 dark:text-surface-100 rounded-xl outline-none border border-transparent dark:border-surface-600 focus:border-primary-300 dark:focus:border-primary-500 transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                            className="flex-1 px-4 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 dark:text-surface-100 rounded-xl outline-none border border-transparent dark:border-surface-600 focus:border-[var(--focus)] dark:focus:border-[var(--focus)] transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                         />
                                         {/* File attach — visible only when file_sharing feature flag is on */}
                                         {bots[0]?.feature_flags?.file_sharing && (
@@ -2421,7 +2435,7 @@ export default function LiveChat({ embedded = false }) {
                                             type="submit"
                                             disabled={!inputText.trim()}
                                             aria-label="Send message"
-                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 dark:bg-primary-500 text-white rounded-xl hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-30 focus-visible:ring-2 focus-visible:ring-primary-300"
+                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 dark:bg-primary-500 text-white rounded-xl hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-30 focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                         >
                                             <Send className="w-4 h-4" />
                                         </button>
@@ -2611,7 +2625,7 @@ export default function LiveChat({ embedded = false }) {
                             <button
                                 onClick={() => { setShowTransferModal(false); setTransferTarget(null); }}
                                 aria-label="Close transfer modal"
-                                className="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 focus-visible:ring-2 focus-visible:ring-primary-300 rounded"
+                                className="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] rounded"
                             >
                                 <X className="w-5 h-5" />
                             </button>
@@ -2736,7 +2750,7 @@ export default function LiveChat({ embedded = false }) {
                                 onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
                                 placeholder="Add a caption…"
                                 autoFocus
-                                className="w-full px-3 py-2 text-sm rounded-xl border border-surface-200 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 dark:text-surface-100 outline-none focus:border-primary-400 dark:focus:border-primary-500 transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                className="w-full px-3 py-2 text-sm rounded-xl border border-surface-200 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 dark:text-surface-100 outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             />
                             <div className="flex gap-2">
                                 <button

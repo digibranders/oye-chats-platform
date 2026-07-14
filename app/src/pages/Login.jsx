@@ -330,7 +330,7 @@ export default function Login() {
                   className={cn(
                     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
                     'border-surface-200',
-                    'focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                    'focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                     'outline-none transition-all text-sm placeholder:text-surface-400'
                   )}
                   placeholder="you@company.com"
@@ -357,7 +357,7 @@ export default function Login() {
                   className={cn(
                     'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white text-surface-900',
                     'border-surface-200',
-                    'focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                    'focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                     'outline-none transition-all text-sm placeholder:text-surface-400'
                   )}
                   placeholder="Enter your password"
@@ -381,7 +381,7 @@ export default function Login() {
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
-                  className="peer appearance-none w-4 h-4 border border-surface-300 rounded bg-white checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/25 transition-all cursor-pointer"
+                  className="peer appearance-none w-4 h-4 border border-surface-300 rounded bg-white checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] transition-all cursor-pointer"
                   tabIndex={3}
                 />
                 <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">

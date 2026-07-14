@@ -4,6 +4,7 @@ import { Inbox, Mail, Clock, CheckCircle2, Trash2, ChevronLeft, ChevronRight, Ch
 import { getOfflineMessages, updateOfflineMessage, deleteOfflineMessage } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { useBotContext } from '../context/BotContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { cn } from '../lib/utils';
 
 const DATE_FILTERS = [
@@ -45,6 +46,7 @@ export default function OfflineMessages({ embedded = false }) {
     // matches the way every other data page in the app scopes to the active
     // bot (Leads, Insights, Chatbot Appearance, etc.).
     const { selectedBot } = useBotContext();
+    const confirm = useConfirm();
     const [messages, setMessages] = useState([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
@@ -108,7 +110,13 @@ export default function OfflineMessages({ embedded = false }) {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Delete this message?')) return;
+        const ok = await confirm({
+            title: 'Delete this message?',
+            description: 'The offline message will be permanently removed.',
+            confirmLabel: 'Delete',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteOfflineMessage(id);
             if (selectedMessage?.id === id) setSelectedMessage(null);

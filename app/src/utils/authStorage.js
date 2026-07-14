@@ -1,21 +1,27 @@
 /**
  * Auth-aware storage wrapper.
  *
- * Routes auth tokens + user metadata into one of two browser stores based on
- * the user's "Remember me" choice at login:
+ * Auth ALWAYS lives in ``localStorage`` so every tab in the same browser
+ * shares one session. It used to route non-"Remember me" logins into
+ * ``sessionStorage``, but sessionStorage is per-tab — opening the app in a
+ * second tab found no token and tore the whole session down. localStorage is
+ * shared across tabs, which is the behaviour users expect.
  *
- *   • ``persistent=true``  → ``localStorage``  (survives browser restart)
- *   • ``persistent=false`` → ``sessionStorage`` (cleared on tab close)
+ * "Remember me" is preserved as an ABSOLUTE session expiry instead of a
+ * per-tab store: remembered → 30 days, not-remembered → 1 day. The expiry is
+ * armed whenever a login bundle (one carrying ``admin_token``) is written and
+ * enforced once at app startup (see ``isSessionExpired`` + the guard in
+ * main.jsx). A session with no expiry recorded (pre-migration) is treated as
+ * valid so this change never force-logs-out an existing user.
  *
- * All reads transparently fall back across both stores — callers never need
- * to know which one a given session chose. Writes target ONE store and clear
- * the OTHER to prevent ambiguous duplicates (otherwise a logout that only
- * clears localStorage would leave a sessionStorage shadow that auto-logs the
- * user back in on next request).
- *
- * Use ``setAuthBundle`` to set every login payload field in one call so they
- * stay aligned on the same persistence tier.
+ * Reads still fall back to sessionStorage so any legacy per-tab session from
+ * before this change keeps working in the tab that owns it.
  */
+
+/** localStorage key holding the absolute session-expiry epoch (ms). */
+export const SESSION_EXPIRY_KEY = 'admin_session_expires_at';
+const REMEMBER_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; //  1 day
 
 /**
  * Every browser-storage key that holds auth state. Used by ``clearAuthStorage``
@@ -46,26 +52,25 @@ export const AUTH_STORAGE_KEYS = [
     'current_workspace_id',
     'current_workspace_name',
     'current_workspace_role',
+    SESSION_EXPIRY_KEY,
 ];
 
 /**
- * Write a single key. ``persistent=true`` uses localStorage; ``false`` uses
- * sessionStorage. The opposite store is cleared so the next read sees one
- * unambiguous source.
+ * Write a single auth key to localStorage (shared across tabs). Any legacy
+ * sessionStorage copy of the same key is cleared so a stale per-tab shadow
+ * can't shadow the shared value. The ``persistent`` param is accepted for
+ * backward compatibility but no longer changes WHERE the value is stored —
+ * session length is governed by the expiry armed in ``setAuthBundle``. Extra
+ * positional args from legacy callers (the old ``persistent`` flag) are
+ * harmlessly ignored.
  */
-export function setAuthItem(key, value, persistent = true) {
+export function setAuthItem(key, value) {
     if (value === null || value === undefined) {
         removeAuthItem(key);
         return;
     }
-    const stringified = String(value);
-    if (persistent) {
-        window.sessionStorage.removeItem(key);
-        window.localStorage.setItem(key, stringified);
-    } else {
-        window.localStorage.removeItem(key);
-        window.sessionStorage.setItem(key, stringified);
-    }
+    window.sessionStorage.removeItem(key);
+    window.localStorage.setItem(key, String(value));
 }
 
 /**
@@ -76,8 +81,27 @@ export function setAuthItem(key, value, persistent = true) {
 export function setAuthBundle(items, persistent = true) {
     Object.entries(items).forEach(([k, v]) => {
         if (v === undefined || v === null) return;
-        setAuthItem(k, v, persistent);
+        setAuthItem(k, v);
     });
+    // A bundle carrying a token is a login/refresh — (re)arm the absolute
+    // session expiry. Stored in localStorage so it's shared across tabs;
+    // "Remember me" (persistent) buys 30 days, otherwise 1 day.
+    if (items.admin_token) {
+        const ttl = persistent ? REMEMBER_TTL_MS : SESSION_TTL_MS;
+        window.localStorage.setItem(SESSION_EXPIRY_KEY, String(Date.now() + ttl));
+    }
+}
+
+/**
+ * True when a recorded session expiry has passed. A missing expiry (a session
+ * created before this mechanism existed) is treated as NOT expired so the
+ * migration never force-logs-out a currently-valid user.
+ */
+export function isSessionExpired() {
+    const raw = window.localStorage.getItem(SESSION_EXPIRY_KEY);
+    if (!raw) return false;
+    const ts = Number(raw);
+    return Number.isFinite(ts) && Date.now() > ts;
 }
 
 /**

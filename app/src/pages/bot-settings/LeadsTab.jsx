@@ -151,7 +151,7 @@ export default function LeadsTab({ draft, set, ent, requestUpgrade }) {
                                     <label className="flex items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
-                                            className="w-4 h-4 text-primary-600 rounded border-surface-300 focus:ring-primary-500"
+                                            className="w-4 h-4 text-primary-600 rounded border-surface-300 focus:ring-[var(--focus-ring)]"
                                             checked={isRequired}
                                             onChange={(e) => {
                                                 set('lead_form_fields', leadFormFields.map((f) =>

@@ -244,7 +244,7 @@ function ToggleSwitch({ enabled, disabled, onChange, label }) {
             className={cn(
                 'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full',
                 'border-2 border-transparent transition-colors duration-200 ease-in-out',
-                'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                'focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] focus:ring-offset-2',
                 'focus:ring-offset-white dark:focus:ring-offset-surface-900',
                 enabled ? 'bg-primary-600' : 'bg-surface-300 dark:bg-surface-700',
                 disabled && 'opacity-50 cursor-not-allowed',

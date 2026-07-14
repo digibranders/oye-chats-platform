@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastProvider } from './context/ToastContext';
+import { ConfirmProvider } from './context/ConfirmContext';
 import { UpgradeModalProvider } from './context/UpgradeModalContext';
 import { CrawlProvider } from './context/CrawlContext';
 import { CurrencyProvider } from './context/CurrencyContext';
@@ -136,6 +137,7 @@ const ClientOnlyPage = ({ children, pageName }) => {
 function App() {
     return (
         <ToastProvider>
+            <ConfirmProvider>
             <BrowserRouter>
                 <UpgradeModalProvider>
                 <Routes>
@@ -245,6 +247,7 @@ function App() {
                 </Routes>
                 </UpgradeModalProvider>
             </BrowserRouter>
+            </ConfirmProvider>
         </ToastProvider>
     );
 }

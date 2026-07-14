@@ -6,15 +6,15 @@ import { submitPlatformFeedback } from '../services/api';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
-import OnboardingWizard from '../components/OnboardingWizard';
 import TrialBanner from '../components/TrialBanner';
 import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
 import WorkspaceAccessDeniedModal from '../components/WorkspaceAccessDeniedModal';
 import { PushProvider, usePush } from '../context/PushContext';
-import { BotProvider, useBotContext } from '../context/BotContext';
+import { BotProvider } from '../context/BotContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
+import { PageHeaderProvider } from '../context/PageHeaderContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
 
 const MD_BREAKPOINT = 768;
@@ -34,7 +34,6 @@ function AdminLayoutInner() {
   });
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < MD_BREAKPOINT);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackTab, setFeedbackTab] = useState('send');
   const [feedbackHighlightId, setFeedbackHighlightId] = useState(null);
@@ -48,7 +47,6 @@ function AdminLayoutInner() {
   const handleFeedbackSubmit = async (payload) => {
     await submitPlatformFeedback(payload);
   };
-  const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -111,13 +109,6 @@ function AdminLayoutInner() {
   useEffect(() => {
     localStorage.setItem('sidebar_open', String(isSidebarOpen));
   }, [isSidebarOpen]);
-
-  useEffect(() => {
-    const isOperator = localStorage.getItem('auth_type') === 'operator';
-    if (!isOperator && !botsLoading && !botsError && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
-      setShowOnboarding(true); // eslint-disable-line react-hooks/set-state-in-effect -- one-time init from external state (localStorage)
-    }
-  }, [botsLoading, botsError, bots.length]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -200,13 +191,6 @@ function AdminLayoutInner() {
 
       <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
 
-      {showOnboarding && (
-        <OnboardingWizard
-          onComplete={() => setShowOnboarding(false)}
-          onRefreshBots={refreshBots}
-        />
-      )}
-
       {/* Floating right-edge feedback tab */}
       <button
         onClick={() => {
@@ -216,7 +200,7 @@ function AdminLayoutInner() {
         }}
         aria-label="Send feedback"
         title="Send feedback"
-        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#a21caf] to-[#86198f] shadow-[-6px_0_30px_rgba(162,28,175,0.5)] z-40 cursor-pointer"
+        className="fixed right-0 top-1/2 -translate-y-1/2 origin-right hover:scale-105 hover:brightness-110 active:brightness-95 transition-[transform,filter] duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#a21caf] to-[#86198f] shadow-[-6px_0_30px_rgba(162,28,175,0.5)] z-40 cursor-pointer"
       >
         <MessageCircle size={20} className="text-white flex-shrink-0" />
         <span
@@ -265,7 +249,13 @@ export default function AdminLayout() {
       <NotificationProvider>
         <BotProvider>
           <PushProvider>
-            <AdminLayoutInner />
+            {/* PageHeaderProvider wraps the layout so both TopBar and the
+                routed page (<Outlet/>) share the contextual app-bar state:
+                pages publish crumbs/title/actions via <PageHeader/>, TopBar
+                renders them. */}
+            <PageHeaderProvider>
+              <AdminLayoutInner />
+            </PageHeaderProvider>
           </PushProvider>
         </BotProvider>
       </NotificationProvider>

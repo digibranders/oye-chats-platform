@@ -77,7 +77,7 @@ export default function Settings() {
                                 onClick={() => setParams({ tab: t.id })}
                                 className={cn(
                                     'flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-left whitespace-nowrap transition-colors',
-                                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                                    'focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                                     t.divider && 'mt-2 pt-3 border-t border-surface-200 dark:border-surface-800',
                                     on
                                         ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'

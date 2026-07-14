@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from app.api.auth import (
     bot_subscription_status,
@@ -17,8 +17,9 @@ from app.api.auth import (
     get_current_client_or_operator,
     require_active_subscription_for_workspace,
 )
+from app.config import APP_URL, FRONTEND_URL, MARKETING_URL
 from app.core.cache import bot_config_key, cache_delete
-from app.core.origin_check import normalize_domain_input
+from app.core.origin_check import extract_hostname, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import Bot, BotGrowthEvent
@@ -76,6 +77,33 @@ def _derive_allowed_domains_from_website(website: str | None) -> list[str]:
 
 
 logger = logging.getLogger(__name__)
+
+# Hostnames that are OUR OWN surfaces (dashboard preview, marketing site, demo
+# pages, local dev). A widget bootstrap from one of these is not a real customer
+# install, so it must never stamp ``Bot.widget_installed_at``.
+_INTERNAL_WIDGET_HOSTS = {
+    h for h in (extract_hostname(APP_URL), extract_hostname(MARKETING_URL), extract_hostname(FRONTEND_URL)) if h
+} | {"localhost", "127.0.0.1"}
+
+
+def _is_external_install_origin(request: Request) -> bool:
+    """True when a widget bootstrap comes from a real external site.
+
+    The ``Origin`` header is the source of truth (``Referer`` is a fallback for
+    clients that omit it). A missing/opaque origin, or one of our own hosts,
+    returns False so we only stamp an install for a genuine customer embed. The
+    request's own host is excluded too, because the hosted demo/preview pages are
+    served by the API itself — a widget embedded there reports the API host as
+    its origin, which must not count as a customer install regardless of how the
+    ``APP_URL``/``MARKETING_URL`` config resolves.
+    """
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    hostname = extract_hostname(origin)
+    if not hostname or hostname in _INTERNAL_WIDGET_HOSTS:
+        return False
+    self_host = extract_hostname(str(request.base_url))
+    return hostname != self_host
+
 
 router = APIRouter(prefix="/bots", tags=["bots"])
 public_router = APIRouter(tags=["bots"])
@@ -298,6 +326,9 @@ class BotResponse(BaseModel):
     email_on_offline: bool = True
     email_visitor_confirmation: bool = True
     live_chat_enabled: bool = True
+    # Set once the embedded widget has been seen live on a real external site;
+    # None until then. Drives the "widget installed" setup-checklist step.
+    widget_installed_at: datetime | None = None
     operator_timeout_seconds: int = 120
     live_chat_queue_timeout_seconds: int = 20
     live_chat_max_queue_size: int = 10
@@ -348,6 +379,27 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     open the widget will only get the configured ``offline_message`` —
     the chat endpoint will not run RAG.
     """
+    # One-time "widget is live" detection. The first time the widget bootstraps
+    # from a real external site (not our dashboard preview / demo / localhost),
+    # stamp the bot so the Dashboard setup checklist can confirm the install
+    # without a user self-report. Best-effort and idempotent — the guarded
+    # UPDATE only matches while the column is NULL, and we invalidate the cached
+    # bot config so subsequent loads skip this path entirely. Never blocks the
+    # widget response.
+    if bot.widget_installed_at is None and _is_external_install_origin(request):
+        try:
+            with get_session() as _install_session:
+                stamped = _install_session.execute(
+                    update(Bot)
+                    .where(Bot.id == bot.id, Bot.widget_installed_at.is_(None))
+                    .values(widget_installed_at=func.now())
+                ).rowcount
+                _install_session.commit()
+            if stamped:
+                cache_delete(bot_config_key(bot.bot_key))
+        except Exception:
+            logger.debug("widget install stamp skipped for bot_id=%s", getattr(bot, "id", None), exc_info=True)
+
     # Construct backend file URL for relative logos
     logo_url = bot.bot_logo
     if logo_url and not logo_url.startswith("http"):
@@ -1110,6 +1162,7 @@ def list_bots(
                     email_on_offline=b.email_on_offline,
                     email_visitor_confirmation=b.email_visitor_confirmation,
                     live_chat_enabled=b.live_chat_enabled,
+                    widget_installed_at=b.widget_installed_at,
                     operator_timeout_seconds=b.operator_timeout_seconds,
                     live_chat_queue_timeout_seconds=b.live_chat_queue_timeout_seconds,
                     live_chat_max_queue_size=b.live_chat_max_queue_size,
@@ -1549,6 +1602,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             email_on_offline=bot.email_on_offline,
             email_visitor_confirmation=bot.email_visitor_confirmation,
             live_chat_enabled=bot.live_chat_enabled,
+            widget_installed_at=bot.widget_installed_at,
             operator_timeout_seconds=bot.operator_timeout_seconds,
             live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
             live_chat_max_queue_size=bot.live_chat_max_queue_size,

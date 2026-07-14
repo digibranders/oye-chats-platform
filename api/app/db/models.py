@@ -362,6 +362,12 @@ class Bot(Base):
     )
     domain_check_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
 
+    # First time the embedded widget was seen bootstrapping from a real external
+    # site (not the dashboard preview / demo / localhost). Stamped exactly once
+    # by the public settings endpoint; lets the dashboard confirm the widget is
+    # actually live without a user self-report. NULL = never seen installed.
+    widget_installed_at = Column(DateTime(timezone=True), nullable=True)
+
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

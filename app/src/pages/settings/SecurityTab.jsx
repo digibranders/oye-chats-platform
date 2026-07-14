@@ -20,7 +20,7 @@ const inputCls = cn(
     'w-full px-3 py-2 pr-10 rounded-xl border border-surface-200 dark:border-surface-600 text-sm',
     'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
     'placeholder:text-surface-400 dark:placeholder:text-surface-500',
-    'focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all'
+    'focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] outline-none transition-all'
 );
 
 const labelCls = 'text-xs font-medium text-surface-500 dark:text-surface-400 mb-1 block';
@@ -272,8 +272,8 @@ export default function SecurityTab() {
                                     className={cn(
                                         'w-full px-3 py-2 rounded-xl border text-sm transition-all outline-none',
                                         confirmMismatch
-                                            ? 'border-rose-400 dark:border-rose-500 focus:ring-2 focus:ring-rose-500/20'
-                                            : 'border-surface-200 dark:border-surface-600 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                                            ? 'border-rose-400 dark:border-rose-500 focus:ring-1 focus:ring-rose-500/20'
+                                            : 'border-surface-200 dark:border-surface-600 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
                                         'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500'
                                     )}
                                 />
@@ -372,7 +372,7 @@ export default function SecurityTab() {
                                     onChange={(e) => setOtp(e.target.value)}
                                     placeholder="6-digit code"
                                     autoComplete="one-time-code"
-                                    className="w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-600 text-sm bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all font-mono tracking-widest"
+                                    className="w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-600 text-sm bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] outline-none transition-all font-mono tracking-widest"
                                 />
                                 <button
                                     type="button"

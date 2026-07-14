@@ -135,7 +135,7 @@ export default function LiveChatRequestBanner() {
                                     onClick={handleAccept}
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.97 }}
-                                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-[7px] rounded-lg text-[12px] font-semibold text-white transition-all focus:outline-none focus:ring-2 focus:ring-primary-400/50"
+                                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-[7px] rounded-lg text-[12px] font-semibold text-white transition-all focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)]"
                                     style={{
                                         background: 'linear-gradient(135deg, #a21caf, #86198f)',
                                         boxShadow: '0 2px 12px rgba(162, 28, 175, 0.35)',

@@ -43,6 +43,17 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
+  /* ── Type scale ──
+     ADDITIVE ONLY: adds the one small rung the redesign kept faking with
+     `text-[11px]`/`text-[10px]` arbitrary values. The default Tailwind rungs
+     (text-xs=12px … text-3xl=30px) are intentionally left untouched so no
+     existing usage reflows. A later, reviewed codemod maps the 692 remaining
+     `text-[Npx]` literals onto the nearest named rung — new code should reach
+     for `text-2xs`/`text-xs`/`text-sm`/… never an arbitrary px value.
+       text-2xs  11px  · dense table meta, timestamps, micro-badges */
+  --text-2xs: 0.6875rem;      /* 11px */
+  --text-2xs--line-height: 1rem;
+
   /* ── Accent Colors (muted, sophisticated) ── */
   --color-emerald-50: #ecfdf5;
   --color-emerald-100: #d1fae5;
@@ -153,7 +164,14 @@
   --text: var(--color-surface-900);
   --text-secondary: var(--color-surface-500);
   --text-muted: var(--color-surface-400);
-  --ring: var(--color-primary-600);
+  /* ── Focus — a calm indigo, intentionally OFF the volt-violet brand so the
+     focus indicator reads as a system affordance rather than more brand color.
+     `--focus` = the solid hairline border/outline; `--focus-ring` = the soft
+     glow. Single source of truth: every focus ring in the app routes through
+     these two tokens (see the focus-* utilities in components). */
+  --focus: #6366f1;                        /* indigo-500 */
+  --focus-ring: rgba(99, 102, 241, 0.28);  /* soft indigo glow */
+  --ring: var(--focus);
   --sidebar-bg: #ffffff;                   /* white sidebar rail (Minecloud) */
   --sidebar-border: var(--color-surface-200);
 }
@@ -168,7 +186,9 @@
   --text: var(--color-surface-50);
   --text-secondary: var(--color-surface-400);
   --text-muted: var(--color-surface-500);
-  --ring: var(--color-primary-400);
+  --focus: #818cf8;                        /* indigo-400 — lighter for dark surfaces */
+  --focus-ring: rgba(129, 140, 248, 0.32);
+  --ring: var(--focus);
   --sidebar-bg: #050505;
   --sidebar-border: var(--color-surface-800);
 }
@@ -318,7 +338,60 @@ body {
   box-shadow: 0 1px 4px rgba(0,0,0,0.3);
 }
 
-/* ── Focus ring utility ── */
+/* ──────────────────────────────────────────────────────────────────────────
+   Global keyboard-focus baseline (a11y — WCAG 2.4.7 Focus Visible).
+
+   Previously the app shipped an opt-in `.focus-ring` class that was applied in
+   ZERO places, so keyboard users navigated the entire dashboard with no
+   visible focus indicator. This makes a consistent ring the default for every
+   natively-focusable and ARIA-promoted interactive element.
+
+   `:focus-visible` fires only for keyboard / programmatic focus, never on
+   mouse click, so pointer users see no rings. The selector list is wrapped in
+   `:where()` (zero specificity) so any component that renders its own focus
+   treatment overrides this with a plain class — and elements that manage
+   their own ring can opt out with `.no-focus-ring`.
+   ────────────────────────────────────────────────────────────────────────── */
+:where(
+  a[href],
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="link"],
+  input:not([type="hidden"]),
+  select,
+  textarea,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 1.5px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+/* Form controls already render their own soft focus ring + primary border
+   (see ui/Input, ui/Select). Stacking the global outline on top of that read
+   as a heavy double bracket, so suppress the extra outline here and let the
+   component's own, quieter treatment stand. Raw/unstyled interactive elements
+   (buttons, links, tabs) still get the thin ring above. */
+:where(input:not([type="hidden"]), select, textarea):focus-visible {
+  outline: none;
+}
+
+.no-focus-ring:focus-visible {
+  outline: none;
+}
+
+/* Never show the ring for mouse users on browsers without :focus-visible. */
+:where(button, [role="button"], a[href]):focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Back-compat: keep `.focus-ring` working for any future explicit use. */
 .focus-ring {
   outline: none;
 }
@@ -326,6 +399,26 @@ body {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
   border-radius: inherit;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reduced-motion (a11y — WCAG 2.3.3 Animation from Interactions).
+
+   The app defines 12 keyframe animations (fade-up, bounce-in, shimmer, …) and
+   animates background/color transitions globally. None of it honoured the OS
+   "reduce motion" setting, so vestibular-sensitive users got the full motion.
+   This collapses all animation and transition to near-instant while preserving
+   the end state (opacity/transform land at their final value immediately).
+   ────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

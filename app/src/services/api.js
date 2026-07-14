@@ -4,6 +4,28 @@ import { clearTrialBannerDismissals } from '../utils/trialBanner';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
+// Public / auth routes where a background 401 (e.g. a stale token left in
+// storage) must NOT force-redirect the visitor to /login. Otherwise landing
+// on /register from the marketing "Start free" CTA with a lapsed token would
+// bounce straight to /login. On these pages we still clear the bad token, we
+// just leave the user where they intended to be.
+const PUBLIC_AUTH_PATHS = [
+    '/login',
+    '/register',
+    '/forgot-password',
+    '/verify-email',
+    '/auth/callback',
+    '/affiliate-invite',
+    '/affiliate-accept',
+    '/invite',
+];
+
+function isOnPublicAuthPath() {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname;
+    return PUBLIC_AUTH_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
 const api = axios.create({
     baseURL: API_BASE_URL,
     headers: {
@@ -188,7 +210,10 @@ api.interceptors.response.use(
             // wipe them on auto-logout so the next account sees a fresh
             // trial banner.
             clearTrialBannerDismissals();
-            if (window.location.pathname !== '/login') {
+            // Only force the user to /login from a PROTECTED page. On public
+            // auth pages (notably /register from the "Start free" CTA) a stale
+            // token's 401 must not hijack the page — clear it and stay put.
+            if (!isOnPublicAuthPath()) {
                 window.location.href = '/login';
             }
         }

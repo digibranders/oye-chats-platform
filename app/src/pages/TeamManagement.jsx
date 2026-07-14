@@ -15,6 +15,7 @@ import {
 } from '../services/api';
 import { getAuthItem } from '../utils/authStorage';
 import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBotContext } from '../context/BotContext';
@@ -25,11 +26,12 @@ import { cn } from '../lib/utils';
 
 const ROLES = ['operator', 'admin', 'owner'];
 
-const inputCls = 'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 text-sm outline-none focus:border-primary-500 dark:focus:border-primary-400 transition-colors';
+const inputCls = 'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 text-sm outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] transition-colors';
 
 export default function TeamManagement() {
     const { isOperator, isBotManager } = getAuthState();
     const { showToast } = useToast();
+    const confirm = useConfirm();
     const { requestUpgrade } = useUpgradeModal();
     const { entitlements: ent } = useEntitlements();
     // "Pure operator" = the caller has an operator role in the currently-
@@ -234,7 +236,13 @@ export default function TeamManagement() {
     };
 
     const handleRevokeInvite = async (inviteId, email) => {
-        if (!window.confirm(`Revoke invitation to ${email}?`)) return;
+        const ok = await confirm({
+            title: 'Revoke invitation?',
+            description: `${email} will no longer be able to join with this invite link.`,
+            confirmLabel: 'Revoke',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await revokeOperatorInvite(inviteId);
             showToast('success', 'Invitation revoked');
@@ -318,7 +326,13 @@ export default function TeamManagement() {
 
     // ── Delete Operator ──────────────────────────────────────────────────────
     const handleDeleteOperator = async (id, name) => {
-        if (!confirm(`Delete operator "${name}"? Their active chats will be unassigned.`)) return;
+        const ok = await confirm({
+            title: `Delete operator "${name}"?`,
+            description: 'Their active chats will be unassigned. This cannot be undone.',
+            confirmLabel: 'Delete operator',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteOperator(id);
             showToast('success', `Operator "${name}" deleted`);
@@ -377,7 +391,13 @@ export default function TeamManagement() {
 
     // ── Delete Department ────────────────────────────────────────────────────
     const handleDeleteDept = async (id, name) => {
-        if (!confirm(`Delete department "${name}"? Agents will be unassigned.`)) return;
+        const ok = await confirm({
+            title: `Delete department "${name}"?`,
+            description: 'Operators in this department will be unassigned. This cannot be undone.',
+            confirmLabel: 'Delete department',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteDepartment(id);
             showToast('success', `Department "${name}" deleted`);

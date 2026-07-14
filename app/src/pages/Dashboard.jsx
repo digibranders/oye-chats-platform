@@ -9,7 +9,7 @@ import { useToast } from '../context/ToastContext';
 import useEntitlements from '../hooks/useEntitlements';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import StatCard from '../components/ui/StatCard';
-import EmptyState from '../components/ui/EmptyState';
+import SetupChecklist from '../components/SetupChecklist';
 import { cn } from '../lib/utils';
 import { getAuthItem } from '../utils/authStorage';
 
@@ -250,15 +250,10 @@ export default function Dashboard() {
     }
   };
 
+  // Brand-new accounts (no bot yet) get the setup guide as the whole page —
+  // it's the single canonical onboarding surface (the old modal wizard is gone).
   if (!botsLoading && bots.length === 0) {
-    return (
-      <EmptyState
-        title="Welcome to OyeChats"
-        description="Create your first chatbot to start seeing analytics, visitor data, and conversation insights here."
-        actionLabel="Create Your First Chatbot"
-        actionTo="/chatbot"
-      />
-    );
+    return <SetupChecklist bots={bots} selectedBot={selectedBot} botsLoading={botsLoading} />;
   }
 
   const quickActions = [
@@ -302,6 +297,10 @@ export default function Dashboard() {
       animate="animate"
       className="space-y-6"
     >
+      {/* Setup guide — self-hides once the account is fully set up or dismissed.
+          Reflects real state (bot created, sources trained, live-chat enabled). */}
+      <SetupChecklist bots={bots} selectedBot={selectedBot} botsLoading={botsLoading} />
+
       {/* Greeting */}
       <motion.div variants={fadeUp} className="flex items-start justify-between">
         <div>
@@ -342,6 +341,10 @@ export default function Dashboard() {
 
       {/* Stat Cards */}
       <motion.div variants={fadeUp} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Sparklines intentionally omitted: the dashboard stats endpoint
+            returns a scalar snapshot, not a time series, so any trend line
+            here would be fabricated. Re-add `sparkline={...}` only once a real
+            per-metric history is available from the API. */}
         <StatCard
           icon={Users}
           label="Active Users"
@@ -349,28 +352,24 @@ export default function Dashboard() {
           badge="Live"
           badgeColor="success"
           loading={isLoading}
-          sparkline={[3, 5, 4, 7, 6, 8, 9]}
         />
         <StatCard
           icon={CheckCircle}
           label="Success Rate"
           value={isLoading ? '—' : `${stats?.success_rate || 0}%`}
           loading={isLoading}
-          sparkline={[40, 55, 60, 58, 65, 70, 68]}
         />
         <StatCard
           icon={MessageSquare}
           label="Conversations"
           value={isLoading ? '—' : (stats?.total_conversations?.toLocaleString() || '0')}
           loading={isLoading}
-          sparkline={[10, 20, 15, 25, 30, 22, 35]}
         />
         <StatCard
           icon={BarChart3}
           label="Total Messages"
           value={isLoading ? '—' : (stats?.total_messages?.toLocaleString() || '0')}
           loading={isLoading}
-          sparkline={[50, 80, 60, 90, 100, 85, 120]}
         />
       </motion.div>
 
