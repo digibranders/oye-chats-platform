@@ -301,6 +301,16 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
             depts = session.execute(select(Department).where(Department.id.in_(dept_ids))).scalars().all()
             dept_names = {d.id: d.name for d in depts}
 
+        # Build bot name lookup — each operator is bound to exactly one bot
+        # via ``Operator.bot_id`` (see migration b1c7e9d3f2a5). Batched into a
+        # single SELECT so a workspace with many operators still resolves the
+        # display names in O(1) queries.
+        bot_ids = {a.bot_id for a in operators if a.bot_id}
+        bot_names = {}
+        if bot_ids:
+            bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all()
+            bot_names = {b.id: b.name for b in bots}
+
         # Count active sessions per operator
         result = []
         for a in operators:
@@ -316,6 +326,8 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
                     "name": a.name,
                     "email": a.email,
                     "role": a.role,
+                    "bot_id": a.bot_id,
+                    "bot_name": bot_names.get(a.bot_id),
                     "department_id": a.department_id,
                     "department_name": dept_names.get(a.department_id),
                     "is_online": a.is_online,
