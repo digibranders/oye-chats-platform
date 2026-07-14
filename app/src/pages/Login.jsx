@@ -122,9 +122,13 @@ export default function Login() {
         );
         sessionStorage.setItem('login_toast', '1');
 
-        if (!data.is_verified) {
-          navigate(`/verify-email?email=${encodeURIComponent(email)}`);
-        } else if (affiliateToken) {
+        // Email verification is no longer a hard wall for organic logins.
+        // An unverified client proceeds to their normal destination and is
+        // nudged by the dismissible VerifyEmailBanner instead; verification
+        // stays enforced server-side on billing/invite mutations. The
+        // ``admin_is_verified`` flag persisted in the bundle above lets the
+        // banner read state without an extra round-trip.
+        if (affiliateToken) {
           // Affiliate token always wins over the default landing target.
           navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
         } else if (safeNext) {
@@ -145,17 +149,11 @@ export default function Login() {
   };
 
   if (getAuthItem('admin_token')) {
-    if (getAuthItem('admin_is_verified') === 'false') {
-      const pending = getAuthItem('admin_pending_email') || '';
-      // Preserve the deep-link ``next`` (e.g. ``/invite/<token>``) through
-      // the verification bounce so an already-logged-in but unverified user
-      // clicking an invite link still lands on the airlock after OTP entry.
-      const verifyParams = new URLSearchParams();
-      if (pending) verifyParams.set('email', pending);
-      if (safeNext) verifyParams.set('next', safeNext);
-      const q = verifyParams.toString();
-      return <Navigate to={`/verify-email${q ? `?${q}` : ''}`} replace />;
-    }
+    // Verification is no longer a hard wall — an already-authenticated but
+    // unverified client falls through to their normal destination and gets
+    // nudged by the VerifyEmailBanner rather than being trapped on
+    // /verify-email. Verification stays enforced server-side on
+    // billing/invite mutations.
     const isOperator = localStorage.getItem('auth_type') === 'operator';
     // Deep-link ``next`` wins over defaults — invite airlock, push-notification
     // click, etc. Without this, an already-logged-in user clicking an invite

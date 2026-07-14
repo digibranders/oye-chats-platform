@@ -7,6 +7,7 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
 import TrialBanner from '../components/TrialBanner';
+import VerifyEmailBanner from '../components/VerifyEmailBanner';
 import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
 import WorkspaceAccessDeniedModal from '../components/WorkspaceAccessDeniedModal';
@@ -156,6 +157,11 @@ function AdminLayoutInner() {
         {/* Persistent trial-state banner. Renders nothing for paying customers,
             operators, or while /auth/me is in flight — see TrialBanner.jsx. */}
         <TrialBanner />
+
+        {/* Deferred email-verification nudge — renders only for unverified
+            client accounts (hidden for operators, verified users, and once
+            dismissed for the session). See VerifyEmailBanner.jsx. */}
+        <VerifyEmailBanner />
 
         {/* Web Push status banner — only renders for operators on a supported
             browser whose permission is "default" (offer to enable), "denied"

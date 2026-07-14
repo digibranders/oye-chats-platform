@@ -8,6 +8,7 @@ import { setAuthBundle } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
+import { STUDIO_ENABLED } from '../utils/flags';
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -131,13 +132,19 @@ export default function Register() {
       // flag set by a previous account.
       clearTrialBannerDismissals();
 
-      // Navigate to email verification — the guard below also handles the
-      // re-render case (setIsLoading(false) fires after navigate). Preserve
-      // ``next`` through the verification bounce so an invite-flow signup
-      // still lands back on the invite airlock after OTP entry.
-      const verifyParams = new URLSearchParams({ email: email.trim() });
-      if (safeNext) verifyParams.set('next', safeNext);
-      navigate(`/verify-email?${verifyParams.toString()}`);
+      // Email verification is no longer a hard wall for ORGANIC signups: the
+      // new client lands straight in the product and is nudged by the
+      // dismissible VerifyEmailBanner (verification stays enforced
+      // server-side on billing/invite mutations). Invite/affiliate
+      // deep-links are preserved so recipients still round-trip back to their
+      // airlock; only organic (no deep-link) signups skip into the app.
+      if (safeNext) {
+        navigate(safeNext);
+      } else if (affiliateToken) {
+        navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
+      } else {
+        navigate(STUDIO_ENABLED ? '/build' : '/');
+      }
     } catch (err) {
       // Detect the "email already registered" backend rejection so we can
       // offer a one-click redirect to Login with the current query params
