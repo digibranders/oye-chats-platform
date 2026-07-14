@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Mail, Webhook as WebhookIcon, Calendar, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
@@ -629,8 +629,8 @@ export default function Integrations() {
     };
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Integrations" subtitle="Connect email, webhooks, and third-party services" />
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Integrations' }]} title="Integrations" />
             <Tabs tabs={integrationTabs} activeTab={activeTab} onChange={handleTabChange} />
 
             {activeTab === 'email' && <EmailSettings />}

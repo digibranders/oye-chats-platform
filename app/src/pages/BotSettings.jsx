@@ -12,6 +12,7 @@ import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import useEntitlements from '../hooks/useEntitlements';
 import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/PageHeader';
 import { getCroppedImg } from './bot-settings/cropImage';
 import GeneralTab from './bot-settings/GeneralTab';
 import PersonalityTab from './bot-settings/PersonalityTab';
@@ -517,8 +518,51 @@ export default function BotSettings({ embedded = false }) {
 
     const tabProps = { draft, set, ent };
 
+    // Page-level actions. Defined once so the Save button is never duplicated:
+    // in the standalone view they live in the contextual app bar (PageHeader
+    // `actions`); in the embedded view they stay inline beside the tab strip.
+    const previewButton = (
+        <button
+            type="button"
+            onClick={() => setWebsitePreviewOpen((v) => !v)}
+            className="inline-flex items-center gap-2 px-3 h-9 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-200 text-sm font-medium hover:bg-surface-50 dark:hover:bg-surface-700 transition-colors"
+        >
+            <Sparkles className="w-4 h-4 text-primary-500" />
+            {websitePreviewOpen ? 'Hide website preview' : 'Preview on my website'}
+        </button>
+    );
+
+    const saveButton = (
+        <button
+            onClick={handleSave}
+            disabled={!isBotManager || isSaving || saved}
+            className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
+                ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                : 'bg-primary-600 hover:bg-primary-700 text-white'
+                }`}
+        >
+            <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+            {saved ? (
+                <>
+                    <CheckCircle className="w-4 h-4 relative z-10" />
+                    <span className="relative z-10">Saved!</span>
+                </>
+            ) : isSaving ? (
+                <>
+                    <RefreshCw className="w-4 h-4 relative z-10 animate-spin" />
+                    <span className="relative z-10">Saving...</span>
+                </>
+            ) : (
+                <>
+                    <CheckCircle className="w-4 h-4 relative z-10" />
+                    <span className="relative z-10">Save Configuration</span>
+                </>
+            )}
+        </button>
+    );
+
     return (
-        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20">
+        <div className={`max-w-6xl mx-auto space-y-6 animate-fade-in pb-20${embedded ? '' : ' -mt-2'}`}>
             {/* Error Toast */}
             {saveError && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 animate-fade-in">
@@ -530,27 +574,23 @@ export default function BotSettings({ embedded = false }) {
                 </div>
             )}
 
-            {/* Page Header */}
+            {/* Contextual app-bar header (standalone only). The embedded variant
+                — mounted inside Chatbot's Appearance tab — renders no PageHeader
+                and keeps its inline Save button below. */}
             {!embedded && (
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                    <div>
-                        <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Bot Settings</h1>
-                        <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Configure your chatbot's personality, appearance, and behavior</p>
-                        {!isBotManager && (
-                            <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">
-                                You have read-only access to this bot configuration.
-                            </p>
-                        )}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => setWebsitePreviewOpen((v) => !v)}
-                        className="self-start inline-flex items-center gap-2 px-3 h-9 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-200 text-sm font-medium hover:bg-surface-50 dark:hover:bg-surface-700 transition-colors"
-                    >
-                        <Sparkles className="w-4 h-4 text-primary-500" />
-                        {websitePreviewOpen ? 'Hide website preview' : 'Preview on my website'}
-                    </button>
-                </div>
+                <PageHeader
+                    crumbs={[{ label: 'Home', to: '/' }, { label: 'My Bots', to: '/chatbot' }, { label: 'Bot Settings' }]}
+                    title="Bot Settings"
+                    actions={<>{previewButton}{saveButton}</>}
+                />
+            )}
+
+            {/* Read-only access note — preserved from the old hero for viewers
+                who can't edit this bot. */}
+            {!embedded && !isBotManager && (
+                <p className="text-sm text-surface-500 dark:text-surface-400">
+                    You have read-only access to this bot configuration.
+                </p>
             )}
 
             {/* Live website preview panel */}
@@ -628,32 +668,9 @@ export default function BotSettings({ embedded = false }) {
                     })}
                 </div>
 
-                <button
-                    onClick={handleSave}
-                    disabled={!isBotManager || isSaving || saved}
-                    className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
-                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                        : 'bg-primary-600 hover:bg-primary-700 text-white'
-                        }`}
-                >
-                    <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
-                    {saved ? (
-                        <>
-                            <CheckCircle className="w-4 h-4 relative z-10" />
-                            <span className="relative z-10">Saved!</span>
-                        </>
-                    ) : isSaving ? (
-                        <>
-                            <RefreshCw className="w-4 h-4 relative z-10 animate-spin" />
-                            <span className="relative z-10">Saving...</span>
-                        </>
-                    ) : (
-                        <>
-                            <CheckCircle className="w-4 h-4 relative z-10" />
-                            <span className="relative z-10">Save Configuration</span>
-                        </>
-                    )}
-                </button>
+                {/* Embedded variant keeps Save inline; the standalone variant
+                    moves it into the contextual app bar (PageHeader actions). */}
+                {embedded && saveButton}
             </div>
 
             <div className="flex flex-col lg:flex-row gap-8 items-start w-full">
