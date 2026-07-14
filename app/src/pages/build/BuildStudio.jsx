@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import OyeChatsMark from '../../components/OyeChatsMark';
 import { MILESTONES, milestoneIndex } from './studioMilestones';
 import CreateStep from './steps/CreateStep';
+import TrainStep from './steps/TrainStep';
 
 // Scripted Otto guidance per milestone (an AI-driven Otto is a future upgrade).
 const OTTO = {
@@ -41,6 +42,8 @@ export default function BuildStudio() {
         switch (milestone.key) {
             case 'create':
                 return <CreateStep onCreated={goNext} />;
+            case 'train':
+                return <TrainStep onDone={goNext} />;
             default:
                 return (
                     <div className="flex flex-col gap-4">
