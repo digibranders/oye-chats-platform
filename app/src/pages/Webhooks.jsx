@@ -6,6 +6,7 @@ import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import {
     createWebhook,
     deleteWebhook,
@@ -102,6 +103,7 @@ function Toggle({ checked, onChange, disabled = false }) {
 export default function Webhooks({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
+    const confirm = useConfirm();
 
     const [activeTab, setActiveTab] = useState('webhooks');
     const [webhooks, setWebhooks] = useState([]);
@@ -232,7 +234,13 @@ export default function Webhooks({ embedded = false }) {
     };
 
     const handleDelete = async (webhookId) => {
-        if (!window.confirm('Are you sure you want to delete this webhook? This action cannot be undone.')) return;
+        const ok = await confirm({
+            title: 'Delete this webhook?',
+            description: 'Event deliveries to this endpoint will stop immediately. This cannot be undone.',
+            confirmLabel: 'Delete webhook',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteWebhook(webhookId);
             showToast('success', 'Webhook deleted');

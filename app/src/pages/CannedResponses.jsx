@@ -2,11 +2,15 @@ import { useState, useEffect } from 'react';
 import { MessageSquareText, Plus, Pencil, Trash2, Search, Tag, X, Lock } from 'lucide-react';
 import { getCannedResponses, createCannedResponse, updateCannedResponse, deleteCannedResponse } from '../services/api';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
+import { useConfirm } from '../context/ConfirmContext';
+import { useToast } from '../context/ToastContext';
 import useEntitlements from '../hooks/useEntitlements';
 import { cn } from '../lib/utils';
 
 export default function CannedResponses({ embedded = false }) {
     const { requestUpgrade } = useUpgradeModal();
+    const confirm = useConfirm();
+    const { showToast } = useToast();
     const { entitlements: ent } = useEntitlements();
     // Quick replies travel with the `live_chat` feature flag because they
     // only make sense once you have human operators. Free users can see
@@ -90,19 +94,25 @@ export default function CannedResponses({ embedded = false }) {
             setShowModal(false);
             fetchResponses();
         } catch (err) {
-            alert(typeof err === 'string' ? err : err?.detail || 'Failed to save response');
+            showToast('error', typeof err === 'string' ? err : err?.detail || 'Failed to save response');
         } finally {
             setSubmitting(false);
         }
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Delete this canned response?')) return;
+        const ok = await confirm({
+            title: 'Delete canned response?',
+            description: 'This quick reply will be removed for your whole team.',
+            confirmLabel: 'Delete',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteCannedResponse(id);
             fetchResponses();
         } catch (err) {
-            alert(typeof err === 'string' ? err : err?.detail || 'Failed to delete response');
+            showToast('error', typeof err === 'string' ? err : err?.detail || 'Failed to delete response');
         }
     };
 
