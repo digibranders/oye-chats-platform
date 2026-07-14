@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Loader2, ArrowRight } from 'lucide-react';
-import { getBot, recordActivationEvent } from '../../../services/api';
+import { getBot, recordActivationEvent, completeOnboarding } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
 import { Button } from '../../../components/ui/Button';
@@ -73,8 +73,10 @@ export default function GoLiveStep() {
 
     useEffect(() => () => clearTimeout(copyTimer.current), []);
 
-    const finish = () => {
+    const finish = async () => {
         recordActivationEvent('studio_completed', { botId });
+        recordActivationEvent('activation_goal_set', { botId, eventData: { goal: 'first_10_qualified_leads' } });
+        await completeOnboarding();
         navigate('/');
     };
 

@@ -1092,6 +1092,40 @@ export const recordActivationEvent = async (eventType, { botId = null, eventData
 };
 
 /**
+ * Free, origin-exempt preview chat against one of the client's OWN bots — used
+ * by the Build Studio "Test & trust" milestone. Authenticated via the admin
+ * X-API-Key (auto-attached); the backend `?preview=true` path skips credits and
+ * the domain allowlist. Returns `{ answer, sources, session_id, ... }`.
+ * @param {number} botId
+ * @param {string} question
+ * @param {string} [sessionId]
+ */
+export const previewChat = async (botId, question, sessionId) => {
+    // AI replies (cold LLM + RAG) can take well over the default timeout — give
+    // the preview a generous 60s window before surfacing a timeout error.
+    const { data } = await api.post(
+        `/chat?preview=true&bot_id=${botId}`,
+        { question, session_id: sessionId },
+        { timeout: 60000 }
+    );
+    return data;
+};
+
+/**
+ * Marks the account's guided onboarding (Build Studio) as complete. Best-effort —
+ * never throws, so finishing the flow can't be blocked by a transient failure.
+ */
+export const completeOnboarding = async () => {
+    try {
+        const { data } = await api.post('/auth/onboarding/complete');
+        return data;
+    } catch (error) {
+        console.warn('completeOnboarding failed (non-fatal):', error?.message);
+        return null;
+    }
+};
+
+/**
  * Gets details of a specific bot.
  * @param {number} botId
  * @returns {Promise<Object>} Bot details

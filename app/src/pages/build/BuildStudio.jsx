@@ -9,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { MILESTONES, milestoneIndex } from './studioMilestones';
 import CreateStep from './steps/CreateStep';
 import TrainStep from './steps/TrainStep';
+import TestStep from './steps/TestStep';
 import AppearanceStep from './steps/AppearanceStep';
 import GoLiveStep from './steps/GoLiveStep';
 import LiveAgentPreview from './LiveAgentPreview';
@@ -101,6 +102,8 @@ export default function BuildStudio() {
                 return <CreateStep onCreated={goNext} />;
             case 'train':
                 return <TrainStep onDone={goNext} />;
+            case 'test':
+                return <TestStep onDone={goNext} />;
             case 'appearance':
                 return <AppearanceStep onDone={goNext} onPreviewColor={setPreviewColor} />;
             case 'golive':
