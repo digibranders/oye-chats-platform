@@ -45,6 +45,7 @@ import StudioProviders from './pages/build/StudioProviders';
 // Components
 import AccessDenied from './components/AccessDenied';
 import { getAuthItem } from './utils/authStorage';
+import { STUDIO_ENABLED } from './utils/flags';
 
 // Build a "?next=..." login URL that round-trips the deep-link target through
 // authentication. Used so push-notification clicks (which land on a specific
@@ -110,6 +111,11 @@ const RootRedirect = ({ fallback }) => {
                 if (cancelled) return;
                 if (me?.is_affiliate_only) {
                     setDestination('/affiliate');
+                } else if (STUDIO_ENABLED && !me?.onboarding_complete && (me?.bot_count ?? 0) === 0) {
+                    // Brand-new (botless, not-yet-onboarded) account → resume the
+                    // guided Build Studio. Accounts that already have a bot are
+                    // never pulled out of their dashboard.
+                    setDestination('/build');
                 }
             })
             .catch(() => {
