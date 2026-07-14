@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
-import { setAuthBundle, getAuthItem } from '../utils/authStorage';
+import { setAuthBundle } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
@@ -160,16 +160,13 @@ export default function Register() {
     }
   };
 
-  if (getAuthItem('admin_token')) {
-    if (getAuthItem('admin_is_verified') === 'false') {
-      const pending = getAuthItem('admin_pending_email') || '';
-      return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
-    }
-    if (affiliateToken) {
-      return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
-    }
-    return <Navigate to="/" />;
-  }
+  // NOTE: /register intentionally has NO "already authenticated → redirect"
+  // guard. It's the target of the marketing site's "Start free" CTA, so it
+  // must always render the form. The old guard redirected on mere token
+  // PRESENCE — a stale/server-invalidated token (common after a session
+  // lapse) sent the visitor to "/", which then 401'd and bounced them to
+  // /login, trapping the sign-up flow. New users, stale-token users, and
+  // logged-in users all reliably land on the form now.
 
   const strengthColor = strengthScore === 3 ? 'bg-emerald-500' : strengthScore === 2 ? 'bg-amber-500' : strengthScore === 1 ? 'bg-rose-500' : 'bg-surface-200';
 
