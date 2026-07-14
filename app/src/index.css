@@ -359,9 +359,18 @@ body {
   summary,
   [tabindex]:not([tabindex="-1"])
 ):focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: 1.5px solid var(--ring);
+  outline-offset: 1px;
   border-radius: 6px;
+}
+
+/* Form controls already render their own soft focus ring + primary border
+   (see ui/Input, ui/Select). Stacking the global outline on top of that read
+   as a heavy double bracket, so suppress the extra outline here and let the
+   component's own, quieter treatment stand. Raw/unstyled interactive elements
+   (buttons, links, tabs) still get the thin ring above. */
+:where(input:not([type="hidden"]), select, textarea):focus-visible {
+  outline: none;
 }
 
 .no-focus-ring:focus-visible {
