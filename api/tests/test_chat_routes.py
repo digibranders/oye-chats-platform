@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.api.auth import get_bot_for_chat, get_current_bot, get_current_client_or_operator
 from app.api.chat_routes import router
 
 
@@ -22,6 +22,10 @@ def _build_app(bot_override=None, auth_override=None):
     app.include_router(router)
     if bot_override:
         app.dependency_overrides[get_current_bot] = lambda: bot_override
+        # /chat and /chat/stream now resolve the bot via get_bot_for_chat
+        # (adds an owner-preview branch); override it too so these tests hit
+        # the same fixture bot.
+        app.dependency_overrides[get_bot_for_chat] = lambda: bot_override
     if auth_override:
         app.dependency_overrides[get_current_client_or_operator] = lambda: auth_override
     return app

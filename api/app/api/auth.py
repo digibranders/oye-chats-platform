@@ -706,6 +706,72 @@ def get_current_bot(
         )
 
 
+def get_bot_for_chat(
+    request: Request,
+    preview: bool = Query(False, description="Owner-preview mode (Build Studio)"),
+    bot_id: int | None = Query(None, description="Bot ID (owner-preview only)"),
+    bot_key: str = Security(bot_key_header),
+    api_key: str = Security(api_key_header),
+):
+    """Resolve the Bot for a chat request, with an optional owner-preview branch.
+
+    Default behaviour is identical to :func:`get_current_bot` (widget path:
+    X-Bot-Key with origin enforcement, or X-API-Key → default bot). The chat
+    endpoints depend on this instead of ``get_current_bot`` so a logged-in
+    client can test *any of their own bots* from the dashboard's Build Studio:
+
+    When ``preview`` is true AND an ``X-API-Key`` is present AND ``bot_id`` is
+    given, the bot is resolved by id and its owner asserted to be the client
+    owning that API key (404 otherwise). The origin/``allowed_domains`` check
+    is intentionally skipped — the caller is the authenticated owner, not an
+    anonymous widget visitor — and the returned bot carries ``_is_preview =
+    True`` so the chat endpoints can serve the reply for free (no credit
+    deduction). Every other request falls through to ``get_current_bot``
+    unchanged, so existing (non-preview) widget traffic is unaffected.
+    """
+    if preview and api_key and bot_id is not None:
+        with get_session() as session:
+            client = session.execute(select(Client).where(Client.api_key == api_key)).scalars().first()
+            if not client:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Bot not found or does not belong to your account.",
+                )
+            _ = client.id, client.is_superadmin, client.suspended_at
+            _ensure_not_suspended(client)
+
+            bot = session.execute(select(Bot).where(Bot.id == bot_id, Bot.client_id == client.id)).scalars().first()
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Bot not found or does not belong to your account.",
+                )
+
+            # Eager-load the same attributes get_current_bot does before detaching,
+            # so the RAG pipeline can read them after the session closes.
+            _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key
+            _ = bot.primary_color, bot.header_color, bot.background_color
+            _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
+            _ = bot.allowed_domains, bot.domain_check_enabled
+            # Pre-resolve the ledger scope exactly like get_current_bot so credit
+            # routing never lazy-loads bot.subscription on a detached object —
+            # even though preview replies skip deduction, downstream code that
+            # inspects _subscription_bot_id stays consistent.
+            if bot.subscription_id:
+                bot._subscription_bot_id = session.scalar(
+                    select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
+                )
+            else:
+                bot._subscription_bot_id = None
+            session.expunge(bot)
+            # Owner-preview: origin check is bypassed (no _enforce_bot_origin) and
+            # the reply is free.
+            bot._is_preview = True
+            return bot
+
+    return get_current_bot(request, bot_key, api_key)
+
+
 def get_client_bot(
     bot_id: int = Query(..., description="Bot ID"),
     client: Client = Depends(get_current_client),

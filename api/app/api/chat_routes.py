@@ -15,7 +15,7 @@ from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.auth import bot_subscription_status, get_current_bot, get_current_client_or_operator
+from app.api.auth import bot_subscription_status, get_bot_for_chat, get_current_bot, get_current_client_or_operator
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
@@ -359,11 +359,12 @@ def _final_metadata_failure_flag(chunk: str) -> bool | None:
 
 @router.post("/chat")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
-def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
+def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bot_for_chat)):
     """
     RAG Endpoint: Analyzes the question, retrieves relevant documents for the bot,
     and generates a standalone answer.
-    Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
+    Authenticated via X-Bot-Key or X-API-Key (resolves default bot). Owner-preview
+    requests (Build Studio: ?preview=true&bot_id=) resolve any owned bot and are free.
     """
     # ── Subscription gate (widget side) ──
     # When the bot owner's trial has expired (or the subscription is
@@ -382,37 +383,41 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         return _polite_offline_payload(bot, reason=f"subscription_{owner_status}")
 
     # ── Credit enforcement: must match /chat/stream ──
-    from app.services import credit_service
+    # Owner-preview (Build Studio) replies are free — skip deduction entirely.
+    is_preview = getattr(bot, "_is_preview", False)
+    cost = 0
+    if not is_preview:
+        from app.services import credit_service
 
-    with get_session() as db:
-        cost = credit_service.get_credit_cost(db, "ai_chat")
-        try:
-            credit_service.check_and_deduct(
-                db,
-                bot.client_id,
-                cost,
-                reason="ai_chat",
-                reference_id=bot.id,
-                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
-            )
-            db.commit()
-        except credit_service.InsufficientCredits as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=402,
-                detail={
-                    "error": "insufficient_credits",
-                    "required": exc.required,
-                    "available": exc.available,
-                    "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
-                },
-            ) from exc
-        except credit_service.KillSwitchActive as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=503,
-                detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
-            ) from exc
+        with get_session() as db:
+            cost = credit_service.get_credit_cost(db, "ai_chat")
+            try:
+                credit_service.check_and_deduct(
+                    db,
+                    bot.client_id,
+                    cost,
+                    reason="ai_chat",
+                    reference_id=bot.id,
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                )
+                db.commit()
+            except credit_service.InsufficientCredits as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "insufficient_credits",
+                        "required": exc.required,
+                        "available": exc.available,
+                        "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
+                    },
+                ) from exc
+            except credit_service.KillSwitchActive as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
+                ) from exc
 
     try:
         ip_address, formatted_device = _parse_request_context(request)
@@ -438,7 +443,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")
         # Refund the credit when the pipeline only produced a canned error
         # message (both LLMs exhausted) — the visitor got no real answer.
-        if result.get("generation_failed"):
+        if result.get("generation_failed") and not is_preview:
             _refund_ai_chat_credit(bot, cost)
         return result
     except HTTPException:
