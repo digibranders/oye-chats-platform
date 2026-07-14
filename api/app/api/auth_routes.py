@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_client_or_operator, get_current_operator
+from app.api.auth import get_current_client_or_operator, get_current_client_strict, get_current_operator
 from app.core.dates import trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.rate_limit import limiter
@@ -571,6 +571,22 @@ class ResendVerificationRequest(BaseModel):
     @classmethod
     def normalise_email(cls, v):
         return v.strip().lower()
+
+
+@router.post("/onboarding/complete")
+def complete_onboarding(client: Client = Depends(get_current_client_strict)):
+    """Mark the account's guided onboarding (Build Studio) as complete.
+
+    Called when the user finishes the Studio's Go-live milestone. Idempotent —
+    safe to call more than once.
+    """
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        row.onboarding_complete = True
+        session.commit()
+    return {"onboarding_complete": True}
 
 
 @router.post("/verify-email")
