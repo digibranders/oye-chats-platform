@@ -1,12 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './context/ToastContext';
 import { UpgradeModalProvider } from './context/UpgradeModalContext';
 import { CrawlProvider } from './context/CrawlContext';
 import { CurrencyProvider } from './context/CurrencyContext';
 import { getAuthState } from './utils/auth';
-import { getCurrentUser } from './services/api';
+import { useWorkspace } from './context/WorkspaceContext';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
@@ -82,52 +81,30 @@ const LegacyAffiliateAcceptRedirect = () => {
 };
 
 /**
- * Smart root redirect. The instant the user lands at "/", we fetch
- * /auth/me and route them based on who they are:
+ * Root landing decision. Fires on every mount of "/" — including a click
+ * on the Overview sidebar link. Two branches:
  *
- *   - affiliate-only user  → /affiliate  (inside the main admin layout)
- *   - everyone else        → render the customer Dashboard inline
+ *   - workspace-operator role → /support (their only useful surface)
+ *   - everyone else           → render the customer Dashboard inline
+ *
+ * The old "affiliate-only ⇒ /affiliate" auto-bounce was removed: it made
+ * the Overview link feel broken for anyone flagged as affiliate-only
+ * (typically a Client with an affiliate row but no bots yet). They can
+ * still reach the affiliate console from the sidebar link — the sidebar
+ * shows that entry when /auth/me.is_affiliate is true.
  *
  * Superadmins are NOT routed here — the super-admin console is a
  * separate Next.js app at admin.oyechats.com.
- *
- * Failure to fetch /auth/me falls through to the customer Dashboard so
- * stale localStorage tokens don't trap users in an infinite loading
- * state. The 401 interceptor in services/api will redirect them to
- * /login if the token is actually invalid.
  */
 const RootRedirect = ({ fallback }) => {
-    const [destination, setDestination] = useState(null);
-    const [resolved, setResolved] = useState(false);
+    // Operators (workspace role) have no Overview page — send them to their
+    // landing surface instead of momentarily flashing the Dashboard-shaped
+    // AccessDenied. Legacy X-Operator-Key sessions are covered too.
+    const { currentRole } = useWorkspace();
+    const { isOperator, isBotManager } = getAuthState();
+    const isOperatorRole = (isOperator && !isBotManager) || (!isOperator && currentRole === 'operator');
 
-    useEffect(() => {
-        let cancelled = false;
-        getCurrentUser()
-            .then((me) => {
-                if (cancelled) return;
-                if (me?.is_affiliate_only) {
-                    setDestination('/affiliate');
-                }
-            })
-            .catch(() => {
-                /* fallback handles it */
-            })
-            .finally(() => {
-                if (!cancelled) setResolved(true);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
-    if (!resolved) {
-        return (
-            <div className="min-h-[60vh] flex items-center justify-center">
-                <Loader2 size={28} className="animate-spin text-primary-500" />
-            </div>
-        );
-    }
-    if (destination) return <Navigate to={destination} replace />;
+    if (isOperatorRole) return <Navigate to="/support" replace />;
     return fallback;
 };
 
@@ -135,10 +112,24 @@ const RootRedirect = ({ fallback }) => {
  * Renders children for workspace owners/admins.
  * Shows an in-place AccessDenied screen for regular operators — does NOT redirect,
  * so bookmarks continue to work if the user's role is later elevated.
+ *
+ * Two independent operator signals to check:
+ *   1. Legacy X-Operator-Key session — ``getAuthState().isOperator``. That
+ *      operator's role is stored in ``operator_role``; admin/owner are
+ *      considered bot-managers and pass through.
+ *   2. New multi-workspace Client session — a Client identity acting as an
+ *      operator in a workspace they don't own. ``auth_type`` is still
+ *      ``'client'`` here, so ``getAuthState()`` returns ``isOperator=false``.
+ *      The current workspace role comes from WorkspaceContext instead. In
+ *      that path we mirror the legacy admin/owner exemption via
+ *      ``operator_role`` returned by ``/me/workspaces`` (surfaced as the
+ *      workspace entry, then plumbed through the context on switch).
  */
 const ClientOnlyPage = ({ children, pageName }) => {
     const { isOperator, isBotManager } = getAuthState();
+    const { currentRole } = useWorkspace();
     if (isOperator && !isBotManager) return <AccessDenied pageName={pageName} />;
+    if (!isOperator && currentRole === 'operator') return <AccessDenied pageName={pageName} />;
     return children;
 };
 

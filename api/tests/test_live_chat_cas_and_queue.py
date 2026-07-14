@@ -117,7 +117,6 @@ def test_visitor_end_helper_only_ends_live_chats(wired):
 
 def test_operator_close_helper_never_resurrects_closed_sessions(wired):
     from app.api import ws_routes
-
     from app.db.models import Bot
 
     c = Client(name="W", email="cas-op@test.example", api_key="key-cas-op")

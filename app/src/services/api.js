@@ -98,6 +98,19 @@ api.interceptors.request.use(
                 if (workspaceId) {
                     config.headers['X-Workspace-Id'] = workspaceId;
                 }
+                // ``X-Acting-Role`` communicates which persona the switcher
+                // pill is currently in. Backend uses it to scope endpoints
+                // like ``GET /bots`` and ``GET /offline-messages`` to the
+                // caller's self-operator bot when they've added themselves
+                // as an operator in their OWN workspace (auth resolves as
+                // ``client`` there — no X-Workspace-Id is sent because it's
+                // their own workspace — so without this hint we can't tell
+                // "owner viewing their workspace as owner" from "owner
+                // viewing their workspace as operator").
+                const workspaceRole = getAuthItem('current_workspace_role');
+                if (workspaceRole) {
+                    config.headers['X-Acting-Role'] = workspaceRole;
+                }
             }
         }
         // Opt every request into the workspace-scoped abort controller unless
@@ -146,7 +159,27 @@ api.interceptors.response.use(
             return Promise.reject(error);
         }
 
-        if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
+        // Public routes must NOT trigger the auto-logout redirect. A stray
+        // 401 from a speculative call (entitlements fired at app root, an
+        // authed hook that happens to be mounted) would bounce an
+        // unauthenticated visitor OFF the invite airlock, register form,
+        // or verify-email page — turning legitimate public-page visits
+        // into infinite login redirects. The 401 still propagates as a
+        // rejected promise so callers can handle it; we just skip the
+        // catastrophic side-effect.
+        const publicPath = window.location.pathname;
+        const isOnPublicRoute = (
+            publicPath === '/login'
+            || publicPath === '/register'
+            || publicPath === '/verify-email'
+            || publicPath === '/forgot-password'
+            || publicPath === '/auth/callback'
+            || publicPath === '/affiliate-invite'
+            || publicPath === '/affiliate-accept'
+            || publicPath.startsWith('/invite/')
+        );
+
+        if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint && !isOnPublicRoute) {
             // Clear from BOTH stores so a session-only login that auto-
             // logs-out doesn't leave a stale localStorage shadow (or
             // vice versa).
@@ -1372,9 +1405,17 @@ export const transferChat = async (sessionId, data) => {
     }
 };
 
-export const toggleOperatorStatus = async () => {
+export const toggleOperatorStatus = async ({ isOnline, botId } = {}) => {
     try {
-        const response = await api.post('/operators/status');
+        const body = {};
+        if (typeof isOnline === 'boolean') body.is_online = isOnline;
+        if (botId) body.bot_id = botId;
+        // Only send a body when the caller actually populated a field —
+        // preserves the legacy no-body toggle semantics the backend still
+        // supports for older callers.
+        const response = Object.keys(body).length > 0
+            ? await api.post('/operators/status', body)
+            : await api.post('/operators/status');
         return response.data;
     } catch (error) {
         console.error('API Error toggling status:', error);
@@ -2439,10 +2480,11 @@ export const regenerateClientApiKey = async () => {
  * Returns ``{ invite, accept_url }`` — the URL is included so a copy-to-clipboard
  * affordance is possible; the email is fired backend-side.
  */
-export const createOperatorInvite = async ({ email, role = 'operator', departmentId = null }) => {
+export const createOperatorInvite = async ({ email, botId, role = 'operator', departmentId = null }) => {
     try {
         const response = await api.post('/invites', {
             email,
+            bot_id: botId,
             role,
             department_id: departmentId,
         });
@@ -2539,9 +2581,9 @@ export const getMyWorkspaces = async () => {
  * Returns ``{ operator_id, role, is_active, was_existing }``. UI can toast
  * "Welcome back to live chat" when ``was_existing`` is true.
  */
-export const addSelfAsOperator = async () => {
+export const addSelfAsOperator = async (botId) => {
     try {
-        const response = await api.post('/me/self-operator');
+        const response = await api.post('/me/self-operator', { bot_id: botId });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to add yourself as an operator');

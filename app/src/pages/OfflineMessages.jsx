@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Inbox, Mail, Clock, CheckCircle2, Trash2, ChevronLeft, ChevronRight, CheckSquare, Square, BarChart2, MessageSquare, TrendingUp } from 'lucide-react';
 import { getOfflineMessages, updateOfflineMessage, deleteOfflineMessage } from '../services/api';
 import { useToast } from '../context/ToastContext';
+import { useBotContext } from '../context/BotContext';
 import { cn } from '../lib/utils';
 
 const DATE_FILTERS = [
@@ -37,6 +38,13 @@ const SENTIMENT_CONFIG = {
 
 export default function OfflineMessages({ embedded = false }) {
     const { showToast } = useToast();
+    // Scope the inbox to the sidebar-selected bot. A workspace with two bots
+    // used to show both bots' messages side by side, which conflates the
+    // separate teams' inboxes. Backend accepts a ``bot_id`` query param and
+    // enforces that the caller owns the bot; sending ``selectedBot.id`` here
+    // matches the way every other data page in the app scopes to the active
+    // bot (Leads, Insights, Chatbot Appearance, etc.).
+    const { selectedBot } = useBotContext();
     const [messages, setMessages] = useState([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
@@ -51,6 +59,7 @@ export default function OfflineMessages({ embedded = false }) {
             setLoading(true);
             const params = { page, limit: 20 };
             if (statusFilter) params.status = statusFilter;
+            if (selectedBot?.id) params.bot_id = selectedBot.id;
             const data = await getOfflineMessages(params);
             setMessages(data.messages || []);
             setTotal(data.total || 0);
@@ -61,8 +70,18 @@ export default function OfflineMessages({ embedded = false }) {
         }
     };
 
+    // Re-fetch when the sidebar switches bots. Reset to page 1 to avoid
+    // landing on a page number that no longer exists for the new bot's
+    // (usually smaller) message set — better than showing "no messages"
+    // while there are actually messages on page 1.
+    useEffect(() => {
+        setPage(1);
+        setSelectedMessage(null);
+        setSelectedIds(new Set());
+    }, [selectedBot?.id]);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => { fetchMessages(); }, [page, statusFilter]);
+    useEffect(() => { fetchMessages(); }, [page, statusFilter, selectedBot?.id]);
 
     const handleMarkRead = async (id) => {
         try {

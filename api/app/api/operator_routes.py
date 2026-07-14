@@ -71,6 +71,7 @@ class CreateOperatorRequest(BaseModel):
     name: str
     email: str
     password: str
+    bot_id: int
     role: str = "operator"
     department_id: int | None = None
 
@@ -118,6 +119,7 @@ class UpdateOperatorRequest(BaseModel):
     name: str | None = None
     email: str | None = None
     role: str | None = None
+    bot_id: int | None = None
     department_id: int | None = None
     avatar_url: str | None = None
     max_concurrent_chats: int | None = None
@@ -301,12 +303,10 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
             depts = session.execute(select(Department).where(Department.id.in_(dept_ids))).scalars().all()
             dept_names = {d.id: d.name for d in depts}
 
-        # Build bot name lookup — each operator is bound to exactly one bot
-        # via ``Operator.bot_id`` (see migration b1c7e9d3f2a5). Batched into a
-        # single SELECT so a workspace with many operators still resolves the
-        # display names in O(1) queries.
+        # Build bot name lookup — one-to-one operator↔bot binding surfaces the
+        # bot the operator handles in the team list UI.
         bot_ids = {a.bot_id for a in operators if a.bot_id}
-        bot_names = {}
+        bot_names: dict[int, str] = {}
         if bot_ids:
             bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all()
             bot_names = {b.id: b.name for b in bots}
@@ -390,6 +390,14 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
         db.commit()
 
     with get_session() as session:
+        # Validate that the target bot belongs to this workspace. Fail loud so
+        # the caller can't create an operator scoped to a bot they don't own.
+        bot = session.execute(
+            select(Bot).where(Bot.id == request.bot_id, Bot.client_id == client_id)
+        ).scalar_one_or_none()
+        if bot is None:
+            raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
+
         # Check for duplicate email — scoped to this workspace only
         existing = session.execute(
             select(Operator).where(Operator.email == request.email, Operator.client_id == client_id)
@@ -411,6 +419,7 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
 
         operator = Operator(
             client_id=client_id,
+            bot_id=request.bot_id,
             name=request.name.strip(),
             email=request.email,
             hashed_password=get_password_hash(request.password),
@@ -422,13 +431,14 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
         session.commit()
         session.refresh(operator)
 
-        logger.info(f"Operator created: {operator.id} ({operator.name}) for client {client_id}")
+        logger.info(f"Operator created: {operator.id} ({operator.name}) for client {client_id} bot {request.bot_id}")
 
         return {
             "id": operator.id,
             "name": operator.name,
             "email": operator.email,
             "role": operator.role,
+            "bot_id": operator.bot_id,
             "department_id": operator.department_id,
         }
 
@@ -451,9 +461,32 @@ async def update_operator(
         if not operator:
             raise HTTPException(status_code=404, detail="Operator not found.")
 
+        # Name + email are personal-identity fields — only the operator being
+        # edited can change them. An admin editing SOMEONE ELSE's row must not
+        # be able to silently rebadge or reassign them by changing the email.
+        # Self-edit is either: a legacy operator hitting this endpoint about
+        # themselves, or a Client whose ``linked_client_id`` matches the row.
+        caller_op_id = auth.get("operator_id") if auth["type"] == "operator" else None
+        caller_client_id = auth.get("linked_client_id") or (auth["client_id"] if auth["type"] == "client" else None)
+        is_self_edit = (caller_op_id is not None and caller_op_id == operator.id) or (
+            caller_client_id is not None
+            and operator.linked_client_id is not None
+            and operator.linked_client_id == caller_client_id
+        )
+
         if request.name is not None:
+            if not is_self_edit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the operator themselves can change their name.",
+                )
             operator.name = request.name.strip()
         if request.email is not None:
+            if not is_self_edit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the operator themselves can change their email.",
+                )
             # Validate workspace-scoped uniqueness, excluding this operator
             dup = session.execute(
                 select(Operator).where(
@@ -477,6 +510,25 @@ async def update_operator(
                         detail="Only workspace owners can assign the owner role.",
                     )
             operator.role = request.role
+        if request.bot_id is not None and request.bot_id != operator.bot_id:
+            new_bot = session.execute(
+                select(Bot).where(Bot.id == request.bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if new_bot is None:
+                raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
+            # Reassignment must not leave dangling live chats on the old bot —
+            # they belong to a bot this operator no longer serves. End them
+            # cleanly by clearing the assignment; the WS layer will bounce them
+            # back to waiting so another operator on the old bot can pick up.
+            session.execute(
+                update(ChatSession)
+                .where(
+                    ChatSession.assigned_operator_id == operator.id,
+                    ChatSession.status == "live",
+                )
+                .values(assigned_operator_id=None, status="waiting")
+            )
+            operator.bot_id = request.bot_id
         if request.department_id is not None:
             # Track department change for dynamic WS update
             if operator.department_id != request.department_id:
@@ -917,7 +969,7 @@ def get_queue(auth=Depends(get_current_client_or_operator)):
             .order_by(ChatSession.created_at.asc())
         ).all()
 
-        for chat_session, _ in waiting_sessions:
+        for chat_session, bot in waiting_sessions:
             # Department filtering for operator-scoped queues
             if operator_dept_id and chat_session.department_id and chat_session.department_id != operator_dept_id:
                 continue
@@ -932,6 +984,12 @@ def get_queue(auth=Depends(get_current_client_or_operator)):
                     "location": chat_session.location,
                     "device": chat_session.device,
                     "department_id": chat_session.department_id,
+                    # ``bot_id`` / ``bot_name`` are surfaced so the operator
+                    # console can scope the queue display to the sidebar-
+                    # selected bot. Without these, a workspace with more than
+                    # one bot bleeds waiting visitors across unrelated bots.
+                    "bot_id": bot.id,
+                    "bot_name": bot.name,
                     "created_at": chat_session.created_at.isoformat() if chat_session.created_at else None,
                 }
             )
@@ -999,6 +1057,15 @@ async def accept_chat(
         owning_bot = session.execute(select(Bot).where(Bot.id == target_session.bot_id)).scalar_one_or_none()
         if not owning_bot or owning_bot.client_id != auth["client_id"]:
             raise HTTPException(status_code=403, detail="Access denied.")
+
+        # One-to-one operator↔bot binding: this operator can only accept chats
+        # on the bot they're assigned to. Chats from any other bot in the same
+        # workspace must go to that bot's operator.
+        if operator.bot_id != target_session.bot_id:
+            raise HTTPException(
+                status_code=403,
+                detail=("This chat belongs to a different bot. Only the operator assigned to that bot can accept it."),
+            )
 
         # DB-level race condition guard: atomically claim the session only if still waiting.
         # Using UPDATE ... WHERE status='waiting' ensures only one operator wins the race.
@@ -1117,6 +1184,18 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
             if not target_operator:
                 raise HTTPException(status_code=404, detail="Target operator not found.")
 
+            # One-to-one operator↔bot binding: reject transfers to an operator
+            # bound to a different bot.  A chat on bot A must not end up
+            # owned by bot B's operator.
+            if target_operator.bot_id != chat_session.bot_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Target operator handles a different bot. "
+                        "Transfer only to an operator assigned to this chat's bot."
+                    ),
+                )
+
             chat_session.assigned_operator_id = target_operator.id
             if target_operator.department_id:
                 chat_session.department_id = target_operator.department_id
@@ -1210,7 +1289,15 @@ def get_my_operator_status(auth=Depends(get_current_client_or_operator)):
 
 
 class SetStatusRequest(BaseModel):
-    is_online: bool
+    # Both fields optional so callers can:
+    #   * ``{}`` or no body    → pure toggle (legacy, backward compat).
+    #   * ``{"is_online": …}`` → explicit set.
+    #   * ``{"bot_id": …}``    → toggle, but scope the operator lookup to a
+    #                            specific bot. The frontend sends this when
+    #                            the sidebar has an active bot so a workspace
+    #                            with two bots doesn't flip the wrong row.
+    is_online: bool | None = None
+    bot_id: int | None = None
 
 
 @router.post("/status")
@@ -1235,35 +1322,74 @@ async def set_operator_status(
             if not operator:
                 raise HTTPException(status_code=404, detail="Operator not found.")
             previously_online = operator.is_online
-            new_online = request.is_online if request is not None else (not operator.is_online)
+            # Explicit set when the caller sent ``is_online``; otherwise pure
+            # toggle. A body that only carries ``bot_id`` for scoping still
+            # counts as a toggle — treat that identically to no body at all.
+            explicit = request is not None and request.is_online is not None
+            new_online = request.is_online if explicit else (not operator.is_online)
             operator.is_online = new_online
             session.commit()
             if previously_online and not new_online:
                 operator_id_to_release = operator.id
             response = {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
         else:
-            # Client: find or create the owner's operator record.
+            # Client: find the caller's operator row in this workspace, if any.
+            # Preference order:
+            #   1. A self-op row (linked_client_id == client.id) — the row
+            #      created by ``POST /me/self-operator``.
+            #   2. A legacy owner-role row (role == 'owner', linked_client_id
+            #      NULL) — created by earlier auto-provisioning paths before
+            #      the linked-identity model landed.
+            # When ``bot_id`` is supplied the lookup is further constrained to
+            # operator rows bound to THAT bot — a client with self-op rows on
+            # two different bots must not toggle the wrong one just because
+            # the sidebar was on the other.
+            # If neither branch finds an operator row, refuse (see 404 below)
+            # so the frontend can prompt the caller to explicitly self-add
+            # for the currently-selected bot.
             client = auth["entity"]
-            operator = session.execute(
-                select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
-            ).scalar_one_or_none()
+            target_bot_id = request.bot_id if request is not None else None
+            self_op_stmt = select(Operator).where(
+                Operator.client_id == client.id,
+                Operator.linked_client_id == client.id,
+            )
+            if target_bot_id is not None:
+                self_op_stmt = self_op_stmt.where(Operator.bot_id == target_bot_id)
+            operator = session.execute(self_op_stmt).scalar_one_or_none()
+            if not operator:
+                legacy_stmt = select(Operator).where(
+                    Operator.client_id == client.id,
+                    Operator.role == "owner",
+                )
+                if target_bot_id is not None:
+                    legacy_stmt = legacy_stmt.where(Operator.bot_id == target_bot_id)
+                operator = session.execute(legacy_stmt.limit(1)).scalar_one_or_none()
 
             if not operator:
-                operator = Operator(
-                    client_id=client.id,
-                    name=client.name,
-                    email=client.email,
-                    is_online=True,
-                    role="owner",
-                    operator_api_key=uuid.uuid4().hex,
+                # Refuse to silently mint an operator row. The frontend catches
+                # this structured error and prompts "Add yourself as an operator
+                # for this workspace?" — on confirm it calls the explicit
+                # ``POST /me/self-operator`` endpoint which requires an
+                # explicit ``bot_id`` so the caller consciously picks which
+                # bot they're going to handle. This matches the pre-merge UX
+                # where going online required an explicit opt-in dialog.
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": "no_operator_row",
+                        "message": (
+                            "You're not on this workspace's operator roster yet. "
+                            "Add yourself as an operator before going online."
+                        ),
+                    },
                 )
-                session.add(operator)
-                session.commit()
-                session.refresh(operator)
-                return {"is_online": True, "operator_name": operator.name, "operator_id": operator.id}
 
             previously_online = operator.is_online
-            new_online = request.is_online if request is not None else (not operator.is_online)
+            # Explicit set when the caller sent ``is_online``; otherwise pure
+            # toggle. A body that only carries ``bot_id`` for scoping still
+            # counts as a toggle — treat that identically to no body at all.
+            explicit = request is not None and request.is_online is not None
+            new_online = request.is_online if explicit else (not operator.is_online)
             operator.is_online = new_online
             session.commit()
             if previously_online and not new_online:
@@ -1653,6 +1779,21 @@ def get_qualified_bot_sessions(
 
     client_id = auth["client_id"]
     operator_dept_id = auth["entity"].department_id if auth["type"] == "operator" else None
+
+    # Plan gate — Starter+Free plans don't get BANT surfacing at all. We
+    # short-circuit here so BANT signals never leak via this endpoint even
+    # if a stale frontend keeps polling. The Live Chat page also hides the
+    # panel and skips the poll, but backend defence is authoritative.
+    from app.services.plan_entitlements_service import get_entitlements
+
+    with get_session() as _ent_session:
+        entitlements = get_entitlements(client_id, _ent_session)
+    if not entitlements.has_feature("bant"):
+        return {
+            "sessions": [],
+            "count": 0,
+            "min_dimensions": _QUALIFIED_MIN_DIMENSIONS,
+        }
 
     # Pull the live presence set first — the widget's poll-driven heartbeat
     # is what makes this a "right-now" view rather than a historical list.

@@ -1,24 +1,127 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Headphones, Send, X, User, Mail, MapPin, Monitor, MessageCircle,
-    Loader2, Circle, ArrowRightLeft, ChevronRight, ChevronLeft,
+    Loader2, Circle, ArrowRightLeft, ChevronRight, ChevronLeft, ChevronDown, Check,
     Users, Info, Phone, Building2, Clock, Paperclip, Zap, TrendingUp,
 } from 'lucide-react';
 import {
     acceptChat, closeOperatorChat, toggleOperatorStatus, getMyOperatorStatus, getChatHistory,
     getCannedResponses, transferChat, getOperators, getDepartments, getSessionDetails, getOperatorQueue,
-    uploadOperatorChatFile, getCurrentSubscription,
+    uploadOperatorChatFile, getCurrentSubscription, addSelfAsOperator,
     getQualifiedBotSessions, sendConnectRequest, cancelConnectRequest,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Sparkles } from 'lucide-react';
 import { getAuthItem } from '../utils/authStorage';
-import { formatVisitorLocation } from '../lib/utils';
+import { cn, formatVisitorLocation } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+
+/**
+ * Presence pill + dropdown for the operator console header.
+ *
+ * Renders the caller's current status (Online / Offline) as a chip; clicking
+ * the chip opens a menu with just those two options. Selecting the option the
+ * operator is NOT currently on invokes ``onSelect`` which flips their status
+ * via the toggle endpoint. Selecting the current status is a no-op that
+ * closes the menu — same behaviour as the reference design.
+ */
+function StatusDropdown({ isOnline, onSelect }) {
+    const [open, setOpen] = useState(false);
+    const containerRef = useRef(null);
+
+    useEffect(() => {
+        if (!open) return undefined;
+        const onDocClick = (e) => {
+            if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+        document.addEventListener('mousedown', onDocClick);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDocClick);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [open]);
+
+    const pick = (target) => {
+        setOpen(false);
+        // Only fire the toggle when the picked state differs from current —
+        // avoids a wasted round trip that would just return the same value.
+        if (target !== isOnline) onSelect();
+    };
+
+    return (
+        <div ref={containerRef} className="relative">
+            <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                className={cn(
+                    'flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-colors',
+                    isOnline
+                        ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-surface-50 dark:bg-surface-800/70 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-300',
+                )}
+            >
+                <Circle
+                    className={cn(
+                        'w-2.5 h-2.5',
+                        isOnline
+                            ? 'fill-emerald-500 text-emerald-500'
+                            : 'fill-surface-400 text-surface-400 dark:fill-surface-500 dark:text-surface-500',
+                    )}
+                />
+                {isOnline ? 'Online' : 'Offline'}
+                <ChevronDown size={14} className={cn('opacity-70 transition-transform', open && 'rotate-180')} />
+            </button>
+
+            {open && (
+                <div
+                    role="listbox"
+                    aria-label="Operator status"
+                    className={cn(
+                        'absolute right-0 top-full mt-2 z-40 w-56 rounded-2xl border shadow-xl overflow-hidden',
+                        'bg-white dark:bg-surface-900',
+                        'border-surface-200 dark:border-surface-800',
+                    )}
+                >
+                    <div className="px-3 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-surface-400 dark:text-surface-500">
+                        Set your status
+                    </div>
+                    {[
+                        { value: true, label: 'Online', dot: 'fill-emerald-500 text-emerald-500' },
+                        { value: false, label: 'Offline', dot: 'fill-surface-400 text-surface-400 dark:fill-surface-500 dark:text-surface-500' },
+                    ].map((opt) => {
+                        const isCurrent = opt.value === isOnline;
+                        return (
+                            <button
+                                key={opt.label}
+                                type="button"
+                                role="option"
+                                aria-selected={isCurrent}
+                                onClick={() => pick(opt.value)}
+                                className={cn(
+                                    'w-full flex items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors',
+                                    'text-surface-700 dark:text-surface-200',
+                                    'hover:bg-surface-100 dark:hover:bg-surface-800',
+                                )}
+                            >
+                                <Circle className={cn('w-2.5 h-2.5', opt.dot)} />
+                                <span className="flex-1">{opt.label}</span>
+                                {isCurrent && <Check size={15} className="text-surface-400 dark:text-surface-500" />}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
 
 /**
  * Render bot markdown in admin chat panels.
@@ -82,7 +185,7 @@ const parseHistoryMessage = (m, i) => {
 };
 
 export default function LiveChat({ embedded = false }) {
-    const { bots, loading: botsLoading } = useBotContext();
+    const { bots, selectedBot, loading: botsLoading } = useBotContext();
 
     // Core operator state
     const [isOnline, setIsOnline] = useState(false);
@@ -292,6 +395,75 @@ export default function LiveChat({ embedded = false }) {
                 }
             }
         });
+    }, []);
+
+    // React to workspace switches. A Client who is a linked operator on
+    // Workspace B and owner of Workspace A will keep local ``isOnline=true``
+    // (and a live WebSocket) after switching to A unless we tear it all
+    // down. That leaks presence into the wrong workspace: the header pill
+    // shows Online, the queue shows the previous workspace's waiting chats,
+    // and the WS keeps delivering messages under the old auth subprotocol.
+    //
+    // Fix: on workspace switch we
+    //   1. force ``isOnline=false`` — the WS effect's cleanup runs, the
+    //      queue/qualified polls stop, and the operators-list fetch skips.
+    //   2. flush every session-scoped list (queue, active chats, chat
+    //      metadata, previews, unread counters, visitor presence).
+    //   3. re-fetch ``getMyOperatorStatus`` under the new workspace so if
+    //      the user IS also an operator there and was left online, we
+    //      restore ``isOnline=true`` (and the WS reconnects under the
+    //      correct subprotocol) rather than making them re-toggle.
+    useEffect(() => {
+        const handleWorkspaceSwitched = () => {
+            manualCloseRef.current = true;
+            clearInterval(pingIntervalRef.current);
+            clearTimeout(reconnectTimerRef.current);
+            clearInterval(queuePollIntervalRef.current);
+            queuePollIntervalRef.current = null;
+            clearInterval(qualifiedPollIntervalRef.current);
+            qualifiedPollIntervalRef.current = null;
+            wsRef.current?.close();
+            wsRef.current = null;
+            reconnectAttemptsRef.current = 0;
+
+            setIsOnline(false);
+            setQueue([]);
+            setActiveChats([]);
+            setChatNames({});
+            setUnreadCounts({});
+            setLastMessages({});
+            setVisitorStatus({});
+            setQualifiedBotSessions([]);
+            setSelectedChat(null);
+            setMessages([]);
+            setIsTyping(false);
+            setOperatorName('');
+            setSessionInfo(null);
+            setPreviewSession(null);
+            setPreviewMessages([]);
+            setConnectionLost(false);
+            setDuplicateTabDetected(false);
+            queueSnapshotRef.current = new Set();
+            chatHistoryCacheRef.current = {};
+            operatorIdRef.current = null;
+            localStorage.removeItem('operator_id');
+
+            // Refetch under the new workspace context — restores online
+            // status silently if the user was already online as an
+            // operator on the target workspace.
+            getMyOperatorStatus().then(status => {
+                if (status && status.is_online) {
+                    setIsOnline(true);
+                    if (status.operator_name) setOperatorName(status.operator_name);
+                    if (status.operator_id) {
+                        operatorIdRef.current = status.operator_id;
+                        localStorage.setItem('operator_id', String(status.operator_id));
+                    }
+                }
+            }).catch(() => { /* silent — will fall back to offline UI */ });
+        };
+        window.addEventListener('oyechats:workspace-switched', handleWorkspaceSwitched);
+        return () => window.removeEventListener('oyechats:workspace-switched', handleWorkspaceSwitched);
     }, []);
 
     // Sync operator online status to localStorage and dispatch custom window event for other components (like TopBar)
@@ -1004,7 +1176,13 @@ export default function LiveChat({ embedded = false }) {
 
     const executeToggleStatus = async () => {
         try {
-            const result = await toggleOperatorStatus();
+            // Scope the toggle to the sidebar-selected bot. A workspace with
+            // multiple bots must not accidentally flip the wrong operator row
+            // online just because the caller has self-op rows on both bots.
+            // The backend uses this to find the caller's operator for THIS
+            // bot only, and 404s when none exists — which drives the
+            // "No operator set" prompt in the catch block below.
+            const result = await toggleOperatorStatus({ botId: selectedBot?.id });
             setIsOnline(result.is_online);
             setOperatorName(result.operator_name);
             if (result.operator_id) {
@@ -1027,6 +1205,48 @@ export default function LiveChat({ embedded = false }) {
                 reconnectAttemptsRef.current = 0;
             }
         } catch (e) {
+            // Backend refuses to silently mint an operator row when the owner
+            // has no self-operator yet — see operator_routes.set_operator_status.
+            // Surface a confirm modal instead of a silent failure: on confirm
+            // we call the explicit /me/self-operator flow (which requires an
+            // explicit bot_id) and retry the toggle. Matches the pre-merge UX.
+            if (e?.status === 404 && e?.detail?.error === 'no_operator_row') {
+                const botIdForOp = selectedBot?.id ?? bots?.[0]?.id ?? null;
+                if (!botIdForOp) {
+                    console.error('Cannot self-add as operator: no bot in this workspace yet.');
+                    return;
+                }
+                setConfirmModal({
+                    title: 'No operator set yet',
+                    message: (
+                        `Add an operator to handle live chats for "${selectedBot?.name || 'this bot'}", `
+                        + `or take the chats yourself.`
+                    ),
+                    actions: [
+                        {
+                            label: 'Take the chats yourself',
+                            tone: 'primary',
+                            onClick: async () => {
+                                setConfirmModal(null);
+                                try {
+                                    await addSelfAsOperator(botIdForOp);
+                                    await executeToggleStatus();
+                                } catch (err) {
+                                    console.error('Failed to add self as operator:', err);
+                                }
+                            },
+                        },
+                        {
+                            label: 'Add an operator',
+                            onClick: () => {
+                                setConfirmModal(null);
+                                navigateRouter('/team');
+                            },
+                        },
+                    ],
+                });
+                return;
+            }
             console.error('Failed to toggle status:', e);
         }
     };
@@ -1372,15 +1592,41 @@ export default function LiveChat({ embedded = false }) {
 
     const currentVisitorName = selectedChat ? (chatNames[selectedChat]?.name || 'Visitor') : 'Visitor';
 
+    // ── Per-bot scoping ────────────────────────────────────────────────
+    // Live chat surfaces (waiting queue, active chats, qualified AI, team
+    // roster) are all scoped to the sidebar-selected bot. Without this a
+    // workspace with two bots would surface each bot's visitors and
+    // operators under both — a legitimate bug the user hit when steve si
+    // (bound to a different bot) showed as Online for "bot2". When no bot
+    // is selected yet (initial load), we let everything render so the
+    // panel isn't blank during boot; `selectedBot` almost always resolves
+    // within a tick of mount.
+    const currentBotId = selectedBot?.id ?? null;
+    const matchesCurrentBot = (bId) => currentBotId == null || bId === currentBotId;
+    const visibleQueue = queue.filter((q) => matchesCurrentBot(q.bot_id));
+    const visibleActiveChats = activeChats.filter(
+        (sid) => matchesCurrentBot(chatNames[sid]?.botId),
+    );
+    const visibleQualifiedBotSessions = qualifiedBotSessions.filter(
+        (qs) => matchesCurrentBot(qs.bot_id),
+    );
+    const visibleOperators = operatorsList.filter((op) => matchesCurrentBot(op.bot_id));
+
     return (
         <div
             className={`flex flex-col h-full ${embedded ? '' : 'animate-fade-in'}`}
         >
-            {/* Top bar: agent name + status toggle */}
+            {/* Top bar: status toggle only. Embedded mode (Support tab) pushes
+                the pill to the right so the empty state below sits by itself.
+                The operator name used to render on the left here but overlapped
+                awkwardly on the empty "You're offline" screen — moved out of
+                the top bar; it's still surfaced elsewhere (avatar in the topbar
+                menu) so we don't lose the "who am I signed in as" answer. */}
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
                 {!embedded && <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />}
-                <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-between' : ''}`}>
-                    {operatorName && <span className="text-sm text-surface-500 dark:text-surface-400">{operatorName}</span>}
+                <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-end' : ''}`}>
+                    {/* connection-lost / reconnecting banner (kept — surfaces
+                        transient WS issues the operator needs to see). */}
                     {connectionLost && (
                         <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-1 rounded-lg">
                             {duplicateTabDetected ? (
@@ -1413,17 +1659,12 @@ export default function LiveChat({ embedded = false }) {
                             )}
                         </span>
                     )}
-                    <button
-                        onClick={handleToggleStatus}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
-                            isOnline
-                                ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
-                                : 'bg-surface-50 dark:bg-surface-800 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400'
-                        }`}
-                    >
-                        <Circle className={`w-3 h-3 ${isOnline ? 'fill-emerald-500 text-emerald-500' : 'fill-surface-300 text-surface-300 dark:fill-surface-600 dark:text-surface-600'}`} />
-                        {isOnline ? 'Online' : 'Offline'}
-                    </button>
+                    {/* Status dropdown — clicking the pill opens a menu with
+                        Online / Offline choices. Selecting the option the
+                        operator is NOT currently on fires the toggle; picking
+                        their current status is a no-op that just closes the
+                        menu (matches the pattern in the reference design). */}
+                    <StatusDropdown isOnline={isOnline} onSelect={handleToggleStatus} />
                 </div>
             </div>
 
@@ -1478,14 +1719,14 @@ export default function LiveChat({ embedded = false }) {
                     {/* ── Left: Queue + Active Chats ── */}
                     <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden flex flex-col">
                         {/* Waiting queue */}
-                        {queue.length > 0 && (
+                        {visibleQueue.length > 0 && (
                             <div className="border-b border-surface-200 dark:border-surface-800 flex-shrink-0">
                                 <div className="px-4 py-3 bg-amber-50 dark:bg-amber-500/10">
                                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                                        Waiting ({queue.length})
+                                        Waiting ({visibleQueue.length})
                                     </h4>
                                 </div>
-                                {queue.map(item => (
+                                {visibleQueue.map(item => (
                                     <div key={item.session_id} className="px-4 py-3 border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors">
                                         <div className="flex items-center justify-between mb-1">
                                             <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
@@ -1519,15 +1760,15 @@ export default function LiveChat({ embedded = false }) {
                         <div className="flex-1 overflow-y-auto">
                             <div className="px-4 py-3 flex-shrink-0">
                                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">
-                                    Active ({activeChats.length})
+                                    Active ({visibleActiveChats.length})
                                 </h4>
                             </div>
-                            {activeChats.length === 0 ? (
+                            {visibleActiveChats.length === 0 ? (
                                 <div className="px-4 py-8 text-center text-sm text-surface-400 dark:text-surface-500">
                                     No active chats
                                 </div>
                             ) : (
-                                activeChats.map(sid => {
+                                visibleActiveChats.map(sid => {
                                     const unread = unreadCounts[sid] || 0;
                                     const name = chatNames[sid]?.name || 'Visitor';
                                     const botName = chatNames[sid]?.botName;
@@ -1580,7 +1821,7 @@ export default function LiveChat({ embedded = false }) {
                             <div className="border-t border-surface-200 dark:border-surface-800">
                                 <div className="px-4 py-3 flex items-center justify-between flex-shrink-0">
                                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">
-                                        Chatting with AI ({qualifiedBotSessions.length})
+                                        Chatting with AI ({visibleQualifiedBotSessions.length})
                                     </h4>
                                     {qualifiedLoading && (
                                         <Loader2 className="w-3 h-3 animate-spin text-surface-400" />
@@ -1594,12 +1835,12 @@ export default function LiveChat({ embedded = false }) {
                                     </div>
                                 )}
 
-                                {qualifiedBotSessions.length === 0 ? (
+                                {visibleQualifiedBotSessions.length === 0 ? (
                                     <div className="px-4 py-8 text-center text-sm text-surface-400 dark:text-surface-500">
                                         No qualified AI conversations yet
                                     </div>
                                 ) : (
-                                    qualifiedBotSessions.map(qs => {
+                                    visibleQualifiedBotSessions.map(qs => {
                                         const dims = qs.bant_dimensions || {};
                                         const dimsCount = qs.bant_dimensions_count || 0;
                                         const tier = qs.bant_tier || 'unqualified';
@@ -2218,17 +2459,22 @@ export default function LiveChat({ embedded = false }) {
                                     </div>
                                 )}
 
-                                {/* Team Roster Tab */}
+                                {/* Team Roster Tab — uses the same per-bot
+                                    filtered list (`visibleOperators`) as the
+                                    queue and active-chat sections so the
+                                    presence indicators, count, and empty
+                                    state all stay consistent with what the
+                                    operator can actually act on for this bot. */}
                                 {(!selectedChat || rightPanelTab === 'team') && (
                                     <div className="p-4">
                                         <h5 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 mb-3">
-                                            Operators ({operatorsList.length})
+                                            Operators ({visibleOperators.length})
                                         </h5>
-                                        {operatorsList.length === 0 ? (
+                                        {visibleOperators.length === 0 ? (
                                             <p className="text-sm text-surface-400 dark:text-surface-500 text-center py-6">No operators yet</p>
                                         ) : (
                                             <div className="space-y-2">
-                                                {operatorsList.map(operator => {
+                                                {visibleOperators.map(operator => {
                                                     const status = getOperatorStatus(operator);
                                                     return (
                                                         <div key={operator.id} className="flex items-center gap-2.5 py-1.5">
@@ -2462,26 +2708,67 @@ export default function LiveChat({ embedded = false }) {
                 </div>
             )}
 
-            {/* ── Confirm modal (replaces window.confirm) ── */}
+            {/* ── Confirm modal (replaces window.confirm) ──
+                Two shapes supported:
+                * Single action — legacy: pass ``onConfirm`` (+ optional
+                  ``confirmLabel`` / ``tone``). Renders Cancel + one CTA
+                  side-by-side (used by "Go Offline" confirmation).
+                * Multiple actions — pass ``actions: [{label, onClick, tone}]``.
+                  Renders each button on its own row above Cancel, top to
+                  bottom. Used by the no-operator prompt so the caller can
+                  pick "Take chats yourself" or "Invite an operator" without
+                  the two CTAs cramming into one row. */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true">
                     <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-xl p-6 max-w-sm w-full mx-4">
                         <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">{confirmModal.title}</h3>
                         <p className="text-sm text-surface-600 dark:text-surface-400 mb-5">{confirmModal.message}</p>
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => setConfirmModal(null)}
-                                className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-800 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={confirmModal.onConfirm}
-                                className="flex-1 py-2.5 text-sm font-medium rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition-colors"
-                            >
-                                Continue
-                            </button>
-                        </div>
+                        {Array.isArray(confirmModal.actions) && confirmModal.actions.length > 0 ? (
+                            <div className="flex flex-col gap-2">
+                                {confirmModal.actions.map((action) => (
+                                    <button
+                                        key={action.label}
+                                        onClick={action.onClick}
+                                        className={cn(
+                                            'w-full py-2.5 text-sm font-semibold rounded-xl transition-colors',
+                                            action.tone === 'primary'
+                                                ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                                                : action.tone === 'danger'
+                                                    ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                                                    : 'border border-surface-200 dark:border-surface-800 text-surface-700 dark:text-surface-200 hover:bg-surface-50 dark:hover:bg-surface-800',
+                                        )}
+                                    >
+                                        {action.label}
+                                    </button>
+                                ))}
+                                <button
+                                    onClick={() => setConfirmModal(null)}
+                                    className="w-full py-2.5 text-sm font-medium rounded-xl text-surface-500 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setConfirmModal(null)}
+                                    className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-800 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmModal.onConfirm}
+                                    className={cn(
+                                        'flex-1 py-2.5 text-sm font-medium rounded-xl text-white transition-colors',
+                                        confirmModal.tone === 'primary'
+                                            ? 'bg-primary-600 hover:bg-primary-700'
+                                            : 'bg-rose-600 hover:bg-rose-700',
+                                    )}
+                                >
+                                    {confirmModal.confirmLabel || 'Continue'}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

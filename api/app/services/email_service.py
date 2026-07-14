@@ -770,11 +770,7 @@ def send_operator_invite_email(
     """
     expiry = f"{expires_in_days} day" if expires_in_days == 1 else f"{expires_in_days} days"
     safe_workspace = esc(workspace_name)
-    inviter_snippet = (
-        f"{esc(inviter_name)} has invited you"
-        if inviter_name
-        else "You&rsquo;ve been invited"
-    )
+    inviter_snippet = f"{esc(inviter_name)} has invited you" if inviter_name else "You&rsquo;ve been invited"
     inner = (
         h1(f"You&rsquo;ve been invited to {safe_workspace}")
         + p(

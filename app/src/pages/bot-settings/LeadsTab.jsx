@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, Sparkles, Settings2, Mail, X } from 'lucide-react';
+import { Bot, Sparkles, Settings2, Mail, X, Lock } from 'lucide-react';
 
 const FIELD_LABELS = { name: 'Name', email: 'Email', phone: 'Phone', company: 'Company' };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -11,10 +11,30 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * required flags), and email-notification settings. The whole tab is paid;
  * the shell only renders it when the plan is unlocked.
  *
- * @param {{ draft: object, set: (field: string, value: unknown) => void }} props
+ * Feature gating
+ * --------------
+ * ``BANT lead qualification`` and ``Email on qualified lead`` are both
+ * Standard+ features driven by the ``bant`` plan feature flag. On Starter
+ * (BANT disabled) the toggles render disabled with a "Paid" pill and the
+ * label click routes into the upgrade modal. The rest of the tab (lead
+ * form, notification recipients, handoff email) stays interactive on
+ * Starter — those are baseline lead-capture features.
+ *
+ * @param {{
+ *   draft: object,
+ *   set: (field: string, value: unknown) => void,
+ *   ent: object,
+ *   requestUpgrade: (intent: string) => void,
+ * }} props
  */
-export default function LeadsTab({ draft, set }) {
+export default function LeadsTab({ draft, set, ent, requestUpgrade }) {
     const [emailInput, setEmailInput] = useState('');
+
+    // Both toggles ride the same ``bant`` feature — "Email on qualified lead"
+    // is meaningless without qualification producing that signal in the first
+    // place, so we gate them together instead of splitting into two flags.
+    const bantLocked = !(ent?.hasFeature?.('bant'));
+    const openBantUpgrade = () => requestUpgrade?.('bant');
 
     const leadFormFields = Array.isArray(draft.lead_form_fields) ? draft.lead_form_fields : [];
     const notificationEmails = Array.isArray(draft.notification_emails) ? draft.notification_emails : [];
@@ -39,14 +59,40 @@ export default function LeadsTab({ draft, set }) {
                     AI will subtly ask qualifying questions (Budget, Authority, Need, Timeline) when the user shows buying intent.
                 </p>
             </div>
-            <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
+            <div
+                className={`bg-[var(--bg-card)] dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between ${bantLocked ? 'cursor-pointer' : ''}`}
+                onClick={bantLocked ? openBantUpgrade : undefined}
+            >
                 <div>
-                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable BANT Qualification</h4>
-                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">Qualify leads automatically during chat.</p>
+                    <div className="flex items-center gap-2">
+                        <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable BANT Qualification</h4>
+                        {bantLocked && (
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                                <Lock size={10} strokeWidth={2.6} /> Paid
+                            </span>
+                        )}
+                    </div>
+                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">
+                        {bantLocked
+                            ? 'Automatic lead qualification is included on Standard and above.'
+                            : 'Qualify leads automatically during chat.'}
+                    </p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={draft.bant_enabled} onChange={(e) => set('bant_enabled', e.target.checked)} />
-                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                <label className={`relative inline-flex items-center ${bantLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                    <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={bantLocked ? false : !!draft.bant_enabled}
+                        disabled={bantLocked}
+                        onChange={(e) => {
+                            if (bantLocked) {
+                                openBantUpgrade();
+                                return;
+                            }
+                            set('bant_enabled', e.target.checked);
+                        }}
+                    />
+                    <div className={`w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600 ${bantLocked ? 'opacity-60' : ''}`}></div>
                 </label>
             </div>
 
@@ -184,11 +230,33 @@ export default function LeadsTab({ draft, set }) {
                         Press Enter or comma to add. Backspace removes the last chip.
                     </p>
                 </div>
-                <div className="flex items-center justify-between py-2">
-                    <span className="text-[13px] text-surface-700 dark:text-surface-300">Email on qualified lead</span>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" className="sr-only peer" checked={draft.email_on_qualified} onChange={(e) => set('email_on_qualified', e.target.checked)} />
-                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                <div
+                    className={`flex items-center justify-between py-2 ${bantLocked ? 'cursor-pointer' : ''}`}
+                    onClick={bantLocked ? openBantUpgrade : undefined}
+                >
+                    <span className="text-[13px] text-surface-700 dark:text-surface-300 flex items-center gap-2">
+                        Email on qualified lead
+                        {bantLocked && (
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                                <Lock size={10} strokeWidth={2.6} /> Paid
+                            </span>
+                        )}
+                    </span>
+                    <label className={`relative inline-flex items-center ${bantLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={bantLocked ? false : !!draft.email_on_qualified}
+                            disabled={bantLocked}
+                            onChange={(e) => {
+                                if (bantLocked) {
+                                    openBantUpgrade();
+                                    return;
+                                }
+                                set('email_on_qualified', e.target.checked);
+                            }}
+                        />
+                        <div className={`w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 ${bantLocked ? 'opacity-60' : ''}`}></div>
                     </label>
                 </div>
                 <div className="flex items-center justify-between py-2">

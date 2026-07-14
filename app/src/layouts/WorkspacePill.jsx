@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown, Plus, Building2, Headphones } from 'lucide-react';
@@ -56,12 +57,31 @@ export default function WorkspacePill() {
 
     const [open, setOpen] = useState(false);
     const containerRef = useRef(null);
+    const buttonRef = useRef(null);
+    // Menu position in viewport coords. The dropdown renders with
+    // ``position: fixed`` so it escapes the TopBar's stacking context,
+    // which pulls in ``backdrop-filter: blur()`` — Chrome/Safari treat that
+    // as a compositing group that clips descendants to the filter box (see
+    // the ``sticky z-20 backdrop-blur-xl`` <header> in TopBar.jsx). An
+    // ``absolute`` dropdown inside it would be cropped at the header's
+    // bottom edge no matter what ``overflow`` says. Fixed positioning +
+    // per-open coordinate capture sidesteps the whole clipping story.
+    const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+
+    // Ref on the portaled menu — outside-click needs to know whether the
+    // click landed inside the menu, but the menu isn't a DOM descendant of
+    // ``containerRef`` anymore (it's a child of ``document.body`` via
+    // createPortal), so ``containerRef.contains(event.target)`` alone would
+    // treat every menu click as "outside" and close the menu on selection.
+    const menuRef = useRef(null);
 
     // Close on outside click.
     useEffect(() => {
         function onDocClick(event) {
             if (!containerRef.current) return;
-            if (!containerRef.current.contains(event.target)) setOpen(false);
+            const inPill = containerRef.current.contains(event.target);
+            const inMenu = menuRef.current?.contains(event.target);
+            if (!inPill && !inMenu) setOpen(false);
         }
         if (open) document.addEventListener('mousedown', onDocClick);
         return () => document.removeEventListener('mousedown', onDocClick);
@@ -74,6 +94,28 @@ export default function WorkspacePill() {
         }
         if (open) document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
+    }, [open]);
+
+    // Recompute the menu's viewport position whenever it opens, and also on
+    // scroll / resize while it's open — the pill sits inside a sticky
+    // TopBar, so those events don't move the pill relative to the viewport,
+    // but a virtual keyboard or a font-scale change can shift it a few px.
+    // Snap the menu 8px below the pill; align its left edge to the pill.
+    useEffect(() => {
+        if (!open) return;
+        function updatePosition() {
+            const el = buttonRef.current;
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            setMenuPos({ top: rect.bottom + 8, left: rect.left });
+        }
+        updatePosition();
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
+        return () => {
+            window.removeEventListener('scroll', updatePosition, true);
+            window.removeEventListener('resize', updatePosition);
+        };
     }, [open]);
 
     // The pill is a SWITCHER — it only earns real estate when the caller
@@ -116,6 +158,7 @@ export default function WorkspacePill() {
     return (
         <div ref={containerRef} className="relative">
             <button
+                ref={buttonRef}
                 type="button"
                 onClick={() => setOpen((v) => !v)}
                 className={cn(
@@ -140,17 +183,41 @@ export default function WorkspacePill() {
                 <ChevronDown size={14} className={cn('text-surface-400 transition-transform', open && 'rotate-180')} />
             </button>
 
-            <AnimatePresence>
+            {/* Portal to document.body — the TopBar's ``backdrop-filter``
+                (a) creates a containing block for ``position: fixed``
+                    descendants (so ``fixed`` alone would still resolve
+                    coordinates relative to the header, not the viewport),
+                (b) traps the whole subtree in its own stacking context at
+                    z=20, losing every z-index race against the sidebar
+                    (z=30) and every other overlay in the app.
+                Rendering into ``document.body`` sidesteps both — the menu
+                lands in the ROOT stacking context where z-50 wins. */}
+            {createPortal(
+                <AnimatePresence>
                 {open && (
                     <motion.div
+                        ref={menuRef}
                         initial={{ opacity: 0, y: -4 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.12 }}
                         role="listbox"
                         aria-label="Workspaces"
+                        style={{
+                            top: menuPos.top,
+                            left: menuPos.left,
+                            // Inline maxWidth avoids the Tailwind arbitrary-value
+                            // route (``max-w-[calc(100vw-24px)]`` was producing
+                            // ``max-width: 0`` in this build because the
+                            // stylesheet wasn't regenerated for the arbitrary
+                            // class name, crushing the dropdown to a 2px sliver).
+                            // The intent is "never overflow the viewport by more
+                            // than a 12px gutter on each side" — plain CSS calc
+                            // does that reliably.
+                            maxWidth: 'calc(100vw - 24px)',
+                        }}
                         className={cn(
-                            'absolute left-0 top-full mt-2 z-40 w-80 max-w-[calc(100vw-24px)]',
+                            'fixed z-50 w-80',
                             'rounded-xl border shadow-xl',
                             'bg-white dark:bg-surface-950',
                             'border-surface-200 dark:border-surface-800',
@@ -192,7 +259,9 @@ export default function WorkspacePill() {
                         )}
                     </motion.div>
                 )}
-            </AnimatePresence>
+                </AnimatePresence>,
+                document.body,
+            )}
         </div>
     );
 }

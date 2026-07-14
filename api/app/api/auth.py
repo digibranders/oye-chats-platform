@@ -268,6 +268,7 @@ def get_current_client_or_operator(
                     operator.name,
                     operator.email,
                     operator.client_id,
+                    operator.bot_id,
                     operator.role,
                     operator.department_id,
                     operator.operator_api_key,
@@ -285,6 +286,9 @@ def get_current_client_or_operator(
                     "entity": operator,
                     "client_id": operator.client_id,
                     "operator_id": operator.id,
+                    # Operator↔bot one-to-one binding. Downstream routes use
+                    # it to scope bot lists, chat routing, and accept guards.
+                    "bot_id": operator.bot_id,
                 }
 
     # Try client key
@@ -350,6 +354,7 @@ def get_current_client_or_operator(
                 operator.name,
                 operator.email,
                 operator.client_id,
+                operator.bot_id,
                 operator.role,
                 operator.department_id,
                 operator.operator_api_key,
@@ -365,6 +370,9 @@ def get_current_client_or_operator(
                 # working transparently.
                 "client_id": requested_workspace_id,
                 "operator_id": operator.id,
+                # Operator↔bot one-to-one binding. Downstream routes use it to
+                # scope bot lists, chat routing, and accept guards.
+                "bot_id": operator.bot_id,
                 # New: the underlying Client identity — useful for auditing and
                 # for cache-key invalidation across workspaces.
                 "linked_client_id": client.id,

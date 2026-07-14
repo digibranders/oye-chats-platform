@@ -574,11 +574,7 @@ async def run_full_crawl(
         # when there's data" behavior — nothing user-visible depends on
         # clearing the client-level palette between crawls.
         should_persist = (
-            bot_id is not None
-            or recommended_colors
-            or brand_tone_text
-            or company_context
-            or services_url_suggestion
+            bot_id is not None or recommended_colors or brand_tone_text or company_context or services_url_suggestion
         )
         if should_persist:
             with get_session() as session:

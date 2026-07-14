@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app import config as app_config
+from app.api.auth import get_current_client_or_operator
 from app.api.auth import get_current_client_strict as get_current_client
 from app.config import (
     BILLING_PROVIDER,
@@ -248,11 +249,21 @@ def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_c
 
 
 @router.get("/current")
-def get_current_subscription(client: Client = Depends(get_current_client)):
-    """Return the client's current subscription details + plan info."""
+def get_current_subscription(auth: dict = Depends(get_current_client_or_operator)):
+    """Return the current workspace's subscription details + plan info.
+
+    Resolved via ``get_current_client_or_operator`` (not strict-client) so an
+    invited operator presenting their own ``X-API-Key`` together with the
+    switched workspace's ``X-Workspace-Id`` reads the WORKSPACE OWNER's plan,
+    not their own personal Free plan. The LiveChat UI feature-gates on this
+    response — reading the wrong client's plan is what made "Live chat isn't
+    included in your plan" appear on the operator's Support surface even
+    though the workspace owner is on Standard.
+    """
+    client_id = auth["client_id"]
     with get_session() as session:
-        sub = get_client_subscription(session, client.id)
-        plan = get_client_plan(session, client.id)
+        sub = get_client_subscription(session, client_id)
+        plan = get_client_plan(session, client_id)
 
         sub_data = None
         if sub:
