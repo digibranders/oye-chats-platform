@@ -14,6 +14,12 @@ export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
   const emailFromUrl = searchParams.get('email') || '';
   const email = emailFromUrl || getAuthItem('admin_pending_email') || '';
+  // Preserve a deep-link ``next`` (e.g. ``/invite/<token>``) through the
+  // verification bounce so an invite-flow signup lands back on the invite
+  // airlock after OTP entry instead of the dashboard root. Open-redirect
+  // guarded — same rule as Login/Register: only same-origin relative paths.
+  const rawNext = searchParams.get('next') || '';
+  const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
 
   const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
   const [error, setError] = useState('');
@@ -29,11 +35,14 @@ export default function VerifyEmail() {
       return;
     }
     if (getAuthItem('admin_is_verified') === 'true') {
-      navigate('/', { replace: true });
+      // Already verified — respect a preserved ``next`` (e.g. invite airlock)
+      // before falling back to the dashboard root. Same open-redirect guard
+      // as the post-verify redirect below.
+      navigate(safeNext || '/', { replace: true });
       return;
     }
     inputRefs.current[0]?.focus();
-  }, [navigate]);
+  }, [navigate, safeNext]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -106,7 +115,11 @@ export default function VerifyEmail() {
       setAuthItem('admin_is_verified', 'true');
       removeAuthItem('admin_pending_email');
 
-      navigate('/', { replace: true });
+      // Honor deep-link ``next`` — invite-flow signups land back on
+      // ``/invite/<token>`` here so the airlock's own logged-in branch
+      // auto-detects the freshly-verified session and shows the Accept
+      // button. Fallback to dashboard root for organic signups.
+      navigate(safeNext || '/', { replace: true });
     } catch (err) {
       setError(err.message || 'Invalid code. Please try again.');
       setOtp(Array(OTP_LENGTH).fill(''));
@@ -265,7 +278,7 @@ export default function VerifyEmail() {
                   'outline-none transition-all',
                   digit
                     ? 'border-primary-500 ring-2 ring-primary-500/20'
-                    : 'border-surface-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20',
+                    : 'border-surface-200 focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)]',
                 )}
                 disabled={isVerifying}
                 aria-label={`Digit ${i + 1}`}

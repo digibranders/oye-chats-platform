@@ -168,7 +168,7 @@ MARKETING_URL = os.getenv("MARKETING_URL", "https://oyechats.com").rstrip("/")
 APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
 # Address users should reach out to for help. Different from EMAIL_FROM_ADDRESS,
 # which is the no-reply sender. SUPPORT_EMAIL is what appears in "Contact us".
-SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "developer@oyechats.com")
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@oyechats.com")
 # Display brand name + taglines used by email headers/footers.
 BRAND_NAME = os.getenv("BRAND_NAME", "OyeChats")
 BRAND_TAGLINE_HEADER = os.getenv("BRAND_TAGLINE_HEADER", "AI-Powered Customer Conversations")

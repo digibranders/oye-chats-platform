@@ -6,6 +6,7 @@ import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import {
     createWebhook,
     deleteWebhook,
@@ -102,6 +103,7 @@ function Toggle({ checked, onChange, disabled = false }) {
 export default function Webhooks({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
+    const confirm = useConfirm();
 
     const [activeTab, setActiveTab] = useState('webhooks');
     const [webhooks, setWebhooks] = useState([]);
@@ -232,7 +234,13 @@ export default function Webhooks({ embedded = false }) {
     };
 
     const handleDelete = async (webhookId) => {
-        if (!window.confirm('Are you sure you want to delete this webhook? This action cannot be undone.')) return;
+        const ok = await confirm({
+            title: 'Delete this webhook?',
+            description: 'Event deliveries to this endpoint will stop immediately. This cannot be undone.',
+            confirmLabel: 'Delete webhook',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteWebhook(webhookId);
             showToast('success', 'Webhook deleted');
@@ -371,7 +379,7 @@ export default function Webhooks({ embedded = false }) {
                                 setSelectedWebhookId(e.target.value ? Number(e.target.value) : null);
                                 setDeliveryPage(1);
                             }}
-                            className="text-sm border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-500"
+                            className="text-sm border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)]"
                         >
                             <option value="">Select webhook</option>
                             {webhooks.map((webhook) => (
@@ -563,7 +571,7 @@ export default function Webhooks({ embedded = false }) {
                                 value={formUrl}
                                 onChange={(e) => setFormUrl(e.target.value)}
                                 placeholder="https://your-crm.com/webhooks/oyechats"
-                                className="w-full px-3 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm focus:outline-none focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                className="w-full px-3 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm focus:outline-none focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                 disabled={isSubmitting || !!newSecret}
                             />
                         </div>

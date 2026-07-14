@@ -132,7 +132,7 @@ export default function InstallDrawer({ bot, open, onClose }) {
                     <button
                         onClick={onClose}
                         aria-label="Close"
-                        className="p-1.5 rounded-lg text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                        className="p-1.5 rounded-lg text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                     >
                         <X size={16} />
                     </button>
@@ -149,13 +149,13 @@ export default function InstallDrawer({ bot, open, onClose }) {
                                 <button
                                     onClick={() => setShowKey((v) => !v)}
                                     aria-label={showKey ? 'Hide bot key' : 'Show bot key'}
-                                    className="text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 rounded"
+                                    className="text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] rounded"
                                 >
                                     {showKey ? <EyeOff size={12} /> : <Eye size={12} />}
                                 </button>
                                 <button
                                     onClick={() => handleCopy(bot.bot_key, `key-${bot.id}`)}
-                                    className="flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 rounded"
+                                    className="flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] rounded"
                                 >
                                     {copiedField === `key-${bot.id}` ? <Check size={11} /> : <Copy size={11} />}
                                     <span className="text-[9px] font-bold uppercase">{copiedField === `key-${bot.id}` ? 'Copied' : 'Copy'}</span>
@@ -183,14 +183,14 @@ export default function InstallDrawer({ bot, open, onClose }) {
                                     href={getBotPreviewUrl(bot.bot_key, bot.website)}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white text-xs font-semibold rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white text-xs font-semibold rounded-lg transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                 >
                                     <ExternalLink size={13} />
                                     View Demo
                                 </a>
                                 <button
                                     onClick={handleDemoCopy}
-                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 text-surface-600 dark:text-surface-300 hover:text-surface-700 dark:hover:text-surface-200 text-xs font-semibold rounded-lg transition-colors bg-[var(--bg-card)] dark:bg-surface-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 text-surface-600 dark:text-surface-300 hover:text-surface-700 dark:hover:text-surface-200 text-xs font-semibold rounded-lg transition-colors bg-[var(--bg-card)] dark:bg-surface-900 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                 >
                                     {copiedField === `demo-${bot.id}` ? <Check size={13} /> : <Link2 size={13} />}
                                     {copiedField === `demo-${bot.id}` ? 'Copied!' : 'Copy Link'}

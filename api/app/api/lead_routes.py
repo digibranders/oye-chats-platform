@@ -13,6 +13,7 @@ from app.api.auth import get_current_client_or_operator
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, LeadInfo
 from app.db.session import get_session
 from app.services.lead_service import build_lead_response
+from app.services.plan_entitlements_service import is_lead_source_attribution_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,8 @@ def list_leads(
             lead_infos = session.execute(select(LeadInfo).where(LeadInfo.session_id.in_(session_ids))).scalars().all()
             lead_info_map = {li.session_id: li for li in lead_infos}
 
+        attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
+
         # Build leads with scores — filters are Python-computed (score/tier not in DB)
         leads = []
         for chat_session, msg_count in results:
@@ -95,6 +98,7 @@ def list_leads(
                 lead_info_map.get(chat_session.id),
                 msg_count,
                 bot=bot_map.get(chat_session.bot_id),
+                include_attribution=attribution_enabled,
             )
 
             # Apply filters (tier or legacy status param)
@@ -265,28 +269,42 @@ def export_leads_csv(
             lead_infos = session.execute(select(LeadInfo).where(LeadInfo.session_id.in_(session_ids))).scalars().all()
             lead_info_map = {lead_info.session_id: lead_info for lead_info in lead_infos}
 
+        attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
+
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(
-            [
-                "Session ID",
-                "Name",
-                "Email",
-                "Phone",
-                "Company",
-                "Score",
-                "Status",
-                "Need",
-                "Budget",
-                "Authority",
-                "Timeline",
-                "Location",
-                "Device",
-                "Messages",
-                "Created",
-                "Last Active",
-            ]
-        )
+        header = [
+            "Session ID",
+            "Name",
+            "Email",
+            "Phone",
+            "Company",
+            "Score",
+            "Status",
+            "Need",
+            "Budget",
+            "Authority",
+            "Timeline",
+            "Location",
+            "Device",
+            "Messages",
+            "Created",
+            "Last Active",
+        ]
+        if attribution_enabled:
+            # Add attribution columns for Standard+ so operators can pipe
+            # the CSV into their own CRM with per-lead source context.
+            header.extend(
+                [
+                    "Source",
+                    "Medium",
+                    "Campaign",
+                    "Referrer",
+                    "Landing Page",
+                    "Journey",
+                ]
+            )
+        writer.writerow(header)
 
         for chat_session, msg_count in results:
             lead_info = lead_info_map.get(chat_session.id)
@@ -295,27 +313,44 @@ def export_leads_csv(
                 lead_info,
                 msg_count,
                 bot=bot_map.get(chat_session.bot_id),
+                include_attribution=attribution_enabled,
             )
-            writer.writerow(
-                [
-                    chat_session.id,
-                    lead_info.name if lead_info else "",
-                    lead_info.email if lead_info else "",
-                    lead_info.phone if lead_info else "",
-                    lead_info.company if lead_info else "",
-                    lead["score"],
-                    lead["tier"],
-                    lead["bant"]["need"]["value"] or "",
-                    lead["bant"]["budget"]["value"] or "",
-                    lead["bant"]["authority"]["value"] or "",
-                    lead["bant"]["timeline"]["value"] or "",
-                    chat_session.location or "",
-                    chat_session.device or "",
-                    msg_count,
-                    chat_session.created_at.isoformat() if chat_session.created_at else "",
-                    chat_session.last_active_at.isoformat() if chat_session.last_active_at else "",
-                ]
-            )
+            row = [
+                chat_session.id,
+                lead_info.name if lead_info else "",
+                lead_info.email if lead_info else "",
+                lead_info.phone if lead_info else "",
+                lead_info.company if lead_info else "",
+                lead["score"],
+                lead["tier"],
+                lead["bant"]["need"]["value"] or "",
+                lead["bant"]["budget"]["value"] or "",
+                lead["bant"]["authority"]["value"] or "",
+                lead["bant"]["timeline"]["value"] or "",
+                chat_session.location or "",
+                chat_session.device or "",
+                msg_count,
+                chat_session.created_at.isoformat() if chat_session.created_at else "",
+                chat_session.last_active_at.isoformat() if chat_session.last_active_at else "",
+            ]
+            if attribution_enabled:
+                source = lead.get("source") or {}
+                utm = source.get("utm_params") or {}
+                journey = source.get("journey") or []
+                journey_summary = " → ".join(
+                    entry.get("path", "") for entry in journey if isinstance(entry, dict) and entry.get("path")
+                )
+                row.extend(
+                    [
+                        utm.get("utm_source", "") or "",
+                        utm.get("utm_medium", "") or "",
+                        utm.get("utm_campaign", "") or "",
+                        source.get("referrer", "") or "",
+                        source.get("landing_page", "") or "",
+                        journey_summary,
+                    ]
+                )
+            writer.writerow(row)
 
         output.seek(0)
         return StreamingResponse(
@@ -362,7 +397,14 @@ def get_lead_detail(
         )
 
         msg_count = len(messages)
-        lead = build_lead_response(chat_session, lead_info, msg_count, bot=bot)
+        attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
+        lead = build_lead_response(
+            chat_session,
+            lead_info,
+            msg_count,
+            bot=bot,
+            include_attribution=attribution_enabled,
+        )
         lead["messages"] = [
             {
                 "role": m.role,

@@ -94,7 +94,7 @@ export default function TrialBanner() {
                         type="button"
                         onClick={dismiss}
                         aria-label="Dismiss trial-ended banner"
-                        className="shrink-0 -mr-1 p-1.5 rounded-md text-white/85 hover:text-white hover:bg-white/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+                        className="shrink-0 -mr-1 p-1.5 rounded-md text-white/85 hover:text-white hover:bg-white/15 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40"
                     >
                         <X size={16} />
                     </button>
@@ -141,7 +141,7 @@ export default function TrialBanner() {
                             type="button"
                             onClick={dismiss}
                             aria-label="Dismiss trial-ending banner"
-                            className="shrink-0 -mr-1 p-1.5 rounded-md text-amber-900/70 hover:text-amber-900 hover:bg-amber-200/60 dark:text-amber-200/70 dark:hover:text-amber-100 dark:hover:bg-amber-500/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40"
+                            className="shrink-0 -mr-1 p-1.5 rounded-md text-amber-900/70 hover:text-amber-900 hover:bg-amber-200/60 dark:text-amber-200/70 dark:hover:text-amber-100 dark:hover:bg-amber-500/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/40"
                         >
                             <X size={16} />
                         </button>
@@ -175,7 +175,7 @@ export default function TrialBanner() {
                         type="button"
                         onClick={dismiss}
                         aria-label="Dismiss trial banner"
-                        className="shrink-0 -mr-1 p-1 rounded-md text-primary-900/60 hover:text-primary-900 hover:bg-primary-100 dark:text-primary-200/70 dark:hover:text-primary-100 dark:hover:bg-primary-500/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
+                        className="shrink-0 -mr-1 p-1 rounded-md text-primary-900/60 hover:text-primary-900 hover:bg-primary-100 dark:text-primary-200/70 dark:hover:text-primary-100 dark:hover:bg-primary-500/15 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                     >
                         <X size={14} />
                     </button>

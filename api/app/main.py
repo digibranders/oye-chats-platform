@@ -33,6 +33,8 @@ from app.api.canned_response_routes import router as canned_response_router
 from app.api.chat_routes import router as chat_router
 from app.api.client_routes import router as client_router
 from app.api.document_routes import router as document_router
+from app.api.invite_routes import me_router as invite_me_router
+from app.api.invite_routes import router as invite_router
 from app.api.lead_routes import router as lead_router
 from app.api.notification_routes import router as notification_router
 from app.api.notification_routes import ws_router as notification_ws_router
@@ -40,6 +42,7 @@ from app.api.oauth_routes import router as oauth_router
 from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
 from app.api.public_pricing_routes import router as public_pricing_router
+from app.api.push_routes import router as push_router
 from app.api.subscription_routes import credits_router
 from app.api.subscription_routes import router as subscription_router
 from app.api.superadmin_ops_routes import router as superadmin_ops_router
@@ -138,6 +141,9 @@ app.include_router(document_router)
 app.include_router(analytics_router)
 app.include_router(lead_router)
 app.include_router(operator_router)
+app.include_router(push_router)
+app.include_router(invite_router)
+app.include_router(invite_me_router)
 app.include_router(offline_message_router)
 app.include_router(canned_response_router)
 app.include_router(notification_router)

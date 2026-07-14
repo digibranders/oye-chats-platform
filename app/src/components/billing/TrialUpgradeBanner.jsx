@@ -119,7 +119,7 @@ export default function TrialUpgradeBanner({
           onClick={onUpgradeClick}
           className={cn(
             'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold',
-            'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+            'transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-2',
             'focus-visible:ring-offset-transparent',
             theme.button,
           )}
@@ -136,7 +136,7 @@ export default function TrialUpgradeBanner({
             className={cn(
               'rounded-md p-1.5 transition-colors',
               theme.dismiss,
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-1',
               'focus-visible:ring-offset-transparent',
             )}
           >
@@ -233,10 +233,10 @@ const THEMES = {
     headline: 'text-primary-900 dark:text-primary-50',
     body: 'text-primary-900/80 dark:text-primary-100/80',
     button:
-      'bg-primary-600 text-white hover:bg-primary-700 focus-visible:ring-primary-500 ' +
+      'bg-primary-600 text-white hover:bg-primary-700 focus-visible:ring-[var(--focus-ring)] ' +
       'dark:bg-primary-500 dark:hover:bg-primary-400',
     dismiss:
-      'text-primary-700 hover:bg-primary-100 focus-visible:ring-primary-500 ' +
+      'text-primary-700 hover:bg-primary-100 focus-visible:ring-[var(--focus-ring)] ' +
       'dark:text-primary-200 dark:hover:bg-primary-500/20',
   },
   warning: {

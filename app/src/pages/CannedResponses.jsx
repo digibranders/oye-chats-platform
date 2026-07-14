@@ -2,11 +2,15 @@ import { useState, useEffect } from 'react';
 import { MessageSquareText, Plus, Pencil, Trash2, Search, Tag, X, Lock } from 'lucide-react';
 import { getCannedResponses, createCannedResponse, updateCannedResponse, deleteCannedResponse } from '../services/api';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
+import { useConfirm } from '../context/ConfirmContext';
+import { useToast } from '../context/ToastContext';
 import useEntitlements from '../hooks/useEntitlements';
 import { cn } from '../lib/utils';
 
 export default function CannedResponses({ embedded = false }) {
     const { requestUpgrade } = useUpgradeModal();
+    const confirm = useConfirm();
+    const { showToast } = useToast();
     const { entitlements: ent } = useEntitlements();
     // Quick replies travel with the `live_chat` feature flag because they
     // only make sense once you have human operators. Free users can see
@@ -90,19 +94,25 @@ export default function CannedResponses({ embedded = false }) {
             setShowModal(false);
             fetchResponses();
         } catch (err) {
-            alert(typeof err === 'string' ? err : err?.detail || 'Failed to save response');
+            showToast('error', typeof err === 'string' ? err : err?.detail || 'Failed to save response');
         } finally {
             setSubmitting(false);
         }
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Delete this canned response?')) return;
+        const ok = await confirm({
+            title: 'Delete canned response?',
+            description: 'This quick reply will be removed for your whole team.',
+            confirmLabel: 'Delete',
+            tone: 'danger',
+        });
+        if (!ok) return;
         try {
             await deleteCannedResponse(id);
             fetchResponses();
         } catch (err) {
-            alert(typeof err === 'string' ? err : err?.detail || 'Failed to delete response');
+            showToast('error', typeof err === 'string' ? err : err?.detail || 'Failed to delete response');
         }
     };
 
@@ -142,14 +152,14 @@ export default function CannedResponses({ embedded = false }) {
                         placeholder="Search responses..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
                 </div>
                 {categories.length > 0 && (
                     <select
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
-                        className="px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600"
+                        className="px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)]"
                     >
                         <option value="">All categories</option>
                         {categories.map(cat => (
@@ -238,7 +248,7 @@ export default function CannedResponses({ embedded = false }) {
                                     value={form.title}
                                     onChange={(e) => setForm(prev => ({ ...prev, title: e.target.value }))}
                                     placeholder="e.g., Greeting"
-                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     required
                                 />
                             </div>
@@ -249,7 +259,7 @@ export default function CannedResponses({ embedded = false }) {
                                     onChange={(e) => setForm(prev => ({ ...prev, content: e.target.value }))}
                                     placeholder="The message content that will be sent..."
                                     rows={4}
-                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 resize-none placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] resize-none placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     required
                                 />
                             </div>
@@ -263,7 +273,7 @@ export default function CannedResponses({ embedded = false }) {
                                             value={form.shortcut}
                                             onChange={(e) => setForm(prev => ({ ...prev, shortcut: e.target.value.replace(/\s/g, '') }))}
                                             placeholder="greeting"
-                                            className="flex-1 px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-r-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                            className="flex-1 px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-r-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                         />
                                     </div>
                                 </div>
@@ -274,7 +284,7 @@ export default function CannedResponses({ embedded = false }) {
                                         value={form.category}
                                         onChange={(e) => setForm(prev => ({ ...prev, category: e.target.value }))}
                                         placeholder="e.g., Sales, Support"
-                                        className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                        className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     />
                                 </div>
                             </div>

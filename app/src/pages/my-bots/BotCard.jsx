@@ -144,7 +144,7 @@ export default function BotCard({
             onKeyDown={handleCardKeyDown}
             className={cn(
                 'group bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border shadow-sm transition-all cursor-pointer',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-surface-950',
+                'focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-1 dark:focus-visible:ring-offset-surface-950',
                 isActive
                     ? 'border-primary-300 dark:border-primary-500/50 ring-1 ring-primary-200/50 dark:ring-primary-500/20'
                     : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600',
@@ -176,7 +176,7 @@ export default function BotCard({
                                 }}
                                 onBlur={commitRename}
                                 maxLength={50}
-                                className="text-sm font-bold text-surface-900 dark:text-surface-100 bg-white dark:bg-surface-800 border border-primary-400 dark:border-primary-500 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-400/30 w-48"
+                                className="text-sm font-bold text-surface-900 dark:text-surface-100 bg-white dark:bg-surface-800 border border-primary-400 dark:border-primary-500 rounded-md px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] dark:focus:ring-[var(--focus-ring)] w-48"
                             />
                         ) : (
                             <h3 className="text-sm font-bold text-surface-900 dark:text-surface-100 truncate">
@@ -198,7 +198,7 @@ export default function BotCard({
                 <div className="flex items-center gap-2 flex-shrink-0" onClick={stop}>
                     <button
                         onClick={(e) => { stop(e); onInstall(bot); }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                     >
                         <Code2 size={13} /> Install
                     </button>
@@ -210,7 +210,7 @@ export default function BotCard({
                             aria-expanded={menuOpen}
                             aria-label={`Actions for ${bot.name}`}
                             onClick={(e) => { stop(e); setMenuOpen((v) => !v); }}
-                            className="p-1.5 rounded-lg text-surface-400 dark:text-surface-500 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                            className="p-1.5 rounded-lg text-surface-400 dark:text-surface-500 hover:text-surface-700 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                         >
                             <MoreHorizontal size={16} />
                         </button>
@@ -260,7 +260,7 @@ export default function BotCard({
                                                         onClick={handleDelete}
                                                         disabled={isDeleting}
                                                         aria-label="Confirm delete"
-                                                        className="p-1 rounded-md bg-rose-500 text-white hover:bg-rose-600 dark:hover:bg-rose-400 transition-colors disabled:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                                                        className="p-1 rounded-md bg-rose-500 text-white hover:bg-rose-600 dark:hover:bg-rose-400 transition-colors disabled:opacity-70 focus:outline-none focus-visible:ring-1 focus-visible:ring-rose-400"
                                                     >
                                                         {isDeleting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                                                     </button>
@@ -268,7 +268,7 @@ export default function BotCard({
                                                         onClick={() => setConfirmDelete(false)}
                                                         disabled={isDeleting}
                                                         aria-label="Cancel delete"
-                                                        className="p-1 rounded-md bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        className="p-1 rounded-md bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] disabled:opacity-50 disabled:cursor-not-allowed"
                                                     >
                                                         <X size={12} />
                                                     </button>

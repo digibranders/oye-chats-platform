@@ -278,7 +278,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                     required
                                     value={newBotName}
                                     onChange={(e) => setNewBotName(e.target.value)}
-                                    className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                    className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] dark:focus:border-[var(--focus)] outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     placeholder="e.g. Support Bot"
                                     maxLength={50}
                                 />
@@ -292,7 +292,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                     type="text"
                                     value={newBotWebsite}
                                     onChange={(e) => setNewBotWebsite(e.target.value)}
-                                    className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                    className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] dark:focus:border-[var(--focus)] outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     placeholder="https://yourwebsite.com"
                                 />
                             </div>
@@ -300,14 +300,14 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                 <button
                                     type="button"
                                     onClick={resetAndClose}
-                                    className="flex-1 py-2.5 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="flex-1 py-2.5 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={isSubmitting || !nameValid}
-                                    className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium transition-colors flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium transition-colors flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                 >
                                     {isSubmitting
                                         ? <Loader2 size={16} className="animate-spin" />
@@ -326,7 +326,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                             type="button"
                                             onClick={() => setBillingCycle(cycle)}
                                             className={cn(
-                                                'px-4 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
+                                                'px-4 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                                                 billingCycle === cycle
                                                     ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm'
                                                     : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-300',
@@ -358,7 +358,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                                 aria-pressed={isSelected}
                                                 onClick={() => setSelectedPlanSlug(plan.slug)}
                                                 className={cn(
-                                                    'w-full text-left p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
+                                                    'w-full text-left p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
                                                     isSelected
                                                         ? 'border-primary-500 bg-primary-50/40 dark:bg-primary-500/10'
                                                         : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600',
@@ -391,7 +391,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                     type="button"
                                     onClick={() => { setCreateStep('details'); setError(''); }}
                                     disabled={isSubmitting}
-                                    className="py-2.5 px-4 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="py-2.5 px-4 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700 disabled:opacity-60 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                 >
                                     Back
                                 </button>
@@ -399,7 +399,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                                     type="button"
                                     onClick={handleSubscribeAndCreate}
                                     disabled={isSubmitting || !selectedPlan}
-                                    className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium transition-colors flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                    className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium transition-colors flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
                                 >
                                     {isSubmitting
                                         ? <Loader2 size={16} className="animate-spin" />

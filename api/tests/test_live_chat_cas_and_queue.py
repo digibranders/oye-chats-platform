@@ -117,11 +117,18 @@ def test_visitor_end_helper_only_ends_live_chats(wired):
 
 def test_operator_close_helper_never_resurrects_closed_sessions(wired):
     from app.api import ws_routes
+    from app.db.models import Bot
 
     c = Client(name="W", email="cas-op@test.example", api_key="key-cas-op")
     wired.add(c)
     wired.flush()
-    op = Operator(client_id=c.id, name="Op", email="op@test.example")
+    # ``Operator.bot_id`` is NOT NULL — seed a bot in the workspace and bind
+    # the operator to it. The test's close-transition path doesn't inspect
+    # the binding; the FK constraint is the only reason we need it here.
+    b = Bot(client_id=c.id, name="B", bot_key="bot-cas-op")
+    wired.add(b)
+    wired.flush()
+    op = Operator(client_id=c.id, bot_id=b.id, name="Op", email="op@test.example")
     wired.add(op)
     wired.commit()
 

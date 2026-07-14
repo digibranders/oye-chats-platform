@@ -50,7 +50,7 @@ export const ColorPickerControl = ({ label, color, onChange }) => {
                                     onChange('#' + val);
                                 }
                             }}
-                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md focus:outline-none focus:border-[var(--focus)] shadow-sm transition-colors"
                         />
                     </div>
                 </div>

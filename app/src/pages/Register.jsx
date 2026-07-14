@@ -17,8 +17,15 @@ const features = [
 ];
 
 export default function Register() {
+  const [initialSearchParams] = useSearchParams();
+  // Pre-fill from URL — the invite airlock routes new invitees here as
+  // ``/register?next=/invite/<token>&email=<invite_email>``. We pre-fill
+  // but DON'T lock the field: the invitee might genuinely want to sign up
+  // under a different email (e.g. work vs personal), and the airlock's
+  // email-match check handles the mismatch cleanly on the return trip.
+  const _initialEmail = (initialSearchParams.get('email') || '').trim();
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(_initialEmail);
   const [companyName, setCompanyName] = useState('');
   const [website, setWebsite] = useState('');
   const [billingCountry, setBillingCountry] = useState('');
@@ -36,6 +43,13 @@ export default function Register() {
   // there so the accept-existing endpoint can wire the affiliate row.
   const [searchParams] = useSearchParams();
   const affiliateToken = searchParams.get('affiliate_token') || '';
+  // Deep-link round-trip target. Invite airlock routes here as
+  // ``/register?next=/invite/<token>&email=<invite_email>`` so a fresh
+  // signup lands back on the airlock to auto-accept. Also honoured by the
+  // Google button below so OAuth signup survives the same round-trip.
+  const rawNext = searchParams.get('next') || '';
+  // Same open-redirect guard as Login.jsx — only relative same-origin paths.
+  const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
 
   const hasMinLength = password.length >= 8;
   const hasLetter = /[A-Za-z]/.test(password);
@@ -114,10 +128,33 @@ export default function Register() {
       clearTrialBannerDismissals();
 
       // Navigate to email verification — the guard below also handles the
-      // re-render case (setIsLoading(false) fires after navigate).
-      navigate(`/verify-email?email=${encodeURIComponent(email.trim())}`);
+      // re-render case (setIsLoading(false) fires after navigate). Preserve
+      // ``next`` through the verification bounce so an invite-flow signup
+      // still lands back on the invite airlock after OTP entry.
+      const verifyParams = new URLSearchParams({ email: email.trim() });
+      if (safeNext) verifyParams.set('next', safeNext);
+      navigate(`/verify-email?${verifyParams.toString()}`);
     } catch (err) {
-      setError(err.message || 'Registration failed. Please try again.');
+      // Detect the "email already registered" backend rejection so we can
+      // offer a one-click redirect to Login with the current query params
+      // preserved (invite ``next``, invited ``email``, etc.). Common flow
+      // for an invitee who forgot they already have an OyeChats account —
+      // without this hint they'd stall on the register page with a generic
+      // error and no obvious next step. Server surfaces this as a 409 with
+      // a message containing "already"; we broaden slightly for resilience.
+      const msg = err?.message || '';
+      const looksLikeEmailTaken = err?.status === 409 || /already/i.test(msg) || /email exists|registered/i.test(msg);
+      if (looksLikeEmailTaken) {
+        // Route to /login with the same next/email so the invite airlock
+        // round-trip continues seamlessly after they sign in.
+        const params = new URLSearchParams();
+        if (email.trim()) params.set('email', email.trim());
+        if (safeNext) params.set('next', safeNext);
+        setError(''); // clear form error; the redirect explains everything
+        navigate(`/login?${params.toString()}`, { replace: true });
+        return;
+      }
+      setError(msg || 'Registration failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -138,7 +175,7 @@ export default function Register() {
 
   const inputCls = cn(
     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
-    'border-surface-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+    'border-surface-200 focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]',
     'outline-none transition-all text-sm placeholder:text-surface-400'
   );
 
@@ -263,7 +300,10 @@ export default function Register() {
             <GoogleAuthButton
               label="Sign up with Google"
               mode="register"
-              next={affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/'}
+              // Same precedence as Login.jsx: honor an explicit ``next``
+              // (invite airlock, push-notification round-trip) first, fall
+              // back to the affiliate-invite deep link, then to root.
+              next={safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/')}
               tabIndex={0}
               onBlockedClick={() => {
                 if (agreedToTerms) return false;
@@ -389,12 +429,12 @@ export default function Register() {
                   className={cn(
                     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-surface-900',
                     'outline-none transition-all text-sm placeholder:text-surface-400',
-                    'focus:ring-2 focus:ring-primary-500/20',
+                    'focus:ring-1 focus:ring-[var(--focus-ring)]',
                     confirmPassword
                       ? passwordsMatch
                         ? 'border-emerald-500 focus:border-emerald-500'
                         : 'border-rose-400 focus:border-rose-500'
-                      : 'border-surface-200 focus:border-primary-500'
+                      : 'border-surface-200 focus:border-[var(--focus)]'
                   )}
                   placeholder="Re-enter your password" autoComplete="new-password" tabIndex={7}
                 />
@@ -419,10 +459,10 @@ export default function Register() {
                   }}
                   className={cn(
                     'peer appearance-none w-4 h-4 border rounded bg-white',
-                    'checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-2 transition-all cursor-pointer',
+                    'checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-1 transition-all cursor-pointer',
                     termsHighlight
                       ? 'border-rose-500 ring-2 ring-rose-500/40'
-                      : 'border-surface-300 focus:ring-primary-500/25'
+                      : 'border-surface-300 focus:ring-[var(--focus-ring)]'
                   )}
                   tabIndex={8}
                 />

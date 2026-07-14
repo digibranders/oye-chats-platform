@@ -87,6 +87,27 @@ let _inFlightPromise = null;
 // their next render.
 const _subscribers = new Set();
 
+// Attach a single window-scoped listener that refreshes entitlements on
+// workspace switch. Plan/limit/feature flags are workspace-scoped (a Free
+// workspace and a Standard workspace return different data from the same
+// endpoint), so switching contexts must bust the cache — otherwise the
+// sidebar's paid-feature lock icons, the Team page's seat display, and
+// every FeatureGate keep showing the previous workspace's plan until the
+// user hard-reloads.
+//
+// Guarded by a module-scoped flag so HMR reloads don't stack listeners.
+// One listener per browser window is enough — ``entitlementsRefresh`` is
+// idempotent and cheap.
+let _workspaceListenerAttached = false;
+function _ensureWorkspaceListener() {
+    if (_workspaceListenerAttached) return;
+    if (typeof window === 'undefined') return;
+    _workspaceListenerAttached = true;
+    window.addEventListener('oyechats:workspace-switched', () => {
+        entitlementsRefresh();
+    });
+}
+
 function _notifySubscribers() {
     _subscribers.forEach((fn) => {
         try {
@@ -200,6 +221,11 @@ export default function useEntitlements() {
     }, []);
 
     useEffect(() => {
+        // First mount anywhere in the app: attach the workspace-switched
+        // listener so future switches bust the cache and every subscriber
+        // (including this one) re-fetches. Safe to call multiple times —
+        // guarded by an internal flag.
+        _ensureWorkspaceListener();
         load();
         // Subscribe to module-level cache busts so a `refresh()` from any
         // sibling component re-pulls entitlements here too.

@@ -263,7 +263,7 @@ function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' })
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-white border border-surface-200 px-3 text-[13px] text-left outline-none hover:border-surface-300 focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 transition-colors cursor-pointer"
+        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-white border border-surface-200 px-3 text-[13px] text-left outline-none hover:border-surface-300 focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)] transition-colors cursor-pointer"
       >
         <span className={cn('truncate', selected && selected.id ? 'text-surface-900' : 'text-surface-400')}>
           {selected ? selected.label : placeholder}

@@ -219,7 +219,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                         'bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white',
                                         'border rounded-lg outline-none transition-colors',
                                         codeName.length === 0 || !codeChanged
-                                            ? 'border-surface-200 dark:border-surface-700 focus:border-primary-400'
+                                            ? 'border-surface-200 dark:border-surface-700 focus:border-[var(--focus)]'
                                             : formatValid
                                                 ? 'border-amber-400/60 focus:border-amber-500 dark:border-amber-500/40'
                                                 : 'border-rose-400/60 focus:border-rose-500 dark:border-rose-500/40',
@@ -284,7 +284,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                                     'w-full h-10 pl-3 pr-8 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border rounded-lg outline-none transition-colors',
                                                     splitOverPool
                                                         ? 'border-rose-400/60 focus:border-rose-500'
-                                                        : 'border-surface-200 dark:border-surface-700 focus:border-primary-400',
+                                                        : 'border-surface-200 dark:border-surface-700 focus:border-[var(--focus)]',
                                                 )}
                                                 disabled={isSaving}
                                             />
@@ -308,7 +308,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                                     'w-full h-10 pl-3 pr-8 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border rounded-lg outline-none transition-colors',
                                                     splitOverPool
                                                         ? 'border-rose-400/60 focus:border-rose-500'
-                                                        : 'border-surface-200 dark:border-surface-700 focus:border-primary-400',
+                                                        : 'border-surface-200 dark:border-surface-700 focus:border-[var(--focus)]',
                                                 )}
                                                 disabled={isSaving}
                                             />

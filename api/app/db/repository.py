@@ -183,10 +183,24 @@ def add_chat_message(
     location: str = None,
     device: str = None,
     bot_id: int = None,
+    media_card: dict | None = None,
+    media_secondary: list | None = None,
 ):
-    """Save a message to chat history. Supports both client_id (legacy) and bot_id (new)."""
+    """Save a message to chat history. Supports both client_id (legacy) and bot_id (new).
+
+    ``media_card`` / ``media_secondary`` persist the parsed media-card payload
+    so the widget can re-render video/document cards on refresh — see
+    ``ChatMessage.media_card`` for the shape. Both stay ``None`` for user
+    turns and for bot answers that don't emit a card.
+    """
     ensure_chat_session(session, session_id, client_id=client_id, bot_id=bot_id, location=location, device=device)
-    new_message = ChatMessage(session_id=session_id, role=role, content=content)
+    new_message = ChatMessage(
+        session_id=session_id,
+        role=role,
+        content=content,
+        media_card=media_card,
+        media_secondary=media_secondary,
+    )
     session.add(new_message)
     session.flush()
     return new_message
@@ -226,8 +240,22 @@ def create_or_update_lead_info(
     email: str | None = None,
     phone: str | None = None,
     company: str | None = None,
+    utm_params: dict | None = None,
+    visitor_journey: list | None = None,
 ) -> LeadInfo:
-    """Create or update lead info for a session."""
+    """Create or update lead info for a session.
+
+    ``utm_params`` and ``visitor_journey`` are optional snapshots of the
+    parent chat_session's attribution data. Caller is responsible for
+    only passing them when the owning client's plan includes the Lead
+    Source Attribution feature — this function does not re-check the
+    entitlement, it only persists what it's given.
+
+    The snapshots follow "first non-empty wins": once attribution is
+    written on a lead, subsequent lead-form submissions on the same
+    session don't overwrite it. This preserves first-touch attribution
+    for a returning visitor who fills out the form multiple times.
+    """
     existing = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)).scalar_one_or_none()
 
     if existing:
@@ -239,6 +267,12 @@ def create_or_update_lead_info(
             existing.phone = phone
         if company is not None:
             existing.company = company
+        # Only backfill attribution — never overwrite an existing snapshot
+        # so a later capture doesn't clobber first-touch data.
+        if utm_params and not existing.utm_params:
+            existing.utm_params = utm_params
+        if visitor_journey and not existing.visitor_journey:
+            existing.visitor_journey = visitor_journey
         session.flush()
         return existing
 
@@ -249,6 +283,8 @@ def create_or_update_lead_info(
         email=email,
         phone=phone,
         company=company,
+        utm_params=utm_params or None,
+        visitor_journey=visitor_journey or None,
     )
     session.add(lead)
     session.flush()

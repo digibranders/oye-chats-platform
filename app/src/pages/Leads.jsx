@@ -27,6 +27,46 @@ const STATUS_CONFIG = {
 
 const BANT_LABELS = { need: 'Need', budget: 'Budget', authority: 'Authority', timeline: 'Timeline' };
 
+// Plans that expose Lead Source Attribution. Must mirror the backend gate in
+// ``plan_entitlements_service.LEAD_SOURCE_ATTRIBUTION_SLUGS`` — the API also
+// strips the ``source`` block for lower tiers, but keeping the same list here
+// lets the UI swap in an upsell tile instead of an empty row.
+const SOURCE_ATTRIBUTION_PLAN_SLUGS = new Set(['standard', 'enterprise']);
+
+// Colored chip presets for the common UTM sources so a scan of the Leads
+// table reads like a channel report. Unknown sources fall through to the
+// emerald default so custom traffic tags still get a badge.
+const UTM_SOURCE_CHIP = {
+    google: { label: 'Google', color: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' },
+    facebook: { label: 'Facebook', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' },
+    linkedin: { label: 'LinkedIn', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' },
+    instagram: { label: 'Instagram', color: 'bg-pink-100 text-pink-700 dark:bg-pink-500/20 dark:text-pink-300' },
+    twitter: { label: 'Twitter/X', color: 'bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300' },
+    x: { label: 'Twitter/X', color: 'bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300' },
+    newsletter: { label: 'Newsletter', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' },
+    email: { label: 'Email', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' },
+    referral: { label: 'Referral', color: 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300' },
+};
+
+const DEFAULT_SOURCE_CHIP_COLOR = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300';
+
+/**
+ * Resolve a lead's ``source`` payload into a chip descriptor. Returns
+ * ``null`` when there's no UTM source captured — the caller renders
+ * nothing (a plain "Direct / Organic" row would clutter the list at scale).
+ */
+const getSourceChip = (source) => {
+    const src = source?.utm_params?.utm_source;
+    if (!src) return null;
+    const key = String(src).toLowerCase();
+    const preset = UTM_SOURCE_CHIP[key];
+    return {
+        color: preset?.color || DEFAULT_SOURCE_CHIP_COLOR,
+        label: preset?.label || String(src),
+        campaign: source?.utm_params?.utm_campaign || null,
+    };
+};
+
 // Contact-type filter options for the leads list. Default is ``named`` so the
 // page opens with identified contacts surfaced first — anonymous chats are a
 // secondary view operators opt into.
@@ -149,6 +189,7 @@ export default function Leads() {
     // dashboard. Backend already blocks lead-dashboard data; this just
     // makes the surface honest about why.
     const { entitlements: ent } = useEntitlements();
+    const sourceAttributionEnabled = SOURCE_ATTRIBUTION_PLAN_SLUGS.has(ent.planSlug);
     const { requestUpgrade } = useUpgradeModal();
     const [leads, setLeads] = useState([]);
     const [stats, setStats] = useState(null);
@@ -425,7 +466,7 @@ export default function Leads() {
                         placeholder="Search by name, email, or location..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
                 </div>
                 <div className="relative sm:w-56">
@@ -433,7 +474,7 @@ export default function Leads() {
                         value={contactFilter}
                         onChange={(e) => setContactFilter(e.target.value)}
                         aria-label="Filter by contact type"
-                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
+                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-[var(--bg-card)] dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-[var(--focus)] dark:focus:border-[var(--focus)] cursor-pointer"
                     >
                         {CONTACT_FILTERS.map((opt) => {
                             const count = contactCounts[opt.value] ?? 0;
@@ -549,6 +590,24 @@ export default function Leads() {
                                                     {lead.contact?.email && (
                                                         <p className="text-[12px] text-surface-500 dark:text-surface-400">{lead.contact.email}</p>
                                                     )}
+                                                    {sourceAttributionEnabled && (() => {
+                                                        const chip = getSourceChip(lead.source);
+                                                        if (!chip) return null;
+                                                        return (
+                                                            <span
+                                                                className={cn(
+                                                                    'inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold',
+                                                                    chip.color
+                                                                )}
+                                                                title={chip.campaign ? `Campaign: ${chip.campaign}` : `Source: ${chip.label}`}
+                                                            >
+                                                                {chip.label}
+                                                                {chip.campaign && (
+                                                                    <span className="opacity-70">· {chip.campaign}</span>
+                                                                )}
+                                                            </span>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </div>
                                         </td>
@@ -699,9 +758,9 @@ export default function Leads() {
                                             value={tagInput}
                                             onChange={(e) => setTagInput(e.target.value)}
                                             onKeyDown={(e) => { if (e.key === 'Enter') { saveTags(selectedLead, tagInput); setTagInput(''); } }}
-                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400"
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-[var(--focus)]"
                                         />
-                                        <p className="text-[10px] text-surface-400">Press Enter to save</p>
+                                        <p className="text-[10px] text-surface-400">Press Enter to save · stored on this device only</p>
                                     </div>
 
                                     {/* Notes */}
@@ -720,7 +779,7 @@ export default function Leads() {
                                             placeholder="Add a note about this lead..."
                                             value={noteInput}
                                             onChange={(e) => setNoteInput(e.target.value)}
-                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400 resize-none"
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-[var(--focus)] resize-none"
                                         />
                                         <button
                                             onClick={() => { saveNote(selectedLead); setNoteInput(''); }}
@@ -729,6 +788,7 @@ export default function Leads() {
                                         >
                                             Save note
                                         </button>
+                                        <p className="text-[10px] text-surface-400">Saved on this device only — not synced to your team.</p>
                                     </div>
 
                                     {/* BANT Breakdown */}
@@ -788,7 +848,126 @@ export default function Leads() {
                                         )}
                                     </div>
 
-                                    {(leadDetail.behavioral_score > 0 || leadDetail.behavioral?.page_url) && (
+                                    {sourceAttributionEnabled ? (
+                                        (() => {
+                                            const source = leadDetail.source || {};
+                                            const utm = source.utm_params || {};
+                                            const journey = Array.isArray(source.journey) ? source.journey : [];
+                                            const hasAttribution = Boolean(
+                                                utm.utm_source || utm.utm_medium || utm.utm_campaign ||
+                                                source.referrer || source.landing_page || journey.length > 0
+                                            );
+                                            if (!hasAttribution) {
+                                                return (
+                                                    <div className="space-y-3">
+                                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Source Attribution</h3>
+                                                        <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 text-[12px] text-surface-500 dark:text-surface-400">
+                                                            Direct / Organic — no UTM tags or referrer captured for this visitor.
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            const chip = getSourceChip(source);
+                                            return (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Source Attribution</h3>
+                                                        {chip && (
+                                                            <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold', chip.color)}>
+                                                                {chip.label}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 space-y-2">
+                                                        {utm.utm_campaign && (
+                                                            <div className="flex items-start gap-2 text-[12px]">
+                                                                <span className="text-surface-400 dark:text-surface-500 shrink-0 w-20">Campaign</span>
+                                                                <span className="text-surface-800 dark:text-surface-200 font-medium break-all">{utm.utm_campaign}</span>
+                                                            </div>
+                                                        )}
+                                                        {utm.utm_medium && (
+                                                            <div className="flex items-start gap-2 text-[12px]">
+                                                                <span className="text-surface-400 dark:text-surface-500 shrink-0 w-20">Medium</span>
+                                                                <span className="text-surface-700 dark:text-surface-300 break-all">{utm.utm_medium}</span>
+                                                            </div>
+                                                        )}
+                                                        {(utm.utm_content || utm.utm_term) && (
+                                                            <div className="flex items-start gap-2 text-[12px]">
+                                                                <span className="text-surface-400 dark:text-surface-500 shrink-0 w-20">Ad detail</span>
+                                                                <span className="text-surface-700 dark:text-surface-300 break-all">{utm.utm_content || utm.utm_term}</span>
+                                                            </div>
+                                                        )}
+                                                        {source.referrer && (
+                                                            <div className="flex items-start gap-2 text-[12px]">
+                                                                <span className="text-surface-400 dark:text-surface-500 shrink-0 w-20">Referrer</span>
+                                                                <span className="text-surface-700 dark:text-surface-300 break-all">
+                                                                    {source.referrer.length > 80 ? source.referrer.substring(0, 80) + '…' : source.referrer}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                        {source.landing_page && (
+                                                            <div className="flex items-start gap-2 text-[12px]">
+                                                                <span className="text-surface-400 dark:text-surface-500 shrink-0 w-20">Landed on</span>
+                                                                <span className="text-surface-700 dark:text-surface-300 break-all">
+                                                                    {source.landing_page.length > 80 ? source.landing_page.substring(0, 80) + '…' : source.landing_page}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {journey.length > 0 && (
+                                                        <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4">
+                                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400 mb-2">
+                                                                Journey before chat · {journey.length} {journey.length === 1 ? 'page' : 'pages'}
+                                                            </p>
+                                                            <ol className="space-y-1.5">
+                                                                {journey.slice(-8).map((entry, idx) => (
+                                                                    <li key={`${entry.path}-${entry.ts || idx}`} className="flex items-start gap-2 text-[12px]">
+                                                                        <span className="text-surface-400 dark:text-surface-500 shrink-0 tabular-nums">
+                                                                            {idx + 1 + Math.max(0, journey.length - 8)}.
+                                                                        </span>
+                                                                        <span className="text-surface-700 dark:text-surface-300 break-all">{entry.path}</span>
+                                                                    </li>
+                                                                ))}
+                                                            </ol>
+                                                            {journey.length > 8 && (
+                                                                <p className="mt-2 text-[11px] text-surface-400 dark:text-surface-500">
+                                                                    Showing the last 8 of {journey.length} pages.
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Source Attribution</h3>
+                                            <button
+                                                type="button"
+                                                onClick={() => requestUpgrade({ feature: 'lead_source_attribution' })}
+                                                className="w-full text-left bg-gradient-to-br from-primary-50 to-surface-50 dark:from-primary-500/10 dark:to-surface-800 border border-primary-200/60 dark:border-primary-500/30 rounded-xl p-4 transition-colors hover:from-primary-100 dark:hover:from-primary-500/20"
+                                            >
+                                                <div className="flex items-start gap-3">
+                                                    <div className="mt-0.5 w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center shrink-0">
+                                                        <Crown className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <p className="text-[13px] font-semibold text-surface-900 dark:text-surface-100">
+                                                            Unlock Lead Source Attribution
+                                                        </p>
+                                                        <p className="mt-1 text-[12px] text-surface-600 dark:text-surface-400 leading-relaxed">
+                                                            See which campaigns, ads, and pages produced this lead — plus the full journey they took before opening the chat. Included on Standard and above.
+                                                        </p>
+                                                        <span className="inline-flex items-center gap-1 mt-2 text-[12px] font-semibold text-primary-600 dark:text-primary-400">
+                                                            Upgrade to Standard <ArrowRight className="w-3 h-3" />
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {(leadDetail.behavioral_score > 0 || (leadDetail.behavioral?.visit_count || 0) > 1) && (
                                         <div className="space-y-3">
                                             <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Behavioral Signals</h3>
                                             <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 space-y-2">

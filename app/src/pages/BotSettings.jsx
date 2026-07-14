@@ -566,7 +566,7 @@ export default function BotSettings({ embedded = false }) {
                                 value={previewUrlInput}
                                 onChange={(e) => setPreviewUrlInput(e.target.value)}
                                 placeholder="https://yourcompany.com"
-                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)]"
                             />
                         </div>
                         <button

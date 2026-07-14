@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { getClientApiKey, regenerateClientApiKey } from '../../services/api';
 
 function LinkCard({ to, icon, title, description }) {
@@ -37,6 +38,7 @@ function LinkCard({ to, icon, title, description }) {
  */
 export default function WorkspaceTab() {
     const { showToast } = useToast();
+    const confirm = useConfirm();
 
     const [masked, setMasked] = useState(null);
     const [loadingKey, setLoadingKey] = useState(true);
@@ -65,9 +67,12 @@ export default function WorkspaceTab() {
     }, [loadKey]);
 
     const handleRegenerate = async () => {
-        const ok = window.confirm(
-            'Regenerate your API key?\n\nThe current key will stop working immediately and any integrations using it will need the new key.',
-        );
+        const ok = await confirm({
+            title: 'Regenerate your API key?',
+            description: 'The current key will stop working immediately, and any integrations using it will need the new key.',
+            confirmLabel: 'Regenerate key',
+            tone: 'danger',
+        });
         if (!ok) return;
 
         setRegenerating(true);

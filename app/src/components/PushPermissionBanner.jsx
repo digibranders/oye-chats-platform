@@ -193,7 +193,7 @@ export default function PushPermissionBanner({ push }) {
                             ? 'Re-check browser notification permission'
                             : 'Enable browser notifications'
                     }
-                    className="group flex items-start gap-3 pr-6 w-full text-left cursor-pointer rounded-xl -m-1 p-1 transition hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 dark:focus-visible:ring-primary-400/40"
+                    className="group flex items-start gap-3 pr-6 w-full text-left cursor-pointer rounded-xl -m-1 p-1 transition hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] dark:focus-visible:ring-[var(--focus-ring)]"
                 >
                     <div className={`shrink-0 w-9 h-9 rounded-full grid place-items-center ${variant.iconBg}`}>
                         <variant.Icon size={17} className={variant.iconColor} strokeWidth={2} />

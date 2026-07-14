@@ -1,44 +1,103 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 const ThemeContext = createContext();
 
 const STORAGE_KEY = 'admin_theme_mode';
+const MODES = ['light', 'dark', 'system'];
+
+/** Read the persisted mode synchronously so the first render matches the DOM.
+ *  Default is 'light' — a returning user only gets dark/system if they chose it. */
+function readStoredMode() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (MODES.includes(stored)) return stored;
+  } catch {
+    // localStorage unavailable (private mode / SSR) — fall through to default.
+  }
+  return 'light';
+}
+
+function systemPrefersDark() {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+}
+
+/** Apply the resolved theme to <html> — the `.dark` class drives Tailwind's
+ *  dark variant, and color-scheme fixes native form controls / scrollbars. */
+function applyTheme(theme) {
+  const root = document.documentElement;
+  root.classList.toggle('dark', theme === 'dark');
+  root.style.colorScheme = theme;
+}
 
 /**
- * ThemeProvider — light-only.
+ * ThemeProvider — light / dark / system with persistence.
  *
- * Dark mode is intentionally disabled for now. The provider forces the light
- * theme on every mount: it strips any `.dark` class off <html>, pins
- * `color-scheme: light`, and clears any stored dark/system preference so a
- * returning user never lands in dark. The `dark:` utility classes throughout
- * the app are left in place (dormant) so dark mode can be re-enabled later by
- * restoring the previous toggle logic — no markup changes required.
- *
- * The context API (`theme`, `mode`, `setMode`) is preserved so existing
- * consumers keep working; `setMode` is a no-op while light-only.
+ * `mode` is the user's choice ('light' | 'dark' | 'system'); `theme` is the
+ * concrete resolved value ('light' | 'dark') after applying the system
+ * preference. When `mode === 'system'` the provider live-follows OS changes.
  */
 export function ThemeProvider({ children }) {
+  const [mode, setModeState] = useState(readStoredMode);
+  const [systemDark, setSystemDark] = useState(systemPrefersDark);
+
+  // Track the OS preference in its own state (updated from the event handler,
+  // never synchronously inside an effect) so `theme` can be derived in render.
   useEffect(() => {
-    const root = document.documentElement;
-    root.classList.remove('dark');
-    root.style.colorScheme = 'light';
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => setSystemDark(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Derived, not stored — no setState-in-effect churn.
+  const theme = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
+
+  // Sync the external DOM (html class + color-scheme) with the resolved theme.
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // Persist the user's chosen mode.
+  useEffect(() => {
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(STORAGE_KEY, mode);
     } catch {
-      // localStorage may be unavailable (private mode) — non-fatal.
+      // non-fatal
     }
+  }, [mode]);
+
+  const setMode = useCallback((next) => {
+    setModeState(MODES.includes(next) ? next : 'system');
+  }, []);
+
+  /** Cycle light → dark → system for a single-button toggle. */
+  const cycleMode = useCallback(() => {
+    setModeState((prev) => {
+      const idx = MODES.indexOf(prev);
+      return MODES[(idx + 1) % MODES.length];
+    });
   }, []);
 
   const value = useMemo(
-    () => ({ theme: 'light', mode: 'light', setMode: () => {} }),
-    []
+    () => ({ theme, mode, setMode, cycleMode }),
+    [theme, mode, setMode, cycleMode]
   );
 
   return (
-    <ThemeContext.Provider value={value}>
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }
 

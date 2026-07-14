@@ -1,14 +1,70 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar } from 'lucide-react';
+import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar, Sun, Moon } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { cn } from '../lib/utils';
 import Breadcrumbs from '../components/Breadcrumbs';
+import WorkspacePill from './WorkspacePill';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import Avatar from '../components/ui/Avatar';
 import NotificationBell from '../components/NotificationBell';
 import { getCurrentUser } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
+import { useTheme } from '../context/ThemeContext';
+
+// Animated Light ⇄ Dark switch. Two states only (System lives in
+// Settings › Appearance): a sliding thumb whose sun/moon icon morphs as it
+// crosses the track. Toggling from 'system' resolves to an explicit choice.
+function ThemeToggle() {
+  const { theme, setMode } = useTheme();
+  const isDark = theme === 'dark';
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={isDark}
+      aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      onClick={() => setMode(isDark ? 'light' : 'dark')}
+      className={cn(
+        'relative inline-flex h-7 w-[52px] shrink-0 items-center rounded-full p-1 transition-colors duration-300',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus)] focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-950',
+        isDark ? 'bg-surface-800' : 'bg-amber-100',
+      )}
+    >
+      {/* Faint destination hint on the far side of the track */}
+      <Sun
+        size={12}
+        className={cn('absolute left-1.5 transition-opacity duration-300', isDark ? 'text-surface-500 opacity-70' : 'opacity-0')}
+      />
+      <Moon
+        size={12}
+        className={cn('absolute right-1.5 transition-opacity duration-300', isDark ? 'opacity-0' : 'text-amber-400 opacity-70')}
+      />
+      {/* Sliding thumb with a morphing icon */}
+      <motion.span
+        initial={false}
+        animate={{ x: isDark ? 24 : 0 }}
+        transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+        className="relative z-10 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm"
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={isDark ? 'moon' : 'sun'}
+            initial={{ rotate: -90, opacity: 0, scale: 0.5 }}
+            animate={{ rotate: 0, opacity: 1, scale: 1 }}
+            exit={{ rotate: 90, opacity: 0, scale: 0.5 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center justify-center"
+          >
+            {isDark ? <Moon size={12} className="text-indigo-500" /> : <Sun size={12} className="text-amber-500" />}
+          </motion.span>
+        </AnimatePresence>
+      </motion.span>
+    </button>
+  );
+}
 
 // Format an ISO timestamp as e.g. "Joined May 4, 2026". Returns "—" on bad input
 // so a fetch hiccup or pre-2024 row never renders the profile dropdown blank.
@@ -112,8 +168,16 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         >
           {isSidebarOpen && !isMobile ? <PanelLeftClose size={18} /> : <Menu size={18} />}
         </button>
-        <div className="min-w-0 truncate">
-          <Breadcrumbs />
+        <div className="min-w-0 flex items-center gap-3 truncate">
+          {/* Workspace switcher — top-left of the app. Renders as an
+              interactive pill for callers who belong to multiple
+              workspaces, as a static label when they only have one. See
+              WorkspacePill for the invited-only "Create your own workspace"
+              affordance behavior. */}
+          <WorkspacePill />
+          <div className="min-w-0 truncate">
+            <Breadcrumbs />
+          </div>
         </div>
       </div>
 
@@ -138,6 +202,9 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         >
           <Search size={16} />
         </button>
+
+        {/* Theme toggle — light / dark / system */}
+        <ThemeToggle />
 
         {/* Notification bell — left of the profile avatar */}
         <NotificationBell />
