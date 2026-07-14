@@ -1073,6 +1073,25 @@ export const createBot = async (data) => {
 };
 
 /**
+ * Records an onboarding/activation milestone event. Best-effort: it must NEVER
+ * throw, so instrumentation can't break the flow it measures.
+ * @param {string} eventType - e.g. 'studio_opened', 'bot_created', 'crawl_completed'
+ * @param {{ botId?: number|null, eventData?: Object|null }} [opts]
+ */
+export const recordActivationEvent = async (eventType, { botId = null, eventData = null } = {}) => {
+    try {
+        await api.post('/activation/events', {
+            event_type: eventType,
+            bot_id: botId,
+            event_data: eventData,
+        });
+    } catch (error) {
+        // Instrumentation is fire-and-forget — swallow failures.
+        console.warn('Activation event failed (non-fatal):', eventType, error?.message);
+    }
+};
+
+/**
  * Gets details of a specific bot.
  * @param {number} botId
  * @returns {Promise<Object>} Bot details

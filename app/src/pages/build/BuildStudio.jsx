@@ -2,6 +2,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import OyeChatsMark from '../../components/OyeChatsMark';
 import { MILESTONES, milestoneIndex } from './studioMilestones';
+import CreateStep from './steps/CreateStep';
+
+// Scripted Otto guidance per milestone (an AI-driven Otto is a future upgrade).
+const OTTO = {
+    create: "Welcome! Let's build your first agent. Give it a name, tell me what it's mainly for, and point me at your website.",
+    train: "Now let's train it on your site — I'll find your pages first, then you pick which ones to crawl.",
+    test: "Before it talks to real customers, let's pressure-test it with a few real questions.",
+    appearance: 'I pulled your brand colours from your site, so it already looks on-brand. Tweak it or skip — no pressure.',
+    golive: "Last step — put it on your site. I'll tell you the moment it's live.",
+};
 
 /**
  * The Build Studio shell — a dedicated, full-screen guided onboarding mode
@@ -21,6 +31,39 @@ export default function BuildStudio() {
     const goTo = (i) => {
         const clamped = Math.max(0, Math.min(MILESTONES.length - 1, i));
         setParams({ m: MILESTONES[clamped].key });
+    };
+    const goNext = () => goTo(current + 1);
+
+    // Each milestone renders its own step content + primary advance action.
+    // Wired milestones (Create) use a real component; the rest are placeholders
+    // with a Next button until Workstream E fills them in.
+    const renderStep = () => {
+        switch (milestone.key) {
+            case 'create':
+                return <CreateStep onCreated={goNext} />;
+            default:
+                return (
+                    <div className="flex flex-col gap-4">
+                        <div className="min-h-[160px] rounded-xl border border-dashed border-surface-300 dark:border-surface-700 grid place-items-center text-surface-400 dark:text-surface-500 text-sm">
+                            {milestone.label} step — coming next
+                        </div>
+                        <button
+                            type="button"
+                            onClick={goNext}
+                            disabled={current === MILESTONES.length - 1}
+                            className="self-start inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
+                        >
+                            {current < MILESTONES.length - 1 ? (
+                                <>
+                                    Next <ArrowRight size={15} />
+                                </>
+                            ) : (
+                                'Finish'
+                            )}
+                        </button>
+                    </div>
+                );
+        }
     };
 
     return (
@@ -106,18 +149,13 @@ export default function BuildStudio() {
                             <div className="font-mono text-[10px] uppercase tracking-wider text-surface-400 dark:text-surface-500 mb-1">
                                 Otto · your setup guide
                             </div>
-                            <p className="text-surface-700 dark:text-surface-200">
-                                {milestone.title}. This milestone is being wired up next — the shell,
-                                progress, and navigation are live.
-                            </p>
+                            <p className="text-surface-700 dark:text-surface-200">{OTTO[milestone.key]}</p>
                         </div>
                     </div>
 
-                    <div className="flex-1 min-h-[180px] rounded-xl border border-dashed border-surface-300 dark:border-surface-700 grid place-items-center text-surface-400 dark:text-surface-500 text-sm">
-                        {milestone.label} step
-                    </div>
+                    <div className="flex-1">{renderStep()}</div>
 
-                    <div className="mt-auto flex items-center gap-3 flex-wrap">
+                    <div className="mt-auto flex items-center gap-3 pt-2">
                         {current > 0 && (
                             <button
                                 type="button"
@@ -127,20 +165,6 @@ export default function BuildStudio() {
                                 <ArrowLeft size={15} /> Back
                             </button>
                         )}
-                        <button
-                            type="button"
-                            onClick={() => goTo(current + 1)}
-                            disabled={current === MILESTONES.length - 1}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
-                        >
-                            {current < MILESTONES.length - 1 ? (
-                                <>
-                                    Next <ArrowRight size={15} />
-                                </>
-                            ) : (
-                                'Finish'
-                            )}
-                        </button>
                         <button
                             type="button"
                             onClick={() => navigate('/')}
