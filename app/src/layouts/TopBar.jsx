@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar, Sun, Moon } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar, Sun, Moon, ChevronRight } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '../lib/utils';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { usePageHeader } from '../context/PageHeaderContext';
 import WorkspacePill from './WorkspacePill';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
@@ -79,6 +80,42 @@ function _formatJoinedDate(iso) {
   }
 }
 
+// Renders the page-published breadcrumb trail INTO the top bar. The last entry
+// is the page title, deliberately emphasized (font-semibold) beyond a normal
+// crumb since it doubles as the page heading; earlier entries with a `to`
+// become links. Non-last crumbs/separators reuse Breadcrumbs.jsx tokens and
+// mobile behavior so migrated and un-migrated pages read identically. Assumes
+// `crumbs` is non-empty (callers guard first).
+function ContextualCrumbs({ crumbs }) {
+  return (
+    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
+      {crumbs.map((crumb, index) => {
+        const isLast = index === crumbs.length - 1;
+        const key = crumb.to || `${crumb.label}-${index}`;
+        return (
+          <span key={key} className="flex items-center gap-1.5">
+            {index > 0 && (
+              <ChevronRight size={14} className="text-surface-600 dark:text-surface-300 hidden sm:inline" />
+            )}
+            {isLast ? (
+              <span aria-current="page" className="font-semibold text-surface-900 dark:text-surface-100">{crumb.label}</span>
+            ) : crumb.to ? (
+              <Link
+                to={crumb.to}
+                className="text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 transition-colors hidden sm:inline"
+              >
+                {crumb.label}
+              </Link>
+            ) : (
+              <span className="text-surface-400 dark:text-surface-500 hidden sm:inline">{crumb.label}</span>
+            )}
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenSearch }) {
   const navigate = useNavigate();
   const adminName = getAuthItem('admin_name') || 'Admin';
@@ -87,6 +124,11 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const [_profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
   const { entitlements } = useEntitlements();
+  // Contextual app-bar state published by the current page via <PageHeader/>.
+  // Empty `crumbs` means the page hasn't migrated yet → fall back to the
+  // location-derived <Breadcrumbs/> so nothing breaks.
+  const { crumbs, actions } = usePageHeader();
+  const hasCrumbs = Array.isArray(crumbs) && crumbs.length > 0;
   const [isOnline, setIsOnline] = useState(() => localStorage.getItem('operator_is_online') === 'true');
   // Mounted-flag prevents a state update after the menu closes if the network
   // request is still in flight — avoids the React "set state on unmounted" warn.
@@ -158,6 +200,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   }, [showUserMenu]);
 
   return (
+    <>
     <header className="h-14 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
       {/* Left */}
       <div className="flex items-center gap-2 md:gap-3 min-w-0">
@@ -176,7 +219,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
               affordance behavior. */}
           <WorkspacePill />
           <div className="min-w-0 truncate">
-            <Breadcrumbs />
+            {hasCrumbs ? <ContextualCrumbs crumbs={crumbs} /> : <Breadcrumbs />}
           </div>
         </div>
       </div>
@@ -306,6 +349,16 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
           </AnimatePresence>
         </div>
       </div>
-  </header>
+    </header>
+
+      {/* Slim contextual action row — only rendered when the current page
+          publishes `actions` (e.g. a Save button). Sticks directly beneath the
+          56px main bar and stacks below it (z-10 < z-20). */}
+      {actions && (
+        <div className="h-12 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-end gap-2 sticky top-14 z-10 transition-colors">
+          {actions}
+        </div>
+      )}
+    </>
   );
 }

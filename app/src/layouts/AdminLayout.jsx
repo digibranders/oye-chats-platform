@@ -14,6 +14,7 @@ import { PushProvider, usePush } from '../context/PushContext';
 import { BotProvider } from '../context/BotContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
+import { PageHeaderProvider } from '../context/PageHeaderContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
 
 const MD_BREAKPOINT = 768;
@@ -248,7 +249,13 @@ export default function AdminLayout() {
       <NotificationProvider>
         <BotProvider>
           <PushProvider>
-            <AdminLayoutInner />
+            {/* PageHeaderProvider wraps the layout so both TopBar and the
+                routed page (<Outlet/>) share the contextual app-bar state:
+                pages publish crumbs/title/actions via <PageHeader/>, TopBar
+                renders them. */}
+            <PageHeaderProvider>
+              <AdminLayoutInner />
+            </PageHeaderProvider>
           </PushProvider>
         </BotProvider>
       </NotificationProvider>
