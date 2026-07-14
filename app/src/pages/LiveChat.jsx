@@ -383,9 +383,13 @@ export default function LiveChat({ embedded = false }) {
         }
     }, []);
 
-    // Restore operator online status from server on mount (prevents forced manual "Go Online" on refresh)
+    // Restore operator online status from server on mount (prevents forced
+    // manual "Go Online" on refresh). Scoped to the currently-selected bot
+    // so a workspace with two bots doesn't inherit bot A's is_online state
+    // when the sidebar is on bot B.
     useEffect(() => {
-        getMyOperatorStatus().then(status => {
+        if (!selectedBot?.id) return;
+        getMyOperatorStatus({ botId: selectedBot.id }).then(status => {
             if (status && status.is_online) {
                 setIsOnline(true);
                 if (status.operator_name) setOperatorName(status.operator_name);
@@ -395,7 +399,83 @@ export default function LiveChat({ embedded = false }) {
                 }
             }
         });
+        // Intentionally mount-only for the initial hydrate — the ``selectedBot``
+        // switch effect below owns the "user changed bots" transition and
+        // tears the WS down first so we never leak online state across bots.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Bot switch — teardown + refetch under the new bot's context. Same
+    // shape as the workspace-switched handler below because the invariant
+    // is the same: local ``isOnline`` reflects an operator row on a specific
+    // bot, and that row is meaningless once the sidebar points at a
+    // different bot. Skips the initial mount (guarded by the ref) so the
+    // hydrate effect above owns first-run.
+    const bootBotIdRef = useRef(null);
+    // Ref mirror of the current bot id — read by handlers registered once on
+    // mount (e.g. workspace-switched) so they can see the latest bot without
+    // re-registering their listeners on every render.
+    const selectedBotIdRef = useRef(selectedBot?.id ?? null);
+    selectedBotIdRef.current = selectedBot?.id ?? null;
+    useEffect(() => {
+        const currentBotId = selectedBot?.id ?? null;
+        if (bootBotIdRef.current === null) {
+            bootBotIdRef.current = currentBotId;
+            return;
+        }
+        if (bootBotIdRef.current === currentBotId) return;
+        bootBotIdRef.current = currentBotId;
+
+        // Tear down WS + local presence-derived state so bot A's roster,
+        // queue, and online flag don't leak into bot B's view.
+        manualCloseRef.current = true;
+        clearInterval(pingIntervalRef.current);
+        clearTimeout(reconnectTimerRef.current);
+        clearInterval(queuePollIntervalRef.current);
+        queuePollIntervalRef.current = null;
+        clearInterval(qualifiedPollIntervalRef.current);
+        qualifiedPollIntervalRef.current = null;
+        wsRef.current?.close();
+        wsRef.current = null;
+        reconnectAttemptsRef.current = 0;
+
+        setIsOnline(false);
+        setQueue([]);
+        setActiveChats([]);
+        setChatNames({});
+        setUnreadCounts({});
+        setLastMessages({});
+        setVisitorStatus({});
+        setQualifiedBotSessions([]);
+        setSelectedChat(null);
+        setMessages([]);
+        setIsTyping(false);
+        setOperatorName('');
+        setSessionInfo(null);
+        setPreviewSession(null);
+        setPreviewMessages([]);
+        setConnectionLost(false);
+        setDuplicateTabDetected(false);
+        queueSnapshotRef.current = new Set();
+        chatHistoryCacheRef.current = {};
+        operatorIdRef.current = null;
+        localStorage.removeItem('operator_id');
+
+        if (!currentBotId) return;
+        // Refetch under the new bot — if the caller is ALSO the operator on
+        // this bot and was already online there, restore ``isOnline=true``
+        // (and the WS effect reconnects) rather than making them re-toggle.
+        getMyOperatorStatus({ botId: currentBotId }).then(status => {
+            if (status && status.is_online) {
+                setIsOnline(true);
+                if (status.operator_name) setOperatorName(status.operator_name);
+                if (status.operator_id) {
+                    operatorIdRef.current = status.operator_id;
+                    localStorage.setItem('operator_id', String(status.operator_id));
+                }
+            }
+        }).catch(() => { /* silent — offline UI is the safe default */ });
+    }, [selectedBot?.id]);
 
     // React to workspace switches. A Client who is a linked operator on
     // Workspace B and owner of Workspace A will keep local ``isOnline=true``
@@ -448,10 +528,12 @@ export default function LiveChat({ embedded = false }) {
             operatorIdRef.current = null;
             localStorage.removeItem('operator_id');
 
-            // Refetch under the new workspace context — restores online
-            // status silently if the user was already online as an
-            // operator on the target workspace.
-            getMyOperatorStatus().then(status => {
+            // Refetch under the new workspace context, scoped to the
+            // currently-selected bot so a switch back to a workspace with
+            // multiple bots doesn't inherit the wrong bot's is_online. We
+            // read from a ref rather than the closure so the handler doesn't
+            // need to re-register on every bot change.
+            getMyOperatorStatus({ botId: selectedBotIdRef.current || undefined }).then(status => {
                 if (status && status.is_online) {
                     setIsOnline(true);
                     if (status.operator_name) setOperatorName(status.operator_name);
@@ -575,6 +657,18 @@ export default function LiveChat({ embedded = false }) {
         const apiKey = getAuthItem('admin_token');
         const authType = getAuthItem('auth_type');
         if (!apiKey || !isOnline) return;
+        // Fresh workspaces (no bots yet) cannot have an owner operator — the
+        // backend auto-provision needs a bot_id to bind to. Skip the WS
+        // (would otherwise 4003-reconnect-loop) and wait for bots to load;
+        // once the first bot exists, effect re-runs via the bots.length dep.
+        // Also clear any stuck "Reconnecting…" banner from a previous
+        // pre-guard attempt so the empty state isn't polluted by stale state.
+        if (botsLoading || bots.length === 0) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectAttemptsRef.current = 0;
+            setConnectionLost(false);
+            return;
+        }
 
         clearTimeout(reconnectTimerRef.current);
         manualCloseRef.current = false;
@@ -932,7 +1026,7 @@ export default function LiveChat({ embedded = false }) {
             wsRef.current = null;
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOnline, reconnectCount, removeSessionFromQueue, syncQueueState, fetchQualifiedBotSessions]);
+    }, [isOnline, reconnectCount, botsLoading, bots.length, removeSessionFromQueue, syncQueueState, fetchQualifiedBotSessions]);
 
     // Visibility + network change handlers — reconnect immediately when the operator
     // returns to the tab or network is restored, with a reset backoff counter so

@@ -1423,9 +1423,10 @@ export const toggleOperatorStatus = async ({ isOnline, botId } = {}) => {
     }
 };
 
-export const getMyOperatorStatus = async () => {
+export const getMyOperatorStatus = async ({ botId } = {}) => {
     try {
-        const response = await api.get('/operators/me/status');
+        const params = botId ? { bot_id: botId } : {};
+        const response = await api.get('/operators/me/status', { params });
         return response.data;
     } catch (error) {
         console.error('API Error getting operator status:', error);

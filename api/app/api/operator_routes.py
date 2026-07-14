@@ -1267,16 +1267,43 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
 
 
 @router.get("/me/status")
-def get_my_operator_status(auth=Depends(get_current_client_or_operator)):
-    """Get the current operator's online status. Used by the admin dashboard on mount."""
+def get_my_operator_status(
+    bot_id: int | None = None,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Get the caller's online status for a specific bot.
+
+    ``bot_id`` scopes the lookup to the caller's operator row bound to that
+    bot — a workspace with two bots must not report ``is_online=True`` for
+    bot B just because the admin is online as bot A's operator. Absent
+    ``bot_id`` the endpoint retains its historic "any of my operator rows"
+    behaviour for callers that haven't been updated yet.
+
+    Preference order matches ``POST /operators/status`` so the two endpoints
+    can never disagree:
+        1. Self-op row (``linked_client_id == client.id``).
+        2. Legacy owner-role row.
+    """
     with get_session() as session:
         if auth["type"] == "operator":
             operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
         else:
             client = auth["entity"]
-            operator = session.execute(
-                select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
-            ).scalar_one_or_none()
+            self_op_stmt = select(Operator).where(
+                Operator.client_id == client.id,
+                Operator.linked_client_id == client.id,
+            )
+            if bot_id is not None:
+                self_op_stmt = self_op_stmt.where(Operator.bot_id == bot_id)
+            operator = session.execute(self_op_stmt).scalar_one_or_none()
+            if not operator:
+                legacy_stmt = select(Operator).where(
+                    Operator.client_id == client.id,
+                    Operator.role == "owner",
+                )
+                if bot_id is not None:
+                    legacy_stmt = legacy_stmt.where(Operator.bot_id == bot_id)
+                operator = session.execute(legacy_stmt.limit(1)).scalar_one_or_none()
 
         if not operator:
             return {"is_online": False, "operator_name": None, "operator_id": None}
