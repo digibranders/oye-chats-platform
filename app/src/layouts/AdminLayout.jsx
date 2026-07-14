@@ -16,6 +16,7 @@ import { NotificationProvider } from '../context/NotificationContext';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { PageHeaderProvider } from '../context/PageHeaderContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
+import InstallBanner from '../components/InstallBanner';
 
 const MD_BREAKPOINT = 768;
 const LG_BREAKPOINT = 1024;
@@ -223,6 +224,9 @@ function AdminLayoutInner() {
         defaultTab={feedbackTab}
         highlightId={feedbackHighlightId}
       />
+
+      {/* Floating in-app banner for PWA installation prompts. */}
+      <InstallBanner />
 
       {/* Floating in-app banner for incoming live-chat handoffs. Suppresses
           itself on /support so the live-chat console isn't covered by a

@@ -10,7 +10,7 @@ future internal refactor.
 What we cover:
     * status transitions (trialing → trial_expired, past_due → expired)
     * marker idempotency (no duplicate emails on re-runs)
-    * the 7/3/1 day-bucket cadence in ``task_trial_reminder_emails``
+    * the 4/2/1 day-bucket cadence in ``task_trial_reminder_emails``
     * ``trial_expired`` data hard-delete past ``data_retention_until``
     * dunning grace window enforcement in
       ``task_expire_past_due_subscriptions``
@@ -197,14 +197,18 @@ class TestTaskExpireTrials:
 
 
 class TestTaskTrialReminderEmails:
-    """Trial reminder cadence — day-7 / day-11 / day-13 buckets, gated by
-    JSONB ``trial_emails_sent`` markers so each fires exactly once."""
+    """Trial reminder cadence on a 7-day trial — halfway (T-4) / T-2 / T-1
+    buckets, gated by JSONB ``trial_emails_sent`` markers so each fires
+    exactly once. Marker keys keep their historical ``day_7`` / ``day_11``
+    / ``day_13`` names from the previous 14-day cadence so existing
+    subscriptions with those slots pre-filled aren't re-spammed after the
+    rescale ships."""
 
     @pytest.mark.parametrize(
         "days_left,expected_marker,expected_fn",
         [
-            (7, "day_7", "send_trial_day_7_email"),
-            (3, "day_11", "send_trial_days_left_email"),
+            (4, "day_7", "send_trial_day_7_email"),
+            (2, "day_11", "send_trial_days_left_email"),
             (1, "day_13", "send_trial_days_left_email"),
         ],
     )
@@ -225,10 +229,10 @@ class TestTaskTrialReminderEmails:
         mock_email.assert_called_once()
         assert sub.trial_emails_sent.get(expected_marker) is not None
 
-    @pytest.mark.parametrize("days_left", [10, 5, 2])
+    @pytest.mark.parametrize("days_left", [7, 5, 3])
     @pytest.mark.asyncio
     async def test_skips_off_cadence_days(self, days_left):
-        """Day-10 / day-5 / day-2 are not in the cadence — nothing fires."""
+        """T-7 / T-5 / T-3 are not in the 7-day cadence — nothing fires."""
         now = datetime.now(UTC)
         sub = _trial_sub(trial_end=now + timedelta(days=days_left - 1, hours=12))
         fake_session = _FakeSession([sub], {sub.client_id: _owner()})

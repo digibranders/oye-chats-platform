@@ -794,13 +794,19 @@ async def task_expire_trials(ctx: dict) -> int:
 
 
 async def task_trial_reminder_emails(ctx: dict) -> int:
-    """Cron: day-7 / day-11 / day-13 reminder cadence.
+    """Cron: 7-day trial reminder cadence (halfway / T-1 / final day).
 
     Runs once a day; for every still-trialing subscription it computes
     ``days_remaining = ceil((trial_end - now) / 1 day)`` and fires the
     matching email if its marker isn't set. We use the day-bucket as the
     idempotency key so a customer who started a trial mid-day still gets
     every reminder on the right calendar day rather than 24h later.
+
+    Marker keys (``day_7``, ``day_11``, ``day_13``) are preserved from
+    the previous 14-day cadence so historical subscriptions with those
+    slots already set on ``trial_emails_sent`` aren't spammed a second
+    time after this rescale ships. The trigger — ``days_remaining`` —
+    is what changed.
 
     Returns the number of emails sent across all subscriptions.
     """
@@ -815,15 +821,14 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
     from app.services.email_service import send_trial_day_7_email, send_trial_days_left_email
 
     # ``key`` doubles as the slot in ``trial_emails_sent`` and as the
-    # discriminator for which template fires. Order matters only for the
-    # log line — the lookup is keyed by ``days_remaining``.
+    # discriminator for which template fires.
     cadence: dict[int, tuple[str, str]] = {
         # days_remaining → (marker_key, template)
-        # day-7 of a 14-day trial → 7 days remaining
-        7: ("day_7", "day_7"),
-        # day-11 of a 14-day trial → 3 days remaining
-        3: ("day_11", "days_left"),
-        # day-13 of a 14-day trial → 1 day remaining
+        # Halfway check-in on a 7-day trial.
+        4: ("day_7", "day_7"),
+        # T-2 warning.
+        2: ("day_11", "days_left"),
+        # Final-day alarm.
         1: ("day_13", "days_left"),
     }
 

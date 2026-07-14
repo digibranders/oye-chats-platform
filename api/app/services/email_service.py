@@ -869,7 +869,7 @@ def send_trial_day_7_email(to_email: str, *, name: str | None, days_remaining: i
 
 
 def send_trial_days_left_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
-    """Urgency reminder fired at day-11 (3 left) and day-13 (1 left)."""
+    """Urgency reminder fired at T-2 and T-1 on the 7-day trial cadence."""
     safe_plan = esc(plan_name)
     if days_remaining <= 1:
         headline = f"your {safe_plan} trial ends tomorrow"

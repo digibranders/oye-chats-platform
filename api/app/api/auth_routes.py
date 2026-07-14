@@ -727,9 +727,13 @@ def register(request: Request, body: RegisterRequest):
             session.flush()  # Get the client ID
             logger.info("Client INSERT flushed: id=%s", new_client.id)
 
-            # Auto-assign the default plan (currently the 14-day trial). The
-            # subscription row is bound locally so we can build the trial
-            # payload + welcome email without re-querying after commit.
+            # Auto-assign the default plan. Whether that yields a trialing
+            # or an active subscription depends on the plan seed
+            # (``Plan.trial_days``) — today the default plan is "free" with
+            # zero trial days, so a plain signup lands active on Free and
+            # the trial is opt-in via the billing modal. The subscription
+            # row is bound locally so we can build the trial payload +
+            # welcome email without re-querying after commit.
             subscription = None
             try:
                 from app.services.plan_service import assign_default_plan_to_client
@@ -771,7 +775,7 @@ def register(request: Request, body: RegisterRequest):
                         name=new_client.name,
                         trial_end=trial_end,
                         credits=credits_granted,
-                        duration_days=int(subscription.plan.trial_days or 14) if subscription.plan else 14,
+                        duration_days=int(subscription.plan.trial_days or 7) if subscription.plan else 7,
                     )
                 except Exception as mail_err:
                     # send_trial_welcome_email is already defensive — this is

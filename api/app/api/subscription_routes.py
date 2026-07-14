@@ -166,12 +166,12 @@ class StartTrialRequest(BaseModel):
 
 @router.post("/start-trial")
 def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_current_client)):
-    """Begin a 14-day free trial of the named paid plan.
+    """Begin the paid plan's configured free trial (currently Standard, 7 days).
 
-    Triggered when the customer clicks "Start free trial" on Starter or
-    Standard. No card is required; on day 14 the expiry cron (PR4) flips
-    the subscription to ``trial_expired`` and the customer must pick a
-    plan + enter a card to keep their bot live.
+    Triggered when the customer clicks "Start free trial". No card is
+    required; when the trial window elapses the expiry cron flips the
+    subscription to ``trial_expired`` and the customer must pick a plan
+    + enter a card to keep their bot live.
 
     Trial credits = the plan's full ``credits_per_month`` so the prospect
     experiences the real product. The welcome email fires here, not on
@@ -216,7 +216,7 @@ def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_c
             trial_end = trial_end.replace(tzinfo=UTC)
         plan = sub.plan
         credits_granted = int(plan.credits_per_month or 0) if plan else 0
-        duration_days = int(plan.trial_days or 14) if plan else 14
+        duration_days = int(plan.trial_days or 7) if plan else 7
         sub_status = sub.status
         session.commit()
 

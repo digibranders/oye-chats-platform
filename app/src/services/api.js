@@ -1806,10 +1806,11 @@ export const createCheckoutSession = async (planId, billingCycle = 'monthly', bi
 };
 
 /**
- * Start a 14-day free trial of the named paid plan.
+ * Start the paid plan's configured free trial (currently Standard, 7 days).
  *
  * The customer must be on the free tier (or have no subscription) and must
- * not have used a trial on this plan before. The backend cancels their
+ * not have used a trial before — one free trial per client, lifetime, across
+ * every trial-eligible plan. The backend cancels their
  * existing free subscription, creates a trialing one on the new plan, and
  * grants the plan's full monthly credit allowance. No card is collected
  * — the conversion path runs through createCheckoutSession on day 14.

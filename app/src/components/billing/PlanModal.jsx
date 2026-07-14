@@ -563,7 +563,7 @@ export default function PlanModal({
                         <div className="px-6 py-3 border-t border-surface-200 dark:border-surface-800 shrink-0 flex items-center justify-between text-[11px] text-surface-500 dark:text-surface-400">
                             <span className="flex items-center gap-1.5">
                                 <ShieldCheck size={12} />
-                                Secure checkout · Cancel anytime · 14-day free trial on Starter plan.
+                                Secure checkout · Cancel anytime · 7-day free trial on Standard plan.
                             </span>
                             <span className="hidden sm:inline">
                                 Need help? <a href={`mailto:${SUPPORT_EMAIL}`} className="text-primary-600 dark:text-primary-400 hover:underline">{SUPPORT_EMAIL}</a>
@@ -1248,13 +1248,13 @@ function ctasFor({
     const paid = { kind: 'paid', variant: 'primary', label: paidLabel, note: paidNote };
 
     // Trial CTA. When a trial is available, we surface both buttons:
-    // "Start your 14-day trial" (primary) AND the paid-path CTA (secondary
+    // "Start your N-day trial" (primary) AND the paid-path CTA (secondary
     // ghost) so the customer can skip the trial and go straight to paid
     // without losing the option. The trial doesn't collect a card so it's
     // strictly the lower-friction default and gets the accent button.
     if (canStartTrial({ plan, isCurrent, currentPlanSlug, currentSubscriptionStatus })) {
         const isSwap = currentSubscriptionStatus === 'trialing';
-        const trialDays = Number(plan.trial_days || 14);
+        const trialDays = Number(plan.trial_days || 7);
         const trial = {
             kind: 'trial',
             variant: 'primary',
@@ -1420,7 +1420,7 @@ function renderPriceLabel(plan, billingCycle, geo, compact = false) {
 // (cobalt tint, calendar + gift iconography, static "N days free trial" label)
 // because the outer TrialUpgradeBanner in Billing.jsx already owns urgency
 // escalation. Doubling up here would just make the modal feel alarmist for
-// customers on day 2 of a 14-day trial. The trial_expired state is a
+// customers on day 2 of a 7-day trial. The trial_expired state is a
 // genuinely worse lifecycle stage, so it keeps the amber/rose warning tone.
 //
 // Ticks every 60s so a customer who leaves the modal open across a day
@@ -1440,8 +1440,8 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
     if (status === 'trialing') {
         if (!trialEndIso) return null;
         // Live countdown — decrements as time passes (ticks every 60s via the
-        // ``now`` state above) so the headline reads "14 days free trial"
-        // when a customer starts their trial, then "13", "12", … "1 day
+        // ``now`` state above) so the headline reads "7 days free trial"
+        // when a customer starts their trial, then "6", "5", … "1 day
         // free trial · ends today" as the deadline approaches. Ceil-rounded
         // to match every other trial countdown in the app (outer banner,
         // top-bar badge) — a trial ending in 2h still reads "1 day left".
@@ -1449,7 +1449,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
         // itself is unparseable, which shouldn't happen in practice but
         // beats rendering "NaN days".
         const liveDaysLeft = trialDaysLeft(trialEndIso, now);
-        const configuredDays = Number(trialDays) > 0 ? Number(trialDays) : 14;
+        const configuredDays = Number(trialDays) > 0 ? Number(trialDays) : 7;
         const daysForHeadline = liveDaysLeft ?? configuredDays;
         let headline;
         if (daysForHeadline <= 0) headline = 'Free trial ends today';

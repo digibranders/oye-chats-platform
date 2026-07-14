@@ -694,7 +694,7 @@ export default function Billing() {
               : 'the end of this billing cycle';
             toastMsg = `Downgrade to ${evt.plan.name} scheduled for ${when}. You'll keep your current plan until then.`;
           } else if (evt.kind === 'trial_started') {
-            toastMsg = `Trial started — ${evt.plan.name} unlocked for ${evt.trial_days || 14} days.`;
+            toastMsg = `Trial started — ${evt.plan.name} unlocked for ${evt.trial_days || 7} days.`;
           } else if (evt.kind === 'subscribed') {
             const credit = Number(evt.response?.proration_credit_cents || 0);
             toastMsg = credit > 0
