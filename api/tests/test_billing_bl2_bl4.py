@@ -44,7 +44,10 @@ pytestmark = pytest.mark.skipif(
 
 
 def _make_client(db, *, email: str) -> Client:
-    client = Client(name="c", email=email, api_key=email, hashed_password="h")
+    # ``is_verified=True`` so these checkout-guard tests clear the B2
+    # email-verification gate on /checkout (a fresh client defaults to
+    # unverified) and exercise the subscription-state logic they target.
+    client = Client(name="c", email=email, api_key=email, hashed_password="h", is_verified=True)
     db.add(client)
     db.flush()
     return client

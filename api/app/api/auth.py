@@ -852,6 +852,77 @@ def require_active_subscription_for_workspace(
         )
 
 
+# ── Email-verification gate (B2) ────────────────────────────────────────────
+# Defers — never walls — a small set of sensitive mutations until the account
+# proves ownership of its email. Onboarding (bot create, crawl, ingest, chat)
+# and all reads stay open so an unverified user can still explore and reach the
+# billing/upgrade prompts; only the money-committing checkout and the outbound
+# invite-send are held back. Structured 403 detail mirrors the
+# ``require_active_subscription`` contract so the dashboard routes every gate
+# failure through one flow.
+
+_EMAIL_VERIFICATION_REQUIRED_DETAIL = {
+    "error": "email_verification_required",
+    "message": "Please verify your email to continue.",
+    "verify_url": "/verify-email",
+}
+
+
+def require_verified_email(client: Client = Depends(get_current_client_strict)) -> Client:
+    """Dependency: gate a sensitive mutation behind a verified email.
+
+    Strict (``X-API-Key`` only) variant, for routes whose client is already
+    resolved via :func:`get_current_client_strict`. Returns the client so a
+    handler can reuse it; raises a structured ``403 email_verification_required``
+    for an un-verified account.
+    """
+    # Superadmins are platform staff and may be provisioned outside the
+    # email-verify OAuth path (``is_verified`` never flipped) — never 403 them,
+    # mirroring the bypass in :func:`require_verified_email_for_workspace`.
+    if getattr(client, "is_superadmin", False):
+        return client
+    if not client.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=dict(_EMAIL_VERIFICATION_REQUIRED_DETAIL),
+        )
+    return client
+
+
+def require_verified_email_for_workspace(
+    auth: dict = Depends(get_current_client_or_operator),
+) -> None:
+    """Workspace-aware variant of :func:`require_verified_email`.
+
+    Endpoints that accept both client (``X-API-Key``) and operator
+    (``X-Operator-Key``) callers gate on the *workspace owner's* email
+    verification: an operator can only act while the owning client's email is
+    verified. Mirrors :func:`require_active_subscription_for_workspace` so an
+    or-operator route is never accidentally narrowed to X-API-Key-only auth.
+    """
+    # Superadmin clients bypass the gate (platform staff) — short-circuit before
+    # any DB lookup, matching the subscription workspace gate.
+    if auth["type"] == "client":
+        client = auth["entity"]
+        if getattr(client, "is_superadmin", False):
+            return None
+
+    client_id = auth["client_id"]
+    with get_session() as session:
+        owner = session.get(Client, client_id)
+        if owner is None or not owner.is_verified:
+            logger.info(
+                "workspace_email_gate_denied client_id=%s actor=%s",
+                client_id,
+                auth["type"],
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=dict(_EMAIL_VERIFICATION_REQUIRED_DETAIL),
+            )
+    return None
+
+
 def bot_subscription_status(client_id: int, subscription_id: int | None = None) -> str:
     """Return the bot owner's current subscription status as a string.
 

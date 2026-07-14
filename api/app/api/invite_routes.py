@@ -26,7 +26,12 @@ from pydantic import BaseModel, field_validator
 from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_client, get_current_client_or_operator, get_current_client_strict
+from app.api.auth import (
+    get_current_client,
+    get_current_client_or_operator,
+    get_current_client_strict,
+    require_verified_email_for_workspace,
+)
 from app.config import APP_ENV, EMAIL_ENABLED, FRONTEND_URL
 from app.core.rate_limit import limiter
 from app.db.models import Bot, Client, Operator, OperatorInvite
@@ -218,6 +223,7 @@ def create_invite(
     request: Request,  # noqa: ARG001 — required by SlowAPI decorator
     body: CreateInviteRequest,
     auth: dict = Depends(get_current_client_or_operator),
+    _verified: None = Depends(require_verified_email_for_workspace),
 ):
     """Send an invitation to join the caller's workspace as an operator."""
     workspace_id: int = auth["client_id"]
@@ -316,6 +322,7 @@ def resend_invite(
     request: Request,  # noqa: ARG001
     invite_id: int,
     auth: dict = Depends(get_current_client_or_operator),
+    _verified: None = Depends(require_verified_email_for_workspace),
 ):
     """Rotate the invite's token and resend the email."""
     workspace_id: int = auth["client_id"]

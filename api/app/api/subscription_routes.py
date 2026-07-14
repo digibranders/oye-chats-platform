@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app import config as app_config
 from app.api.auth import get_current_client_strict as get_current_client
+from app.api.auth import require_verified_email
 from app.config import (
     BILLING_PROVIDER,
     DISPLAY_USD_TO_INR,
@@ -862,6 +863,7 @@ def create_checkout(
     request: CheckoutRequest,
     http_request: Request,
     client: Client = Depends(get_current_client),
+    _verified: Client = Depends(require_verified_email),
 ):
     """Create a Razorpay checkout session for a paid plan.
 
@@ -1006,6 +1008,7 @@ def change_plan(
     request: ChangePlanRequest,
     http_request: Request,
     client: Client = Depends(get_current_client),
+    _verified: Client = Depends(require_verified_email),
 ):
     """Upgrade or downgrade the client's subscription to a different plan.
 
@@ -1423,7 +1426,11 @@ class SeatChangeRequest(BaseModel):
 
 
 @router.post("/seats")
-def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_current_client)):
+def change_seat_count(
+    request: SeatChangeRequest,
+    client: Client = Depends(get_current_client),
+    _verified: Client = Depends(require_verified_email),
+):
     """Add or remove operator seats from the active subscription.
 
     Each seat above ``plan.included_operator_seats`` is billed through a
@@ -1778,7 +1785,11 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
 
 
 @credits_router.post("/topup")
-def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_client)):
+def initiate_topup(
+    request: TopupRequest,
+    client: Client = Depends(get_current_client),
+    _verified: Client = Depends(require_verified_email),
+):
     """Initiate a top-up purchase via Razorpay.
 
     Returns a Razorpay order payload:

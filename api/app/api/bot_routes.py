@@ -16,6 +16,7 @@ from app.api.auth import (
     get_current_bot,
     get_current_client_or_operator,
     require_active_subscription_for_workspace,
+    require_verified_email_for_workspace,
 )
 from app.config import APP_URL, FRONTEND_URL, MARKETING_URL
 from app.core.cache import bot_config_key, cache_delete
@@ -1284,7 +1285,11 @@ class BotCheckoutVerifyRequest(BaseModel):
 
 
 @router.post("/checkout")
-def create_bot_checkout(request: BotCheckoutRequest, auth=Depends(get_current_client_or_operator)):
+def create_bot_checkout(
+    request: BotCheckoutRequest,
+    auth=Depends(get_current_client_or_operator),
+    _verified: None = Depends(require_verified_email_for_workspace),
+):
     """Mint a Razorpay subscription for one new bot.
 
     Returns the Razorpay Checkout payload (``subscription_id``,
