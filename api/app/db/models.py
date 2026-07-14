@@ -635,6 +635,25 @@ class BotGrowthEvent(Base):
     )
 
 
+class ActivationEvent(Base):
+    """Onboarding activation milestones emitted by a client account.
+
+    Unlike ``BotGrowthEvent`` (which restricts ``event_type`` to a fixed set),
+    ``event_type`` here is intentionally free-form so new activation milestones
+    can be added without a schema/constraint change. Rows are best-effort
+    instrumentation, scoped to the emitting client (optionally a specific bot).
+    """
+
+    __tablename__ = "activation_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True)
+    event_type = Column(String, nullable=False, index=True)  # free-form; NO CheckConstraint
+    event_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class Webhook(Base):
     __tablename__ = "webhooks"
 
