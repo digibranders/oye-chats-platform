@@ -15,6 +15,22 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>OyeChats Admin</title>
+  <script>
+    // Apply the persisted theme before first paint to avoid a light/dark flash.
+    // Mirrors ThemeContext: default is 'light' when nothing is stored; only an
+    // explicit 'dark' or 'system' preference can produce dark.
+    (function () {
+      try {
+        var m = localStorage.getItem('admin_theme_mode');
+        var dark = m === 'dark' ||
+          (m === 'system' && window.matchMedia &&
+           window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var el = document.documentElement;
+        el.classList.toggle('dark', dark);
+        el.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) { /* localStorage unavailable — ignore */ }
+    })();
+  </script>
 </head>
 
 <body>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar } from 'lucide-react';
+import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar, Sun, Moon, Monitor } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Breadcrumbs from '../components/Breadcrumbs';
 import WorkspacePill from './WorkspacePill';
@@ -10,6 +10,30 @@ import Avatar from '../components/ui/Avatar';
 import NotificationBell from '../components/NotificationBell';
 import { getCurrentUser } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
+import { useTheme } from '../context/ThemeContext';
+
+// Theme toggle cycles light → dark → system; the icon reflects the current
+// chosen mode (not the resolved theme) so 'system' stays discoverable.
+const THEME_META = {
+  light: { Icon: Sun, label: 'Light theme — click for dark' },
+  dark: { Icon: Moon, label: 'Dark theme — click for system' },
+  system: { Icon: Monitor, label: 'System theme — click for light' },
+};
+
+function ThemeToggle() {
+  const { mode, cycleMode } = useTheme();
+  const { Icon, label } = THEME_META[mode] || THEME_META.system;
+  return (
+    <button
+      onClick={cycleMode}
+      title={label}
+      aria-label={label}
+      className="p-2 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+    >
+      <Icon size={16} />
+    </button>
+  );
+}
 
 // Format an ISO timestamp as e.g. "Joined May 4, 2026". Returns "—" on bad input
 // so a fetch hiccup or pre-2024 row never renders the profile dropdown blank.
@@ -147,6 +171,9 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         >
           <Search size={16} />
         </button>
+
+        {/* Theme toggle — light / dark / system */}
+        <ThemeToggle />
 
         {/* Notification bell — left of the profile avatar */}
         <NotificationBell />
