@@ -395,7 +395,23 @@ export default function Register() {
                 </label>
                 <div className="relative group">
                   <Globe size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
-                  <input type="url" value={website} onChange={(e) => setWebsite(e.target.value)} className={inputCls} placeholder="https://..." autoComplete="url" tabIndex={4} />
+                  <input
+                    type="url"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    onBlur={(e) => {
+                      // Auto-prepend https:// so a bare host (e.g. www.oyechats.com)
+                      // passes the native URL validation instead of erroring. We
+                      // only add the protocol — no validation/clearing — so partial
+                      // input the user is still working on is never discarded.
+                      const v = e.target.value.trim();
+                      if (v && !/^https?:\/\//i.test(v)) setWebsite(`https://${v}`);
+                    }}
+                    className={inputCls}
+                    placeholder="www.example.com"
+                    autoComplete="url"
+                    tabIndex={4}
+                  />
                 </div>
               </div>
             </div>
