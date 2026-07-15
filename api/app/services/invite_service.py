@@ -36,7 +36,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Client, Operator, OperatorInvite, Subscription
+from app.db.models import Bot, Client, Operator, OperatorInvite, Subscription
 from app.services import plan_entitlements_service
 from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
 
@@ -304,6 +304,7 @@ def create_invite(
     workspace_id: int,
     email: str,
     role: str,
+    bot_id: int,
     department_id: int | None,
     invited_by: Client,
 ) -> tuple[OperatorInvite, str]:
@@ -323,6 +324,19 @@ def create_invite(
         raise InviteError(
             "invalid_role",
             f"Role must be one of: {sorted(VALID_INVITE_ROLES)}.",
+        )
+
+    # Validate the bot exists in this workspace — an invite scoped to a bot
+    # in a different workspace would let the invitee accept into a bot they
+    # were never authorised for. Reject at CREATE, not just at accept.
+    target_bot = session.execute(
+        select(Bot.id).where(Bot.id == bot_id, Bot.client_id == workspace_id)
+    ).scalar_one_or_none()
+    if target_bot is None:
+        raise InviteError(
+            "bot_not_found",
+            "The selected bot doesn't exist in this workspace.",
+            status_code=404,
         )
 
     _require_manager_role(session, invited_by, workspace_id)
@@ -367,6 +381,7 @@ def create_invite(
     now = datetime.now(UTC)
     invite = OperatorInvite(
         client_id=workspace_id,
+        bot_id=bot_id,
         email=email,
         role=role,
         department_id=department_id,
@@ -528,6 +543,10 @@ def accept_invite(
         # to a different (but case-equivalent) email surface.
         existing.is_active = True
         existing.role = invite.role
+        # Re-invite may target a different bot than the previous run — apply
+        # the current invite's binding so the reactivated row lands on the
+        # bot the invite was actually sent for.
+        existing.bot_id = invite.bot_id
         existing.department_id = invite.department_id
         existing.invited_email = invite.email
         invite.status = "accepted"
@@ -548,6 +567,7 @@ def accept_invite(
 
     operator = Operator(
         client_id=invite.client_id,
+        bot_id=invite.bot_id,
         linked_client_id=accepting_client.id,
         name=accepting_client.name,
         email=accepting_email,

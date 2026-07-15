@@ -150,7 +150,7 @@ export default function BotCard({
                     : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600',
             )}
         >
-            <div className="p-5 flex items-center gap-4">
+            <div className="p-5 flex flex-wrap sm:flex-nowrap items-center gap-x-4 gap-y-3">
                 <div className={cn(
                     'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
                     isActive ? 'bg-primary-100 dark:bg-primary-500/15' : 'bg-surface-100 dark:bg-surface-800',
@@ -160,7 +160,7 @@ export default function BotCard({
                         : <Bot size={20} className={isActive ? 'text-primary-600 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500'} />}
                 </div>
 
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 basis-0">
                     <div className="flex items-center gap-2">
                         {isRenaming ? (
                             <input
@@ -176,7 +176,7 @@ export default function BotCard({
                                 }}
                                 onBlur={commitRename}
                                 maxLength={50}
-                                className="text-sm font-bold text-surface-900 dark:text-surface-100 bg-white dark:bg-surface-800 border border-primary-400 dark:border-primary-500 rounded-md px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] dark:focus:ring-[var(--focus-ring)] w-48"
+                                className="text-sm font-bold text-surface-900 dark:text-surface-100 bg-white dark:bg-surface-800 border border-primary-400 dark:border-primary-500 rounded-md px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[var(--focus-ring)] dark:focus:ring-[var(--focus-ring)] w-full max-w-[12rem]"
                             />
                         ) : (
                             <h3 className="text-sm font-bold text-surface-900 dark:text-surface-100 truncate">
@@ -184,18 +184,18 @@ export default function BotCard({
                             </h3>
                         )}
                         {isActive && (
-                            <span className="px-2 py-0.5 text-[9px] font-bold text-primary-600 dark:text-primary-400 bg-primary-100 dark:bg-primary-500/15 rounded-full uppercase">
+                            <span className="px-2 py-0.5 text-[9px] font-bold text-primary-600 dark:text-primary-400 bg-primary-100 dark:bg-primary-500/15 rounded-full uppercase flex-shrink-0">
                                 Active
                             </span>
                         )}
                     </div>
-                    <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-[11px] text-surface-400 dark:text-surface-500 font-mono">{maskKey(bot.bot_key)}</span>
-                        <span className="text-[10px] text-surface-400 dark:text-surface-500">Created {new Date(bot.created_at).toLocaleDateString()}</span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                        <span className="text-[11px] text-surface-400 dark:text-surface-500 font-mono truncate max-w-full">{maskKey(bot.bot_key)}</span>
+                        <span className="text-[10px] text-surface-400 dark:text-surface-500 whitespace-nowrap">Created {new Date(bot.created_at).toLocaleDateString()}</span>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-shrink-0" onClick={stop}>
+                <div className="flex items-center gap-2 flex-shrink-0 basis-full sm:basis-auto justify-end sm:justify-start" onClick={stop}>
                     <button
                         onClick={(e) => { stop(e); onInstall(bot); }}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"

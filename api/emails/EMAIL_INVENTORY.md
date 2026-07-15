@@ -108,23 +108,23 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Triggers | `auth_routes.py:769` (register); `oauth_routes.py:392` (OAuth signup); `subscription_routes.py:221` (trial start) |
 | Metered | No |
 
-#### B2. Trial midpoint check-in (Day 7)
+#### B2. Trial midpoint check-in (T-4 on the 7-day trial)
 | | |
 |---|---|
-| Function | `send_trial_day_7_email(to_email, name, days_remaining, plan_name)` |
+| Function | `send_trial_halfway_email(to_email, name, days_remaining, plan_name)` |
 | Subject | `You're halfway through your OyeChats trial` |
-| Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:863`) — **daily 09:00** |
+| Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:879`) — **daily 09:00** — fires when `days_remaining == 4` (marker key `day_7` preserved from the legacy 14-day cadence) |
 | Metered | No |
 
-#### B3. Trial "X days left" (Day 11 = 3 left, Day 13 = 1 left)
+#### B3. Trial "X days left" (T-2 warning and final-day alarm)
 | | |
 |---|---|
 | Function | `send_trial_days_left_email(to_email, name, days_remaining, plan_name)` |
 | Subject | `{N} days left in your OyeChats trial` / `Your OyeChats trial ends tomorrow` (≤1 day) |
-| Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:870`) — **daily 09:00** |
+| Trigger | ARQ cron `task_trial_reminder_emails` (`tasks.py:886`) — **daily 09:00** — fires when `days_remaining ∈ {2, 1}` (marker keys `day_11`, `day_13` preserved from the legacy 14-day cadence) |
 | Metered | No |
 
-#### B4. Trial ended (Day 14)
+#### B4. Trial ended
 | | |
 |---|---|
 | Function | `send_trial_ended_email(to_email, name, plan_name, data_retention_until)` |
@@ -279,7 +279,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 | Cron task | Schedule | Emails it can send |
 |-----------|----------|--------------------|
-| `task_trial_reminder_emails` | daily **09:00** | B2 (day 7), B3 (days 11 & 13) |
+| `task_trial_reminder_emails` | daily **09:00** | B2 (T-4 halfway), B3 (T-2 & final day) |
 | `task_expire_trials` | **hourly at :15** | B4 (trial ended) |
 | `task_delete_expired_trial_data` | daily **00:20** | B5 (data deleted) |
 | `task_promote_scheduled_downgrades` | daily **00:07** | C2 (downgrade re-auth, via transition_service) |

@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.sql import func
@@ -193,13 +193,49 @@ def list_offline_messages(
     bot_id: int | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    acting_as: str | None = Header(None, alias="X-Acting-Role"),
     auth=Depends(get_current_client_or_operator),
 ):
-    """List offline messages for the authenticated client/agent's bots."""
+    """List offline messages for the authenticated client / operator.
+
+    Client / workspace-owner sessions see every bot in the workspace.
+    Operator sessions are one-to-one with a bot — they see messages for that
+    bot only, and the operator's ``bot_id`` overrides any ``bot_id`` query
+    parameter so a modified request can't peek at a sibling bot's inbox.
+    """
     client_id = auth["client_id"]
     with get_session() as session:
         # Get client's bot IDs
         bot_ids = [bid for (bid,) in session.execute(select(Bot.id).where(Bot.client_id == client_id)).all()]
+
+        # Operator scoping: collapse the workspace's bot list down to the one
+        # bot this operator is bound to. Overrides any ``bot_id`` query param
+        # so an operator can't peek at a sibling bot's messages by changing
+        # the URL. Falls back to the entity attribute if the auth resolver's
+        # cached ``bot_id`` field isn't populated (older code path).
+        if auth["type"] == "operator":
+            operator_bot_id = auth.get("bot_id") or getattr(auth.get("entity"), "bot_id", None)
+            if operator_bot_id is None or operator_bot_id not in bot_ids:
+                return {"messages": [], "total": 0, "page": page}
+            bot_ids = [operator_bot_id]
+            bot_id = operator_bot_id
+        elif auth["type"] == "client" and (acting_as or "").lower() == "operator":
+            # Self-operator path — owner added themselves as operator in their
+            # own workspace and the switcher pill is in "operator" mode. Look
+            # up their self-operator row and scope to its bot.
+            from app.db.models import Operator as _Op
+
+            self_op_bot_id = session.execute(
+                select(_Op.bot_id).where(
+                    _Op.client_id == client_id,
+                    _Op.linked_client_id == client_id,
+                    _Op.is_active.is_(True),
+                )
+            ).scalar_one_or_none()
+            if self_op_bot_id is not None and self_op_bot_id in bot_ids:
+                bot_ids = [self_op_bot_id]
+                bot_id = self_op_bot_id
+
         if not bot_ids:
             return {"messages": [], "total": 0, "page": page}
 

@@ -47,12 +47,19 @@ class _ExecuteResult:
         return _ScalarResult(self._tuple_value)
 
 
-def _owner_tuple(*, suspended: bool, is_superadmin: bool = False):
-    """Row shape returned by ``select(Client.is_superadmin, Client.suspended_at)``."""
-    return (is_superadmin, datetime.now(UTC) if suspended else None)
+def _owner_tuple(*, suspended: bool, is_superadmin: bool = False, deactivated: bool = False):
+    """Row shape returned by ``select(Client.is_superadmin, Client.suspended_at, Client.deactivated_at)``."""
+    now = datetime.now(UTC)
+    return (is_superadmin, now if suspended else None, now if deactivated else None)
 
 
-def _client(*, suspended: bool, is_superadmin: bool = False, **extra) -> SimpleNamespace:
+def _client(
+    *,
+    suspended: bool,
+    is_superadmin: bool = False,
+    deactivated: bool = False,
+    **extra,
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=1,
         name="Acme",
@@ -60,6 +67,7 @@ def _client(*, suspended: bool, is_superadmin: bool = False, **extra) -> SimpleN
         api_key="client-key-123",
         is_superadmin=is_superadmin,
         suspended_at=datetime.now(UTC) if suspended else None,
+        deactivated_at=datetime.now(UTC) if deactivated else None,
         **extra,
     )
 
@@ -337,3 +345,77 @@ class TestGetCurrentBot:
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_suspended"
+
+
+# ── Deactivated-client enforcement (post-trial hard-delete) ──────────────────
+#
+# ``Client.deactivated_at`` is set by ``task_delete_expired_trial_data`` after
+# the 15-day retention window. Every auth path that accepts a Client identity
+# must refuse to resolve a deactivated row with HTTP 403 ``account_deleted`` —
+# otherwise a customer whose workspace was hard-deleted would authenticate
+# into a ghost dashboard. Superadmins remain exempt.
+
+
+class TestGetCurrentClientDeactivated:
+    def test_deactivated_client_api_key_rejected(self, monkeypatch):
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(_client(suspended=False, deactivated=True))
+        _patch_session(monkeypatch, session)
+
+        with pytest.raises(HTTPException) as exc:
+            auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "account_deleted"
+
+    def test_deactivated_client_via_operator_key_rejected(self, monkeypatch):
+        operator = SimpleNamespace(id=9, client_id=1, operator_api_key="op-key")
+        deactivated_owner = _client(suspended=False, deactivated=True)
+        session = MagicMock()
+        session.execute.side_effect = [
+            _ExecuteResult(operator),
+            _ExecuteResult(deactivated_owner),
+        ]
+        _patch_session(monkeypatch, session)
+
+        with pytest.raises(HTTPException) as exc:
+            auth.get_current_client(api_key=None, operator_key="op-key", legacy_agent_key=None)
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "account_deleted"
+
+    def test_superadmin_never_deactivated_locked_out(self, monkeypatch):
+        """Defensive: even if ``deactivated_at`` were somehow set on a
+        superadmin row, the console must stay reachable."""
+        admin = _client(suspended=False, deactivated=True, is_superadmin=True)
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(admin)
+        _patch_session(monkeypatch, session)
+
+        result = auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+        assert result is admin
+
+
+class TestGetCurrentBotDeactivatedOwner:
+    def test_deactivated_owner_bot_key_rejected(self, monkeypatch):
+        """Widget requests must stop working when the owning client is
+        deactivated — otherwise a hard-deleted workspace's embed keeps
+        serving 200s against a dashboard the customer can't reach."""
+        bot = _bot(client_id=1)
+        session = MagicMock()
+        # Bot lookup returns the bot; the owner-standing tuple lookup returns
+        # a deactivated row.
+        session.execute.side_effect = [
+            _ExecuteResult(bot),
+            _ExecuteResult(None, tuple_value=_owner_tuple(suspended=False, deactivated=True)),
+        ]
+        _patch_session(monkeypatch, session)
+        monkeypatch.setattr(auth, "cache_get", lambda key: None)
+        monkeypatch.setattr(auth, "cache_set", lambda *a, **k: None)
+
+        request = SimpleNamespace(headers={})
+        with pytest.raises(HTTPException) as exc:
+            auth.get_current_bot(request=request, bot_key="bot-abc123", api_key=None)
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "account_deleted"

@@ -29,9 +29,8 @@ import { useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Download, X } from 'lucide-react';
 import useInstallPrompt from '../hooks/useInstallPrompt';
-import { useWorkspace } from '../context/WorkspaceContext';
-import { getAuthState } from '../utils/auth';
 import { cn } from '../lib/utils';
+import InstallInstructionsModal from './InstallInstructionsModal';
 
 const DISMISS_KEY = 'oyechats:install_banner_dismissed_at';
 const DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -58,11 +57,10 @@ function markDismissed() {
 
 export default function InstallBanner() {
     const { canInstall, isInstalled, isIOS, install } = useInstallPrompt();
-    const { currentRole } = useWorkspace();
-    const { isOperator: legacyOperator } = getAuthState();
     const location = useLocation();
     const [dismissed, setDismissed] = useState(() => wasDismissedRecently());
     const [installing, setInstalling] = useState(false);
+    const [showInstructions, setShowInstructions] = useState(false);
 
     // Re-check dismissal on route change — someone who dismissed then hit
     // Cmd+K a week later would otherwise stay hidden until page reload.
@@ -70,35 +68,30 @@ export default function InstallBanner() {
         setDismissed(wasDismissedRecently());
     }, [location.pathname]);
 
-    const audienceMatches = (
-        legacyOperator
-        || currentRole === 'operator'
-        || location.pathname === '/support'
-    );
-
     const shouldRender = (
         !isInstalled
-        && !isIOS
-        && canInstall
-        && audienceMatches
         && !dismissed
     );
 
     const handleInstall = useCallback(async () => {
-        setInstalling(true);
-        try {
-            const { outcome } = await install();
-            if (outcome !== 'accepted') {
-                // Browser prompt was declined or unavailable — silence us so
-                // we don't re-appear on next render / route change until the
-                // 7-day window elapses.
-                markDismissed();
-                setDismissed(true);
+        if (canInstall) {
+            setInstalling(true);
+            try {
+                const { outcome } = await install();
+                if (outcome !== 'accepted') {
+                    // Browser prompt was declined or unavailable — silence us so
+                    // we don't re-appear on next render / route change until the
+                    // 7-day window elapses.
+                    markDismissed();
+                    setDismissed(true);
+                }
+            } finally {
+                setInstalling(false);
             }
-        } finally {
-            setInstalling(false);
+        } else {
+            setShowInstructions(true);
         }
-    }, [install]);
+    }, [install, canInstall]);
 
     const handleDismiss = useCallback(() => {
         markDismissed();
@@ -106,61 +99,104 @@ export default function InstallBanner() {
     }, []);
 
     return (
-        <AnimatePresence>
-            {shouldRender && (
-                <motion.div
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 12 }}
-                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                    role="dialog"
-                    aria-label="Install OyeChats as an app"
-                    className={cn(
-                        'fixed bottom-4 right-4 z-30 w-[22rem] max-w-[calc(100vw-2rem)]',
-                        'rounded-2xl border shadow-lg p-4',
-                        'bg-white dark:bg-surface-900',
-                        'border-surface-200 dark:border-surface-800',
-                    )}
-                >
-                    <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-surface-100 dark:bg-surface-800 flex items-center justify-center shrink-0">
-                            <Download size={18} className="text-surface-700 dark:text-surface-200" />
+        <>
+            <AnimatePresence>
+                {shouldRender && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 12 }}
+                        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                        role="dialog"
+                        aria-label="Install OyeChats as an app"
+                        className={cn(
+                            'fixed z-30 transition-all duration-300',
+                            'bottom-4 left-4 right-4',
+                            'md:bottom-4 md:right-4 md:left-auto md:w-[22rem] md:max-w-[calc(100vw-2rem)]',
+                            'rounded-2xl border shadow-lg p-4',
+                            'bg-white dark:bg-surface-900',
+                            'border-surface-200 dark:border-surface-800',
+                        )}
+                    >
+                        <div className="flex flex-row md:items-start items-center justify-between gap-3 w-full">
+                            {/* Icon & Text Block */}
+                            <div className="flex items-center md:items-start gap-3 min-w-0 flex-1">
+                                <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-950/20 flex items-center justify-center shrink-0">
+                                    <Download size={20} className="text-primary-600 dark:text-primary-400" />
+                                </div>
+                                <div className="min-w-0">
+                                    <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100 leading-tight">
+                                        Install OyeChats
+                                    </h3>
+                                    <p className="text-xs text-surface-600 dark:text-surface-400 mt-0.5 leading-tight md:leading-relaxed whitespace-normal">
+                                        <span className="block md:hidden">Add to home screen for quick access</span>
+                                        <span className="hidden md:block">Get chat alerts even when the browser is closed.</span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Mobile Actions: Inline Button + Close button */}
+                            <div className="flex items-center gap-2 shrink-0 md:hidden">
+                                <button
+                                    type="button"
+                                    onClick={handleInstall}
+                                    disabled={installing}
+                                    className={cn(
+                                        'px-4 py-1.5 rounded-full text-xs font-semibold transition-colors',
+                                        'bg-primary-600 hover:bg-primary-700 text-white',
+                                        'dark:bg-primary-500 dark:hover:bg-primary-600',
+                                        installing && 'opacity-60 cursor-wait',
+                                    )}
+                                >
+                                    {installing ? 'Installing...' : 'Install'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDismiss}
+                                    className="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 p-1 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+                                    aria-label="Dismiss install prompt"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            {/* Desktop-only Close button at top right */}
+                            <button
+                                type="button"
+                                onClick={handleDismiss}
+                                className="hidden md:block text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 shrink-0 p-0.5 rounded"
+                                aria-label="Dismiss install prompt"
+                                title="Dismiss for 7 days"
+                            >
+                                <X size={16} />
+                            </button>
                         </div>
-                        <div className="flex-1 min-w-0">
-                            <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">
-                                Install OyeChats
-                            </h3>
-                            <p className="text-xs text-surface-600 dark:text-surface-400 mt-0.5 leading-relaxed">
-                                Get chat alerts even when the browser is closed.
-                            </p>
+
+                        {/* Desktop-only Action Row at bottom */}
+                        <div className="hidden md:flex mt-3 justify-end">
+                            <button
+                                type="button"
+                                onClick={handleInstall}
+                                disabled={installing}
+                                className={cn(
+                                    'px-4 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                                    'bg-surface-900 hover:bg-surface-800 text-white',
+                                    'dark:bg-surface-100 dark:hover:bg-white dark:text-surface-900',
+                                    installing && 'opacity-60 cursor-wait',
+                                )}
+                            >
+                                {installing ? 'Installing...' : 'Install'}
+                            </button>
                         </div>
-                        <button
-                            type="button"
-                            onClick={handleDismiss}
-                            className="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 shrink-0 p-0.5 rounded"
-                            aria-label="Dismiss install prompt"
-                            title="Dismiss for 7 days"
-                        >
-                            <X size={16} />
-                        </button>
-                    </div>
-                    <div className="mt-3 flex justify-end">
-                        <button
-                            type="button"
-                            onClick={handleInstall}
-                            disabled={installing}
-                            className={cn(
-                                'px-4 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                                'bg-surface-900 hover:bg-surface-800 text-white',
-                                'dark:bg-surface-100 dark:hover:bg-white dark:text-surface-900',
-                                installing && 'opacity-60 cursor-wait',
-                            )}
-                        >
-                            {installing ? 'Installing...' : 'Install'}
-                        </button>
-                    </div>
-                </motion.div>
-            )}
-        </AnimatePresence>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <InstallInstructionsModal
+                open={showInstructions}
+                mode={isIOS ? 'ios' : (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) ? 'android' : 'desktop')}
+                onClose={() => setShowInstructions(false)}
+            />
+        </>
     );
 }

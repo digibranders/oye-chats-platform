@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select, update
@@ -1068,11 +1068,56 @@ def get_bot_demo_page(
 
 
 @router.get("", response_model=list[BotResponse])
-def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
-    """List all bots for the authenticated client or agent's client."""
+def list_bots(
+    request: Request,
+    acting_as: str | None = Header(None, alias="X-Acting-Role"),
+    auth=Depends(get_current_client_or_operator),
+):
+    """List bots the caller can act on.
+
+    Scoping matrix
+    --------------
+    * **Client / workspace owner (own workspace, no operator hat)** — every
+      bot in the workspace.
+    * **Operator (X-Operator-Key or linked-operator via X-Workspace-Id)** —
+      the single bot they're bound to (one-to-one operator↔bot binding).
+    * **Owner acting as their own self-operator** — the auth resolver classifies
+      this as ``type="client"`` because the caller is looking at their own
+      workspace, so the operator-scoping branch above wouldn't fire on its
+      own. When the frontend sends ``X-Acting-Role: operator`` (the workspace
+      switcher pill sets this whenever ``currentRole === 'operator'``), we
+      look up the caller's self-operator row and restrict to that bot too.
+      Falling back to the full workspace list on any lookup miss preserves
+      owner UX for clients whose frontend didn't send the hint.
+
+    Operators must not see or switch to other bots in the workspace; the admin
+    UI's bot switcher renders this list verbatim, so filtering here keeps
+    unauthorised bots off the client entirely.
+    """
     client_id = auth["client_id"]
     with get_session() as session:
         stmt = select(Bot).where(Bot.client_id == client_id).order_by(Bot.id)
+        if auth["type"] == "operator":
+            operator_bot_id = auth.get("bot_id") or getattr(auth.get("entity"), "bot_id", None)
+            if operator_bot_id is None:
+                return []
+            stmt = stmt.where(Bot.id == operator_bot_id)
+        elif auth["type"] == "client" and (acting_as or "").lower() == "operator":
+            # Self-operator path — owner added themselves as an operator in
+            # their own workspace and the switcher pill is in "operator"
+            # mode. Resolve the self-operator row (client_id ==
+            # linked_client_id == workspace owner id) and scope to its bot.
+            from app.db.models import Operator as _Op
+
+            self_op_bot_id = session.execute(
+                select(_Op.bot_id).where(
+                    _Op.client_id == client_id,
+                    _Op.linked_client_id == client_id,
+                    _Op.is_active.is_(True),
+                )
+            ).scalar_one_or_none()
+            if self_op_bot_id is not None:
+                stmt = stmt.where(Bot.id == self_op_bot_id)
         bots = session.execute(stmt).scalars().all()
         bots_response = []
         for b in bots:

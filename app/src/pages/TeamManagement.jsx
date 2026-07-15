@@ -35,6 +35,21 @@ export default function TeamManagement() {
     const confirm = useConfirm();
     const { requestUpgrade } = useUpgradeModal();
     const { entitlements: ent } = useEntitlements();
+    // "Pure operator" = the caller has an operator role in the currently-
+    // viewed workspace and can't manage the team. Two paths qualify:
+    //   1. Legacy X-Operator-Key session with role != owner/admin.
+    //   2. Client identity with ``auth_type='client'`` (so isBotManager stays
+    //      true at the storage level) but ``currentRole='operator'`` — they
+    //      accepted an invite into someone else's workspace and are acting
+    //      as an operator there via the switcher.
+    // Write actions (invite, create dept, edit/delete rows) gate on
+    // ``canManageTeam``; tab visibility does NOT — operators still see the
+    // Operators and Departments lists read-only. Kept in a single derivation
+    // so a mismatch between the button gate and the payload gate is
+    // impossible.
+    const { currentRole: workspaceRole, currentWorkspaceId } = useWorkspace();
+    const pureOperator = (isOperator && !isBotManager) || workspaceRole === 'operator';
+    const canManageTeam = isBotManager && !pureOperator;
     // Live-chat-derived team features (operators, departments, canned
     // responses) are all bundled behind the `live_chat` plan feature. Free
     // plans render the team page so users can SEE the surface, but every
@@ -82,7 +97,6 @@ export default function TeamManagement() {
     // memberships, WorkspaceContext hasn't populated yet and this is null; in
     // that state we fall through to "viewing own workspace" behaviour (the
     // caller has no other workspace to be viewing anyway).
-    const { currentWorkspaceId } = useWorkspace();
     const isViewingOwnWorkspace = !currentWorkspaceId || currentWorkspaceId === myClientId;
     // The sidebar's bot switcher scopes team management: an operator is
     // bound to exactly one bot (``Operator.bot_id``, migration
@@ -106,11 +120,21 @@ export default function TeamManagement() {
     // CTA in that context makes the button semantically honest: "add yourself
     // as an operator HERE."
     const canSelfAdd = !isOperator && !!myClientId && isViewingOwnWorkspace;
-    // The self-operator row (owner acting as operator in their own workspace)
-    // is the one whose ``linked_client_id`` matches the logged-in Client. Only
-    // one such row can exist per workspace by the partial unique index.
+    // The self-operator row (owner acting as operator in their own workspace).
+    // Preference order matches the backend toggle-status lookup so the CTA
+    // hides for either shape of row:
+    //   1. The linked self-op row (``linked_client_id === myClientId``) —
+    //      the row created by ``POST /me/self-operator``.
+    //   2. A legacy ``role === 'owner'`` row with no linked identity — created
+    //      by earlier auto-provisioning paths before the linked-identity model.
+    // Only one row of either shape can exist per workspace for this caller,
+    // so the ``find`` is safe.
     const selfOperatorRow = canSelfAdd
-        ? (operators.find((op) => op.linked_client_id === myClientId) || null)
+        ? (
+            operators.find((op) => op.linked_client_id === myClientId)
+            || operators.find((op) => op.role === 'owner' && !op.linked_client_id)
+            || null
+        )
         : null;
     const hasActiveSelfOperator = !!(selfOperatorRow && selfOperatorRow.is_active !== false);
 
@@ -238,9 +262,16 @@ export default function TeamManagement() {
     // is needed — the operators-table Delete is the reversal action.
     const handleAddSelfAsOperator = async () => {
         if (!requireLiveChat('add_operator')) return;
+        // Operators are one-to-one with a bot. Bind the new self-operator row
+        // to the sidebar-selected bot; if the sidebar hasn't populated yet,
+        // refuse cleanly rather than send a bad request the backend will 422.
+        if (!selectedBotId) {
+            showToast('error', 'Pick a bot in the sidebar first — operators are scoped to a bot.');
+            return;
+        }
         setSelfOperatorBusy(true);
         try {
-            await addSelfAsOperator();
+            await addSelfAsOperator(selectedBotId);
             fetchData();
             showToast('success', "You're now taking live chats in this workspace");
         } catch (err) {
@@ -268,14 +299,23 @@ export default function TeamManagement() {
         setEditOpError('');
         setEditOpSaving(true);
         try {
-            await updateOperator(editingOperator.id, {
-                name: editOpForm.name.trim(),
-                email: editOpForm.email.trim().toLowerCase(),
+            // Name/email are self-only. When the caller is NOT the operator being
+            // edited, we omit those fields from the payload so the backend guard
+            // doesn't 403 on an accidental send. Role / department / max chats
+            // are always sent — those are the admin-editable fields.
+            const isSelfEdit = !!(editingOperator?.linked_client_id && editingOperator.linked_client_id === myClientId);
+            const payload = {
                 role: editOpForm.role,
                 department_id: editOpForm.department_id ? Number(editOpForm.department_id) : null,
                 max_concurrent_chats: Number(editOpForm.max_concurrent_chats),
-            });
-            showToast('success', `Operator "${editOpForm.name}" updated`);
+            };
+            if (isSelfEdit) {
+                payload.name = editOpForm.name.trim();
+                payload.email = editOpForm.email.trim().toLowerCase();
+            }
+            await updateOperator(editingOperator.id, payload);
+            const displayName = isSelfEdit ? editOpForm.name : editingOperator.name;
+            showToast('success', `Operator "${displayName}" updated`);
             setEditingOperator(null);
             fetchData();
         } catch (err) {
@@ -434,7 +474,7 @@ export default function TeamManagement() {
                                 </span>
                             )}
                         </p>
-                        {isBotManager && (
+                        {canManageTeam && (
                             <div className="flex items-center gap-2">
                                 {/* Primary CTA — email invite (invite-first onboarding).
                                     The invitee signs up on their own; no password
@@ -502,7 +542,7 @@ export default function TeamManagement() {
                         Bot-scoped: only invites targeting the currently-
                         selected bot show up so a workspace with dozens of
                         pending invites across bots doesn't drown the surface. */}
-                    {isBotManager && !pendingInvitesLoading && botScopedPendingInvites.length > 0 && (
+                    {canManageTeam && !pendingInvitesLoading && botScopedPendingInvites.length > 0 && (
                         <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-4">
                             <div className="flex items-center gap-2 mb-3">
                                 <Clock size={14} className="text-surface-500" />
@@ -556,7 +596,7 @@ export default function TeamManagement() {
 
                     {/* ── Invite operator modal ───────────────────────────── */}
                     <AnimatePresence>
-                        {isBotManager && showInviteOperator && (
+                        {canManageTeam && showInviteOperator && (
                             <motion.div
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -629,8 +669,8 @@ export default function TeamManagement() {
                     </AnimatePresence>
 
                     {/* Operators Table */}
-                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
-                        <table className="w-full">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-x-auto">
+                        <table className="w-full min-w-[820px]">
                             <thead>
                                 <tr className="border-b border-surface-100 dark:border-surface-800">
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Operator</th>
@@ -639,7 +679,7 @@ export default function TeamManagement() {
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Department</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Status</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Chats</th>
-                                    {isBotManager && (
+                                    {canManageTeam && (
                                         <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Actions</th>
                                     )}
                                 </tr>
@@ -684,7 +724,7 @@ export default function TeamManagement() {
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-sm text-surface-600 dark:text-surface-400">{operator.active_chats || 0}</td>
-                                            {isBotManager && (
+                                            {canManageTeam && (
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex items-center justify-end gap-1">
                                                         <button
@@ -706,9 +746,18 @@ export default function TeamManagement() {
                                             )}
                                         </tr>
 
-                                        {/* Inline edit row */}
+                                        {/* Inline edit row. ``isEditingSelfOp`` gates the name/email
+                                            fields — those are personal identity, only the operator
+                                            themselves can change them. Everyone else edits role /
+                                            department / max chats only. */}
                                         <AnimatePresence>
-                                            {editingOperator?.id === operator.id && (
+                                            {editingOperator?.id === operator.id && (() => {
+                                                const isEditingSelfOp = !!(
+                                                    operator.linked_client_id
+                                                    && myClientId
+                                                    && operator.linked_client_id === myClientId
+                                                );
+                                                return (
                                                 <tr key={`edit-${operator.id}`}>
                                                     <td colSpan={isBotManager ? 7 : 6} className="px-0 py-0">
                                                         <motion.div
@@ -725,16 +774,27 @@ export default function TeamManagement() {
                                                                     Edit Operator — {operator.name}
                                                                 </p>
                                                                 {editOpError && <p className="text-sm text-rose-600 dark:text-rose-400 mb-3">{editOpError}</p>}
+                                                                {/* Self-edit gate: name + email are personal-identity
+                                                                    fields, editable ONLY by the operator themselves.
+                                                                    Admins/owners can change role / department / max
+                                                                    concurrent chats but not the person's name or email
+                                                                    on their behalf — matches how most team tools work
+                                                                    (Slack, Linear) and prevents an admin from silently
+                                                                    reassigning an invite by editing the email. */}
                                                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                                                     <div>
                                                                         <label className="text-[11px] text-surface-500 dark:text-surface-400 mb-1 block">Name</label>
-                                                                        <input type="text" required value={editOpForm.name}
-                                                                            onChange={(e) => setEditOpForm(p => ({ ...p, name: e.target.value }))} className={inputCls} />
+                                                                        <input type="text" required value={editOpForm.name} disabled={!isEditingSelfOp}
+                                                                            onChange={(e) => setEditOpForm(p => ({ ...p, name: e.target.value }))}
+                                                                            className={cn(inputCls, !isEditingSelfOp && 'opacity-60 cursor-not-allowed')}
+                                                                            title={!isEditingSelfOp ? 'Only the operator can change their own name' : undefined} />
                                                                     </div>
                                                                     <div>
                                                                         <label className="text-[11px] text-surface-500 dark:text-surface-400 mb-1 block">Email</label>
-                                                                        <input type="email" required value={editOpForm.email}
-                                                                            onChange={(e) => setEditOpForm(p => ({ ...p, email: e.target.value }))} className={inputCls} />
+                                                                        <input type="email" required value={editOpForm.email} disabled={!isEditingSelfOp}
+                                                                            onChange={(e) => setEditOpForm(p => ({ ...p, email: e.target.value }))}
+                                                                            className={cn(inputCls, !isEditingSelfOp && 'opacity-60 cursor-not-allowed')}
+                                                                            title={!isEditingSelfOp ? 'Only the operator can change their own email' : undefined} />
                                                                     </div>
                                                                     <div>
                                                                         <label className="text-[11px] text-surface-500 dark:text-surface-400 mb-1 block">Role</label>
@@ -776,16 +836,25 @@ export default function TeamManagement() {
                                                         </motion.div>
                                                     </td>
                                                 </tr>
-                                            )}
+                                                );
+                                            })()}
                                         </AnimatePresence>
                                     </>
                                 ))}
-                                {operators.length === 0 && (
+                                {botScopedOperators.length === 0 && (
                                     <tr>
                                         <td colSpan={isBotManager ? 7 : 6} className="px-4 py-12 text-center text-surface-400 dark:text-surface-500">
                                             <Headphones size={32} className="mx-auto mb-2 opacity-50" />
-                                            <p className="font-medium">No operators yet</p>
-                                            <p className="text-xs mt-1">Create operators to handle live chat conversations.</p>
+                                            <p className="font-medium">
+                                                {selectedBot?.name
+                                                    ? `No operators on ${selectedBot.name} yet`
+                                                    : 'No bot selected'}
+                                            </p>
+                                            <p className="text-xs mt-1">
+                                                {selectedBot?.name
+                                                    ? 'Invite an operator to handle this bot’s live chats.'
+                                                    : 'Pick a bot in the sidebar to see its operators.'}
+                                            </p>
                                         </td>
                                     </tr>
                                 )}
@@ -802,7 +871,7 @@ export default function TeamManagement() {
                         <p className="text-sm text-surface-500 dark:text-surface-400">
                             {departments.length} department{departments.length !== 1 ? 's' : ''}
                         </p>
-                        {isBotManager && (
+                        {canManageTeam && (
                             <button
                                 onClick={() => {
                                     if (!requireLiveChat('add_department')) return;
@@ -823,7 +892,7 @@ export default function TeamManagement() {
 
                     {/* Create Department Form */}
                     <AnimatePresence>
-                        {isBotManager && showCreateDept && (
+                        {canManageTeam && showCreateDept && (
                             <motion.div
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -869,7 +938,7 @@ export default function TeamManagement() {
                                             <span className="text-xs text-surface-500 dark:text-surface-400">
                                                 {deptOperators.length} operator{deptOperators.length !== 1 ? 's' : ''}
                                             </span>
-                                            {isBotManager && (
+                                            {canManageTeam && (
                                                 <div className="flex gap-1">
                                                     <button
                                                         onClick={() => isEditing ? setEditingDept(null) : openEditDept(dept)}

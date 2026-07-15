@@ -112,6 +112,43 @@ def _ensure_not_suspended(client: Client) -> None:
         )
 
 
+def _ensure_not_deactivated(client: Client) -> None:
+    """Reject a deactivated client with HTTP 403 ``account_deleted``.
+
+    ``Client.deactivated_at`` is stamped by ``task_delete_expired_trial_data``
+    once the 15-day post-trial retention window elapses without an upgrade.
+    At that point the workspace's bots, documents, and chat history have all
+    been hard-deleted; the Client row is kept only for support / audit.
+    Letting the customer authenticate past that point drops them into a
+    ghost dashboard with no way back — friendlier to fail closed here with a
+    clear reason the frontend can render ("your account was deleted; please
+    contact support to restore or start a new signup").
+
+    Superadmins are exempt for the same reason as suspension — they are
+    platform staff, not customers, and must never be locked out.
+    """
+    if getattr(client, "is_superadmin", False):
+        return
+    if getattr(client, "deactivated_at", None) is not None:
+        logger.warning("Deactivated client %s attempted authentication.", getattr(client, "id", None))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="account_deleted",
+        )
+
+
+def _ensure_client_authenticatable(client: Client) -> None:
+    """One-call funnel for every reason a client row must be rejected at auth.
+
+    Callers assume the client has been fetched from a live session and the
+    relevant status columns (``suspended_at``, ``deactivated_at``) were
+    eagerly loaded before session-close, so no lazy-load hits DetachedInstance.
+    Superadmin exemption is delegated to the individual checkers.
+    """
+    _ensure_not_suspended(client)
+    _ensure_not_deactivated(client)
+
+
 def get_current_client(
     api_key: str = Security(api_key_header),
     operator_key: str = Security(operator_key_header),
@@ -137,8 +174,16 @@ def get_current_client(
             client = session.execute(stmt).scalars().first()
             if client:
                 # Eagerly access attributes before session closes
-                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
-                _ensure_not_suspended(client)
+                _ = (
+                    client.id,
+                    client.name,
+                    client.email,
+                    client.api_key,
+                    client.is_superadmin,
+                    client.suspended_at,
+                    client.deactivated_at,
+                )
+                _ensure_client_authenticatable(client)
                 session.expunge(client)
                 return client
             logger.warning("Failed authentication attempt with invalid API Key.")
@@ -159,8 +204,16 @@ def get_current_client(
             if operator:
                 client = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
                 if client:
-                    _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
-                    _ensure_not_suspended(client)
+                    _ = (
+                        client.id,
+                        client.name,
+                        client.email,
+                        client.api_key,
+                        client.is_superadmin,
+                        client.suspended_at,
+                        client.deactivated_at,
+                    )
+                    _ensure_client_authenticatable(client)
                     session.expunge(client)
                     return client
             raise HTTPException(
@@ -268,6 +321,7 @@ def get_current_client_or_operator(
                     operator.name,
                     operator.email,
                     operator.client_id,
+                    operator.bot_id,
                     operator.role,
                     operator.department_id,
                     operator.operator_api_key,
@@ -277,14 +331,17 @@ def get_current_client_or_operator(
                 # standing — a suspended workspace locks out its operators too.
                 owner = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
                 if owner is not None:
-                    _ = owner.id, owner.is_superadmin, owner.suspended_at
-                    _ensure_not_suspended(owner)
+                    _ = owner.id, owner.is_superadmin, owner.suspended_at, owner.deactivated_at
+                    _ensure_client_authenticatable(owner)
                 session.expunge(operator)
                 return {
                     "type": "operator",
                     "entity": operator,
                     "client_id": operator.client_id,
                     "operator_id": operator.id,
+                    # Operator↔bot one-to-one binding. Downstream routes use
+                    # it to scope bot lists, chat routing, and accept guards.
+                    "bot_id": operator.bot_id,
                 }
 
     # Try client key
@@ -296,8 +353,16 @@ def get_current_client_or_operator(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid API Key.",
                 )
-            _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
-            _ensure_not_suspended(client)
+            _ = (
+                client.id,
+                client.name,
+                client.email,
+                client.api_key,
+                client.is_superadmin,
+                client.suspended_at,
+                client.deactivated_at,
+            )
+            _ensure_client_authenticatable(client)
 
             # No workspace header, or caller pointing at their own workspace →
             # act as owner (legacy path).
@@ -342,14 +407,15 @@ def get_current_client_or_operator(
             # suspended workspace locks out its linked operators too.
             owner = session.execute(select(Client).where(Client.id == requested_workspace_id)).scalars().first()
             if owner is not None:
-                _ = owner.id, owner.is_superadmin, owner.suspended_at
-                _ensure_not_suspended(owner)
+                _ = owner.id, owner.is_superadmin, owner.suspended_at, owner.deactivated_at
+                _ensure_client_authenticatable(owner)
 
             _ = (
                 operator.id,
                 operator.name,
                 operator.email,
                 operator.client_id,
+                operator.bot_id,
                 operator.role,
                 operator.department_id,
                 operator.operator_api_key,
@@ -365,6 +431,9 @@ def get_current_client_or_operator(
                 # working transparently.
                 "client_id": requested_workspace_id,
                 "operator_id": operator.id,
+                # Operator↔bot one-to-one binding. Downstream routes use it to
+                # scope bot lists, chat routing, and accept guards.
+                "bot_id": operator.bot_id,
                 # New: the underlying Client identity — useful for auditing and
                 # for cache-key invalidation across workspaces.
                 "linked_client_id": client.id,
@@ -400,8 +469,16 @@ def get_current_client_strict(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API Key.",
             )
-        _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
-        _ensure_not_suspended(client)
+        _ = (
+            client.id,
+            client.name,
+            client.email,
+            client.api_key,
+            client.is_superadmin,
+            client.suspended_at,
+            client.deactivated_at,
+        )
+        _ensure_client_authenticatable(client)
         session.expunge(client)
         return client
 
@@ -591,21 +668,33 @@ def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
 
 
 def _ensure_bot_owner_not_suspended(session, client_id: int) -> None:
-    """Reject a widget request whose owning client is suspended (403).
+    """Reject a widget request whose owning client is suspended or
+    deactivated (403).
 
     ``get_current_bot`` runs on the hot chat path, so this adds one narrow
-    ``suspended_at``/``is_superadmin`` lookup keyed by ``client_id`` rather than
-    loading the whole Client row. A missing owner (deleted client) is treated as
-    not-suspended — the surrounding bot lookup already validated the bot exists.
+    ``suspended_at`` / ``deactivated_at`` / ``is_superadmin`` lookup keyed
+    by ``client_id`` rather than loading the whole Client row. A missing
+    owner (client row already purged) is treated as not-suspended — the
+    surrounding bot lookup already validated the bot exists, and the
+    hard-delete cron leaves the Client row in place anyway.
     """
     owner = (
-        session.execute(select(Client.is_superadmin, Client.suspended_at).where(Client.id == client_id))
+        session.execute(
+            select(Client.is_superadmin, Client.suspended_at, Client.deactivated_at).where(Client.id == client_id)
+        )
         .tuples()
         .first()
     )
     if owner is None:
         return
-    _ensure_not_suspended(SimpleNamespace(id=client_id, is_superadmin=owner[0], suspended_at=owner[1]))
+    _ensure_client_authenticatable(
+        SimpleNamespace(
+            id=client_id,
+            is_superadmin=owner[0],
+            suspended_at=owner[1],
+            deactivated_at=owner[2],
+        )
+    )
 
 
 def get_current_bot(
@@ -675,8 +764,8 @@ def get_current_bot(
             stmt = select(Client).where(Client.api_key == api_key)
             client = session.execute(stmt).scalars().first()
             if client:
-                _ = client.id, client.is_superadmin, client.suspended_at
-                _ensure_not_suspended(client)
+                _ = client.id, client.is_superadmin, client.suspended_at, client.deactivated_at
+                _ensure_client_authenticatable(client)
                 # Get the client's first (default) bot
                 bot_stmt = (
                     select(Bot).where(Bot.client_id == client.id, Bot.is_active.is_(True)).order_by(Bot.id).limit(1)

@@ -17,6 +17,9 @@ export default defineConfig({
       template: 'treemap',
     }),
   ],
+  esbuild: {
+    drop: ['console', 'debugger'],
+  },
   base: widgetBase,
   build: {
     outDir: 'dist/app',

@@ -4,11 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
   Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, CreditCard,
-  Gift, Palette, Lock, List, Sparkles,
+  Gift, Palette, Lock, List, Sparkles, Download, Loader2,
 } from 'lucide-react';
 import OyeChatsMark from '../components/OyeChatsMark';
+import InstallInstructionsModal from '../components/InstallInstructionsModal';
 import { useBotContext } from '../context/BotContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useToast } from '../context/ToastContext';
+import useInstallPrompt from '../hooks/useInstallPrompt';
 import { getAuthState } from '../utils/auth';
 import { getOfflineMessages, getLeadStats, getCurrentUser } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
@@ -41,6 +44,38 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   // from the Sidebar — a component that mounts on every authenticated
   // page — is fine.
   const { entitlements: ent } = useEntitlements();
+
+  // PWA install affordance — operators live inside Support all day so getting
+  // OyeChats into their dock/home-screen matters most for them. The hook is
+  // cheap (subscribes to `beforeinstallprompt`); we hide the menu row entirely
+  // once the app is already running as an installed PWA (``isInstalled``).
+  const { canInstall, isInstalled, isIOS, install } = useInstallPrompt();
+  const { showToast } = useToast();
+  const [installModalMode, setInstallModalMode] = useState(null);
+  const [installing, setInstalling] = useState(false);
+
+  const handleInstallClick = async () => {
+    if (canInstall) {
+      setInstalling(true);
+      try {
+        const { outcome } = await install();
+        if (outcome === 'accepted') {
+          showToast('success', 'OyeChats installed. Look for the app icon on your device.');
+        } else if (outcome === 'dismissed') {
+          showToast('info', 'Install dismissed — you can try again anytime.');
+        } else {
+          // Prompt event was consumed by the time we clicked — fall back to
+          // the how-to modal so the CTA still lands somewhere useful.
+          setInstallModalMode(isIOS ? 'ios' : 'desktop');
+        }
+      } finally {
+        setInstalling(false);
+      }
+      return;
+    }
+    setInstallModalMode(isIOS ? 'ios' : 'desktop');
+  };
+
   const [hasUnreadChangelog, setHasUnreadChangelog] = useState(() => {
     try {
       return localStorage.getItem(CHANGELOG_SEEN_STORAGE_KEY) !== LATEST_CHANGELOG_VERSION;
@@ -188,7 +223,23 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   // the other "your-account" tools rather than under "Main" (which is
   // workspace-data oriented).
   const configItems = isOperatorRole
-    ? [{ path: '/team', name: 'Team', icon: UsersRound }]
+    ? [
+        { path: '/team', name: 'Team', icon: UsersRound },
+        // Install OyeChats — action-only item (no route). Operators live
+        // inside Support all day, so surfacing the PWA install here is the
+        // fastest path from "logged in via browser tab" to "chats reach me
+        // via a real app icon". Hidden once the app is already installed.
+        ...(!isInstalled
+          ? [{
+              key: 'install-oyechats',
+              name: installing ? 'Installing…' : 'Install OyeChats',
+              icon: installing ? Loader2 : Download,
+              onClickAction: handleInstallClick,
+              iconSpin: installing,
+              disabled: installing,
+            }]
+          : []),
+      ]
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot, children: [
           { path: '/chatbot?tab=bots', name: 'All Bots', icon: List },
@@ -213,6 +264,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
       ];
 
   const isActive = (item) => {
+    if (!item.path) return false;
     if (item.path.includes('?')) {
       const [pathname, search] = item.path.split('?');
       return location.pathname === pathname && location.search === `?${search}`;
@@ -222,9 +274,57 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   };
 
   const isParentActive = (item) =>
-    item.path !== '/' && location.pathname.startsWith(item.path.split('?')[0]);
+    item.path && item.path !== '/' && location.pathname.startsWith(item.path.split('?')[0]);
+
+  const renderActionItem = (item, index) => {
+    const Icon = item.icon;
+    return (
+      <motion.div
+        key={item.key || item.name}
+        initial={{ opacity: 0, x: -8 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.2, delay: index * 0.03 }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (item.disabled) return;
+            item.onClickAction?.();
+          }}
+          disabled={item.disabled}
+          title={!isOpen ? item.name : undefined}
+          aria-label={item.name}
+          className={cn(
+            'relative flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group text-left',
+            isOpen ? 'w-full' : 'w-10 h-10 justify-center',
+            item.disabled
+              ? 'text-surface-400 dark:text-surface-500 cursor-not-allowed opacity-60'
+              : 'text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/[0.05] hover:text-surface-700 dark:hover:text-surface-200',
+          )}
+        >
+          <div className="relative flex-shrink-0">
+            <Icon
+              size={18}
+              className={cn(
+                'transition-colors text-surface-400 dark:text-surface-500 group-hover:text-surface-600 dark:group-hover:text-surface-300',
+                item.iconSpin && 'animate-spin',
+              )}
+            />
+          </div>
+          {isOpen && (
+            <span className="truncate text-[13px] font-medium flex-1">{item.name}</span>
+          )}
+        </button>
+      </motion.div>
+    );
+  };
 
   const renderLink = (item, index) => {
+    // Action-only rows (e.g. "Install OyeChats") get a button rather than a
+    // NavLink so they don't touch router state or trigger an active-route
+    // highlight for a non-existent path.
+    if (item.onClickAction) return renderActionItem(item, index);
+
     const Icon = item.icon;
     const active = isActive(item);
     const parentActive = isParentActive(item);
@@ -411,7 +511,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
               <p className="mt-1 text-[10px] text-amber-200/80">Could not load workspace bots.</p>
             </div>
           ) : bots.length === 0 ? (
-            isBotManager ? (
+            isBotManager && !isOperatorRole ? (
               <NavLink
                 to="/chatbot"
                 onClick={handleNavClick}
@@ -473,7 +573,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                         </button>
                       ))}
                     </div>
-                    {isBotManager && (
+                    {isBotManager && !isOperatorRole && (
                       <div className="border-t border-surface-200 dark:border-surface-800">
                         <button
                           onClick={handleCreateBot}
@@ -501,7 +601,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center" title={selectedBot.name}>
               <Bot size={15} className="text-primary-400" />
             </div>
-          ) : isBotManager ? (
+          ) : isBotManager && !isOperatorRole ? (
             <NavLink to="/chatbot" className="w-9 h-9 rounded-lg bg-white dark:bg-surface-900 border border-dashed border-surface-300 dark:border-surface-700 flex items-center justify-center" title="Create a chatbot">
               <Plus size={15} className="text-surface-500" />
             </NavLink>
@@ -525,43 +625,44 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         </div>
       </nav>
 
-      {/* What's new — sits flush against the Settings divider line below. */}
-      <div className={cn('shrink-0 pb-2', isOpen ? 'px-6' : 'px-0 flex justify-center')}>
-        {isOpen ? (
-          <a
-            href={CHANGELOG_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={handleChangelogClick}
-            className="inline-flex items-center gap-2 text-[12px] text-surface-500 dark:text-surface-500 hover:text-surface-800 dark:hover:text-surface-200 transition-colors"
-          >
-            <span>
+      {/* What's new — presence IS the signal. The entry only renders while
+          there's an unread release (``localStorage[CHANGELOG_SEEN_STORAGE_KEY]
+          !== LATEST_CHANGELOG_VERSION``); clicking it flips the seen marker
+          via ``handleChangelogClick`` which drops ``hasUnreadChangelog`` and
+          removes this block from the sidebar until the next version bumps
+          ``LATEST_CHANGELOG_VERSION``. No separate dot indicator — the label
+          itself is enough. */}
+      {hasUnreadChangelog && (
+        <div className={cn('shrink-0 pb-2', isOpen ? 'px-6' : 'px-0 flex justify-center')}>
+          {isOpen ? (
+            <a
+              href={CHANGELOG_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={handleChangelogClick}
+              className="inline-flex items-center text-[12px] text-surface-500 dark:text-surface-500 hover:text-surface-800 dark:hover:text-surface-200 transition-colors"
+            >
               What&apos;s new
-            </span>
-            {hasUnreadChangelog && (
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.7)]"
-                aria-label="New release available"
-              />
-            )}
-          </a>
-        ) : (
-          <a
-            href={CHANGELOG_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={handleChangelogClick}
-            title="What's new"
-            aria-label={hasUnreadChangelog ? "What's new (unread release)" : "What's new"}
-            className="relative flex items-center justify-center w-9 h-9 rounded-lg text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/[0.05] hover:text-surface-700 dark:hover:text-surface-200 transition-all"
-          >
-            <Sparkles size={16} className="shrink-0" />
-            {hasUnreadChangelog && (
-              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.7)]" />
-            )}
-          </a>
-        )}
-      </div>
+            </a>
+          ) : (
+            // Collapsed sidebar has no room for a text label, so the unread
+            // release surfaces as a bare dot — same click target as the
+            // expanded link. Clicking still fires ``handleChangelogClick``
+            // which flips the seen marker and removes the whole block.
+            <a
+              href={CHANGELOG_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={handleChangelogClick}
+              title="What's new"
+              aria-label="What's new"
+              className="flex items-center justify-center w-9 h-9 rounded-lg text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/[0.05] transition-all"
+            >
+              <span className="h-2 w-2 rounded-full bg-primary-500 dark:bg-primary-400 shadow-[0_0_6px_rgba(139,92,246,0.6)]" />
+            </a>
+          )}
+        </div>
+      )}
 
       {/* Bottom: Settings link only — the user identity card lives in TopBar's
           profile dropdown, so showing the avatar + name here is duplicate. */}
@@ -585,6 +686,17 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
           )}
         </NavLink>
       </div>
+
+      {/* Install-instructions modal — shown when the operator clicks the
+          sidebar's Install OyeChats row and the browser can't fire a native
+          prompt (Safari desktop, iOS Safari, prompt already consumed). Kept
+          mounted regardless of `installModalMode` so its close transition
+          animates cleanly; the component internally no-ops when open=false. */}
+      <InstallInstructionsModal
+        open={installModalMode !== null}
+        mode={installModalMode || 'desktop'}
+        onClose={() => setInstallModalMode(null)}
+      />
     </aside>
   );
 }

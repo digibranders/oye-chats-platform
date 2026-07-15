@@ -20,8 +20,11 @@ from app.services.plan_entitlements_service import (
     PlanEntitlements,
     _build_usage,
     _compute,
+    get_chat_history_retention_days,
     get_entitlements,
     invalidate,
+    is_bant_enabled_for_plan,
+    is_leads_dashboard_enabled,
 )
 
 # ── Dataclass helpers ──────────────────────────────────────────────────────
@@ -412,6 +415,166 @@ class TestBuildUsage:
 
         assert usage["bots"] == 0  # degraded
         assert usage["operators"] == 3  # still works
+
+
+# ── BANT plan-gate helper ────────────────────────────────────────────────────
+#
+# ``is_bant_enabled_for_plan`` is the chat hot-path gate that decides whether
+# a client's active plan exposes BANT qualification. It reads
+# ``entitlements.features['bant']`` and deny-by-defaults on lookup failure so
+# a broken cache read never silently leaks a paid feature.
+
+
+class TestIsBantEnabledForPlan:
+    def _entitlements(self, *, bant: bool | None) -> PlanEntitlements:
+        features = {}
+        if bant is not None:
+            features["bant"] = bant
+        return PlanEntitlements(
+            client_id=1,
+            plan_slug="standard" if bant else "free",
+            plan_name="Standard" if bant else "Free",
+            subscription_status="active",
+            limits={},
+            features=features,
+        )
+
+    def test_returns_true_when_plan_grants_bant(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(bant=True),
+        ):
+            assert is_bant_enabled_for_plan(1, session) is True
+
+    def test_returns_false_when_plan_denies_bant(self):
+        """A Free/Starter customer must have new-chat BANT extraction
+        skipped even if the bot's own ``bant_enabled`` toggle is on."""
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(bant=False),
+        ):
+            assert is_bant_enabled_for_plan(1, session) is False
+
+    def test_returns_false_when_feature_key_missing(self):
+        """A plan seeded without a ``bant`` key must default to denied
+        rather than silently grant the feature."""
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(bant=None),
+        ):
+            assert is_bant_enabled_for_plan(1, session) is False
+
+    def test_returns_false_on_entitlements_lookup_failure(self):
+        """Deny-by-default: a resolver crash must never grant BANT."""
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            side_effect=RuntimeError("cache down"),
+        ):
+            assert is_bant_enabled_for_plan(1, session) is False
+
+
+# ── Leads dashboard plan-gate helper ─────────────────────────────────────────
+#
+# ``is_leads_dashboard_enabled`` mirrors the sidebar's ``ent.isFree`` lock so
+# the API refuses to serve leads to Free customers. Every paid slug (including
+# custom super-admin-created tiers that aren't literally "free") passes.
+
+
+class TestIsLeadsDashboardEnabled:
+    def _entitlements(self, slug: str) -> PlanEntitlements:
+        return PlanEntitlements(
+            client_id=1,
+            plan_slug=slug,
+            plan_name=slug.title(),
+            subscription_status="active",
+            limits={},
+            features={},
+        )
+
+    def test_free_plan_denied(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements("free"),
+        ):
+            assert is_leads_dashboard_enabled(1, session) is False
+
+    @pytest.mark.parametrize("slug", ["starter", "standard", "enterprise", "custom-paid"])
+    def test_paid_slugs_allowed(self, slug):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(slug),
+        ):
+            assert is_leads_dashboard_enabled(1, session) is True
+
+    def test_returns_false_on_entitlements_lookup_failure(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            side_effect=RuntimeError("cache down"),
+        ):
+            assert is_leads_dashboard_enabled(1, session) is False
+
+
+# ── Chat history retention helper ────────────────────────────────────────────
+#
+# ``get_chat_history_retention_days`` reads ``limits.chat_history_days`` and
+# is used by the visitors listing + per-session transcript endpoints to hide
+# conversations older than the customer's plan permits.
+
+
+class TestGetChatHistoryRetentionDays:
+    def _entitlements(self, *, days) -> PlanEntitlements:
+        return PlanEntitlements(
+            client_id=1,
+            plan_slug="free",
+            plan_name="Free",
+            subscription_status="active",
+            limits={"chat_history_days": days} if days is not None else {},
+            features={},
+        )
+
+    @pytest.mark.parametrize("days,expected", [(7, 7), (30, 30), (90, 90), (0, 0), (-1, UNLIMITED)])
+    def test_returns_configured_value(self, days, expected):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(days=days),
+        ):
+            assert get_chat_history_retention_days(1, session) == expected
+
+    def test_missing_key_defaults_to_unlimited(self):
+        """A plan without a ``chat_history_days`` key at all mustn't
+        suddenly hide the customer's dashboard — default open, not closed."""
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(days=None),
+        ):
+            assert get_chat_history_retention_days(1, session) == UNLIMITED
+
+    def test_malformed_value_defaults_to_unlimited(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(days="not-a-number"),
+        ):
+            assert get_chat_history_retention_days(1, session) == UNLIMITED
+
+    def test_lookup_failure_defaults_to_unlimited(self):
+        """Deliberately generous — a transient resolver crash must not
+        empty out the customer's chat history in the UI."""
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            side_effect=RuntimeError("cache down"),
+        ):
+            assert get_chat_history_retention_days(1, session) == UNLIMITED
 
 
 if __name__ == "__main__":

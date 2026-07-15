@@ -837,8 +837,8 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         _capture_email_failure(exc, event="trial_welcome", email=to_email)
 
 
-def send_trial_day_7_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
-    """Halfway-through nudge."""
+def send_trial_halfway_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
+    """Halfway-through nudge — fires at T-4 on the 7-day trial cadence."""
     inner = (
         h1(f"You&rsquo;re halfway through your trial, {_first_name(name)}")
         + p(
@@ -864,12 +864,12 @@ def send_trial_day_7_email(to_email: str, *, name: str | None, days_remaining: i
             ),
         )
     except Exception as exc:
-        logger.warning("trial_day_7_email_failed for %s: %s", _redact(to_email), exc)
-        _capture_email_failure(exc, event="trial_day_7", email=to_email)
+        logger.warning("trial_halfway_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_halfway", email=to_email)
 
 
 def send_trial_days_left_email(to_email: str, *, name: str | None, days_remaining: int, plan_name: str) -> None:
-    """Urgency reminder fired at day-11 (3 left) and day-13 (1 left)."""
+    """Urgency reminder fired at T-2 and T-1 on the 7-day trial cadence."""
     safe_plan = esc(plan_name)
     if days_remaining <= 1:
         headline = f"your {safe_plan} trial ends tomorrow"

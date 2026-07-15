@@ -9,8 +9,9 @@ import { daysUntil, formatTrialDate, trialDaysLeft } from '../../utils/trial';
  *
  *   1. **In-trial** (`subscription.status === 'trialing'`) — nudges the
  *      customer to authorise a paid mandate before the trial expires, so
- *      the chatbot never goes offline. Copy softens on day 14, sharpens
- *      to warning at day 3, escalates to alarm at day 0.
+ *      the chatbot never goes offline. Copy softens for the first few
+ *      days, sharpens to warning at ≤2 days left, escalates to alarm on
+ *      the day of expiry.
  *
  *   2. **In grace window** (`subscription.status === 'trial_expired'` with
  *      `data_retention_until` still in the future) — the bot is already
@@ -54,16 +55,15 @@ export default function TrialUpgradeBanner({
     if (status === 'trialing' && trialEndIso) {
       const daysLeft = trialDaysLeft(trialEndIso, now);
       if (daysLeft === null) return null;
-      // Hold the nudge for the first half of a 14-day trial: on day 1 the
-      // customer is exploring, not deciding, and a payment banner right
-      // out of the gate reads as pushy. Wait until the halfway mark, then
-      // start reminding — info tone at 7→4 days left, warning at ≤3,
-      // alarm on the day of. "Trial technically over but the flip cron
-      // hasn't fired yet" still shows the trialing copy because the
-      // retention window hasn't started; we can't yet quote a deletion date.
+      // 7-day trial: banner is visible for the full window (there is no
+      // "way too early" phase to hide it in). Info tone at 4–7 days left,
+      // warning at ≤2, alarm on the day of. "Trial technically over but
+      // the flip cron hasn't fired yet" still shows the trialing copy
+      // because the retention window hasn't started; we can't yet quote
+      // a deletion date.
       const TRIAL_BANNER_DAYS = 7;
       if (daysLeft > TRIAL_BANNER_DAYS) return null;
-      const urgency = daysLeft <= 0 ? 'alarm' : daysLeft <= 3 ? 'warning' : 'info';
+      const urgency = daysLeft <= 0 ? 'alarm' : daysLeft <= 2 ? 'warning' : 'info';
       return { kind: 'trialing', daysLeft, deadlineIso: trialEndIso, urgency };
     }
     if (status === 'trial_expired' && retentionIso) {

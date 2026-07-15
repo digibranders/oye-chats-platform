@@ -35,7 +35,7 @@ export default function Support() {
   const tabs = useMemo(
     () => [
       { id: 'live-chat', label: 'Live Chat', icon: Headphones, locked: liveChatLocked },
-      { id: 'messages', label: 'Messages', icon: Inbox },
+      { id: 'messages', label: 'Offline messages', icon: Inbox },
     ],
     [liveChatLocked],
   );

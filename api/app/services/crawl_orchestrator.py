@@ -46,6 +46,7 @@ from app.services.crawler_service import (
     release_crawl_lock,
     set_crawl_progress,
 )
+from app.services.footer_harvester import harvest_footer_media
 from app.services.llm_service import classify_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
@@ -323,6 +324,17 @@ async def run_full_crawl(
         await consumer
 
     consumer_task: asyncio.Task | None = None
+    # Phase 1 footer harvest — runs in parallel with the main crawl. Only
+    # fires for a URL crawl (ordered_urls is a partial re-scrape that already
+    # has an explicit page list, so a site-wide footer pass would be off
+    # topic there). Log-only for now: the awaited result is emitted to the
+    # crawl log so we can validate signal quality on real customer sites
+    # before wiring the media into the ingest pipeline. Failure modes are
+    # all silent + bounded (30s timeout below, cancel on teardown) so no
+    # kill switch is needed at this stage.
+    footer_task: asyncio.Task | None = None
+    if not ordered_urls:
+        footer_task = asyncio.create_task(harvest_footer_media(url))
 
     try:
         if streaming:
@@ -359,6 +371,35 @@ async def run_full_crawl(
                     max_depth=max_depth,
                     concurrency=concurrency,
                 )
+
+        # Await the parallel footer harvest and log its findings. Bounded
+        # wait so a hung Spider scrape here can never delay the crawl's
+        # completion beyond the main scrape's own budget. Cancels and
+        # swallows on timeout — this is a diagnostic side channel.
+        if footer_task is not None:
+            try:
+                footer_media = await asyncio.wait_for(footer_task, timeout=30.0)
+            except TimeoutError:
+                footer_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await footer_task
+                footer_media = {}
+                logger.info("footer_harvest timeout url=%s", url)
+            except Exception:
+                footer_media = {}
+                logger.warning("footer_harvest failed url=%s", url, exc_info=True)
+            finally:
+                footer_task = None
+            if footer_media:
+                logger.info(
+                    "footer_harvest url=%s youtube_videos=%d youtube_channels=%d files=%d",
+                    url,
+                    len(footer_media.get("youtube") or []),
+                    len(footer_media.get("youtube_channels") or []),
+                    len(footer_media.get("files") or []),
+                )
+            else:
+                logger.info("footer_harvest url=%s no media found", url)
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors") or []
@@ -717,4 +758,11 @@ async def run_full_crawl(
                 await _finish_consumer(consumer_task, discard_pending=True)
             except Exception:
                 logger.exception("Streaming ingest consumer failed during crawl teardown for client %s", client_id)
+        # Never leak the footer harvest task either. It only survives here on
+        # a failure path (the happy path awaits + nulls it above); cancel and
+        # drain silently so a stray Spider POST can't outlive the crawl.
+        if footer_task is not None:
+            footer_task.cancel()
+            with contextlib.suppress(BaseException):
+                await footer_task
         release_crawl_lock(client_id)

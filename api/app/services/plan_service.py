@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -505,11 +505,11 @@ class TrialUnavailable(Exception):
 
 
 def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscription:
-    """Move a client onto a 14-day trial of the named paid plan.
+    """Move a client onto the paid plan's configured trial window.
 
     Trial credits = the plan's own ``credits_per_month``. The customer
-    experiences the full paid tier; converting on day 14 (or any day
-    before) doesn't change the credit shape, just the billing flow.
+    experiences the full paid tier; converting before the trial ends
+    doesn't change the credit shape, just the billing flow.
 
     Idempotency / safety:
 
@@ -517,9 +517,10 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
       ``active`` on the ``free`` plan) is gracefully canceled so the new
       trialing row can satisfy the ``status IN (active, trialing,
       past_due)`` partial-unique index on ``subscriptions.client_id``.
-    * Pre-existing rows on the *same* plan (any historical status) raise
-      :class:`TrialUnavailable` with reason ``already_trialed`` — one
-      trial per plan, lifetime.
+    * Any prior trial on *any* plan (historical row with a non-null
+      ``trial_start`` or a status of ``trialing`` / ``trial_expired``)
+      raises :class:`TrialUnavailable` with reason ``already_trialed``.
+      One free trial per lifetime, across every trial-eligible plan.
     * Pre-existing rows on a different *paid* plan raise
       ``active_paid_subscription`` — the upgrade/downgrade UI handles
       that case, not the start-trial path.
@@ -544,27 +545,32 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
             message=f"The '{plan.name}' plan does not offer a free trial.",
         )
 
-    # Lifetime ban on re-trialing the same plan. We check the historical
-    # set, not just the current row, so a customer who already used their
-    # Starter trial can't reset by canceling and re-clicking.
-    prior_on_same_plan = (
+    # Lifetime ban on re-trialing — one free trial per client, across every
+    # trial-eligible plan. We match any historical row that either started
+    # a trial (``trial_start IS NOT NULL``) or currently sits in a trial
+    # state (``trialing`` / ``trial_expired``), so a customer who already
+    # burned their Standard trial can't reset by canceling and re-clicking,
+    # and can't sidestep the rule by pointing at a different plan slug.
+    prior_trial = (
         session.execute(
             select(Subscription)
             .where(
                 Subscription.client_id == client_id,
-                Subscription.plan_id == plan.id,
+                or_(
+                    Subscription.trial_start.is_not(None),
+                    Subscription.status.in_(("trialing", "trial_expired")),
+                ),
             )
             .limit(1)
         )
         .scalars()
         .first()
     )
-    if prior_on_same_plan is not None:
+    if prior_trial is not None:
         raise TrialUnavailable(
             "already_trialed",
             message=(
-                f"You have already used your free trial for the '{plan.name}' plan. "
-                "Choose this plan from the billing page to subscribe directly."
+                "You have already used your free trial. Choose a plan from the billing page to subscribe directly."
             ),
         )
 

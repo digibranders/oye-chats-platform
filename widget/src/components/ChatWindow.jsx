@@ -2139,16 +2139,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
 
 
-                {/* Bottom-anchor spacer — flex-grow absorbs leftover height so a
-                    short conversation sits flush against the input instead of
-                    stranded at the top with a dead gap below it. It shrinks
-                    back to 0 once real content overflows the container, so
-                    long conversations still scroll from a natural top edge.
+                {/* Bottom-anchor spacer — MUST be the first flex child so a
+                    short conversation is pushed down flush against the input
+                    (matches WhatsApp/Intercom/Crisp). flex-1 collapses to 0
+                    once real content overflows, so long conversations still
+                    scroll from a natural top edge.
                     Deliberately NOT `justify-end` on the container: that
                     combined with overflow-y: auto has a known cross-browser
                     bug (iOS Safari included) where content that overflows
                     past the top becomes unreachable by scrolling. */}
-                {!isInitializing && <div aria-hidden="true" className="flex-1" />}
+                {!isInitializing && <div aria-hidden="true" className="flex-1 min-h-0" />}
 
                 {/* Loading spinner */}
                 {isInitializing && (

@@ -57,6 +57,7 @@ _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 class CreateInviteRequest(BaseModel):
     email: str
+    bot_id: int
     role: Literal["operator", "admin"] = "operator"
     department_id: int | None = None
 
@@ -73,6 +74,7 @@ class InviteView(BaseModel):
     id: int
     email: str
     role: str
+    bot_id: int
     department_id: int | None
     status: str
     created_at: datetime
@@ -119,11 +121,23 @@ class MeWorkspacesResponse(BaseModel):
     workspaces: list[WorkspaceView]
 
 
+class SelfOperatorRequest(BaseModel):
+    """Body for ``POST /me/self-operator``.
+
+    ``bot_id`` is required because operators are bot-scoped — the owner must
+    pick which bot they'll take chats for. Reactivating a previously-added
+    self-op row with a different ``bot_id`` reassigns it.
+    """
+
+    bot_id: int
+
+
 class SelfOperatorResponse(BaseModel):
     """Response for ``POST /me/self-operator`` — the owner-as-operator row."""
 
     operator_id: int
     role: str
+    bot_id: int
     is_active: bool
     # ``was_existing`` = True when the endpoint reactivated a previously
     # self-added row instead of creating a fresh one. Frontend can use it to
@@ -193,6 +207,7 @@ def _invite_to_view(invite: OperatorInvite) -> InviteView:
         id=invite.id,
         email=invite.email,
         role=invite.role,
+        bot_id=invite.bot_id,
         department_id=invite.department_id,
         status=invite.status,
         created_at=invite.created_at,
@@ -261,6 +276,7 @@ def create_invite(
                 workspace_id=workspace_id,
                 email=str(body.email),
                 role=body.role,
+                bot_id=body.bot_id,
                 department_id=body.department_id,
                 invited_by=actor,
             )
@@ -489,7 +505,10 @@ def accept_invite_public(
 
 
 @me_router.post("/self-operator", response_model=SelfOperatorResponse, status_code=status.HTTP_201_CREATED)
-def add_self_as_operator(client: Client = Depends(get_current_client_strict)):
+def add_self_as_operator(
+    body: SelfOperatorRequest,
+    client: Client = Depends(get_current_client_strict),
+):
     """Add the calling Client as an operator in their own workspace.
 
     Idempotent — returns the existing row if the caller already self-added
@@ -525,6 +544,15 @@ def add_self_as_operator(client: Client = Depends(get_current_client_strict)):
         except InviteError as err:
             raise _map_invite_error(err) from err
 
+        # Validate the bot belongs to this workspace before touching operator
+        # state — reject fast rather than accidentally binding self-op to
+        # a bot the caller doesn't own.
+        bot_row = session.execute(
+            select(Bot.id).where(Bot.id == body.bot_id, Bot.client_id == client.id)
+        ).scalar_one_or_none()
+        if bot_row is None:
+            raise HTTPException(status_code=404, detail="Bot not found in this workspace.")
+
         existing = session.execute(
             select(Operator).where(
                 Operator.client_id == client.id,
@@ -532,15 +560,14 @@ def add_self_as_operator(client: Client = Depends(get_current_client_strict)):
             )
         ).scalar_one_or_none()
 
-        # Already active — pure idempotent no-op. Do NOT re-run the seat
-        # check here; the row's existing ``is_active=True`` state is already
-        # accounted for in current usage, so consuming another seat would be
-        # wrong. Returning early also keeps double-clicks and retry loops
-        # from thrashing the entitlements cache.
-        if existing is not None and existing.is_active:
+        # Already active AND on the same bot — pure idempotent no-op. Do NOT
+        # re-run the seat check; the row's existing ``is_active=True`` is
+        # already in current usage. Bot mismatch falls through and reassigns.
+        if existing is not None and existing.is_active and existing.bot_id == body.bot_id:
             return SelfOperatorResponse(
                 operator_id=existing.id,
                 role=existing.role,
+                bot_id=existing.bot_id,
                 is_active=True,
                 was_existing=True,
             )
@@ -558,11 +585,14 @@ def add_self_as_operator(client: Client = Depends(get_current_client_strict)):
 
         if existing is not None:
             existing.is_active = True
+            existing.bot_id = body.bot_id
             operator_id = existing.id
             role = existing.role
+            bot_id = existing.bot_id
         else:
             op = Operator(
                 client_id=client.id,
+                bot_id=body.bot_id,
                 linked_client_id=client.id,
                 name=client.name,
                 email=(client.email or "").strip().lower(),
@@ -575,18 +605,21 @@ def add_self_as_operator(client: Client = Depends(get_current_client_strict)):
             session.flush()
             operator_id = op.id
             role = "owner"
+            bot_id = op.bot_id
 
         session.commit()
         plan_entitlements_service.invalidate(client.id)
         logger.info(
-            "self_operator_added client=%s operator=%s reactivated=%s",
+            "self_operator_added client=%s operator=%s bot=%s reactivated=%s",
             client.id,
             operator_id,
+            bot_id,
             existing is not None,
         )
         return SelfOperatorResponse(
             operator_id=operator_id,
             role=role,
+            bot_id=bot_id,
             is_active=True,
             was_existing=existing is not None,
         )

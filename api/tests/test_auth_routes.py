@@ -1,6 +1,7 @@
 """Tests for app.api.auth_routes — authentication endpoints."""
 
 from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -61,6 +62,8 @@ class TestLogin:
             is_verified=True,
             company_name="Test Co",
             website="https://example.com",
+            suspended_at=None,
+            deactivated_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)
@@ -120,6 +123,8 @@ class TestLogin:
             is_verified=True,
             company_name="Co",
             website="",
+            suspended_at=None,
+            deactivated_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)
@@ -128,6 +133,95 @@ class TestLogin:
 
         tc = TestClient(_build_app())
         response = tc.post("/auth/login", json={"email": "TEST@Example.COM", "password": "password123"})
+
+        assert response.status_code == 200
+
+    def test_login_rejects_suspended_client(self, monkeypatch):
+        """A suspended client must be rejected at the login handler itself, not
+        just downstream — so the frontend can render a clear message instead of
+        handing back an api_key that immediately 403s on the first API call."""
+        from app.api import auth_routes
+
+        client_obj = SimpleNamespace(
+            id=1,
+            name="User",
+            email="test@example.com",
+            api_key="key",
+            hashed_password="h",
+            is_superadmin=False,
+            is_verified=True,
+            company_name="Co",
+            website="",
+            suspended_at=datetime.now(UTC),
+            deactivated_at=None,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(client_obj)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+        monkeypatch.setattr(auth_routes, "verify_password", lambda p, h: True)
+
+        tc = TestClient(_build_app())
+        response = tc.post("/auth/login", json={"email": "test@example.com", "password": "password123"})
+
+        assert response.status_code == 403
+        assert "suspended" in response.json()["detail"].lower()
+
+    def test_login_rejects_deactivated_client(self, monkeypatch):
+        """Same story for a hard-deleted (post-trial retention) client — the
+        message must name the deletion so the customer knows to contact
+        support instead of retrying with a fresh signup that fails on the
+        duplicate-email check."""
+        from app.api import auth_routes
+
+        client_obj = SimpleNamespace(
+            id=1,
+            name="User",
+            email="test@example.com",
+            api_key="key",
+            hashed_password="h",
+            is_superadmin=False,
+            is_verified=True,
+            company_name="Co",
+            website="",
+            suspended_at=None,
+            deactivated_at=datetime.now(UTC),
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(client_obj)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+        monkeypatch.setattr(auth_routes, "verify_password", lambda p, h: True)
+
+        tc = TestClient(_build_app())
+        response = tc.post("/auth/login", json={"email": "test@example.com", "password": "password123"})
+
+        assert response.status_code == 403
+        assert "deleted" in response.json()["detail"].lower()
+
+    def test_login_lets_superadmin_through_even_if_suspended(self, monkeypatch):
+        """Defensive: platform staff must never be locked out of the console
+        even if a standing column somehow got flipped on their row."""
+        from app.api import auth_routes
+
+        client_obj = SimpleNamespace(
+            id=1,
+            name="Admin",
+            email="admin@example.com",
+            api_key="admin-key",
+            hashed_password="h",
+            is_superadmin=True,
+            is_verified=True,
+            company_name=None,
+            website=None,
+            suspended_at=datetime.now(UTC),
+            deactivated_at=datetime.now(UTC),
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(client_obj)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+        monkeypatch.setattr(auth_routes, "verify_password", lambda p, h: True)
+
+        tc = TestClient(_build_app())
+        response = tc.post("/auth/login", json={"email": "admin@example.com", "password": "p"})
 
         assert response.status_code == 200
 
@@ -209,7 +303,7 @@ class TestRegister:
     def test_duplicate_email_rejected(self, monkeypatch):
         from app.api import auth_routes
 
-        existing = SimpleNamespace(id=1, email="dup@example.com")
+        existing = SimpleNamespace(id=1, email="dup@example.com", deactivated_at=None, suspended_at=None)
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(existing)
         monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
@@ -227,6 +321,71 @@ class TestRegister:
         )
 
         assert response.status_code == 409
+        # Generic active-duplicate copy: no ``error`` code, string detail.
+        assert isinstance(response.json()["detail"], str)
+
+    def test_deactivated_email_returns_restore_message(self, monkeypatch):
+        """Registration must recognise a post-trial-deleted email and steer
+        the user to support instead of the generic 'email exists' 409."""
+        from app.api import auth_routes
+
+        existing = SimpleNamespace(
+            id=1,
+            email="deleted@example.com",
+            deactivated_at=datetime.now(UTC),
+            suspended_at=None,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(existing)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+
+        tc = TestClient(_build_app())
+        response = tc.post(
+            "/auth/register",
+            json={
+                "name": "User",
+                "email": "deleted@example.com",
+                "password": "password1",
+                "company_name": "Co",
+                "website": "",
+            },
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["error"] == "account_deleted"
+        assert "support" in detail["message"].lower()
+
+    def test_suspended_email_returns_support_message(self, monkeypatch):
+        from app.api import auth_routes
+
+        existing = SimpleNamespace(
+            id=1,
+            email="suspended@example.com",
+            deactivated_at=None,
+            suspended_at=datetime.now(UTC),
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(existing)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+
+        tc = TestClient(_build_app())
+        response = tc.post(
+            "/auth/register",
+            json={
+                "name": "User",
+                "email": "suspended@example.com",
+                "password": "password1",
+                "company_name": "Co",
+                "website": "",
+            },
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["error"] == "account_suspended"
 
     def test_weak_password_rejected(self):
         tc = TestClient(_build_app())
@@ -306,6 +465,9 @@ class TestPasswordReset:
             email="test@example.com",
             reset_otp=None,
             reset_otp_expires_at=None,
+            is_superadmin=False,
+            deactivated_at=None,
+            suspended_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)
@@ -320,6 +482,34 @@ class TestPasswordReset:
         # OTP should be set on the client object
         assert client_obj.reset_otp is not None
 
+    def test_request_reset_rejects_deactivated_client(self, monkeypatch):
+        """A hard-deleted (post-trial) client mustn't receive a reset OTP —
+        they'd set a new password only to be blocked at login."""
+        from app.api import auth_routes
+
+        client_obj = SimpleNamespace(
+            id=1,
+            email="deleted@example.com",
+            reset_otp=None,
+            reset_otp_expires_at=None,
+            is_superadmin=False,
+            deactivated_at=datetime.now(UTC),
+            suspended_at=None,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(client_obj)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+        mock_send = MagicMock()
+        monkeypatch.setattr(auth_routes, "send_password_reset_email", mock_send)
+
+        tc = TestClient(_build_app())
+        response = tc.post("/auth/request-password-reset", json={"email": "deleted@example.com"})
+
+        assert response.status_code == 403
+        assert "deleted" in response.json()["detail"].lower()
+        mock_send.assert_not_called()
+        assert client_obj.reset_otp is None
+
     def test_reset_with_valid_otp(self, monkeypatch):
         from datetime import UTC, datetime, timedelta
 
@@ -331,6 +521,9 @@ class TestPasswordReset:
             reset_otp="123456",
             reset_otp_expires_at=datetime.now(UTC) + timedelta(minutes=10),
             hashed_password="old_hash",
+            is_superadmin=False,
+            deactivated_at=None,
+            suspended_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)
@@ -358,6 +551,9 @@ class TestPasswordReset:
             reset_otp="123456",
             reset_otp_expires_at=datetime.now(UTC) + timedelta(minutes=10),
             hashed_password="old",
+            is_superadmin=False,
+            deactivated_at=None,
+            suspended_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)
@@ -373,6 +569,41 @@ class TestPasswordReset:
         # OTP should be invalidated after wrong attempt (brute force prevention)
         assert client_obj.reset_otp is None
 
+    def test_reset_confirm_rejects_deactivated_client(self, monkeypatch):
+        """Belt-and-braces: even a valid OTP must not land a new password
+        on a deactivated account — the customer would just be blocked at
+        login anyway. Covers the race where deactivation lands between
+        the OTP-request and OTP-confirm calls."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.api import auth_routes
+
+        client_obj = SimpleNamespace(
+            id=1,
+            email="deleted@example.com",
+            reset_otp="123456",
+            reset_otp_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            hashed_password="old_hash",
+            is_superadmin=False,
+            deactivated_at=datetime.now(UTC),
+            suspended_at=None,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(client_obj)
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+        monkeypatch.setattr(auth_routes, "get_password_hash", lambda p: "new_hash")
+
+        tc = TestClient(_build_app())
+        response = tc.post(
+            "/auth/reset-password",
+            json={"email": "deleted@example.com", "otp": "123456", "new_password": "newpass1"},
+        )
+
+        assert response.status_code == 403
+        assert "deleted" in response.json()["detail"].lower()
+        # Password unchanged — the reset must not land.
+        assert client_obj.hashed_password == "old_hash"
+
     def test_reset_with_expired_otp(self, monkeypatch):
         from datetime import UTC, datetime, timedelta
 
@@ -384,6 +615,9 @@ class TestPasswordReset:
             reset_otp="123456",
             reset_otp_expires_at=datetime.now(UTC) - timedelta(minutes=1),
             hashed_password="old",
+            is_superadmin=False,
+            deactivated_at=None,
+            suspended_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)
@@ -405,6 +639,9 @@ class TestPasswordReset:
             email="test@example.com",
             reset_otp=None,
             reset_otp_expires_at=None,
+            is_superadmin=False,
+            deactivated_at=None,
+            suspended_at=None,
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(client_obj)

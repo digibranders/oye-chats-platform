@@ -309,7 +309,8 @@ export default function AffiliateDashboard() {
                         </button>
                     </div>
                 ) : (
-                    <table className="w-full text-sm">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] text-sm">
                         <thead>
                             <tr className="border-b border-surface-100 dark:border-surface-800">
                                 <th className="text-center px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Code</th>
@@ -447,6 +448,7 @@ export default function AffiliateDashboard() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
             </div>
 

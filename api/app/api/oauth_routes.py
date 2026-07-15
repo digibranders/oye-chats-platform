@@ -372,7 +372,7 @@ def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | N
                 trial_end_at = trial_end_at.replace(tzinfo=UTC)
             plan = subscription.plan
             trial_credits = int(plan.credits_per_month or 0) if plan else None
-            trial_duration_days = int(plan.trial_days or 14) if plan else 14
+            trial_duration_days = int(plan.trial_days or 7) if plan else 7
 
         session.commit()
         session.refresh(new_client)

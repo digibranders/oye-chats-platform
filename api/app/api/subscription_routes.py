@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app import config as app_config
+from app.api.auth import get_current_client_or_operator, require_verified_email
 from app.api.auth import get_current_client_strict as get_current_client
-from app.api.auth import require_verified_email
 from app.config import (
     BILLING_PROVIDER,
     DISPLAY_USD_TO_INR,
@@ -166,12 +166,12 @@ class StartTrialRequest(BaseModel):
 
 @router.post("/start-trial")
 def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_current_client)):
-    """Begin a 14-day free trial of the named paid plan.
+    """Begin the paid plan's configured free trial (currently Standard, 7 days).
 
-    Triggered when the customer clicks "Start free trial" on Starter or
-    Standard. No card is required; on day 14 the expiry cron (PR4) flips
-    the subscription to ``trial_expired`` and the customer must pick a
-    plan + enter a card to keep their bot live.
+    Triggered when the customer clicks "Start free trial". No card is
+    required; when the trial window elapses the expiry cron flips the
+    subscription to ``trial_expired`` and the customer must pick a plan
+    + enter a card to keep their bot live.
 
     Trial credits = the plan's full ``credits_per_month`` so the prospect
     experiences the real product. The welcome email fires here, not on
@@ -216,7 +216,7 @@ def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_c
             trial_end = trial_end.replace(tzinfo=UTC)
         plan = sub.plan
         credits_granted = int(plan.credits_per_month or 0) if plan else 0
-        duration_days = int(plan.trial_days or 14) if plan else 14
+        duration_days = int(plan.trial_days or 7) if plan else 7
         sub_status = sub.status
         session.commit()
 
@@ -249,11 +249,21 @@ def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_c
 
 
 @router.get("/current")
-def get_current_subscription(client: Client = Depends(get_current_client)):
-    """Return the client's current subscription details + plan info."""
+def get_current_subscription(auth: dict = Depends(get_current_client_or_operator)):
+    """Return the current workspace's subscription details + plan info.
+
+    Resolved via ``get_current_client_or_operator`` (not strict-client) so an
+    invited operator presenting their own ``X-API-Key`` together with the
+    switched workspace's ``X-Workspace-Id`` reads the WORKSPACE OWNER's plan,
+    not their own personal Free plan. The LiveChat UI feature-gates on this
+    response — reading the wrong client's plan is what made "Live chat isn't
+    included in your plan" appear on the operator's Support surface even
+    though the workspace owner is on Standard.
+    """
+    client_id = auth["client_id"]
     with get_session() as session:
-        sub = get_client_subscription(session, client.id)
-        plan = get_client_plan(session, client.id)
+        sub = get_client_subscription(session, client_id)
+        plan = get_client_plan(session, client_id)
 
         sub_data = None
         if sub:
@@ -1049,10 +1059,65 @@ def change_plan(
         # doesn't show the old tier's grant under the new (smaller) denominator.
         if new_plan.monthly_price_cents == 0 and new_plan.slug == "free":
             if sub is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="You're already on Free — nothing to downgrade.",
+                # ``get_client_subscription`` only returns rows in the
+                # active-set (active/trialing/past_due). A customer whose
+                # trial has already expired lands here with sub=None even
+                # though they hold a real ``trial_expired`` row — that row
+                # is what makes them locked out of their workspace. Treat
+                # "downgrade to Free" as the legitimate way to reactivate:
+                # cancel the expired row (clearing ``data_retention_until``
+                # so the hard-delete cron never fires on it), then insert a
+                # fresh active Free subscription and grant Free credits.
+                expired_sub = session.execute(
+                    select(Subscription)
+                    .where(
+                        Subscription.client_id == client.id,
+                        Subscription.status == "trial_expired",
+                        Subscription.bot_id.is_(None),
+                    )
+                    .order_by(Subscription.created_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if expired_sub is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You're already on Free — nothing to downgrade.",
+                    )
+
+                now = datetime.now(UTC)
+                expired_sub.status = "canceled"
+                expired_sub.canceled_at = now
+                expired_sub.cancel_reason = "downgrade_to_free_from_trial_expired"
+                # Belt-and-braces: null the retention marker so the
+                # hard-delete cron never sees the row again even if a
+                # future refactor broadens its status filter.
+                expired_sub.data_retention_until = None
+
+                new_sub = Subscription(
+                    client_id=client.id,
+                    plan_id=new_plan.id,
+                    status="active",
+                    billing_cycle="monthly",
+                    operator_quantity=1,
+                    current_period_start=now,
+                    current_period_end=add_months(now, 1),
+                    payment_provider="manual",
                 )
+                new_sub.plan = new_plan
+                session.add(new_sub)
+                session.flush()
+                credit_service.reset_monthly_plan_credits(session, client.id, bot_id=new_sub.bot_id)
+                credit_service.grant_for_subscription(session, new_sub)
+                session.commit()
+                logger.info(
+                    "Client %s reactivated from trial_expired onto Free (old sub %s canceled)",
+                    client.id,
+                    expired_sub.id,
+                )
+                return {
+                    "status": "downgraded",
+                    "message": f"Reactivated on {new_plan.name}. Your workspace is back online with Free-tier limits.",
+                }
             if sub.razorpay_subscription_id:
                 # Without this branch the local row would flip to Free while
                 # Razorpay's UPI mandate kept debiting the customer at the

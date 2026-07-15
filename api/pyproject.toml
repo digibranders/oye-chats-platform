@@ -27,7 +27,7 @@ dependencies = [
     "langfuse>=4.0.0,<5.0.0",
     "sentry-sdk[fastapi]>=2.0.0",
     "boto3>=1.34.0",
-    "pypdf>=4.0.0",
+    "pypdf>=6.13.3",
     # Invoice PDF rendering (invoicing v2 Phase 4). Needs system pango:
     # macOS `brew install pango` (+ DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib),
     # Ubuntu `apt install libpango-1.0-0 libpangoft2-1.0-0`.

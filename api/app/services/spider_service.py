@@ -220,6 +220,54 @@ async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: as
     return None
 
 
+async def fetch_html(
+    url: str,
+    *,
+    use_js: bool = False,
+    _client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Fetch the raw HTML of a single URL via Spider ``/scrape``.
+
+    Unlike :func:`fetch_urls`, this asks Spider for ``return_format=html`` and
+    disables readability so the DOM comes back intact — needed by the footer
+    harvester, which isolates ``<footer>`` / ``[role=contentinfo]`` regions
+    from the raw markup that the main markdown crawl would otherwise strip.
+
+    Returns the HTML body on success, or ``None`` on any failure (missing API
+    key, HTTP error, empty body). Best-effort by design — the caller is a
+    log-only, non-billable side channel and must never abort a real crawl.
+    """
+    if not SPIDER_API_KEY:
+        logger.debug("fetch_html skipped for %s — SPIDER_API_KEY not configured", url)
+        return None
+
+    payload = {
+        "url": url,
+        "return_format": "html",
+        "request": _engine(use_js),
+        "readability": False,
+        "store_data": False,
+    }
+    headers = {"Authorization": f"Bearer {SPIDER_API_KEY}", "Content-Type": "application/json"}
+
+    owns_client = _client is None
+    client = _client or httpx.AsyncClient(timeout=SPIDER_TIMEOUT)
+    try:
+        try:
+            resp = await client.post(f"{SPIDER_API_URL}/scrape", json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            logger.warning("fetch_html %s: HTTP error %s", url, exc)
+            return None
+        if resp.status_code >= 400:
+            logger.warning("fetch_html %s returned %s", url, resp.status_code)
+            return None
+        content, _upstream = _extract_page_content(resp)
+        return content
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
 async def fetch_urls(
     urls: list[str],
     *,

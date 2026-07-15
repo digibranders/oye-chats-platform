@@ -5,6 +5,9 @@ import { defineConfig } from 'vite'
 // Kept separate from the app build so the customer-facing entry stays cacheable and < 5 KB gzipped.
 
 export default defineConfig({
+  esbuild: {
+    drop: ['console', 'debugger'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: false,

@@ -167,7 +167,7 @@ export default function PushPermissionBanner({ push }) {
         <div
             role="status"
             aria-live="polite"
-            className={`fixed z-40 bottom-5 right-5 left-5 sm:left-auto sm:bottom-6 sm:right-6 max-w-sm transition-all duration-300 ease-out ${
+            className={`fixed z-40 bottom-[calc(env(safe-area-inset-bottom,0px)+7.5rem)] right-4 left-4 sm:left-auto sm:bottom-6 sm:right-6 max-w-sm transition-all duration-300 ease-out ${
                 mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}
         >

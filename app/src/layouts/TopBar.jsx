@@ -218,12 +218,16 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         >
           {isSidebarOpen && !isMobile ? <PanelLeftClose size={18} /> : <Menu size={18} />}
         </button>
-        <div className="min-w-0 flex items-center gap-3 truncate">
-          {/* Workspace switcher — top-left of the app. Renders as an
-              interactive pill for callers who belong to multiple
-              workspaces, as a static label when they only have one. See
-              WorkspacePill for the invited-only "Create your own workspace"
-              affordance behavior. */}
+        {/* No ``truncate``/``overflow-hidden`` on this wrapper. WorkspacePill's
+            dropdown is a ``position: absolute`` child that escapes the pill
+            and extends BELOW the TopBar; an overflow-hidden ancestor clips
+            the whole dropdown out of view (it opens at y ≈ TopBar.bottom,
+            so any clip on this row hides 100% of it). Truncation for the
+            long breadcrumb path is applied on the Breadcrumbs wrapper only. */}
+        <div className="min-w-0 flex items-center gap-3">
+          {/* Workspace switcher — top-left of the app. Interactive pill
+              when the caller belongs to multiple workspaces; renders null
+              when there's only one workspace (nowhere to switch). */}
           <WorkspacePill />
           <div className="min-w-0 truncate">
             {hasCrumbs ? <ContextualCrumbs crumbs={crumbs} /> : <Breadcrumbs />}
@@ -260,7 +264,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         <NotificationBell />
 
         {/* Divider line */}
-        <div className="h-6 w-px bg-surface-200 dark:bg-surface-800 mx-2 md:mx-3 self-center" />
+        <div className="h-6 w-px bg-surface-200 dark:bg-surface-800 mx-1 md:mx-3 self-center" />
 
         {/* User menu */}
         <div className="relative">

@@ -1599,8 +1599,8 @@ export default function KnowledgeBase() {
                 )}
               </div>
             ) : (
-              <div className="overflow-hidden border border-surface-200 dark:border-surface-800 rounded-xl">
-                <table className="w-full text-left table-fixed">
+              <div className="overflow-x-auto border border-surface-200 dark:border-surface-800 rounded-xl">
+                <table className="w-full min-w-[720px] text-left table-fixed">
                   <colgroup>
                     <col className="w-[38%]" />
                     <col className="w-[12%]" />

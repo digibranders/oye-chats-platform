@@ -687,7 +687,7 @@ export default function BotSettings() {
                     )}
                     {activeTab === 'messages' && <MessagesTab {...tabProps} isSaving={isSaving} />}
                     {activeTab === 'behavior' && <BehaviorTab {...tabProps} advancedLocked={advancedLocked} requestUpgrade={requestUpgrade} />}
-                    {activeTab === 'leads' && <LeadsTab {...tabProps} />}
+                    {activeTab === 'leads' && <LeadsTab {...tabProps} requestUpgrade={requestUpgrade} />}
                     {activeTab === 'live_chat' && <LiveChatTab {...tabProps} />}
                 </div>
 

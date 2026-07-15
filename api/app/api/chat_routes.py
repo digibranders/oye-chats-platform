@@ -907,8 +907,11 @@ def get_history_endpoint(
             auth = {"client_id": bot_obj.client_id, "type": "bot"}
 
     try:
+        from datetime import UTC, datetime, timedelta
+
         from app.db.models import Bot as BotModel
         from app.db.models import ChatMessage, ChatSession
+        from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
 
         with get_session() as session:
             all_history = []
@@ -919,6 +922,17 @@ def get_history_endpoint(
                 query = select(BotModel.id).where(BotModel.client_id == auth["client_id"])
                 bots = session.execute(query).scalars().all()
                 resolve_bot_ids = list(bots)
+
+            # Plan-driven retention cutoff for admin / operator callers.
+            # Widget calls (``auth["type"] == "bot"``) skip this — a visitor's
+            # in-progress conversation must be readable regardless of the
+            # workspace owner's plan, otherwise a mid-chat refresh would blank
+            # out messages the visitor is actively looking at.
+            created_after = None
+            if auth.get("type") != "bot":
+                retention_days = get_chat_history_retention_days(auth["client_id"], session)
+                if retention_days != UNLIMITED:
+                    created_after = datetime.now(UTC) - timedelta(days=retention_days)
 
             for sid in sids:
                 # Build paginated query with cursor support
@@ -935,6 +949,13 @@ def get_history_endpoint(
                     stmt = stmt.where(BotModel.id == resolved_bot_id)
                 elif resolve_bot_ids:
                     stmt = stmt.where(BotModel.id.in_(resolve_bot_ids))
+                # Filter by the parent session's ``created_at`` — a whole
+                # conversation older than the retention window is hidden as
+                # a unit. Message-level filtering would leak "session started
+                # 20 days ago, but here are 3 recent messages" fragments that
+                # confuse the transcript view.
+                if created_after is not None:
+                    stmt = stmt.where(ChatSession.created_at >= created_after)
 
                 if before is not None:
                     stmt = stmt.where(ChatMessage.id < before)
