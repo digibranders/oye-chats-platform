@@ -11,6 +11,7 @@ from app.api.auth import (
     get_current_bot,
     get_current_client_or_operator,
     require_active_subscription_for_workspace,
+    require_verified_email_for_workspace,
 )
 from app.api.bot_routes import public_router, router
 
@@ -34,6 +35,9 @@ def _build_app(auth_override=None, bot_override=None):
     # subscription row per test. PR3 has its own dedicated coverage for
     # the gate semantics (see test_trial_enforcement.py).
     app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
+    # Same rationale for the email-verification gate — its semantics are covered
+    # in test_verified_email_gate; here we act as a verified workspace.
+    app.dependency_overrides[require_verified_email_for_workspace] = lambda: None
     return app
 
 
