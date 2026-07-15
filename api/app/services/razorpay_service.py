@@ -1644,13 +1644,23 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         is_per_bot = (notes.get("purpose") or "").lower() == "per_bot_subscription"
 
         if not is_per_bot:
-            # Account-level (legacy) flow: cancel any existing active
-            # subscription for this client (upgrade flow).
+            # Account-level (legacy) flow: cancel any existing subscription
+            # this new one is replacing.
+            #
+            # ``trial_expired`` is included alongside the active-set because a
+            # customer who lets their trial lapse and *then* subscribes must
+            # have the old trial row canceled here — otherwise
+            # ``task_delete_expired_trial_data`` (which filters purely on
+            # ``status == 'trial_expired' AND data_retention_until < now``)
+            # will hard-delete the paying customer's workspace when the 15-day
+            # retention window elapses. Canceling flips the row out of the
+            # cron's filter; nulling ``data_retention_until`` is belt-and-
+            # braces in case the filter is ever broadened.
             existing = (
                 session.execute(
                     select(Subscription).where(
                         Subscription.client_id == client_id,
-                        Subscription.status.in_(("active", "trialing", "past_due")),
+                        Subscription.status.in_(("active", "trialing", "past_due", "trial_expired")),
                         Subscription.bot_id.is_(None),
                     )
                 )
@@ -1683,6 +1693,10 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 # gateway cancel below stamps the reconcile marker only on failure.
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
+                # If this is a trial_expired row we're superseding, null the
+                # retention marker so the hard-delete cron can never see the
+                # row again even if the status flip is somehow reverted.
+                old.data_retention_until = None
                 superseded_gateway_cancels.append((old, seat_addon_id))
 
         # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /

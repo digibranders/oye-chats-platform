@@ -16,6 +16,7 @@ from app.db.repository import (
     get_visitor_data,
 )
 from app.db.session import get_session
+from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,20 @@ def get_visitors_endpoint(
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
-            data = get_visitor_data(session, client_id=auth["client_id"], bot_id=bot_id, limit=limit, offset=offset)
+            # Plan-driven chat-history retention. A Free customer with a
+            # 7-day cap only sees conversations from the last week; unlimited
+            # plans (Enterprise, and defensively any lookup failure) pass
+            # ``None`` so no time filter is applied.
+            retention_days = get_chat_history_retention_days(auth["client_id"], session)
+            created_after = datetime.now(UTC) - timedelta(days=retention_days) if retention_days != UNLIMITED else None
+            data = get_visitor_data(
+                session,
+                client_id=auth["client_id"],
+                bot_id=bot_id,
+                limit=limit,
+                offset=offset,
+                created_after=created_after,
+            )
 
             unique_visitors = {}
             current_user_index = 1

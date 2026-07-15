@@ -818,7 +818,7 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
 
     from app.db.models import Client, Subscription
     from app.db.session import get_session
-    from app.services.email_service import send_trial_day_7_email, send_trial_days_left_email
+    from app.services.email_service import send_trial_days_left_email, send_trial_halfway_email
 
     # ``key`` doubles as the slot in ``trial_emails_sent`` and as the
     # discriminator for which template fires.
@@ -872,7 +872,11 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
 
                 try:
                     if template == "day_7":
-                        send_trial_day_7_email(
+                        # Legacy template key "day_7" is now the halfway
+                        # slot on a 7-day trial (T-4). Marker key preserved
+                        # for backward-compat with in-flight trials whose
+                        # ``trial_emails_sent`` was set under the old name.
+                        send_trial_halfway_email(
                             owner.email,
                             name=owner.name,
                             days_remaining=days_remaining,
@@ -951,6 +955,35 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
                 # Owner already deactivated → already processed. Skip and
                 # let the marker rest; we don't want to re-fire the email.
                 if owner.deactivated_at is not None and (sub.trial_emails_sent or {}).get("data_deleted"):
+                    continue
+
+                # Defence-in-depth: if the customer already subscribed to a
+                # paid plan during the retention window, they should have had
+                # this trial_expired row canceled at activation
+                # (razorpay_service.py account-level activation branch). If
+                # for any reason the cancel didn't happen — a lost webhook, a
+                # manual DB fix that recreated the row, a future code path
+                # that inserts without going through the standard activation
+                # — we must NOT delete a paying customer's workspace. Bail
+                # out and null the retention marker so this row stops
+                # triggering the cron; a human can investigate the orphan.
+                has_active_sibling = session.execute(
+                    select(Subscription.id)
+                    .where(
+                        Subscription.client_id == owner.id,
+                        Subscription.status.in_(("active", "trialing", "past_due")),
+                    )
+                    .limit(1)
+                ).first()
+                if has_active_sibling is not None:
+                    logger.warning(
+                        "task_delete_expired_trial_data: skipping delete for client %s — "
+                        "trial_expired sub %s co-exists with an active subscription. "
+                        "Nulling data_retention_until to stop re-firing; investigate the orphan.",
+                        owner.id,
+                        sub.id,
+                    )
+                    sub.data_retention_until = None
                     continue
 
                 # Wipe bot-rooted data. ondelete='CASCADE' on Document,

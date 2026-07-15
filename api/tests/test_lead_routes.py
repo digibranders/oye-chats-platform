@@ -13,11 +13,26 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import get_current_client_or_operator
 from app.api.lead_routes import router
+
+
+@pytest.fixture(autouse=True)
+def _allow_leads_dashboard(monkeypatch):
+    """Every route in this file assumes the caller has paid-tier leads
+    access — the plan gate is exercised in ``test_plan_entitlements_service``.
+    Stub it here so we don't have to mock a full entitlements resolver in
+    every test's session fixture. ``patch`` at import site so both the
+    router-level dependency and any future in-handler check see the stub.
+    """
+    from app.api import lead_routes as _lead_routes
+
+    monkeypatch.setattr(_lead_routes, "is_leads_dashboard_enabled", lambda *_a, **_k: True)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

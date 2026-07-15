@@ -669,6 +669,27 @@ def login(request: Request, body: LoginRequest):
                 logger.warning("Login failed: incorrect password for %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
+            # Standing checks — a suspended or hard-deleted account must not
+            # get past the password check, or the customer lands on a working
+            # session that any subsequent API call immediately rejects.
+            # Superadmins are exempt (platform staff, never customers).
+            if not client.is_superadmin:
+                if client.suspended_at is not None:
+                    logger.warning("Login failed: suspended client %s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Your account has been suspended. Please contact support.",
+                    )
+                if client.deactivated_at is not None:
+                    logger.warning("Login failed: deactivated client %s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Your account was deleted after the post-trial retention window. "
+                            "Please contact support to restore it or sign up again."
+                        ),
+                    )
+
             logger.info("Successful dashboard login for client %s (%s)", client.id, client.name)
 
             return {
@@ -699,10 +720,52 @@ def register(request: Request, body: RegisterRequest):
     """
     try:
         with get_session() as session:
-            # Check for duplicate email
+            # Check for duplicate email. Three states matter here: an
+            # active row is a normal duplicate-signup collision; a
+            # suspended row is a superadmin-imposed lockout that only
+            # support can lift; a deactivated row is the post-trial
+            # hard-delete tombstone (workspace data purged, Client row
+            # kept for audit). Each surface its own message so the user
+            # knows exactly what to do next instead of guessing why
+            # signup failed.
             stmt = select(Client).where(Client.email == body.email).limit(1)
             existing = session.execute(stmt).scalars().first()
-            if existing:
+            if existing is not None:
+                if getattr(existing, "deactivated_at", None) is not None:
+                    logger.info(
+                        "register_blocked_deactivated client_id=%s email=%s",
+                        existing.id,
+                        _redact_email(_sanitize_for_log(body.email)),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "account_deleted",
+                            "message": (
+                                "This email belongs to an account that was deleted after its "
+                                "post-trial retention window. Please contact support to restore it, "
+                                "or sign up with a different email address."
+                            ),
+                            "support_email": "developer@oyechats.com",
+                        },
+                    )
+                if getattr(existing, "suspended_at", None) is not None:
+                    logger.info(
+                        "register_blocked_suspended client_id=%s email=%s",
+                        existing.id,
+                        _redact_email(_sanitize_for_log(body.email)),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "account_suspended",
+                            "message": (
+                                "This email belongs to a suspended account. Please contact support "
+                                "to resolve the suspension before creating a new account."
+                            ),
+                            "support_email": "developer@oyechats.com",
+                        },
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="An account with this email already exists. Please sign in instead.",
@@ -856,6 +919,30 @@ def request_password_reset(request: Request, body: RequestPasswordResetRequest):
                 # Return success anyway to avoid email enumeration
                 return {"message": "If an account exists, a reset link has been sent."}
 
+            # Standing checks — a deactivated or suspended account must
+            # not receive a reset OTP. The login endpoint already returns
+            # a specific reason for these states so there's no further
+            # enumeration signal being leaked here; matching the login
+            # copy keeps the customer-facing story consistent instead of
+            # sending them into a "why isn't my reset email arriving?"
+            # dead end.
+            if not client.is_superadmin:
+                if client.deactivated_at is not None:
+                    logger.info("password_reset_blocked_deactivated client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Your account was deleted after the post-trial retention window. "
+                            "Please contact support to restore it or sign up again."
+                        ),
+                    )
+                if client.suspended_at is not None:
+                    logger.info("password_reset_blocked_suspended client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Your account has been suspended. Please contact support.",
+                    )
+
             otp = str(secrets.randbelow(900000) + 100000)
             client.reset_otp = otp
             client.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
@@ -863,6 +950,10 @@ def request_password_reset(request: Request, body: RequestPasswordResetRequest):
 
             send_password_reset_email(client.email, otp)
             return {"message": "If an account exists, a reset link has been sent."}
+    except HTTPException:
+        # Standing-check rejections must propagate as-is; the catch-all
+        # below would otherwise mask a 403 as a generic 500.
+        raise
     except Exception as e:
         logger.error(
             "Failed to request password reset for %s: %s",
@@ -883,6 +974,27 @@ def reset_password(request: Request, body: ResetPasswordRequest):
 
             if not client or not client.reset_otp or not client.reset_otp_expires_at:
                 raise HTTPException(status_code=400, detail="Invalid or expired reset code.")
+
+            # Defence-in-depth: even if the OTP was minted before the
+            # account was deactivated / suspended (e.g. a support action
+            # ran between the two calls), don't let the reset land — the
+            # customer would set a password only to be blocked at login.
+            if not client.is_superadmin:
+                if client.deactivated_at is not None:
+                    logger.info("password_reset_confirm_blocked_deactivated client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Your account was deleted after the post-trial retention window. "
+                            "Please contact support to restore it or sign up again."
+                        ),
+                    )
+                if client.suspended_at is not None:
+                    logger.info("password_reset_confirm_blocked_suspended client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Your account has been suspended. Please contact support.",
+                    )
 
             if datetime.now(UTC) > client.reset_otp_expires_at:
                 client.reset_otp = None

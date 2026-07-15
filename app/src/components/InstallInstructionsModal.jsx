@@ -42,11 +42,14 @@ export default function InstallInstructionsModal({ open, mode, onClose }) {
     }, [open, onClose]);
 
     const isIOS = mode === 'ios';
-    const heroIcon = isIOS ? <Smartphone size={26} strokeWidth={2.2} /> : <MonitorSmartphone size={26} strokeWidth={2.2} />;
-    const title = isIOS ? 'Install OyeChats on iOS' : 'Install OyeChats on desktop';
+    const isAndroid = mode === 'android';
+    const heroIcon = (isIOS || isAndroid) ? <Smartphone size={26} strokeWidth={2.2} /> : <MonitorSmartphone size={26} strokeWidth={2.2} />;
+    const title = isIOS ? 'Install OyeChats on iOS' : (isAndroid ? 'Install OyeChats on Android' : 'Install OyeChats on desktop');
     const subtitle = isIOS
         ? "Safari doesn't offer a one-tap install button — follow these two steps."
-        : "Your browser hasn't offered a one-tap install yet. Use its menu to add OyeChats as an app.";
+        : (isAndroid
+            ? "Your browser hasn't offered a one-tap install yet — follow these two steps."
+            : "Your browser hasn't offered a one-tap install yet. Use its menu to add OyeChats as an app.");
 
     return (
         <AnimatePresence>
@@ -121,6 +124,24 @@ export default function InstallInstructionsModal({ open, mode, onClose }) {
                                     />
                                     <Note>
                                         Add to Home Screen only works from Safari on iOS — not Chrome, Firefox, or in-app browsers.
+                                    </Note>
+                                </>
+                            ) : isAndroid ? (
+                                <>
+                                    <Step
+                                        index={1}
+                                        icon={<MoreVertical size={16} strokeWidth={2.2} />}
+                                        title="Open the browser menu"
+                                        body="Tap the three-dots (⋯) icon in the top-right corner of your Chrome browser toolbar."
+                                    />
+                                    <Step
+                                        index={2}
+                                        icon={<Smartphone size={16} strokeWidth={2.2} />}
+                                        title="Tap 'Add to Home Screen' or 'Install app'"
+                                        body="Scroll down and tap 'Add to Home Screen' or 'Install app' to install OyeChats. It will now launch like a native app."
+                                    />
+                                    <Note>
+                                        If you are using a browser other than Chrome (like Firefox or Samsung Internet), look for 'Install' or 'Add to Home Screen' in its main menu.
                                     </Note>
                                 </>
                             ) : (

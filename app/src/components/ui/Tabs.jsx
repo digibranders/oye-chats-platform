@@ -29,7 +29,7 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
 
   if (variant === 'underline') {
     return (
-      <div role="tablist" className={cn('flex items-center gap-6 border-b border-surface-200 dark:border-surface-800', className)}>
+      <div role="tablist" className={cn('flex items-center gap-6 border-b border-surface-200 dark:border-surface-800 overflow-x-auto max-w-full [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden', className)}>
         {tabs.map((tab, index) => {
           const isActive = activeTab === tab.id;
           const Icon = tab.icon;
@@ -42,7 +42,7 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
               onClick={() => onChange(tab.id)}
               onKeyDown={(e) => handleKeyDown(e, index)}
               className={cn(
-                'relative flex items-center gap-2 pb-3 text-sm font-medium transition-colors',
+                'relative flex flex-shrink-0 items-center gap-2 pb-3 text-sm font-medium whitespace-nowrap transition-colors',
                 isActive
                   ? 'text-primary-600 dark:text-primary-400'
                   : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200'
@@ -75,7 +75,7 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
   }
 
   return (
-    <div role="tablist" className={cn('flex items-center gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit', className)}>
+    <div role="tablist" className={cn('flex items-center gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl max-w-full overflow-x-auto [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-fit', className)}>
       {tabs.map((tab, index) => {
         const isActive = activeTab === tab.id && !tab.locked;
         const Icon = tab.icon;
@@ -90,7 +90,7 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
             onKeyDown={(e) => handleKeyDown(e, index)}
             title={tab.locked ? 'Available on Starter and above' : undefined}
             className={cn(
-              'relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+              'relative flex flex-shrink-0 items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200',
               isActive
                 ? 'text-surface-900 dark:text-surface-50'
                 : tab.locked

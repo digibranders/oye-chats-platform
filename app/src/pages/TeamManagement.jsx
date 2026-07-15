@@ -671,8 +671,8 @@ export default function TeamManagement() {
                     </AnimatePresence>
 
                     {/* Operators Table */}
-                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
-                        <table className="w-full">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-x-auto">
+                        <table className="w-full min-w-[820px]">
                             <thead>
                                 <tr className="border-b border-surface-100 dark:border-surface-800">
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Operator</th>

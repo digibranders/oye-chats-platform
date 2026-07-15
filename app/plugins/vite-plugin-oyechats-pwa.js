@@ -45,7 +45,7 @@ export function oyechatsPwaPlugin() {
       let sw;
       try {
         sw = readFileSync(swPath, 'utf8');
-      } catch (err) {
+      } catch {
         const publicSwPath = path.join(distDir, '..', 'public', 'sw.js');
         try {
           sw = readFileSync(publicSwPath, 'utf8');

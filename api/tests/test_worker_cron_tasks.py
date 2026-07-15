@@ -207,7 +207,7 @@ class TestTaskTrialReminderEmails:
     @pytest.mark.parametrize(
         "days_left,expected_marker,expected_fn",
         [
-            (4, "day_7", "send_trial_day_7_email"),
+            (4, "day_7", "send_trial_halfway_email"),
             (2, "day_11", "send_trial_days_left_email"),
             (1, "day_13", "send_trial_days_left_email"),
         ],
@@ -239,7 +239,7 @@ class TestTaskTrialReminderEmails:
 
         with (
             patch("app.db.session.get_session", return_value=fake_session),
-            patch("app.services.email_service.send_trial_day_7_email") as mock_d7,
+            patch("app.services.email_service.send_trial_halfway_email") as mock_d7,
             patch("app.services.email_service.send_trial_days_left_email") as mock_dl,
         ):
             count = await cron_tasks.task_trial_reminder_emails({})
@@ -260,7 +260,7 @@ class TestTaskTrialReminderEmails:
 
         with (
             patch("app.db.session.get_session", return_value=fake_session),
-            patch("app.services.email_service.send_trial_day_7_email") as mock_email,
+            patch("app.services.email_service.send_trial_halfway_email") as mock_email,
         ):
             count = await cron_tasks.task_trial_reminder_emails({})
 
@@ -277,7 +277,7 @@ class TestTaskTrialReminderEmails:
 
         with (
             patch("app.db.session.get_session", return_value=fake_session),
-            patch("app.services.email_service.send_trial_day_7_email") as mock_email,
+            patch("app.services.email_service.send_trial_halfway_email") as mock_email,
         ):
             count = await cron_tasks.task_trial_reminder_emails({})
 
@@ -304,10 +304,11 @@ class TestTaskDeleteExpiredTrialData:
         bots = [SimpleNamespace(id=1, client_id=owner.id), SimpleNamespace(id=2, client_id=owner.id)]
 
         fake_session = _FakeSession([sub], {sub.client_id: owner})
-        # Override execute so the second .execute() call (the Bot query)
-        # returns our bot list. _FakeSession returns the same scalar set
-        # for every execute(); we shadow that with a more granular stub
-        # keyed by call index.
+        # The cron issues three queries per candidate: (1) the trial_expired
+        # subscription list, (2) the active-sibling defence check, (3) the
+        # bot list to delete. _FakeSession returns the same scalar set for
+        # every execute(); we shadow it with a per-call stub so each query
+        # gets the shape it expects.
         call_count = {"n": 0}
         original_execute = fake_session.execute
 
@@ -315,6 +316,13 @@ class TestTaskDeleteExpiredTrialData:
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return original_execute(stmt)  # Subscription list
+            if call_count["n"] == 2:
+                # No active sibling → cron proceeds with the delete.
+                class _NoSiblingRow:
+                    def first(self):
+                        return None
+
+                return _NoSiblingRow()
 
             class _Scalars:
                 def all(self):
@@ -339,6 +347,55 @@ class TestTaskDeleteExpiredTrialData:
         assert owner.deactivated_at is not None
         mock_email.assert_called_once()
         assert sub.trial_emails_sent.get("data_deleted") is not None
+
+    @pytest.mark.asyncio
+    async def test_skips_delete_when_client_has_active_subscription(self):
+        """Data-loss regression: a customer who subscribed to a paid plan
+        during the retention window must not have their workspace deleted
+        by this cron. The old trial_expired row would normally be canceled
+        at activation (razorpay_service.py); the cron's active-sibling
+        check is defence-in-depth for the case where that cancel didn't
+        happen (lost webhook, manual DB edit, future code path)."""
+        now = datetime.now(UTC)
+        sub = _trial_sub(
+            status="trial_expired",
+            data_retention_until=now - timedelta(hours=1),
+        )
+        owner = _owner()
+
+        fake_session = _FakeSession([sub], {sub.client_id: owner})
+        call_count = {"n": 0}
+        original_execute = fake_session.execute
+
+        def staged_execute(stmt):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return original_execute(stmt)  # Subscription list
+
+            # Active-sibling check → returns a truthy row, meaning the
+            # customer already has a live paid subscription. Cron must
+            # abort the delete and null data_retention_until.
+            class _SiblingRow:
+                def first(self):
+                    return (999,)
+
+            return _SiblingRow()
+
+        fake_session.execute = staged_execute
+
+        with (
+            patch("app.db.session.get_session", return_value=fake_session),
+            patch("app.services.email_service.send_trial_data_deleted_email") as mock_email,
+        ):
+            count = await cron_tasks.task_delete_expired_trial_data({})
+
+        assert count == 0, "cron must not count a bailed-out delete"
+        assert fake_session.deleted == [], "no bots should be deleted"
+        assert owner.deactivated_at is None, "owner must not be deactivated"
+        assert sub.data_retention_until is None, (
+            "retention marker must be nulled so the cron stops re-firing on this orphan"
+        )
+        mock_email.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_skips_already_deactivated_owner_with_marker(self):

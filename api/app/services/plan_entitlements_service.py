@@ -322,6 +322,96 @@ def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> b
     return entitlements.plan_slug in LEAD_SOURCE_ATTRIBUTION_SLUGS
 
 
+def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
+    """True iff this client's active plan exposes the Leads dashboard.
+
+    Leads is a paid-tier surface — the Free plan hides the sidebar link,
+    and the ``/leads`` API mirrors that with a 403. Every paid tier
+    (Starter / Standard / Enterprise, plus any custom slug that isn't
+    ``"free"``) gets access; individual quota (Starter capped at 35 leads
+    per period, Standard unlimited) is enforced separately via the
+    ``limits.leads`` counter, not this feature gate.
+
+    Deny-by-default on entitlements lookup failure — same policy as every
+    other gate in this module.
+    """
+    try:
+        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "leads_dashboard_gate: entitlements lookup failed for client=%s — denying",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug != "free"
+
+
+def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:
+    """Days of chat history the client's active plan lets them see.
+
+    Returns the value straight from ``limits.chat_history_days`` on the
+    active plan. ``UNLIMITED`` (``-1``) means "no retention cap" — the
+    admin dashboard shows every conversation ever recorded. Any positive
+    integer caps the visible window: a Free customer with a 7-day plan
+    limit sees only chats from the last 7 days, regardless of how far
+    back their stored history goes.
+
+    Failure policy is deliberately GENEROUS here (unlike other gates):
+    a resolver hiccup falls back to ``UNLIMITED`` so the customer's
+    dashboard never mysteriously empties itself on a transient cache
+    miss. The real deny-by-default gates are the ones that grant paid
+    features; showing older-than-cap chat history is a privacy leak we
+    can live with for the milliseconds a stale cache might last.
+    """
+    try:
+        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "chat_history_retention: entitlements lookup failed for client=%s — defaulting to unlimited",
+            client_id,
+            exc_info=True,
+        )
+        return UNLIMITED
+    value = entitlements.limits.get("chat_history_days", UNLIMITED)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "chat_history_retention: non-integer limit for client=%s: %r — defaulting to unlimited",
+            client_id,
+            value,
+        )
+        return UNLIMITED
+
+
+def is_bant_enabled_for_plan(client_id: int, db_session: Session) -> bool:
+    """True iff this client's active plan exposes BANT qualification.
+
+    Chat hot-path gate: the rag pipeline reads this before running BANT
+    extraction, offering team-connect cards, or shipping the qualification
+    system prompt. When a customer downgrades from a BANT-enabled tier
+    (Standard / Enterprise) to one without it (Free / Starter), this flips
+    to False on the next entitlements cache cycle (≤60s) and every new
+    chat runs without qualification. Historical BANT signals stay visible
+    in Insights — this gate only stops NEW scoring.
+
+    Falls back to False on any resolver error to match the deny-by-default
+    policy used elsewhere in this module: a broken cache read must never
+    silently grant a paid feature.
+    """
+    try:
+        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "bant_plan_gate: entitlements lookup failed for client=%s — denying",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return bool(entitlements.features.get("bant", False))
+
+
 def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> PlanEntitlements:
     """Build the entitlements dataclass from primary sources. Internal."""
     # 1. Look up the subscription. ``get_client_subscription`` returns the

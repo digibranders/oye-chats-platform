@@ -264,7 +264,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         <NotificationBell />
 
         {/* Divider line */}
-        <div className="h-6 w-px bg-surface-200 dark:bg-surface-800 mx-2 md:mx-3 self-center" />
+        <div className="h-6 w-px bg-surface-200 dark:bg-surface-800 mx-1 md:mx-3 self-center" />
 
         {/* User menu */}
         <div className="relative">

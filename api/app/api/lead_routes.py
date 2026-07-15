@@ -13,11 +13,44 @@ from app.api.auth import get_current_client_or_operator
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, LeadInfo
 from app.db.session import get_session
 from app.services.lead_service import build_lead_response
-from app.services.plan_entitlements_service import is_lead_source_attribution_enabled
+from app.services.plan_entitlements_service import (
+    is_lead_source_attribution_enabled,
+    is_leads_dashboard_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/leads", tags=["leads"])
+
+def _require_leads_dashboard(auth: dict = Depends(get_current_client_or_operator)) -> None:
+    """Router-level gate — Leads is a paid-tier surface (Starter+).
+
+    Free customers see the sidebar item locked; this dependency mirrors
+    the lock on the API so a URL-hack or a stale bookmark can't leak the
+    dashboard. Runs BEFORE every route in this router via
+    ``dependencies=[]`` on the ``APIRouter``. Deny-by-default on
+    entitlements failure keeps the paid surface behind the plan check
+    even when the resolver is unhappy.
+    """
+    with get_session() as session:
+        if not is_leads_dashboard_enabled(auth["client_id"], session):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "feature_not_available",
+                    "feature": "leads",
+                    "message": (
+                        "The leads dashboard is included on Starter and above. "
+                        "Please upgrade your plan to access captured leads."
+                    ),
+                },
+            )
+
+
+router = APIRouter(
+    prefix="/leads",
+    tags=["leads"],
+    dependencies=[Depends(_require_leads_dashboard)],
+)
 
 
 def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int]:

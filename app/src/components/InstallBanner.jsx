@@ -29,8 +29,6 @@ import { useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Download, X } from 'lucide-react';
 import useInstallPrompt from '../hooks/useInstallPrompt';
-import { useWorkspace } from '../context/WorkspaceContext';
-import { getAuthState } from '../utils/auth';
 import { cn } from '../lib/utils';
 import InstallInstructionsModal from './InstallInstructionsModal';
 
@@ -59,28 +57,16 @@ function markDismissed() {
 
 export default function InstallBanner() {
     const { canInstall, isInstalled, isIOS, install } = useInstallPrompt();
-    const { currentRole } = useWorkspace();
-    const { isOperator: legacyOperator } = getAuthState();
     const location = useLocation();
     const [dismissed, setDismissed] = useState(() => wasDismissedRecently());
     const [installing, setInstalling] = useState(false);
     const [showInstructions, setShowInstructions] = useState(false);
-    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
 
     // Re-check dismissal on route change — someone who dismissed then hit
     // Cmd+K a week later would otherwise stay hidden until page reload.
     useEffect(() => {
         setDismissed(wasDismissedRecently());
     }, [location.pathname]);
-
-    // Handle screen resizing to dynamically toggle all-page mobile visibility
-    useEffect(() => {
-        const handleResize = () => {
-            setIsMobile(window.innerWidth < 768);
-        };
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
 
     const shouldRender = (
         !isInstalled
@@ -208,7 +194,7 @@ export default function InstallBanner() {
 
             <InstallInstructionsModal
                 open={showInstructions}
-                mode={isIOS ? 'ios' : 'desktop'}
+                mode={isIOS ? 'ios' : (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent) ? 'android' : 'desktop')}
                 onClose={() => setShowInstructions(false)}
             />
         </>

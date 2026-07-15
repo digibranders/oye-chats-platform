@@ -25,6 +25,13 @@ pricing page reads via ``/public/pricing-catalog``:
   answer rewritten to reflect the new policy (Standard only, 7 days,
   one per account lifetime).
 
+BANT entitlement fix — the canonical seed matrix erroneously granted
+Starter ``features.bant = true`` even though the pricing page and the
+"downgrade loses BANT" behaviour treat qualification as a Standard-only
+feature. Flip it to ``false`` here so the runtime gate
+(``plan_entitlements_service.is_bant_enabled_for_plan``) correctly
+denies Starter customers.
+
 Revision ID: d9e2a4c7f108
 Revises: 597bbddd6562
 Create Date: 2026-07-14
@@ -109,6 +116,13 @@ def upgrade() -> None:
     conn.execute(sa.text("UPDATE plans SET trial_days = 0 WHERE slug = 'starter'"))
     conn.execute(sa.text("UPDATE plans SET trial_days = 7 WHERE slug = 'standard'"))
 
+    # 1b. Correct the BANT feature entitlement on Starter — seeded as true
+    # in the canonical matrix but the product treats BANT as Standard-only.
+    # ``jsonb_set`` preserves every other key on the ``features`` blob.
+    conn.execute(
+        sa.text("UPDATE plans SET features = jsonb_set(features, '{bant}', 'false'::jsonb) WHERE slug = 'starter'")
+    )
+
     # 2. Starter marketing — drop the trial bullet, revert CTA to paid-path.
     def _demote_starter(m: dict) -> None:
         features = [f for f in (m.get("highlight_features") or []) if f != _STARTER_TRIAL_BULLET]
@@ -138,6 +152,10 @@ def downgrade() -> None:
 
     conn.execute(sa.text("UPDATE plans SET trial_days = 14 WHERE slug = 'starter'"))
     conn.execute(sa.text("UPDATE plans SET trial_days = 0 WHERE slug = 'standard'"))
+    # Restore the pre-migration BANT entitlement on Starter.
+    conn.execute(
+        sa.text("UPDATE plans SET features = jsonb_set(features, '{bant}', 'true'::jsonb) WHERE slug = 'starter'")
+    )
 
     def _restore_starter(m: dict) -> None:
         features = list(m.get("highlight_features") or [])

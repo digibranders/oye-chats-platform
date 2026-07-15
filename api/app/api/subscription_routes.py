@@ -1057,10 +1057,65 @@ def change_plan(
         # doesn't show the old tier's grant under the new (smaller) denominator.
         if new_plan.monthly_price_cents == 0 and new_plan.slug == "free":
             if sub is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="You're already on Free — nothing to downgrade.",
+                # ``get_client_subscription`` only returns rows in the
+                # active-set (active/trialing/past_due). A customer whose
+                # trial has already expired lands here with sub=None even
+                # though they hold a real ``trial_expired`` row — that row
+                # is what makes them locked out of their workspace. Treat
+                # "downgrade to Free" as the legitimate way to reactivate:
+                # cancel the expired row (clearing ``data_retention_until``
+                # so the hard-delete cron never fires on it), then insert a
+                # fresh active Free subscription and grant Free credits.
+                expired_sub = session.execute(
+                    select(Subscription)
+                    .where(
+                        Subscription.client_id == client.id,
+                        Subscription.status == "trial_expired",
+                        Subscription.bot_id.is_(None),
+                    )
+                    .order_by(Subscription.created_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if expired_sub is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You're already on Free — nothing to downgrade.",
+                    )
+
+                now = datetime.now(UTC)
+                expired_sub.status = "canceled"
+                expired_sub.canceled_at = now
+                expired_sub.cancel_reason = "downgrade_to_free_from_trial_expired"
+                # Belt-and-braces: null the retention marker so the
+                # hard-delete cron never sees the row again even if a
+                # future refactor broadens its status filter.
+                expired_sub.data_retention_until = None
+
+                new_sub = Subscription(
+                    client_id=client.id,
+                    plan_id=new_plan.id,
+                    status="active",
+                    billing_cycle="monthly",
+                    operator_quantity=1,
+                    current_period_start=now,
+                    current_period_end=add_months(now, 1),
+                    payment_provider="manual",
                 )
+                new_sub.plan = new_plan
+                session.add(new_sub)
+                session.flush()
+                credit_service.reset_monthly_plan_credits(session, client.id, bot_id=new_sub.bot_id)
+                credit_service.grant_for_subscription(session, new_sub)
+                session.commit()
+                logger.info(
+                    "Client %s reactivated from trial_expired onto Free (old sub %s canceled)",
+                    client.id,
+                    expired_sub.id,
+                )
+                return {
+                    "status": "downgraded",
+                    "message": f"Reactivated on {new_plan.name}. Your workspace is back online with Free-tier limits.",
+                }
             if sub.razorpay_subscription_id:
                 # Without this branch the local row would flip to Free while
                 # Razorpay's UPI mandate kept debiting the customer at the
