@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import PageHeader from '../../components/PageHeader';
+import OyeChatsMark from '../../components/OyeChatsMark';
 import { Button } from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
@@ -18,7 +19,7 @@ const EASE = [0.16, 1, 0.3, 1];
 
 // Scripted Otto guidance per milestone (an AI-driven Otto is a future upgrade).
 const OTTO = {
-    create: "Welcome! Let's build your first agent. Give it a name, tell me what it's mainly for, and point me at your website.",
+    create: "Welcome! Let's build your first agent. Give it a name and point me at your website — I'll take it from there.",
     train: "Now let's train it on your site — I'll find your pages first, then you pick which ones to crawl.",
     test: "Before it talks to real customers, let's pressure-test it with a few real questions.",
     appearance: 'I pulled your brand colours from your site, so it already looks on-brand. Tweak it or skip — no pressure.',
@@ -162,11 +163,10 @@ export default function BuildStudio() {
 
                             <div className="flex gap-3">
                                 <div
-                                    className="w-9 h-9 shrink-0 rounded-xl grid place-items-center text-white text-sm font-bold"
-                                    style={{ background: 'linear-gradient(135deg, #6366f1, #d946ef)' }}
+                                    className="w-9 h-9 shrink-0 rounded-xl grid place-items-center overflow-hidden bg-[var(--bg-card)] border border-[var(--border)]"
                                     aria-hidden="true"
                                 >
-                                    O
+                                    <OyeChatsMark size={28} />
                                 </div>
                                 <div className="rounded-2xl rounded-tl-md bg-[var(--bg-muted)] px-4 py-3 text-sm text-[var(--text-secondary)] max-w-prose">
                                     {OTTO[milestone.key]}
