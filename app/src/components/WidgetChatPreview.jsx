@@ -1,4 +1,13 @@
+import { useEffect, useRef } from 'react';
 import { X, MoreHorizontal, Bot, Headphones, CalendarDays } from 'lucide-react';
+
+function pathOf(url) {
+    try {
+        return new URL(url).pathname || url;
+    } catch {
+        return url;
+    }
+}
 
 /**
  * Font stack used by the embeddable widget (see widget/src/index.css `:host`).
@@ -28,13 +37,27 @@ export const WIDGET_FONT_STACK =
  *   `welcome_suggestions`, `input_placeholder`), and `feature_flags`
  *   (`show_branding`).
  * @param {'chat'|'waiting'|'unavailable'} [props.state='chat'] Which view to render.
+ * @param {Array<{role:'user'|'bot', text:string, sources?:string[]}>} [props.messages]
+ *   When non-empty (chat state), renders a LIVE conversation in the message area
+ *   instead of the welcome screen — used by the Build Studio Prove step so the
+ *   agent proves itself inside the real widget. Omit for the static Bot Settings
+ *   preview.
+ * @param {boolean} [props.pending] Bot is answering — shows a typing indicator.
  * @param {string} [props.className] Extra classes for the outer widget frame.
  */
-export default function WidgetChatPreview({ settings, state = 'chat', className = '' }) {
+export default function WidgetChatPreview({ settings, state = 'chat', messages = [], pending = false, className = '' }) {
     // Live-chat affordance is gated by both the bot toggle and the plan
     // entitlement. When the entitlement isn't supplied (e.g. the Build Studio,
     // which has no per-field lock context) treat it as allowed.
     const liveChatAllowed = settings.live_chat_allowed !== false;
+
+    // Interactive mode: once a conversation exists, the message area shows the
+    // real Q&A instead of the welcome overlay (Build Studio Prove step).
+    const hasConversation = state === 'chat' && (messages.length > 0 || pending);
+    const scrollRef = useRef(null);
+    useEffect(() => {
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    }, [messages, pending]);
 
     return (
         /* Chat Window Preview Wrapper — mirrors the real widget's classic
@@ -108,7 +131,50 @@ export default function WidgetChatPreview({ settings, state = 'chat', className 
                 className="relative flex-grow overflow-hidden min-h-[420px] bg-[#F8F8F8]"
                 style={{ paddingTop: state === 'chat' ? 24 : undefined }}
             >
-                {state === 'chat' && (() => {
+                {hasConversation && (
+                    <div ref={scrollRef} className="absolute inset-0 z-10 overflow-y-auto flex flex-col gap-3 px-4 py-4" style={{ backgroundColor: '#F8F8F8' }}>
+                        {messages.map((m, i) =>
+                            m.role === 'user' ? (
+                                <div key={i} className="flex justify-end">
+                                    <div
+                                        className="max-w-[80%] rounded-2xl rounded-br-md px-3.5 py-2 text-[14px] text-white whitespace-pre-wrap break-words"
+                                        style={{ backgroundColor: settings.primary_color }}
+                                    >
+                                        {m.text}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div key={i} className="flex flex-col items-start gap-1.5 max-w-[88%]">
+                                    <div className="rounded-2xl rounded-tl-md bg-white border border-gray-100 px-3.5 py-2 text-[14px] text-[#16202C] whitespace-pre-wrap break-words shadow-sm">
+                                        {m.text}
+                                    </div>
+                                    {Array.isArray(m.sources) && m.sources.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 pl-1">
+                                            {m.sources.slice(0, 3).map((s, j) => (
+                                                <span
+                                                    key={j}
+                                                    className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500"
+                                                    title={s}
+                                                >
+                                                    ◆ {pathOf(s)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        )}
+                        {pending && (
+                            <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-md bg-white border border-gray-100 px-3.5 py-2.5 self-start shadow-sm">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '120ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '240ms' }} />
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {state === 'chat' && !hasConversation && (() => {
                     // Mirror WelcomeScreen.jsx: greeting (emoji stripped, with a
                     // time-of-day fallback), subtitle, and the suggestion pills
                     // whose layout follows the MessagesTab vertical/horizontal

@@ -42,7 +42,7 @@ function botToPreviewSettings(bot, previewColor) {
  * brand colour, so the Studio preview is pixel-identical to Bot Settings and the
  * real widget. The Appearance step's `previewColor` live-recolours it.
  */
-export default function LiveAgentPreview({ previewColor }) {
+export default function LiveAgentPreview({ previewColor, messages = [], pending = false }) {
     const { selectedBot } = useBotContext();
 
     return (
@@ -66,6 +66,8 @@ export default function LiveAgentPreview({ previewColor }) {
                     <WidgetChatPreview
                         settings={botToPreviewSettings(selectedBot, previewColor)}
                         state="chat"
+                        messages={messages}
+                        pending={pending}
                     />
                 </motion.div>
             ) : (

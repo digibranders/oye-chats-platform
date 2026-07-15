@@ -1,30 +1,48 @@
 import { useState, useEffect } from 'react';
 import { Check, ArrowRight, Loader2 } from 'lucide-react';
-import { getClientSettings, updateClientSettings, recordActivationEvent } from '../../../services/api';
+import {
+    getClientSettings,
+    updateClientSettings,
+    updateBot,
+    recordActivationEvent,
+} from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
+import { Input } from '../../../components/ui/Input';
 import { Button } from '../../../components/ui/Button';
 import { cn } from '../../../lib/utils';
 
 const PRESETS = ['#d946ef', '#6366f1', '#0ea5e9', '#10b981', '#f97316', '#ef4444'];
 
+// A placeholder name derived at Connect from the bare domain (e.g. "Acme").
+// If the current name still looks like that placeholder and the crawl found a
+// nicer company name, we suggest the company name instead.
+function suggestName(bot) {
+    const current = (bot?.name || '').trim();
+    const company = (bot?.company_name || '').trim();
+    if (company && company.toLowerCase() !== current.toLowerCase()) return company;
+    return current;
+}
+
 /**
- * Appearance milestone — the accent colour, seeded with the palette auto-detected
- * from the site during the crawl. Picking a colour updates the live preview in
- * real time (via onPreviewColor); the full branding surface lives in Settings.
+ * Personalize milestone (Prove-it-first step 3) — merges naming + appearance
+ * into one low-effort "make it yours" step. The name is pre-filled from the
+ * company name the crawl extracted; the accent colour is seeded from the
+ * palette auto-detected on the site. Both are one-tap confirms.
  */
-export default function AppearanceStep({ onDone, onPreviewColor }) {
+export default function PersonalizeStep({ onDone, onPreviewColor }) {
     const { selectedBot, refreshBots } = useBotContext();
     const { showToast } = useToast();
     const botId = selectedBot?.id;
 
     const [loading, setLoading] = useState(true);
     const [detected, setDetected] = useState([]);
+    const [name, setName] = useState(() => suggestName(selectedBot));
     const [color, setColor] = useState(selectedBot?.primary_color || '#d946ef');
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        if (!botId) return;
+        if (!botId) return undefined;
         let cancelled = false;
         (async () => {
             try {
@@ -49,15 +67,17 @@ export default function AppearanceStep({ onDone, onPreviewColor }) {
     };
 
     const save = async () => {
+        const finalName = name.trim() || selectedBot?.name || 'AI Assistant';
         setSaving(true);
         try {
+            await updateBot(botId, { name: finalName });
             await updateClientSettings({ primary_color: color }, botId);
             recordActivationEvent('appearance_saved', { botId, eventData: { color } });
             await refreshBots();
             onPreviewColor?.(null);
             onDone?.();
         } catch (err) {
-            showToast('error', err?.message || 'Could not save appearance.');
+            showToast('error', err?.message || 'Could not save your changes.');
             setSaving(false);
         }
     };
@@ -91,6 +111,14 @@ export default function AppearanceStep({ onDone, onPreviewColor }) {
 
     return (
         <div className="flex flex-col gap-6">
+            <div>
+                <label className="block text-sm font-medium text-[var(--text)] mb-1.5">Agent name</label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ava" maxLength={60} aria-label="Agent name" />
+                {selectedBot?.company_name && (
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">Suggested from your website — edit if you like.</p>
+                )}
+            </div>
+
             {detected.length > 0 && (
                 <div>
                     <label className="block text-sm font-medium text-[var(--text)] mb-2.5">Detected from your website</label>
@@ -126,16 +154,6 @@ export default function AppearanceStep({ onDone, onPreviewColor }) {
                     {saving ? 'Saving…' : 'Looks good'}
                     {!saving && <ArrowRight size={16} />}
                 </Button>
-                <button
-                    type="button"
-                    onClick={() => {
-                        onPreviewColor?.(null);
-                        onDone?.();
-                    }}
-                    className="text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-                >
-                    Skip
-                </button>
             </div>
 
             <p className="text-xs text-[var(--text-muted)]">

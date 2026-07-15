@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
@@ -7,11 +7,12 @@ import OyeChatsMark from '../../components/OyeChatsMark';
 import { Button } from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
+import { useBotContext } from '../../context/BotContext';
+import { previewChat } from '../../services/api';
 import { MILESTONES, milestoneIndex } from './studioMilestones';
-import CreateStep from './steps/CreateStep';
-import TrainStep from './steps/TrainStep';
-import TestStep from './steps/TestStep';
-import AppearanceStep from './steps/AppearanceStep';
+import ConnectStep from './steps/ConnectStep';
+import ProveStep from './steps/ProveStep';
+import PersonalizeStep from './steps/PersonalizeStep';
 import GoLiveStep from './steps/GoLiveStep';
 import LiveAgentPreview from './LiveAgentPreview';
 
@@ -19,10 +20,9 @@ const EASE = [0.16, 1, 0.3, 1];
 
 // Scripted Otto guidance per milestone (an AI-driven Otto is a future upgrade).
 const OTTO = {
-    create: "Welcome! Let's build your first agent. Give it a name and point me at your website — I'll take it from there.",
-    train: "Now let's train it on your site — I'll find your pages first, then you pick which ones to crawl.",
-    test: "Before it talks to real customers, let's pressure-test it with a few real questions.",
-    appearance: 'I pulled your brand colours from your site, so it already looks on-brand. Tweak it or skip — no pressure.',
+    connect: "Welcome! Just point me at your website — that's all I need. I'll read it, learn your brand, and build your agent from there.",
+    prove: "I'm learning your site now. The moment I'm done, ask me anything — I'll answer right in the preview using what I read.",
+    personalize: 'I pulled your name and brand colours from your site, so it already looks on-brand. Tweak them or keep them — your call.',
     golive: "Last step — put it on your site. I'll tell you the moment it's live.",
 };
 
@@ -84,29 +84,59 @@ function Stepper({ current, onStep }) {
  */
 export default function BuildStudio() {
     const navigate = useNavigate();
+    const { selectedBot } = useBotContext();
     const [params, setParams] = useSearchParams();
     const current = milestoneIndex(params.get('m'));
     const milestone = MILESTONES[current];
-    // Live override so the Appearance step can recolour the preview in real time.
+    // Live override so the Personalize step can recolour the preview in real time.
     const [previewColor, setPreviewColor] = useState(null);
+    // Shared Prove-step conversation — the controls live in ProveStep (left) but
+    // the Q&A renders inside the widget preview (right), so BuildStudio owns it.
+    const [previewMessages, setPreviewMessages] = useState([]);
+    const [previewPending, setPreviewPending] = useState(false);
+    const previewSessionRef = useRef(`studio-preview-${Math.floor(performance.now())}`);
 
     const goTo = (i) => {
         const clamped = Math.max(0, Math.min(MILESTONES.length - 1, i));
         setPreviewColor(null);
+        setPreviewMessages([]);
+        setPreviewPending(false);
         setParams({ m: MILESTONES[clamped].key });
     };
     const goNext = () => goTo(current + 1);
 
+    // Send a question into the widget preview and stream back a real cited answer.
+    const sendPreview = async (question) => {
+        const q = (question || '').trim();
+        const botId = selectedBot?.id;
+        if (!q || previewPending || !botId) return;
+        setPreviewMessages((m) => [...m, { role: 'user', text: q }]);
+        setPreviewPending(true);
+        try {
+            const res = await previewChat(botId, q, previewSessionRef.current);
+            setPreviewMessages((m) => [
+                ...m,
+                { role: 'bot', text: res?.answer || '', sources: Array.isArray(res?.sources) ? res.sources : [] },
+            ]);
+        } catch (err) {
+            setPreviewMessages((m) => [
+                ...m,
+                { role: 'bot', text: err?.message || 'The agent could not answer that just now.', sources: [] },
+            ]);
+        } finally {
+            setPreviewPending(false);
+        }
+    };
+    const askedCount = previewMessages.filter((m) => m.role === 'user').length;
+
     const renderStep = () => {
         switch (milestone.key) {
-            case 'create':
-                return <CreateStep onCreated={goNext} />;
-            case 'train':
-                return <TrainStep onDone={goNext} />;
-            case 'test':
-                return <TestStep onDone={goNext} />;
-            case 'appearance':
-                return <AppearanceStep onDone={goNext} onPreviewColor={setPreviewColor} />;
+            case 'connect':
+                return <ConnectStep onConnected={goNext} />;
+            case 'prove':
+                return <ProveStep onDone={goNext} onAsk={sendPreview} sending={previewPending} askedCount={askedCount} />;
+            case 'personalize':
+                return <PersonalizeStep onDone={goNext} onPreviewColor={setPreviewColor} />;
             case 'golive':
                 return <GoLiveStep />;
             default:
@@ -198,7 +228,7 @@ export default function BuildStudio() {
 
                         {/* Live preview column */}
                         <div className="w-full lg:sticky lg:top-28">
-                            <LiveAgentPreview previewColor={previewColor} />
+                            <LiveAgentPreview previewColor={previewColor} messages={previewMessages} pending={previewPending} />
                         </div>
                     </div>
             </MotionConfig>
