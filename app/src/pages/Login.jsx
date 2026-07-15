@@ -72,10 +72,10 @@ export default function Login() {
         // previous account in this tab. Done before the toast flag so a
         // failed read can't accidentally suppress the new user's banner.
         clearTrialBannerDismissals();
-        // ``rememberMe`` drives where the auth bundle lands: localStorage
-        // (persists across browser restarts) when checked, sessionStorage
-        // (cleared on tab close) when not. All keys go to the SAME store
-        // so the user-info bundle stays consistent with the token.
+        // Auth always lives in localStorage (shared across tabs). ``rememberMe``
+        // no longer changes WHERE the bundle lands — it drives the absolute
+        // session TTL armed in setAuthBundle: checked → 30 days, unchecked →
+        // 1 day. main.jsx wipes the session once that expiry passes.
         setAuthBundle(
           {
             admin_token: data.access_token,
