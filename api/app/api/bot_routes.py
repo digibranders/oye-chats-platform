@@ -1153,6 +1153,7 @@ def create_bot(
     request: CreateBotRequest,
     auth=Depends(get_current_client_or_operator),
     _sub=Depends(require_active_subscription_for_workspace),
+    _verified=Depends(require_verified_email_for_workspace),
 ):
     """Create a new bot for the authenticated workspace.
 

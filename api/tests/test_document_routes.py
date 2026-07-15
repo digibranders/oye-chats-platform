@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import (
     get_current_client_or_operator,
     require_active_subscription_for_workspace,
+    require_verified_email_for_workspace,
 )
 from app.api.document_routes import router
 
@@ -28,6 +29,9 @@ def _build_app(auth_override=None):
     # See test_bot_routes — gate semantics live in test_trial_enforcement;
     # bypassing here keeps these tests focused on document-route logic.
     app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
+    # Email-verification gate is covered in test_verified_email_gate; bypass it
+    # here so these tests exercise document-route logic on a verified workspace.
+    app.dependency_overrides[require_verified_email_for_workspace] = lambda: None
     return app
 
 

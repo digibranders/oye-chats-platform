@@ -8,7 +8,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import document_routes
-from app.api.auth import get_current_client_or_operator, require_active_subscription_for_workspace
+from app.api.auth import (
+    get_current_client_or_operator,
+    require_active_subscription_for_workspace,
+    require_verified_email_for_workspace,
+)
 from app.api.document_routes import router
 from app.services.plan_service import UNLIMITED
 
@@ -28,6 +32,7 @@ def _build_app():
         "operator_id": None,
     }
     app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
+    app.dependency_overrides[require_verified_email_for_workspace] = lambda: None
     return app
 
 

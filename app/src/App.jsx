@@ -111,10 +111,13 @@ const RootRedirect = ({ fallback }) => {
                 if (me?.is_affiliate_only) {
                     setDestination('/affiliate');
                 } else if (STUDIO_ENABLED && !me?.onboarding_complete && (me?.bot_count ?? 0) === 0) {
-                    // Brand-new (botless, not-yet-onboarded) account → resume the
-                    // guided Build Studio. Accounts that already have a bot are
-                    // never pulled out of their dashboard.
-                    setDestination('/build');
+                    // Brand-new (botless, not-yet-onboarded) account. Email must
+                    // be verified before onboarding — the backend 403s
+                    // create-bot/crawl/ingest for unverified workspaces, so send
+                    // unverified users to the OTP screen instead of into a flow
+                    // that would dead-end. Verified accounts resume the guided
+                    // Build Studio. (Google SSO signups are already verified.)
+                    setDestination(me?.is_verified ? '/build' : '/verify-email');
                 }
             })
             .catch(() => {

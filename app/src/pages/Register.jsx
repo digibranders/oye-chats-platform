@@ -9,7 +9,6 @@ import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
 import Select from '../components/ui/Select';
-import { STUDIO_ENABLED } from '../utils/flags';
 
 // Billing-country choices for the custom Select. An empty-value first option
 // keeps "Detect automatically" (currency inferred from the request IP) both
@@ -123,19 +122,16 @@ export default function Register() {
       // flag set by a previous account.
       clearTrialBannerDismissals();
 
-      // Email verification is no longer a hard wall for ORGANIC signups: the
-      // new client lands straight in the product and is nudged by the
-      // dismissible VerifyEmailBanner (verification stays enforced
-      // server-side on billing/invite mutations). Invite/affiliate
-      // deep-links are preserved so recipients still round-trip back to their
-      // airlock; only organic (no deep-link) signups skip into the app.
-      if (safeNext) {
-        navigate(safeNext);
-      } else if (affiliateToken) {
-        navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
-      } else {
-        navigate(STUDIO_ENABLED ? '/build' : '/');
-      }
+      // Email/password signups MUST verify their email before entering the
+      // product — this closes the abuse vector where fake/nonexistent emails
+      // farm free trial credits + crawl compute (the backend now also 403s
+      // create-bot/crawl/ingest for unverified workspaces). Google SSO is
+      // exempt: those emails are provider-verified at the source. We route to
+      // the OTP screen, preserving any invite/affiliate deep-link as ``next``
+      // so recipients still round-trip back to their airlock after verifying.
+      const postVerifyNext =
+        safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '');
+      navigate(postVerifyNext ? `/verify-email?next=${encodeURIComponent(postVerifyNext)}` : '/verify-email');
     } catch (err) {
       // Detect the "email already registered" backend rejection so we can
       // offer a one-click redirect to Login with the current query params
