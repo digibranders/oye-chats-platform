@@ -185,7 +185,7 @@ export default function BuildStudio() {
                     {/* Guide column */}
                     <div className="flex flex-col gap-6 min-h-[420px]">
                             <div>
-                                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)] mb-1.5">
+                                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)] mb-1.5">
                                     Step {current + 1} of {MILESTONES.length}
                                 </div>
                                 <h1 className="text-2xl font-semibold tracking-tight text-balance">{milestone.title}</h1>

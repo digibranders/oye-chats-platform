@@ -1,10 +1,55 @@
 import { motion } from 'framer-motion';
-import { Sparkles } from 'lucide-react';
+import { MessageCircle } from 'lucide-react';
 import { useBotContext } from '../../context/BotContext';
 import Badge from '../../components/ui/Badge';
 import WidgetChatPreview from '../../components/WidgetChatPreview';
 
 const EASE = [0.16, 1, 0.3, 1];
+
+function hostOf(url) {
+    try {
+        return new URL((url || '').startsWith('http') ? url : `https://${url}`).host;
+    } catch {
+        return '';
+    }
+}
+
+// A faint mock of the customer's own web page, behind the widget — so the
+// preview reads as "your widget, live on your site" rather than a bare card.
+function PageSkeleton() {
+    return (
+        <div aria-hidden="true" className="absolute inset-0 px-5 pt-5 pointer-events-none opacity-60">
+            <div className="h-3.5 w-20 rounded bg-[var(--border)] mb-5" />
+            <div className="h-20 rounded-xl bg-[var(--border)]/70 mb-4" />
+            <div className="h-2.5 w-3/4 rounded bg-[var(--border)] mb-2.5" />
+            <div className="h-2.5 w-2/3 rounded bg-[var(--border)] mb-2.5" />
+            <div className="h-2.5 w-1/2 rounded bg-[var(--border)]" />
+        </div>
+    );
+}
+
+// The chrome of a browser window — traffic-light dots + an address bar showing
+// the customer's domain (placeholder until Connect captures it).
+function BrowserFrame({ domain, children }) {
+    return (
+        <div className="w-full rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] shadow-[0_20px_50px_-24px_rgba(0,0,0,0.35)] overflow-hidden">
+            <div className="flex items-center gap-2 px-3 h-9 border-b border-[var(--border)] bg-[var(--bg-muted)]/50">
+                <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
+                </div>
+                <div className="flex-1 mx-2 h-5 rounded-md bg-[var(--bg-card)] border border-[var(--border)] flex items-center px-2.5">
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono truncate">{domain}</span>
+                </div>
+            </div>
+            <div className="relative min-h-[440px] bg-[var(--bg-muted)]/25">
+                <PageSkeleton />
+                <div className="relative flex justify-end items-end min-h-[440px] p-3">{children}</div>
+            </div>
+        </div>
+    );
+}
 
 /**
  * Map a bot record (from `useBotContext`) into the settings shape
@@ -45,10 +90,12 @@ function botToPreviewSettings(bot, previewColor) {
 export default function LiveAgentPreview({ previewColor, messages = [], pending = false }) {
     const { selectedBot } = useBotContext();
 
+    const domain = hostOf(selectedBot?.website) || 'your-site.com';
+
     return (
         <div className="flex flex-col h-full">
             <div className="flex items-center justify-between mb-3">
-                <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">Live preview</span>
+                <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">Live preview</span>
                 {selectedBot ? (
                     <Badge variant="soft" color="default" size="sm">
                         Not live yet
@@ -56,42 +103,32 @@ export default function LiveAgentPreview({ previewColor, messages = [], pending 
                 ) : null}
             </div>
 
-            {selectedBot ? (
-                <motion.div
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, ease: EASE }}
-                    className="w-full flex justify-center"
-                >
-                    <WidgetChatPreview
-                        settings={botToPreviewSettings(selectedBot, previewColor)}
-                        state="chat"
-                        messages={messages}
-                        pending={pending}
-                    />
-                </motion.div>
-            ) : (
-                <motion.div
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, ease: EASE }}
-                    className="flex-1 w-full max-w-sm mx-auto rounded-[22px] border border-[var(--border)] bg-[var(--bg-card)] shadow-[0_12px_40px_-16px_rgba(0,0,0,0.25)] overflow-hidden flex flex-col"
-                >
-                    <div className="flex-1 min-h-[240px] px-4 py-8 flex flex-col items-center justify-center text-center gap-3">
-                        <motion.div
-                            initial={{ scale: 0.85, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            transition={{ duration: 0.5, delay: 0.1, ease: EASE }}
-                            className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/30 dark:to-primary-800/20 grid place-items-center"
-                        >
-                            <Sparkles size={24} className="text-primary-500 dark:text-primary-400" />
-                        </motion.div>
-                        <p className="text-sm text-[var(--text-muted)] max-w-[22ch]">
-                            Your agent will appear here as you build it.
-                        </p>
-                    </div>
-                </motion.div>
-            )}
+            <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, ease: EASE }}
+            >
+                <BrowserFrame domain={domain}>
+                    {selectedBot ? (
+                        <WidgetChatPreview
+                            settings={botToPreviewSettings(selectedBot, previewColor)}
+                            state="chat"
+                            messages={messages}
+                            pending={pending}
+                            className="max-w-[340px]"
+                        />
+                    ) : (
+                        // No bot yet (Connect step): show the closed launcher on the
+                        // page, as it would appear before a visitor opens it.
+                        <div className="flex flex-col items-end gap-2">
+                            <span className="text-[11px] text-[var(--text-muted)] mr-1">Your agent will appear here</span>
+                            <div className="w-14 h-14 rounded-full grid place-items-center text-white shadow-lg bg-primary-500">
+                                <MessageCircle size={24} />
+                            </div>
+                        </div>
+                    )}
+                </BrowserFrame>
+            </motion.div>
         </div>
     );
 }
