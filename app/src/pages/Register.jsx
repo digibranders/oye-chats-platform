@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -43,15 +43,12 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
-  const [termsHighlight, setTermsHighlight] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   // Email/password is the secondary signup path — revealed behind a "Continue
   // with email" disclosure so Google SSO stays the primary call-to-action.
   // Auto-expanded when an email is pre-filled (invite airlock round-trip).
   const [showEmailForm, setShowEmailForm] = useState(Boolean(_initialEmail));
-  const termsCheckboxRef = useRef(null);
   const navigate = useNavigate();
   // Affiliate invite round-trip — see Login.jsx for the rationale. New
   // sign-ups arrived from the Partners invite landing get routed back
@@ -72,18 +69,6 @@ export default function Register() {
   const passwordsMatch = password && confirmPassword && password === confirmPassword;
   const strengthScore = [hasMinLength, hasLetter, hasNumber].filter(Boolean).length;
 
-  // Shared "you must accept the Terms first" gate — used by both the
-  // email/password submit and the Google OAuth button (which redirects the
-  // full page, so it has to be blocked synchronously on click). Surfaces the
-  // error banner AND highlights + scrolls to the checkbox itself, since
-  // Google's button sits above the checkbox in the layout.
-  const blockOnTerms = () => {
-    setError('Terms required — please agree to the Terms and Privacy Policy to continue.');
-    setTermsHighlight(true);
-    termsCheckboxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    termsCheckboxRef.current?.focus();
-  };
-
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
@@ -102,10 +87,6 @@ export default function Register() {
     }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
-      return;
-    }
-    if (!agreedToTerms) {
-      blockOnTerms();
       return;
     }
 
@@ -310,11 +291,8 @@ export default function Register() {
           {/* Google OAuth signup — backend uses the same endpoint as login;
               it decides "new account" vs "returning" by looking up the
               provider subject + email. Hidden when the server reports
-              Google OAuth is not configured. Gated on the Terms/Privacy
-              checkbox below, same as the email/password form — Google is a
-              full-page redirect, so the gate has to run on click via
-              onBlockedClick rather than a disabled attribute. */}
-          <div className="mb-4">
+              Google OAuth is not configured. */}
+          <div className="mb-3">
             <GoogleAuthButton
               label="Sign up with Google"
               mode="register"
@@ -323,71 +301,34 @@ export default function Register() {
               // back to the affiliate-invite deep link, then to root.
               next={safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/')}
               tabIndex={0}
-              onBlockedClick={() => {
-                if (agreedToTerms) return false;
-                blockOnTerms();
-                return true;
-              }}
             />
           </div>
 
-          {/* Terms/Privacy agreement — kept ALWAYS visible (not tucked inside
-              the collapsible email form) because it gates the PRIMARY Google
-              button too. Google is a full-page redirect, so the gate runs on
-              click via onBlockedClick, which scrolls to and highlights this
-              checkbox; it must stay mounted for that to work. */}
-          <label className="flex items-start gap-2.5 mb-4 cursor-pointer group">
-            <div className="relative flex items-center justify-center mt-0.5 flex-shrink-0">
-              <input
-                ref={termsCheckboxRef}
-                type="checkbox"
-                checked={agreedToTerms}
-                onChange={(e) => {
-                  setAgreedToTerms(e.target.checked);
-                  if (e.target.checked) {
-                    setTermsHighlight(false);
-                    setError('');
-                  }
-                }}
-                className={cn(
-                  'peer appearance-none w-4 h-4 border rounded bg-white',
-                  'checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-1 transition-all cursor-pointer',
-                  termsHighlight
-                    ? 'border-rose-500 ring-2 ring-rose-500/40'
-                    : 'border-surface-300 focus:ring-[var(--focus-ring)]'
-                )}
-                tabIndex={0}
-              />
-              <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <span className={cn('text-xs leading-relaxed', termsHighlight ? 'text-rose-600' : 'text-surface-500')}>
-              {termsHighlight && <span className="font-semibold">Terms required — </span>}
-              I agree to the{' '}
-              <a
-                href="https://oyechats.com/legal/terms"
-                target="_blank"
-                rel="noopener noreferrer"
-                tabIndex={-1}
-                onClick={(e) => e.stopPropagation()}
-                className="text-primary-600 hover:text-primary-700"
-              >
-                Terms
-              </a>{' '}
-              and{' '}
-              <a
-                href="https://oyechats.com/legal/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
-                tabIndex={-1}
-                onClick={(e) => e.stopPropagation()}
-                className="text-primary-600 hover:text-primary-700"
-              >
-                Privacy Policy
-              </a>.
-            </span>
-          </label>
+          {/* Implicit consent — the industry-standard pattern (Google, Stripe,
+              Vercel, Linear, Notion): one statement covering BOTH signup
+              methods, no checkbox, buttons never disabled. Signing up is the
+              consenting action; this notice sits under the primary CTA so it's
+              always visible regardless of whether the email form is expanded. */}
+          <p className="mb-4 text-xs leading-relaxed text-surface-500">
+            By signing up, you agree to our{' '}
+            <a
+              href="https://oyechats.com/legal/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-600 hover:text-primary-700 font-medium"
+            >
+              Terms
+            </a>{' '}
+            and{' '}
+            <a
+              href="https://oyechats.com/legal/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-600 hover:text-primary-700 font-medium"
+            >
+              Privacy Policy
+            </a>.
+          </p>
 
           {/* Secondary email/password path, disclosed on demand. All fields
               and handlers are unchanged; only the Terms gate was lifted out
@@ -546,7 +487,6 @@ export default function Register() {
             <button
               type="submit"
               disabled={isLoading}
-              aria-describedby={!agreedToTerms ? 'terms-required-hint' : undefined}
               className={cn(
                 'w-full py-2.5 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
                 'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
@@ -556,23 +496,6 @@ export default function Register() {
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
             </button>
-            {/* The Terms gate lives above the collapsed divider (it also gates the
-                Google button), so when it's unchecked the reason the submit is
-                blocked is off-screen. Surface it right here — clicking scrolls to
-                and highlights the checkbox via the same blockOnTerms path. */}
-            {!agreedToTerms && (
-              <p id="terms-required-hint" className="text-center text-xs text-surface-500">
-                Please{' '}
-                <button
-                  type="button"
-                  onClick={blockOnTerms}
-                  className="font-medium text-primary-600 hover:text-primary-700 underline underline-offset-2"
-                >
-                  agree to the Terms and Privacy Policy
-                </button>{' '}
-                to create your account.
-              </p>
-            )}
               </form>
             </>
           )}
