@@ -8,7 +8,17 @@ import { setAuthBundle } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
+import Select from '../components/ui/Select';
 import { STUDIO_ENABLED } from '../utils/flags';
+
+// Billing-country choices for the custom Select. An empty-value first option
+// keeps "Detect automatically" (currency inferred from the request IP) both
+// selectable and revertable — value '' shows this label, any code shows the
+// picked country. Built once at module load (COUNTRY_OPTIONS is static).
+const BILLING_COUNTRY_OPTIONS = [
+  { value: '', label: 'Detect automatically', search: 'detect automatically auto' },
+  ...COUNTRY_OPTIONS,
+];
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -450,24 +460,20 @@ export default function Register() {
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
+              <label htmlFor="billingCountry" className="block text-[13px] font-medium text-surface-600 mb-1.5">
                 Billing country <span className="text-surface-400 font-normal text-[11px]">(sets your currency)</span>
               </label>
               <div className="relative group">
-                <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
-                <select
+                <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 z-10 pointer-events-none text-surface-400 group-focus-within:text-primary-500 transition-colors" />
+                <Select
+                  id="billingCountry"
                   value={billingCountry}
-                  onChange={(e) => setBillingCountry(e.target.value)}
-                  className={cn(inputCls, 'appearance-none cursor-pointer')}
-                  tabIndex={5}
-                >
-                  <option value="" className="bg-white text-surface-900">Detect automatically</option>
-                  {COUNTRY_OPTIONS.map((c) => (
-                    <option key={c.value} value={c.value} className="bg-white text-surface-900">
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setBillingCountry}
+                  options={BILLING_COUNTRY_OPTIONS}
+                  placeholder="Detect automatically"
+                  searchable
+                  className="pl-10 pr-4 py-2.5 rounded-xl"
+                />
               </div>
               <p className="mt-1 text-[11px] text-surface-400">India is billed in ₹ INR; other countries in $ USD.</p>
             </div>
