@@ -472,6 +472,7 @@ export default function Register() {
                   options={BILLING_COUNTRY_OPTIONS}
                   placeholder="Detect automatically"
                   searchable
+                  light
                   className="pl-10 pr-4 py-2.5 rounded-xl"
                 />
               </div>
@@ -543,7 +544,9 @@ export default function Register() {
             </div>
 
             <button
-              type="submit" disabled={isLoading || !agreedToTerms}
+              type="submit"
+              disabled={isLoading}
+              aria-describedby={!agreedToTerms ? 'terms-required-hint' : undefined}
               className={cn(
                 'w-full py-2.5 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
                 'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
@@ -553,6 +556,23 @@ export default function Register() {
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
             </button>
+            {/* The Terms gate lives above the collapsed divider (it also gates the
+                Google button), so when it's unchecked the reason the submit is
+                blocked is off-screen. Surface it right here — clicking scrolls to
+                and highlights the checkbox via the same blockOnTerms path. */}
+            {!agreedToTerms && (
+              <p id="terms-required-hint" className="text-center text-xs text-surface-500">
+                Please{' '}
+                <button
+                  type="button"
+                  onClick={blockOnTerms}
+                  className="font-medium text-primary-600 hover:text-primary-700 underline underline-offset-2"
+                >
+                  agree to the Terms and Privacy Policy
+                </button>{' '}
+                to create your account.
+              </p>
+            )}
               </form>
             </>
           )}
