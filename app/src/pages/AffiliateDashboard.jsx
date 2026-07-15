@@ -4,7 +4,7 @@ import {
     Sparkles, Plus, Loader2, Copy, Check, MousePointerClick, Users,
     TrendingUp, Tag, Power, RotateCcw, AlertCircle, Pencil, Eye,
 } from 'lucide-react';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 import CreateCodeModal from '../components/affiliate/CreateCodeModal';
@@ -193,36 +193,39 @@ export default function AffiliateDashboard() {
     }
 
     return (
-        <div className="space-y-6 animate-fade-in pb-12">
+        <div className="space-y-6 animate-fade-in pb-12 -mt-2">
             <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'Affiliate Program' }]}
                 title="Affiliate Program"
-                subtitle="Create referral codes, share them anywhere, and track every signup they bring in."
-            >
-                {/* Pool chip — surfaces the commission % the super-admin
-                    granted this affiliate. It's the ceiling each code's
-                    (my-commission + friend-reward) must split within. */}
-                {!isLoading && !error && (
-                    <div
-                        className="inline-flex items-center gap-2 px-3 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 text-primary-700 dark:text-primary-300"
-                        title="Set by your account manager. Each code splits within this pool."
-                    >
-                        <TrendingUp size={14} />
-                        <span className="text-[12px] font-semibold tabular-nums">
-                            Pool: {poolPct.toFixed(2)}%
-                        </span>
-                    </div>
+                actions={(
+                    <>
+                        {/* Pool chip — surfaces the commission % the super-admin
+                            granted this affiliate. It's the ceiling each code's
+                            (my-commission + friend-reward) must split within. */}
+                        {!isLoading && !error && (
+                            <div
+                                className="inline-flex items-center gap-2 px-3 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 text-primary-700 dark:text-primary-300"
+                                title="Set by your account manager. Each code splits within this pool."
+                            >
+                                <TrendingUp size={14} />
+                                <span className="text-[12px] font-semibold tabular-nums">
+                                    Pool: {poolPct.toFixed(2)}%
+                                </span>
+                            </div>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => setShowCreate(true)}
+                            disabled={isLoading || !!error || atCap}
+                            title={atCap ? `You're at the ${maxCodes}-code limit. Deactivate one to create another.` : undefined}
+                            className="inline-flex items-center gap-2 px-4 h-10 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <Plus size={15} />
+                            Create code
+                        </button>
+                    </>
                 )}
-                <button
-                    type="button"
-                    onClick={() => setShowCreate(true)}
-                    disabled={isLoading || !!error || atCap}
-                    title={atCap ? `You're at the ${maxCodes}-code limit. Deactivate one to create another.` : undefined}
-                    className="inline-flex items-center gap-2 px-4 h-10 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <Plus size={15} />
-                    Create code
-                </button>
-            </PageHeader>
+            />
 
             {/* Stats row */}
             {isLoading ? (
@@ -306,7 +309,8 @@ export default function AffiliateDashboard() {
                         </button>
                     </div>
                 ) : (
-                    <table className="w-full text-sm">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] text-sm">
                         <thead>
                             <tr className="border-b border-surface-100 dark:border-surface-800">
                                 <th className="text-center px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Code</th>
@@ -444,6 +448,7 @@ export default function AffiliateDashboard() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
             </div>
 

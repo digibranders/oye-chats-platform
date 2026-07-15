@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_client_or_operator, get_current_operator
+from app.api.auth import get_current_client_or_operator, get_current_client_strict, get_current_operator
 from app.core.dates import trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.rate_limit import limiter
@@ -353,6 +353,12 @@ class CurrentUserResponse(BaseModel):
     bot_count: int
     is_superadmin: bool = False
     is_online: bool = False
+    # Email-verification + onboarding-wizard state. For clients these mirror
+    # the columns on their own account; for operators they reflect the
+    # workspace owner's account (the client they belong to), since operators
+    # don't have their own verification/onboarding lifecycle.
+    is_verified: bool = False
+    onboarding_complete: bool = False
     role: str | None = None  # operator role; None for clients
     # Affiliate-program membership — derived from the affiliates table.
     # ``True`` only when an active (non-deactivated) row exists for the
@@ -430,6 +436,11 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
                 bot_count=int(bot_count or 0),
                 is_superadmin=False,
                 is_online=bool(operator.is_online),
+                # Reflect the workspace owner's account state — operators act
+                # inside a client's workspace and share its verification /
+                # onboarding status rather than owning their own.
+                is_verified=bool(owner_client.is_verified) if owner_client else False,
+                onboarding_complete=bool(owner_client.onboarding_complete) if owner_client else False,
                 role=operator.role,
             )
 
@@ -473,6 +484,8 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             bot_count=int(bot_count or 0),
             is_superadmin=bool(client.is_superadmin),
             is_online=bool(is_online),
+            is_verified=bool(client.is_verified),
+            onboarding_complete=bool(client.onboarding_complete),
             role=None,
             is_affiliate=affiliate_row is not None,
             affiliate_id=affiliate_row.id if affiliate_row else None,
@@ -558,6 +571,22 @@ class ResendVerificationRequest(BaseModel):
     @classmethod
     def normalise_email(cls, v):
         return v.strip().lower()
+
+
+@router.post("/onboarding/complete")
+def complete_onboarding(client: Client = Depends(get_current_client_strict)):
+    """Mark the account's guided onboarding (Build Studio) as complete.
+
+    Called when the user finishes the Studio's Go-live milestone. Idempotent —
+    safe to call more than once.
+    """
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        row.onboarding_complete = True
+        session.commit()
+    return {"onboarding_complete": True}
 
 
 @router.post("/verify-email")
@@ -669,6 +698,27 @@ def login(request: Request, body: LoginRequest):
                 logger.warning("Login failed: incorrect password for %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
+            # Standing checks — a suspended or hard-deleted account must not
+            # get past the password check, or the customer lands on a working
+            # session that any subsequent API call immediately rejects.
+            # Superadmins are exempt (platform staff, never customers).
+            if not client.is_superadmin:
+                if client.suspended_at is not None:
+                    logger.warning("Login failed: suspended client %s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Your account has been suspended. Please contact support.",
+                    )
+                if client.deactivated_at is not None:
+                    logger.warning("Login failed: deactivated client %s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Your account was deleted after the post-trial retention window. "
+                            "Please contact support to restore it or sign up again."
+                        ),
+                    )
+
             logger.info("Successful dashboard login for client %s (%s)", client.id, client.name)
 
             return {
@@ -699,10 +749,52 @@ def register(request: Request, body: RegisterRequest):
     """
     try:
         with get_session() as session:
-            # Check for duplicate email
+            # Check for duplicate email. Three states matter here: an
+            # active row is a normal duplicate-signup collision; a
+            # suspended row is a superadmin-imposed lockout that only
+            # support can lift; a deactivated row is the post-trial
+            # hard-delete tombstone (workspace data purged, Client row
+            # kept for audit). Each surface its own message so the user
+            # knows exactly what to do next instead of guessing why
+            # signup failed.
             stmt = select(Client).where(Client.email == body.email).limit(1)
             existing = session.execute(stmt).scalars().first()
-            if existing:
+            if existing is not None:
+                if getattr(existing, "deactivated_at", None) is not None:
+                    logger.info(
+                        "register_blocked_deactivated client_id=%s email=%s",
+                        existing.id,
+                        _redact_email(_sanitize_for_log(body.email)),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "account_deleted",
+                            "message": (
+                                "This email belongs to an account that was deleted after its "
+                                "post-trial retention window. Please contact support to restore it, "
+                                "or sign up with a different email address."
+                            ),
+                            "support_email": "developer@oyechats.com",
+                        },
+                    )
+                if getattr(existing, "suspended_at", None) is not None:
+                    logger.info(
+                        "register_blocked_suspended client_id=%s email=%s",
+                        existing.id,
+                        _redact_email(_sanitize_for_log(body.email)),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "account_suspended",
+                            "message": (
+                                "This email belongs to a suspended account. Please contact support "
+                                "to resolve the suspension before creating a new account."
+                            ),
+                            "support_email": "developer@oyechats.com",
+                        },
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="An account with this email already exists. Please sign in instead.",
@@ -727,9 +819,13 @@ def register(request: Request, body: RegisterRequest):
             session.flush()  # Get the client ID
             logger.info("Client INSERT flushed: id=%s", new_client.id)
 
-            # Auto-assign the default plan (currently the 14-day trial). The
-            # subscription row is bound locally so we can build the trial
-            # payload + welcome email without re-querying after commit.
+            # Auto-assign the default plan. Whether that yields a trialing
+            # or an active subscription depends on the plan seed
+            # (``Plan.trial_days``) — today the default plan is "free" with
+            # zero trial days, so a plain signup lands active on Free and
+            # the trial is opt-in via the billing modal. The subscription
+            # row is bound locally so we can build the trial payload +
+            # welcome email without re-querying after commit.
             subscription = None
             try:
                 from app.services.plan_service import assign_default_plan_to_client
@@ -771,7 +867,7 @@ def register(request: Request, body: RegisterRequest):
                         name=new_client.name,
                         trial_end=trial_end,
                         credits=credits_granted,
-                        duration_days=int(subscription.plan.trial_days or 14) if subscription.plan else 14,
+                        duration_days=int(subscription.plan.trial_days or 7) if subscription.plan else 7,
                     )
                 except Exception as mail_err:
                     # send_trial_welcome_email is already defensive — this is
@@ -852,6 +948,30 @@ def request_password_reset(request: Request, body: RequestPasswordResetRequest):
                 # Return success anyway to avoid email enumeration
                 return {"message": "If an account exists, a reset link has been sent."}
 
+            # Standing checks — a deactivated or suspended account must
+            # not receive a reset OTP. The login endpoint already returns
+            # a specific reason for these states so there's no further
+            # enumeration signal being leaked here; matching the login
+            # copy keeps the customer-facing story consistent instead of
+            # sending them into a "why isn't my reset email arriving?"
+            # dead end.
+            if not client.is_superadmin:
+                if client.deactivated_at is not None:
+                    logger.info("password_reset_blocked_deactivated client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Your account was deleted after the post-trial retention window. "
+                            "Please contact support to restore it or sign up again."
+                        ),
+                    )
+                if client.suspended_at is not None:
+                    logger.info("password_reset_blocked_suspended client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Your account has been suspended. Please contact support.",
+                    )
+
             otp = str(secrets.randbelow(900000) + 100000)
             client.reset_otp = otp
             client.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
@@ -859,6 +979,10 @@ def request_password_reset(request: Request, body: RequestPasswordResetRequest):
 
             send_password_reset_email(client.email, otp)
             return {"message": "If an account exists, a reset link has been sent."}
+    except HTTPException:
+        # Standing-check rejections must propagate as-is; the catch-all
+        # below would otherwise mask a 403 as a generic 500.
+        raise
     except Exception as e:
         logger.error(
             "Failed to request password reset for %s: %s",
@@ -879,6 +1003,27 @@ def reset_password(request: Request, body: ResetPasswordRequest):
 
             if not client or not client.reset_otp or not client.reset_otp_expires_at:
                 raise HTTPException(status_code=400, detail="Invalid or expired reset code.")
+
+            # Defence-in-depth: even if the OTP was minted before the
+            # account was deactivated / suspended (e.g. a support action
+            # ran between the two calls), don't let the reset land — the
+            # customer would set a password only to be blocked at login.
+            if not client.is_superadmin:
+                if client.deactivated_at is not None:
+                    logger.info("password_reset_confirm_blocked_deactivated client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Your account was deleted after the post-trial retention window. "
+                            "Please contact support to restore it or sign up again."
+                        ),
+                    )
+                if client.suspended_at is not None:
+                    logger.info("password_reset_confirm_blocked_suspended client_id=%s", client.id)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Your account has been suspended. Please contact support.",
+                    )
 
             if datetime.now(UTC) > client.reset_otp_expires_at:
                 client.reset_otp = None

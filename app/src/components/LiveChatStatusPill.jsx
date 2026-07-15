@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { CircleDot, AlertTriangle, UserPlus, Loader2 } from 'lucide-react';
 import { getOperators } from '../services/api';
+import { useBotContext } from '../context/BotContext';
 
 /**
  * LiveChatStatusPill — at-a-glance live chat readiness for the Support page.
@@ -35,6 +36,13 @@ import { getOperators } from '../services/api';
 const POLL_INTERVAL_MS = 5_000;
 
 export default function LiveChatStatusPill() {
+    // Scope the readiness pill to the sidebar-selected bot. Operators are
+    // bound one-to-one to a bot (Operator.bot_id, migration b1c7e9d3f2a5),
+    // so a workspace with two bots and one operator each would otherwise
+    // show "1 of 2 online" on the bot with zero operators online — the
+    // pill is answering "can visitors on THIS bot reach a human right now?",
+    // not "does anyone in the workspace happen to be online?".
+    const { selectedBot } = useBotContext();
     const [operators, setOperators] = useState(null);
     const [error, setError] = useState(false);
 
@@ -79,7 +87,11 @@ export default function LiveChatStatusPill() {
             window.removeEventListener('oyechats:operators-changed', handleRosterChange);
             document.removeEventListener('visibilitychange', handleVisibility);
         };
-    }, []);
+        // Re-run the effect when the sidebar switches bots so the pill
+        // reflects the new bot's roster immediately instead of waiting for
+        // the 5s poll tick. Dropping selectedBot?.id from deps would leave
+        // the pill showing stale "1 of 2 online" copy for the previous bot.
+    }, [selectedBot?.id]);
 
     if (operators === null && !error) {
         return (
@@ -94,8 +106,15 @@ export default function LiveChatStatusPill() {
         return null; // Fail silent — don't break the page header on an API blip
     }
 
-    const total = operators.length;
-    const onlineCount = operators.filter((o) => o.is_online).length;
+    // Filter down to operators bound to the currently-selected bot. Falls
+    // through to the full list when no bot has been resolved yet (initial
+    // render before BotContext hydrates) so we don't briefly show the
+    // "no operators" empty state.
+    const scopedOperators = selectedBot?.id
+        ? operators.filter((o) => o.bot_id === selectedBot.id)
+        : operators;
+    const total = scopedOperators.length;
+    const onlineCount = scopedOperators.filter((o) => o.is_online).length;
 
     // Empty state — no operators at all. This is the high-impact prompt:
     // the customer is paying for live chat but it literally cannot work.

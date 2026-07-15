@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Mail, Webhook as WebhookIcon, Calendar, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
+import { Mail, Webhook as WebhookIcon, Calendar, Loader2, Info, ChevronDown, ChevronRight, Check, X, Lock } from 'lucide-react';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
@@ -155,6 +155,14 @@ function EmailSettings() {
     // wrote them to bot 1. Now we read/write the sidebar-selected bot
     // and re-render whenever the user switches bots.
     const { selectedBot, refreshBots, loading: botsLoading } = useBotContext();
+    const { entitlements: ent } = useEntitlements();
+    const { requestUpgrade } = useUpgradeModal();
+    // "Notify team on qualified leads" mirrors the BANT gate in the Leads tab
+    // of BotSettings — both surfaces write ``email_on_qualified`` on the same
+    // bot row and both are meaningless without BANT producing the qualified
+    // signal in the first place, so we gate them behind the same feature.
+    const bantLocked = !ent?.hasFeature?.('bant');
+    const openBantUpgrade = () => requestUpgrade?.('bant');
     const [saving, setSaving] = useState(false);
 
     // Form state — reply-to is a single email (stored as array for chip input); recipients are arrays
@@ -335,12 +343,39 @@ function EmailSettings() {
                 <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100 mb-4">Email Notifications</h3>
 
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div
+                        className={cn(
+                            'flex items-center justify-between',
+                            bantLocked && 'cursor-pointer',
+                        )}
+                        onClick={bantLocked ? openBantUpgrade : undefined}
+                    >
                         <div>
-                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Notify team on qualified leads</p>
-                            <p className="text-xs text-surface-500 dark:text-surface-400">Send email when a visitor reaches SQL qualification</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200 flex items-center gap-2">
+                                Notify team on qualified leads
+                                {bantLocked && (
+                                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                                        <Lock size={10} strokeWidth={2.6} /> Paid
+                                    </span>
+                                )}
+                            </p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">
+                                {bantLocked
+                                    ? 'Automatic lead qualification is included on Standard and above.'
+                                    : 'Send email when a visitor reaches SQL qualification'}
+                            </p>
                         </div>
-                        <Toggle checked={emailOnQualified} onChange={setEmailOnQualified} />
+                        <Toggle
+                            checked={bantLocked ? false : emailOnQualified}
+                            disabled={bantLocked}
+                            onChange={(next) => {
+                                if (bantLocked) {
+                                    openBantUpgrade();
+                                    return;
+                                }
+                                setEmailOnQualified(next);
+                            }}
+                        />
                     </div>
 
                     <div className="flex items-center justify-between">
@@ -629,8 +664,8 @@ export default function Integrations() {
     };
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Integrations" subtitle="Connect email, webhooks, and third-party services" />
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Integrations' }]} title="Integrations" />
             <Tabs tabs={integrationTabs} activeTab={activeTab} onChange={handleTabChange} />
 
             {activeTab === 'email' && <EmailSettings />}

@@ -5,7 +5,11 @@ from pathlib import Path
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 
-from app.api.auth import get_current_client_or_operator, require_active_subscription_for_workspace
+from app.api.auth import (
+    get_current_client_or_operator,
+    require_active_subscription_for_workspace,
+    require_verified_email_for_workspace,
+)
 from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
@@ -225,6 +229,7 @@ def ingest_documents(
     auth: dict = Depends(get_current_client_or_operator),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     _sub=Depends(require_active_subscription_for_workspace),
+    _verified=Depends(require_verified_email_for_workspace),
 ):
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client.
 
@@ -550,6 +555,7 @@ async def crawl_discover_endpoint(
     request: Request,
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
+    _verified=Depends(require_verified_email_for_workspace),
 ):
     """Discover the number of crawlable pages on a site without ingesting content.
 
@@ -878,6 +884,7 @@ async def crawl_endpoint(
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
     _sub=Depends(require_active_subscription_for_workspace),
+    _verified=Depends(require_verified_email_for_workspace),
 ):
     """Start a crawl + ingestion job for a client.
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check, Lock, Crown } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Sector } from 'recharts';
 import { getDashboardStats, getTopQuestions, getLeadStats, getFeedbackData, getOfflineMessages, getBotDemoUrl, trackDemoShareClick } from '../services/api';
@@ -10,8 +10,11 @@ import useEntitlements from '../hooks/useEntitlements';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import StatCard from '../components/ui/StatCard';
 import SetupChecklist from '../components/SetupChecklist';
+import StudioResumeCard from '../components/StudioResumeCard';
+import PageHeader from '../components/PageHeader';
 import { cn } from '../lib/utils';
 import { getAuthItem } from '../utils/authStorage';
+import { STUDIO_ENABLED } from '../utils/flags';
 
 const DATE_RANGES = [
   { id: 7, label: '7 days' },
@@ -250,9 +253,11 @@ export default function Dashboard() {
     }
   };
 
-  // Brand-new accounts (no bot yet) get the setup guide as the whole page —
-  // it's the single canonical onboarding surface (the old modal wizard is gone).
+  // Brand-new accounts (no bot yet) have their onboarding elsewhere:
+  //   - Studio on  → the guided /build flow is the canonical surface; send them there.
+  //   - Studio off → the legacy full-page SetupChecklist is the onboarding surface.
   if (!botsLoading && bots.length === 0) {
+    if (STUDIO_ENABLED) return <Navigate to="/build" replace />;
     return <SetupChecklist bots={bots} selectedBot={selectedBot} botsLoading={botsLoading} />;
   }
 
@@ -295,11 +300,21 @@ export default function Dashboard() {
       variants={stagger}
       initial="initial"
       animate="animate"
-      className="space-y-6"
+      className="space-y-6 -mt-2"
     >
-      {/* Setup guide — self-hides once the account is fully set up or dismissed.
-          Reflects real state (bot created, sources trained, live-chat enabled). */}
-      <SetupChecklist bots={bots} selectedBot={selectedBot} botsLoading={botsLoading} />
+      {/* Publishes "Home › Overview" into the top bar. The personalized
+          greeting below is a welcome banner, not a duplicate page title. */}
+      <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Overview' }]} title="Overview" />
+
+      {/* Setup guide. With the guided Build Studio enabled, the legacy multi-step
+          SetupChecklist is retired in favour of a slim "Resume setup" nudge that
+          points back to /build and self-hides once onboarding is complete. When
+          the flag is off, the legacy checklist remains the onboarding surface. */}
+      {STUDIO_ENABLED ? (
+        <StudioResumeCard />
+      ) : (
+        <SetupChecklist bots={bots} selectedBot={selectedBot} botsLoading={botsLoading} />
+      )}
 
       {/* Greeting */}
       <motion.div variants={fadeUp} className="flex items-start justify-between">

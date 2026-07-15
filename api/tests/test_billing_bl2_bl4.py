@@ -44,7 +44,10 @@ pytestmark = pytest.mark.skipif(
 
 
 def _make_client(db, *, email: str) -> Client:
-    client = Client(name="c", email=email, api_key=email, hashed_password="h")
+    # ``is_verified=True`` so these checkout-guard tests clear the B2
+    # email-verification gate on /checkout (a fresh client defaults to
+    # unverified) and exercise the subscription-state logic they target.
+    client = Client(name="c", email=email, api_key=email, hashed_password="h", is_verified=True)
     db.add(client)
     db.flush()
     return client
@@ -425,3 +428,73 @@ def test_upgrade_does_not_immediately_gateway_cancel_old(db):
     assert old.status == "active"
     # Rollover credits were snapshotted onto the old row, not lost.
     assert old.upgrade_credit_pending_cents == 1000
+
+
+# ── trial_expired → Free reactivation ─────────────────────────────────────────
+
+
+def test_change_plan_free_reactivates_trial_expired_customer(db):
+    """A trial_expired customer picking Free must land on an active Free sub
+    (not a 400) — and the old trial_expired row must be canceled with
+    ``data_retention_until`` nulled so the hard-delete cron never fires on
+    what is now a legitimate Free-tier account."""
+    from datetime import timedelta
+
+    from app.api import auth, subscription_routes
+
+    client = _make_client(db, email="reactivate-free@e.com")
+    std = _make_plan(db, slug="std-reactivate", price_cents=399900)
+    # The Branch 1 code path keys on the exact slug "free" (matches the
+    # canonical seed), so the test plan must use that slug.
+    free = _make_plan(db, slug="free", price_cents=0, credits=200)
+
+    now = datetime.now(UTC)
+    expired = Subscription(
+        client_id=client.id,
+        plan_id=std.id,
+        bot_id=None,
+        status="trial_expired",
+        payment_provider="manual",
+        trial_start=now - timedelta(days=14),
+        trial_end=now - timedelta(days=1),
+        data_retention_until=now + timedelta(days=14),
+        current_period_start=now - timedelta(days=14),
+        current_period_end=now - timedelta(days=1),
+    )
+    expired.plan = std
+    db.add(expired)
+    db.commit()
+
+    app = FastAPI()
+    app.include_router(subscription_routes.router)
+    app.dependency_overrides[auth.get_current_client_strict] = lambda: client
+    api = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+    ):
+        resp = api.post("/subscriptions/change-plan", json={"plan_id": free.id})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "downgraded"
+    assert "Free" in body["message"] or "free" in body["message"]
+
+    db.refresh(expired)
+    assert expired.status == "canceled"
+    assert expired.data_retention_until is None
+    assert expired.cancel_reason == "downgrade_to_free_from_trial_expired"
+
+    fresh = (
+        db.execute(
+            Subscription.__table__.select()
+            .where(Subscription.client_id == client.id)
+            .where(Subscription.status == "active")
+        )
+        .mappings()
+        .first()
+    )
+    assert fresh is not None, "a fresh active Free subscription should exist"
+    assert fresh["plan_id"] == free.id
+    assert fresh["payment_provider"] == "manual"

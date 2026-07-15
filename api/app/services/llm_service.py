@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 
 import litellm
 
@@ -394,6 +395,79 @@ Return ONLY the single preset key (e.g. "professional"), nothing else."""
     except Exception as e:
         logger.warning(f"Brand tone classification failed (non-blocking): {e}")
         return None
+
+
+def generate_seed_questions(
+    company_name: str | None,
+    company_description: str | None,
+    *,
+    count: int = 5,
+    metadata: dict | None = None,
+) -> list[str]:
+    """Propose candidate onboarding "test" questions a real visitor would ask.
+
+    Returns up to ``count`` short, natural questions derived from the company's
+    auto-extracted name + description. These are only *candidates* — the caller
+    (``seed_questions_service``) verifies each is actually answerable from the
+    bot's indexed content before surfacing any, so a hallucinated or off-base
+    question never reaches the user. Returns ``[]`` on any failure (non-blocking).
+
+    Uses the gate-tier model (AR-10), matching :func:`extract_company_context`.
+    """
+    desc = (company_description or "").strip()
+    name = (company_name or "").strip()
+    if not desc and not name:
+        return []
+    try:
+        _model = runtime_config.get_gate_model()
+        prompt = f"""You are helping a business owner test their new website support chatbot.
+
+Company name: {name or "(unknown)"}
+What they do: {desc or "(no description available)"}
+
+Write {count} short, natural questions that a real visitor to this company's
+website would ask its support chatbot — the kind that should be answerable from
+the company's own website content (services, pricing, hours, contact, how it
+works, etc.). Keep each question under 12 words, specific to THIS company (not
+generic filler), and phrased the way a customer actually types.
+
+Return ONLY the questions, one per line, no numbering, no quotes, no extra text."""
+
+        kwargs: dict = {
+            "model": _model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 200,
+            "metadata": metadata or {"generation_name": "seed-questions"},
+        }
+        _apply_model_family_kwargs(kwargs, _model)
+        with langfuse_generation("seed-questions", model=_model, prompt=prompt) as gen:
+            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
+            response = litellm.completion(**kwargs)
+            text = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=text)
+        if not text:
+            return []
+
+        questions: list[str] = []
+        for raw in text.splitlines():
+            # Strip leading list markers / numbering / quotes the model may add.
+            line = raw.strip().lstrip("-*•").strip()
+            line = re.sub(r"^\d+[.)]\s*", "", line).strip().strip('"').strip()
+            if 5 <= len(line) <= 140 and line.endswith("?"):
+                questions.append(line)
+        # De-dupe (case-insensitive) preserving order.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for q in questions:
+            key = q.lower()
+            if key not in seen:
+                seen.add(key)
+                deduped.append(q)
+        return deduped[:count]
+    except Exception as e:
+        logger.warning(f"Seed-question generation failed (non-blocking): {e}")
+        return []
 
 
 def generate_tone_sample(brand_tone: str, question: str, *, metadata: dict | None = None) -> str | None:

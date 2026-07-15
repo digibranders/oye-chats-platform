@@ -34,7 +34,10 @@ def _session_cm(session):
 
 
 def _make_client(db, *, email: str) -> Client:
-    client = Client(name="c", email=email, api_key=email, hashed_password="h")
+    # ``is_verified=True`` so these country-routing tests clear the B2
+    # email-verification gate on /checkout and exercise the currency/plan logic
+    # they actually target (a fresh client defaults to unverified).
+    client = Client(name="c", email=email, api_key=email, hashed_password="h", is_verified=True)
     db.add(client)
     db.flush()
     return client

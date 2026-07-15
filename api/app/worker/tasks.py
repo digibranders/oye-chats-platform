@@ -794,13 +794,19 @@ async def task_expire_trials(ctx: dict) -> int:
 
 
 async def task_trial_reminder_emails(ctx: dict) -> int:
-    """Cron: day-7 / day-11 / day-13 reminder cadence.
+    """Cron: 7-day trial reminder cadence (halfway / T-1 / final day).
 
     Runs once a day; for every still-trialing subscription it computes
     ``days_remaining = ceil((trial_end - now) / 1 day)`` and fires the
     matching email if its marker isn't set. We use the day-bucket as the
     idempotency key so a customer who started a trial mid-day still gets
     every reminder on the right calendar day rather than 24h later.
+
+    Marker keys (``day_7``, ``day_11``, ``day_13``) are preserved from
+    the previous 14-day cadence so historical subscriptions with those
+    slots already set on ``trial_emails_sent`` aren't spammed a second
+    time after this rescale ships. The trigger — ``days_remaining`` —
+    is what changed.
 
     Returns the number of emails sent across all subscriptions.
     """
@@ -812,18 +818,17 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
 
     from app.db.models import Client, Subscription
     from app.db.session import get_session
-    from app.services.email_service import send_trial_day_7_email, send_trial_days_left_email
+    from app.services.email_service import send_trial_days_left_email, send_trial_halfway_email
 
     # ``key`` doubles as the slot in ``trial_emails_sent`` and as the
-    # discriminator for which template fires. Order matters only for the
-    # log line — the lookup is keyed by ``days_remaining``.
+    # discriminator for which template fires.
     cadence: dict[int, tuple[str, str]] = {
         # days_remaining → (marker_key, template)
-        # day-7 of a 14-day trial → 7 days remaining
-        7: ("day_7", "day_7"),
-        # day-11 of a 14-day trial → 3 days remaining
-        3: ("day_11", "days_left"),
-        # day-13 of a 14-day trial → 1 day remaining
+        # Halfway check-in on a 7-day trial.
+        4: ("day_7", "day_7"),
+        # T-2 warning.
+        2: ("day_11", "days_left"),
+        # Final-day alarm.
         1: ("day_13", "days_left"),
     }
 
@@ -867,7 +872,11 @@ async def task_trial_reminder_emails(ctx: dict) -> int:
 
                 try:
                     if template == "day_7":
-                        send_trial_day_7_email(
+                        # Legacy template key "day_7" is now the halfway
+                        # slot on a 7-day trial (T-4). Marker key preserved
+                        # for backward-compat with in-flight trials whose
+                        # ``trial_emails_sent`` was set under the old name.
+                        send_trial_halfway_email(
                             owner.email,
                             name=owner.name,
                             days_remaining=days_remaining,
@@ -946,6 +955,35 @@ async def task_delete_expired_trial_data(ctx: dict) -> int:
                 # Owner already deactivated → already processed. Skip and
                 # let the marker rest; we don't want to re-fire the email.
                 if owner.deactivated_at is not None and (sub.trial_emails_sent or {}).get("data_deleted"):
+                    continue
+
+                # Defence-in-depth: if the customer already subscribed to a
+                # paid plan during the retention window, they should have had
+                # this trial_expired row canceled at activation
+                # (razorpay_service.py account-level activation branch). If
+                # for any reason the cancel didn't happen — a lost webhook, a
+                # manual DB fix that recreated the row, a future code path
+                # that inserts without going through the standard activation
+                # — we must NOT delete a paying customer's workspace. Bail
+                # out and null the retention marker so this row stops
+                # triggering the cron; a human can investigate the orphan.
+                has_active_sibling = session.execute(
+                    select(Subscription.id)
+                    .where(
+                        Subscription.client_id == owner.id,
+                        Subscription.status.in_(("active", "trialing", "past_due")),
+                    )
+                    .limit(1)
+                ).first()
+                if has_active_sibling is not None:
+                    logger.warning(
+                        "task_delete_expired_trial_data: skipping delete for client %s — "
+                        "trial_expired sub %s co-exists with an active subscription. "
+                        "Nulling data_retention_until to stop re-firing; investigate the orphan.",
+                        owner.id,
+                        sub.id,
+                    )
+                    sub.data_retention_until = None
                     continue
 
                 # Wipe bot-rooted data. ondelete='CASCADE' on Document,

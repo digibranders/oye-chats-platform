@@ -11,7 +11,7 @@ import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { useCrawl } from '../context/CrawlContext';
 import useEntitlements from '../hooks/useEntitlements';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
@@ -669,8 +669,8 @@ export default function KnowledgeBase() {
   ];
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Sources" subtitle="Train your chatbot with documents and websites" />
+    <div className="space-y-6 -mt-2">
+      <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Sources' }]} title="Sources" />
       <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
 
       <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm max-w-4xl min-h-[400px]">
@@ -1599,8 +1599,8 @@ export default function KnowledgeBase() {
                 )}
               </div>
             ) : (
-              <div className="overflow-hidden border border-surface-200 dark:border-surface-800 rounded-xl">
-                <table className="w-full text-left table-fixed">
+              <div className="overflow-x-auto border border-surface-200 dark:border-surface-800 rounded-xl">
+                <table className="w-full min-w-[720px] text-left table-fixed">
                   <colgroup>
                     <col className="w-[38%]" />
                     <col className="w-[12%]" />

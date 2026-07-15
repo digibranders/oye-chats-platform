@@ -43,6 +43,12 @@ const ISO_3166_ALPHA2 = [
   'ZA', 'ZM', 'ZW',
 ];
 
+// Codes kept in the canonical ISO list above (so it stays a faithful
+// reference) but hidden from the billing-country selector. British Indian
+// Ocean Territory (IO) has no resident civilian/customer population and only
+// surfaces as noise when searching "india"; exclude it from the picker.
+const EXCLUDED_CODES = new Set(['IO']);
+
 function flagEmoji(code) {
   // Regional indicator symbols: 'A' (65) → U+1F1E6.
   return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
@@ -57,10 +63,12 @@ function countryName(code) {
 }
 
 /** `[{ value: 'IN', label: '🇮🇳 India', search: 'india in' }, …]` sorted by name. */
-export const COUNTRY_OPTIONS = ISO_3166_ALPHA2.map((code) => {
-  const name = countryName(code);
-  return { value: code, label: `${flagEmoji(code)} ${name}`, search: `${name} ${code}`.toLowerCase() };
-}).sort((a, b) => a.search.localeCompare(b.search));
+export const COUNTRY_OPTIONS = ISO_3166_ALPHA2.filter((code) => !EXCLUDED_CODES.has(code))
+  .map((code) => {
+    const name = countryName(code);
+    return { value: code, label: `${flagEmoji(code)} ${name}`, search: `${name} ${code}`.toLowerCase() };
+  })
+  .sort((a, b) => a.search.localeCompare(b.search));
 
 const LABEL_BY_CODE = Object.fromEntries(COUNTRY_OPTIONS.map((opt) => [opt.value, opt.label]));
 

@@ -1,7 +1,8 @@
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { User, Shield, Bell, Palette, Briefcase, Headphones, CodeXml } from 'lucide-react';
 import { cn } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import ProfileTab from './settings/ProfileTab';
 import SecurityTab from './settings/SecurityTab';
 import NotificationsTab from './settings/NotificationsTab';
@@ -9,6 +10,8 @@ import AppearanceTab from './settings/AppearanceTab';
 import LiveChatTab from './settings/LiveChatTab';
 import WorkspaceTab from './settings/WorkspaceTab';
 import ContactTab from './settings/ContactTab';
+import { getAuthState } from '../utils/auth';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 const TABS = [
     { id: 'profile', label: 'Profile', icon: User, Component: ProfileTab },
@@ -33,19 +36,37 @@ const TABS = [
  */
 export default function Settings() {
     const [params, setParams] = useSearchParams();
-    const active = TABS.find((t) => t.id === params.get('tab')) || TABS[0];
+    // Operators get a stripped Settings shell — Profile only. The Install
+    // OyeChats PWA card that operators need is already rendered inside
+    // ProfileTab (gated on isOperatorRole there), so filtering the top-level
+    // tab list to Profile alone gives them "Profile fields + Install card"
+    // with zero owner-only surfaces (security keys, appearance, live-chat
+    // settings, workspace, custom-work contact).
+    //
+    // Two operator paths both collapse to the same shape:
+    //   1. Legacy X-Operator-Key session with a non-manager role.
+    //   2. Client identity whose current workspace role is 'operator'
+    //      (invited via the workspace switcher).
+    const { isOperator, isBotManager } = getAuthState();
+    const { currentRole: workspaceRole } = useWorkspace();
+    const pureOperator = (isOperator && !isBotManager) || workspaceRole === 'operator';
+    const visibleTabs = useMemo(
+        () => (pureOperator ? TABS.filter((t) => t.id === 'profile') : TABS),
+        [pureOperator],
+    );
+    const active = visibleTabs.find((t) => t.id === params.get('tab')) || visibleTabs[0];
     const Active = active.Component;
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Settings" subtitle="Account & workspace preferences" />
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Settings' }]} title="Settings" />
 
             <div className="flex flex-col md:flex-row gap-6">
                 <nav
                     aria-label="Settings sections"
                     className="md:w-56 shrink-0 flex md:flex-col gap-1 overflow-x-auto"
                 >
-                    {TABS.map((t) => {
+                    {visibleTabs.map((t) => {
                         const Icon = t.icon;
                         const on = t.id === active.id;
                         return (

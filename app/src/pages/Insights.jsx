@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BarChart3, MessageCircle, ThumbsUp } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import Tabs from '../components/ui/Tabs';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import Analytics from './Analytics';
 import Users from './Users';
 import Feedback from './Feedback';
@@ -19,8 +19,8 @@ export default function Insights() {
   const [activeTab, setActiveTab] = useState(initialTab);
 
   return (
-    <div className="space-y-4">
-      <PageHeader title="Insights" subtitle="Analyze your chatbot's performance and visitor interactions" />
+    <div className="space-y-4 -mt-2">
+      <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Insights' }]} title="Insights" />
       <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === 'analytics' && <Analytics embedded />}

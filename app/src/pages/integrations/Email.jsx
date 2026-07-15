@@ -1,13 +1,15 @@
 import { Mail } from 'lucide-react';
-import PageHeader from '../../components/ui/PageHeader';
+import PageHeader from '../../components/PageHeader';
 import Badge from '../../components/ui/Badge';
 
 export default function Email() {
     return (
-        <div className="space-y-6 max-w-3xl">
-            <PageHeader title="Email Integration" subtitle="Configure email notifications and outreach">
-                <Badge variant="neutral">Coming Soon</Badge>
-            </PageHeader>
+        <div className="space-y-6 max-w-3xl -mt-2">
+            <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'Email Integration' }]}
+                title="Email Integration"
+                actions={<Badge variant="neutral">Coming Soon</Badge>}
+            />
 
             <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-12">
                 <div className="flex flex-col items-center justify-center text-center">

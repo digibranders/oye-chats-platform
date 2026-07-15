@@ -57,14 +57,14 @@ const SEVERITY_LABELS = Object.fromEntries(SEVERITIES.map((s) => [s.id, s.label]
 
 const STATUS_META = {
   open: { label: 'Open', icon: Clock, className: 'bg-amber-50 border-amber-200 text-amber-700' },
-  in_progress: { label: 'In progress', icon: Loader2, className: 'bg-primary-50 border-primary-200 text-primary-700' },
+  in_progress: { label: 'In progress', icon: Loader2, className: 'bg-primary-50 dark:bg-primary-500/15 border-primary-200 text-primary-700' },
   resolved: { label: 'Resolved', icon: CheckCircle2, className: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
-  closed: { label: 'Closed', icon: Archive, className: 'bg-surface-100 border-surface-200 text-surface-500' },
+  closed: { label: 'Closed', icon: Archive, className: 'bg-surface-100 dark:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-500' },
 };
 
 const SEVERITY_TONE = {
-  low: 'bg-surface-100 border-surface-200 text-surface-600',
-  medium: 'bg-primary-50 border-primary-200 text-primary-700',
+  low: 'bg-surface-100 dark:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-300',
+  medium: 'bg-primary-50 dark:bg-primary-500/15 border-primary-200 text-primary-700',
   high: 'bg-amber-50 border-amber-200 text-amber-700',
   critical: 'bg-rose-50 border-rose-200 text-rose-700',
 };
@@ -93,7 +93,7 @@ function StatusBadge({ status }) {
 
 function MetaPill({ children }) {
   return (
-    <span className="text-[11px] text-surface-500 px-2 py-0.5 rounded-full bg-surface-100 border border-surface-200">
+    <span className="text-[11px] text-surface-500 px-2 py-0.5 rounded-full bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
       {children}
     </span>
   );
@@ -110,7 +110,7 @@ function AttachmentThumbs({ attachments }) {
           target="_blank"
           rel="noopener noreferrer"
           title={att.name || 'Attachment'}
-          className="group relative w-16 h-16 rounded-lg overflow-hidden border border-surface-200 bg-surface-100"
+          className="group relative w-16 h-16 rounded-lg overflow-hidden border border-surface-200 dark:border-surface-700 bg-surface-100 dark:bg-surface-800"
         >
           <img src={att.url} alt={att.name || 'attachment'} className="w-full h-full object-cover" loading="lazy" />
         </a>
@@ -154,11 +154,11 @@ function MyFeedbackList({ highlightId }) {
     return (
       <div className="flex flex-col items-center justify-center py-14 text-center">
         <AlertCircle size={22} className="text-rose-500" />
-        <p className="mt-3 text-sm text-surface-600">{error}</p>
+        <p className="mt-3 text-sm text-surface-600 dark:text-surface-300">{error}</p>
         <button
           type="button"
           onClick={load}
-          className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-surface-100 hover:bg-surface-200 border border-surface-200 text-[13px] text-surface-700 transition-colors"
+          className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-surface-800 border border-surface-200 dark:border-surface-700 text-[13px] text-surface-700 dark:text-surface-200 transition-colors"
         >
           <RefreshCw size={13} /> Try again
         </button>
@@ -169,10 +169,10 @@ function MyFeedbackList({ highlightId }) {
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-surface-100 border border-surface-200">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
           <Inbox size={22} className="text-surface-400" />
         </div>
-        <p className="mt-4 text-[15px] font-semibold text-surface-900">No feedback yet</p>
+        <p className="mt-4 text-[15px] font-semibold text-surface-900 dark:text-surface-100">No feedback yet</p>
         <p className="mt-1.5 text-[13px] text-surface-500 max-w-[280px]">
           Once you send feedback, you&apos;ll see its status and our response here.
         </p>
@@ -187,7 +187,7 @@ function MyFeedbackList({ highlightId }) {
           key={item.id}
           className={cn(
             'rounded-xl border bg-[var(--bg-card)] p-4 transition-colors',
-            highlightId === item.id ? 'border-primary-500 ring-1 ring-primary-500/30' : 'border-surface-200'
+            highlightId === item.id ? 'border-primary-500 ring-1 ring-primary-500/30' : 'border-surface-200 dark:border-surface-700'
           )}
         >
           <div className="flex items-start justify-between gap-3">
@@ -209,16 +209,16 @@ function MyFeedbackList({ highlightId }) {
             <span className="text-[11px] text-surface-400 shrink-0 tabular-nums">{formatDate(item.created_at)}</span>
           </div>
 
-          <p className="mt-3 text-[13px] text-surface-700 whitespace-pre-wrap leading-relaxed">{item.message}</p>
+          <p className="mt-3 text-[13px] text-surface-700 dark:text-surface-200 whitespace-pre-wrap leading-relaxed">{item.message}</p>
 
           <AttachmentThumbs attachments={item.attachments} />
 
           {item.admin_response && (
-            <div className="mt-3 rounded-lg border border-primary-200 bg-primary-50 p-3">
+            <div className="mt-3 rounded-lg border border-primary-200 bg-primary-50 dark:bg-primary-500/15 p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 mb-1.5 flex items-center gap-1.5">
                 <MessageSquare size={11} /> Response from OyeChats
               </p>
-              <p className="text-[13px] text-surface-700 whitespace-pre-wrap leading-relaxed">{item.admin_response}</p>
+              <p className="text-[13px] text-surface-700 dark:text-surface-200 whitespace-pre-wrap leading-relaxed">{item.admin_response}</p>
               {item.resolved_at && (
                 <p className="mt-2 text-[11px] text-surface-400 tabular-nums">Resolved {formatDate(item.resolved_at)}</p>
               )}
@@ -263,9 +263,9 @@ function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' })
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-white border border-surface-200 px-3 text-[13px] text-left outline-none hover:border-surface-300 focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)] transition-colors cursor-pointer"
+        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 px-3 text-[13px] text-left outline-none hover:border-surface-300 dark:hover:border-surface-600 focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus-ring)] transition-colors cursor-pointer"
       >
-        <span className={cn('truncate', selected && selected.id ? 'text-surface-900' : 'text-surface-400')}>
+        <span className={cn('truncate', selected && selected.id ? 'text-surface-900 dark:text-surface-100' : 'text-surface-400')}>
           {selected ? selected.label : placeholder}
         </span>
         <ChevronDown
@@ -277,7 +277,7 @@ function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' })
       {open && (
         <ul
           role="listbox"
-          className="absolute z-30 mt-1.5 w-full max-h-56 overflow-auto rounded-xl border border-surface-200 bg-white p-1 shadow-xl"
+          className="absolute z-30 mt-1.5 w-full max-h-56 overflow-auto rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-1 shadow-xl"
         >
           {options.map((o) => {
             const active = o.id === value;
@@ -293,7 +293,7 @@ function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' })
                   }}
                   className={cn(
                     'w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] text-left transition-colors cursor-pointer',
-                    active ? 'bg-primary-50 text-surface-900' : 'text-surface-600 hover:bg-surface-100'
+                    active ? 'bg-primary-50 dark:bg-primary-500/15 text-surface-900 dark:text-surface-100' : 'text-surface-600 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800'
                   )}
                 >
                   <span className="truncate">{o.label}</span>
@@ -465,16 +465,16 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
       />
 
       {/* Modal Card */}
-      <div className="relative w-full max-w-lg bg-[var(--bg-card)] border border-surface-200 text-surface-900 rounded-2xl shadow-xl transform transition-all overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-lg bg-[var(--bg-card)] border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-surface-100 rounded-2xl shadow-xl transform transition-all overflow-hidden flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="flex items-start justify-between px-6 pt-6 pb-4">
           <div className="flex gap-4">
-            <div className="flex items-center justify-center w-11 h-11 rounded-full bg-primary-50 border border-primary-200 shrink-0">
+            <div className="flex items-center justify-center w-11 h-11 rounded-full bg-primary-50 dark:bg-primary-500/15 border border-primary-200 shrink-0">
               <MessageSquare size={20} className="text-primary-600" />
             </div>
             <div>
-              <h2 className="text-[17px] font-semibold text-surface-900 leading-tight">Feedback</h2>
+              <h2 className="text-[17px] font-semibold text-surface-900 dark:text-surface-100 leading-tight">Feedback</h2>
               <p className="text-[13px] text-surface-500 mt-1">
                 {activeTab === 'send'
                   ? "We'd love to hear your thoughts and help us improve OyeChats."
@@ -484,7 +484,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full bg-surface-100 hover:bg-surface-200 border border-surface-200 transition-colors text-surface-500 hover:text-surface-900"
+            className="p-1.5 rounded-full bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-surface-800 border border-surface-200 dark:border-surface-700 transition-colors text-surface-500 hover:text-surface-900 dark:hover:text-surface-100"
             aria-label="Close modal"
           >
             <X size={16} />
@@ -493,7 +493,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
 
         {/* Tabs */}
         <div className="px-6">
-          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-xl bg-surface-100 border border-surface-200">
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-xl bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -501,7 +501,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 onClick={() => setActiveTab(t.id)}
                 className={cn(
                   'px-3.5 h-8 rounded-lg text-[13px] font-medium transition-all cursor-pointer',
-                  activeTab === t.id ? 'bg-white text-surface-900 shadow-sm' : 'text-surface-500 hover:text-surface-900'
+                  activeTab === t.id ? 'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 shadow-sm' : 'text-surface-500 hover:text-surface-900 dark:hover:text-surface-100'
                 )}
               >
                 {t.label}
@@ -516,7 +516,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
             <>
               {/* Type (required) */}
               <div className="space-y-2.5">
-                <label className="block text-[13px] font-semibold text-surface-900">
+                <label className="block text-[13px] font-semibold text-surface-900 dark:text-surface-100">
                   What type of feedback is this? <span className="text-surface-400 font-normal">(required)</span>
                 </label>
                 <div className="flex flex-wrap gap-2">
@@ -531,8 +531,8 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                         className={cn(
                           'flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-medium border transition-all cursor-pointer',
                           selected
-                            ? 'bg-primary-50 border-primary-500 text-surface-900 ring-1 ring-primary-500/30'
-                            : 'bg-white hover:bg-surface-50 border-surface-200 text-surface-600'
+                            ? 'bg-primary-50 dark:bg-primary-500/15 border-primary-500 text-surface-900 dark:text-surface-100 ring-1 ring-primary-500/30'
+                            : 'bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-300'
                         )}
                       >
                         <Icon size={14} className={selected ? 'text-primary-600' : 'text-surface-400'} />
@@ -545,7 +545,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
 
               {/* Area (optional) — custom dropdown */}
               <div className="space-y-2">
-                <label htmlFor="fb-area" className="block text-[13px] font-semibold text-surface-900">
+                <label htmlFor="fb-area" className="block text-[13px] font-semibold text-surface-900 dark:text-surface-100">
                   Area <span className="text-surface-400 font-normal">(optional)</span>
                 </label>
                 <SelectMenu
@@ -560,7 +560,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
               {/* Severity (bug-only) — one line */}
               {type === 'bug' && (
                 <div className="space-y-2">
-                  <label className="block text-[13px] font-semibold text-surface-900">
+                  <label className="block text-[13px] font-semibold text-surface-900 dark:text-surface-100">
                     Severity <span className="text-surface-400 font-normal">(optional)</span>
                   </label>
                   <div className="grid grid-cols-4 gap-2">
@@ -574,8 +574,8 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                           className={cn(
                             'h-9 rounded-lg text-[12px] font-medium border transition-all cursor-pointer text-center',
                             selected
-                              ? 'bg-primary-50 border-primary-500 text-surface-900 ring-1 ring-primary-500/30'
-                              : 'bg-white hover:bg-surface-50 border-surface-200 text-surface-600'
+                              ? 'bg-primary-50 dark:bg-primary-500/15 border-primary-500 text-surface-900 dark:text-surface-100 ring-1 ring-primary-500/30'
+                              : 'bg-white dark:bg-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-300'
                           )}
                         >
                           {s.label}
@@ -588,20 +588,20 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
 
               {/* Message + attachments */}
               <div className="space-y-2">
-                <label className="block text-[13px] font-semibold text-surface-900">
+                <label className="block text-[13px] font-semibold text-surface-900 dark:text-surface-100">
                   Describe your feedback <span className="text-surface-400 font-normal">(required)</span>
                 </label>
-                <div className="group bg-white border border-surface-200 rounded-xl focus-within:border-primary-500 focus-within:ring-1 focus-within:ring-primary-500/20 transition-all duration-200 flex flex-col overflow-hidden">
+                <div className="group bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-xl focus-within:border-primary-500 focus-within:ring-1 focus-within:ring-primary-500/20 transition-all duration-200 flex flex-col overflow-hidden">
                   <textarea
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="What happened or what would you like to see? Paste a screenshot anywhere in this dialog to attach it."
-                    className="w-full h-32 bg-transparent border-0 p-4 pb-2 text-surface-900 placeholder-surface-400 focus:outline-none resize-none text-sm leading-relaxed"
+                    className="w-full h-32 bg-transparent border-0 p-4 pb-2 text-surface-900 dark:text-surface-100 placeholder-surface-400 focus:outline-none resize-none text-sm leading-relaxed"
                     autoFocus
                   />
 
                   {/* Attachment toolbar + thumbnails */}
-                  <div className="px-4 py-2.5 border-t border-surface-200 bg-surface-50 space-y-2.5">
+                  <div className="px-4 py-2.5 border-t border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800 space-y-2.5">
                     <div className="flex items-center gap-2">
                       <input
                         type="file"
@@ -615,7 +615,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={attachments.length >= MAX_ATTACHMENTS}
-                        className="inline-flex items-center gap-1.5 px-2.5 h-8 rounded-lg hover:bg-surface-100 text-surface-600 hover:text-surface-900 transition-colors cursor-pointer text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-1.5 px-2.5 h-8 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 transition-colors cursor-pointer text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
                         title="Attach screenshots or paste from clipboard (max 5, 10MB each)"
                       >
                         <ImagePlus size={15} /> Add screenshot
@@ -628,7 +628,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                         {attachments.map((att) => (
                           <div
                             key={att.id}
-                            className="group/att relative w-16 h-16 rounded-lg overflow-hidden border border-surface-200 bg-surface-100"
+                            className="group/att relative w-16 h-16 rounded-lg overflow-hidden border border-surface-200 dark:border-surface-700 bg-surface-100 dark:bg-surface-800"
                           >
                             <img src={att.previewUrl} alt={att.name} className="w-full h-full object-cover" />
                             {att.status === 'uploading' && (
@@ -680,17 +680,17 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
 
         {/* Footer — only on the compose tab */}
         {activeTab === 'send' && (
-          <div className="px-6 py-5 border-t border-surface-200 flex items-center justify-end gap-4 bg-[var(--bg-card)]">
+          <div className="px-6 py-5 border-t border-surface-200 dark:border-surface-700 flex items-center justify-end gap-4 bg-[var(--bg-card)]">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm font-semibold text-surface-500 hover:text-surface-900 transition-colors cursor-pointer"
+              className="px-4 py-2 text-sm font-semibold text-surface-500 hover:text-surface-900 dark:hover:text-surface-100 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:bg-surface-200 disabled:text-surface-400 text-white text-sm font-semibold shadow-sm shadow-primary-500/20 hover:shadow-md hover:shadow-primary-500/30 disabled:shadow-none transition-all flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+              className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:bg-surface-200 dark:disabled:bg-surface-800 disabled:text-surface-400 text-white text-sm font-semibold shadow-sm shadow-primary-500/20 hover:shadow-md hover:shadow-primary-500/30 disabled:shadow-none transition-all flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <>

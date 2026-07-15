@@ -4,7 +4,7 @@ import { getAuthState } from '../utils/auth';
 import Cropper from 'react-easy-crop';
 import {
     CheckCircle, RefreshCw, Sparkles, Check, AlertCircle, X,
-    ZoomIn, ZoomOut, RotateCw, Bot, MoreHorizontal, Headphones, CalendarDays, Lock,
+    ZoomIn, ZoomOut, RotateCw, Lock,
 } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin, getBrandTonePresets, detectBrandTone, previewBrandTone } from '../services/api';
 import { useBotContext } from '../context/BotContext';
@@ -12,6 +12,7 @@ import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import useEntitlements from '../hooks/useEntitlements';
 import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/PageHeader';
 import { getCroppedImg } from './bot-settings/cropImage';
 import GeneralTab from './bot-settings/GeneralTab';
 import PersonalityTab from './bot-settings/PersonalityTab';
@@ -20,6 +21,7 @@ import MessagesTab from './bot-settings/MessagesTab';
 import BehaviorTab from './bot-settings/BehaviorTab';
 import LeadsTab from './bot-settings/LeadsTab';
 import LiveChatTab from './bot-settings/LiveChatTab';
+import WidgetChatPreview from '../components/WidgetChatPreview';
 
 /**
  * Default editable bot fields. Keys mirror the bot-model field names so the
@@ -76,14 +78,6 @@ const DEFAULT_DRAFT = {
 };
 
 /**
- * Font stack used by the embeddable widget (see widget/src/index.css `:host`).
- * Applied to the Live Preview subtree so its typography matches the real
- * rendered widget instead of inheriting the dashboard's Inter body font.
- */
-const WIDGET_FONT_STACK =
-    "'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif";
-
-/**
  * BotSettings — the per-bot editor shell.
  *
  * Owns all shared state lifted from the legacy `Interface.jsx`: the editable
@@ -93,7 +87,7 @@ const WIDGET_FONT_STACK =
  * active-tab state. Each tab under `pages/bot-settings/` is a presentational +
  * field-binding component receiving `{ draft, set, ent, ... }`.
  */
-export default function BotSettings({ embedded = false }) {
+export default function BotSettings() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
     const { isBotManager } = getAuthState();
@@ -517,8 +511,50 @@ export default function BotSettings({ embedded = false }) {
 
     const tabProps = { draft, set, ent };
 
+    // Page-level actions rendered in the contextual app bar (PageHeader
+    // `actions`). Defined as elements so the Save-button markup lives once.
+    const previewButton = (
+        <button
+            type="button"
+            onClick={() => setWebsitePreviewOpen((v) => !v)}
+            className="inline-flex items-center gap-2 px-3 h-9 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-200 text-sm font-medium hover:bg-surface-50 dark:hover:bg-surface-700 transition-colors"
+        >
+            <Sparkles className="w-4 h-4 text-primary-500" />
+            {websitePreviewOpen ? 'Hide website preview' : 'Preview on my website'}
+        </button>
+    );
+
+    const saveButton = (
+        <button
+            onClick={handleSave}
+            disabled={!isBotManager || isSaving || saved}
+            className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
+                ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                : 'bg-primary-600 hover:bg-primary-700 text-white'
+                }`}
+        >
+            <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+            {saved ? (
+                <>
+                    <CheckCircle className="w-4 h-4 relative z-10" />
+                    <span className="relative z-10">Saved!</span>
+                </>
+            ) : isSaving ? (
+                <>
+                    <RefreshCw className="w-4 h-4 relative z-10 animate-spin" />
+                    <span className="relative z-10">Saving...</span>
+                </>
+            ) : (
+                <>
+                    <CheckCircle className="w-4 h-4 relative z-10" />
+                    <span className="relative z-10">Save Configuration</span>
+                </>
+            )}
+        </button>
+    );
+
     return (
-        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20">
+        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20 -mt-2">
             {/* Error Toast */}
             {saveError && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 animate-fade-in">
@@ -530,27 +566,22 @@ export default function BotSettings({ embedded = false }) {
                 </div>
             )}
 
-            {/* Page Header */}
-            {!embedded && (
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                    <div>
-                        <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Bot Settings</h1>
-                        <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Configure your chatbot's personality, appearance, and behavior</p>
-                        {!isBotManager && (
-                            <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">
-                                You have read-only access to this bot configuration.
-                            </p>
-                        )}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => setWebsitePreviewOpen((v) => !v)}
-                        className="self-start inline-flex items-center gap-2 px-3 h-9 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-200 text-sm font-medium hover:bg-surface-50 dark:hover:bg-surface-700 transition-colors"
-                    >
-                        <Sparkles className="w-4 h-4 text-primary-500" />
-                        {websitePreviewOpen ? 'Hide website preview' : 'Preview on my website'}
-                    </button>
-                </div>
+            {/* Contextual app-bar header. Published unconditionally: this editor
+                is mounted inside Chatbot's Appearance tab, so it owns the top-bar
+                breadcrumb (Home › My Bots › Bot Settings) plus the Save + Preview
+                actions in the sticky action row. */}
+            <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'My Bots', to: '/chatbot' }, { label: 'Bot Settings' }]}
+                title="Bot Settings"
+                actions={<>{previewButton}{saveButton}</>}
+            />
+
+            {/* Read-only access note — preserved from the old hero for viewers
+                who can't edit this bot. */}
+            {!isBotManager && (
+                <p className="text-sm text-surface-500 dark:text-surface-400">
+                    You have read-only access to this bot configuration.
+                </p>
             )}
 
             {/* Live website preview panel */}
@@ -627,33 +658,6 @@ export default function BotSettings({ embedded = false }) {
                         );
                     })}
                 </div>
-
-                <button
-                    onClick={handleSave}
-                    disabled={!isBotManager || isSaving || saved}
-                    className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
-                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                        : 'bg-primary-600 hover:bg-primary-700 text-white'
-                        }`}
-                >
-                    <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
-                    {saved ? (
-                        <>
-                            <CheckCircle className="w-4 h-4 relative z-10" />
-                            <span className="relative z-10">Saved!</span>
-                        </>
-                    ) : isSaving ? (
-                        <>
-                            <RefreshCw className="w-4 h-4 relative z-10 animate-spin" />
-                            <span className="relative z-10">Saving...</span>
-                        </>
-                    ) : (
-                        <>
-                            <CheckCircle className="w-4 h-4 relative z-10" />
-                            <span className="relative z-10">Save Configuration</span>
-                        </>
-                    )}
-                </button>
             </div>
 
             <div className="flex flex-col lg:flex-row gap-8 items-start w-full">
@@ -683,7 +687,7 @@ export default function BotSettings({ embedded = false }) {
                     )}
                     {activeTab === 'messages' && <MessagesTab {...tabProps} isSaving={isSaving} />}
                     {activeTab === 'behavior' && <BehaviorTab {...tabProps} advancedLocked={advancedLocked} requestUpgrade={requestUpgrade} />}
-                    {activeTab === 'leads' && <LeadsTab {...tabProps} />}
+                    {activeTab === 'leads' && <LeadsTab {...tabProps} requestUpgrade={requestUpgrade} />}
                     {activeTab === 'live_chat' && <LiveChatTab {...tabProps} />}
                 </div>
 
@@ -715,217 +719,15 @@ export default function BotSettings({ embedded = false }) {
                         ))}
                     </div>
 
-                    {/* Chat Window Preview Wrapper — mirrors the real widget's classic
-                        (light) theme 1:1 (see widget/src/components/{themeConfigs,
-                        ChatWindow,WelcomeScreen,ChatInput}.jsx). The Calibri font stack
-                        matches widget/src/index.css so the preview can't drift from
-                        what visitors actually see. */}
-                    <div
-                        className="w-full max-w-[380px] bg-[#F8F8F8] rounded-2xl overflow-hidden shadow-xl flex flex-col border border-[#BBE7FF]/30 transition-colors"
-                        style={{ fontFamily: WIDGET_FONT_STACK }}
-                    >
-
-                        {/* 1. Header bar — date/time + action icons. The "···" menu
-                            mirrors the widget: on the welcome screen its only entry is
-                            "Leave a message", which shows solely in bot mode when live
-                            chat is OFF. "New chat" (+) needs a prior user message, so it
-                            never appears here. */}
-                        <div className="bg-[#F8F8F8] px-5 py-2 flex items-center justify-between shrink-0">
-                            <span className="text-[11px] text-gray-400 font-medium tracking-wide">
-                                {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            <div className="flex items-center gap-1">
-                                {previewState === 'chat' && !draft.live_chat_enabled && (
-                                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
-                                        <MoreHorizontal className="w-4 h-4" />
-                                    </div>
-                                )}
-                                <div className="w-7 h-7 flex items-center justify-center text-gray-400">
-                                    <X className="w-5 h-5" />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 2. Floating agent badge — avatar + bot name only (no
-                            subtitle, no status dot), matching renderAgentBadge(). */}
-                        {previewState === 'chat' && (
-                            <div className="shrink-0 flex justify-center -mt-3 -mb-5 relative z-30">
-                                <div
-                                    className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40"
-                                    style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
-                                >
-                                    {draft.avatar_type === 'orb' ? (
-                                        <div
-                                            className="w-7 h-7 rounded-full flex-shrink-0"
-                                            style={{
-                                                background: `radial-gradient(circle at 35% 35%, ${draft.orb_color || draft.primary_color}44, ${draft.orb_color || draft.primary_color}bb, ${draft.orb_color || draft.primary_color})`,
-                                                boxShadow: `0 0 6px ${draft.orb_color || draft.primary_color}55`,
-                                            }}
-                                        />
-                                    ) : draft.avatar_type === 'mascot' ? (
-                                        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: draft.primary_color }}>
-                                            <Bot className="w-3.5 h-3.5 text-white" />
-                                        </div>
-                                    ) : draft.bot_logo ? (
-                                        <img src={draft.bot_logo} alt="logo" className="w-7 h-7 rounded-full object-cover" />
-                                    ) : (
-                                        <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: draft.primary_color }}>
-                                            <Bot className="w-3.5 h-3.5 text-white" />
-                                        </div>
-                                    )}
-                                    <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
-                                        {draft.bot_name || 'AI Assistant'}
-                                    </span>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* 3. Messages area — the welcome overlay is bottom-anchored
-                            (justify-end), exactly like the widget's welcome screen. */}
-                        <div
-                            className="relative flex-grow overflow-hidden min-h-[420px] bg-[#F8F8F8]"
-                            style={{ paddingTop: previewState === 'chat' ? 24 : undefined }}
-                        >
-                            {previewState === 'chat' && (() => {
-                                // Mirror WelcomeScreen.jsx: greeting (emoji stripped, with a
-                                // time-of-day fallback), subtitle, and the suggestion pills
-                                // whose layout follows the MessagesTab vertical/horizontal
-                                // toggle so this preview updates live.
-                                const widgetMessages = draft.widget_messages || {};
-                                const previewIsVertical = widgetMessages.welcome_suggestions_layout === 'vertical';
-                                const previewSuggestions = (
-                                    Array.isArray(widgetMessages.welcome_suggestions) && widgetMessages.welcome_suggestions.length > 0
-                                        ? widgetMessages.welcome_suggestions
-                                        : (Array.isArray(draft.welcome_suggestions) && draft.welcome_suggestions.length > 0
-                                            ? draft.welcome_suggestions
-                                            : ['Our Services', 'About us', 'Contact us'])
-                                ).filter(Boolean);
-                                const hour = new Date().getHours();
-                                const fallbackGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-                                const greeting = (draft.welcome_title || fallbackGreeting).replace(/\p{Emoji}/gu, '').trim();
-                                return (
-                                    <div className="absolute inset-0 z-10 flex flex-col items-start justify-end px-5 pb-4" style={{ backgroundColor: '#F8F8F8' }}>
-                                        <div className="flex flex-col items-start text-left w-full">
-                                            <h2 className="text-2xl font-bold text-[#16202C]">{greeting}</h2>
-                                            <p className={`text-[15px] text-gray-500 ${previewIsVertical ? 'mt-1 mb-3' : 'mt-1'}`}>
-                                                {draft.welcome_subtitle || 'How can I help you today?'}
-                                            </p>
-                                            <div
-                                                className={
-                                                    previewIsVertical
-                                                        ? 'flex flex-col gap-2 mt-2 w-full items-stretch'
-                                                        : 'flex flex-wrap gap-2 mt-5 justify-start'
-                                                }
-                                            >
-                                                {previewSuggestions.map((s, i) => (
-                                                    <span
-                                                        key={s}
-                                                        className={
-                                                            previewIsVertical
-                                                                ? 'w-full text-left px-4 py-2.5 rounded-xl text-[13px] text-gray-700 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer'
-                                                                : 'px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer'
-                                                        }
-                                                        style={{ animation: `fade-up 0.3s ease-out ${i * 0.08}s both` }}
-                                                    >
-                                                        {s}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {previewState === 'waiting' && (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center px-5 py-4 gap-2 text-center">
-                                    <div
-                                        className="w-14 h-14 rounded-full flex items-center justify-center"
-                                        style={{ backgroundColor: `${draft.primary_color}22` }}
-                                    >
-                                        <div
-                                            className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-                                            style={{ borderColor: `${draft.primary_color} transparent transparent transparent` }}
-                                        />
-                                    </div>
-                                    <p className="text-[14px] font-semibold text-[#16202C]">
-                                        {draft.waiting_message || 'Connecting you to support...'}
-                                    </p>
-                                </div>
-                            )}
-
-                            {previewState === 'unavailable' && (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center px-5 py-4 gap-2 text-center">
-                                    <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
-                                        <Bot className="w-7 h-7 text-gray-400" />
-                                    </div>
-                                    <p className="text-[14px] font-semibold text-[#16202C]">
-                                        {draft.offline_message || "We'll be right back! Leave a message and we'll follow up shortly."}
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* 4. Input + footer — chat state only. Mirrors ChatInput.jsx:
-                            the empty-state send icon is #BBE7FF (not the brand color),
-                            and the action bar carries icon-only affordances on the left
-                            with the "Powered by OyeChats" link on the right (gated by the
-                            show_branding feature flag). */}
-                        {previewState === 'chat' && (
-                            <div className="px-4 pb-4 pt-2 bg-[#F8F8F8] shrink-0">
-                                {/* Input box */}
-                                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
-                                    <div className="flex-1 min-w-0">
-                                        <span className="block text-[14px] text-gray-400 leading-[20px] truncate">
-                                            {draft.widget_messages.input_placeholder || 'Write a message...'}
-                                        </span>
-                                    </div>
-                                    <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-0.5 flex-shrink-0 text-[#BBE7FF]">
-                                        <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
-                                    </svg>
-                                </div>
-
-                                {/* Privacy notice */}
-                                <p className="text-[10px] text-gray-400 leading-snug mt-2 px-1">
-                                    This chat may be monitored and recorded according to our{' '}
-                                    <a
-                                        href="https://www.oyechats.com/legal/privacy"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="font-semibold underline text-gray-500 hover:text-gray-700 transition-colors"
-                                    >
-                                        Privacy Policy
-                                    </a>
-                                    .
-                                </p>
-
-                                {/* Action bar — handoff / meeting icons + branding */}
-                                <div className="flex items-center justify-between gap-3 mt-3.5 pt-1 px-1">
-                                    <div className="flex items-center gap-3 min-w-0">
-                                        {draft.live_chat_enabled && liveChatAllowed && (
-                                            <span className="flex items-center gap-1 text-[11px]" style={{ color: '#9ca3af' }} title="Live chat">
-                                                <Headphones size={12} />
-                                            </span>
-                                        )}
-                                        {draft.meeting_booking_enabled && (
-                                            <span className="flex items-center gap-1 text-[11px] text-gray-400" title="Book a meeting">
-                                                <CalendarDays size={12} />
-                                            </span>
-                                        )}
-                                    </div>
-                                    {draft.feature_flags?.show_branding !== false && (
-                                        <a
-                                            href="https://oyechats.com"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
-                                        >
-                                            Powered by OyeChats
-                                        </a>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    {/* Live widget mock — extracted to WidgetChatPreview so Bot
+                        Settings and the Build Studio render pixel-identically and
+                        both stay pinned to the real widget. `live_chat_allowed`
+                        carries the plan entitlement so the handoff affordance keeps
+                        the same lock behaviour it had inline. */}
+                    <WidgetChatPreview
+                        settings={{ ...draft, live_chat_allowed: liveChatAllowed }}
+                        state={previewState}
+                    />
                 </div>
             </div>
 

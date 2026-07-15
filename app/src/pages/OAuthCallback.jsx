@@ -4,6 +4,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { getCurrentUser } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, setAuthItem } from '../utils/authStorage';
+import { STUDIO_ENABLED } from '../utils/flags';
 
 /**
  * Maps the machine-readable error codes returned by the backend OAuth
@@ -146,8 +147,14 @@ export default function OAuthCallback() {
                 // Super-admins use the dedicated console at
                 // admin.oyechats.com and do not route here.
                 let destination = next;
-                if (me?.is_affiliate_only) destination = '/affiliate';
-                else if (!destination || destination === '/') destination = '/';
+                if (me?.is_affiliate_only) {
+                    destination = '/affiliate';
+                } else if (!destination || destination === '/') {
+                    // New (botless, not-yet-onboarded) accounts start in the guided
+                    // Build Studio; everyone else lands on the dashboard root.
+                    destination =
+                        STUDIO_ENABLED && !me?.onboarding_complete && (me?.bot_count ?? 0) === 0 ? '/build' : '/';
+                }
 
                 navigate(destination, { replace: true });
             })

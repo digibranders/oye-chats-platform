@@ -21,6 +21,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import inspect, select, text
 
+from app.api.activation_routes import router as activation_router
 from app.api.affiliate_routes import router as affiliate_router
 from app.api.affiliate_routes import superadmin_router as affiliate_superadmin_router
 from app.api.analytics_routes import router as analytics_router
@@ -142,6 +143,7 @@ app.include_router(analytics_router)
 app.include_router(lead_router)
 app.include_router(operator_router)
 app.include_router(push_router)
+app.include_router(activation_router)
 app.include_router(invite_router)
 app.include_router(invite_me_router)
 app.include_router(offline_message_router)

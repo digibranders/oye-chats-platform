@@ -1198,17 +1198,35 @@ def get_client_platform_feedback(session, client_id: int) -> list[dict]:
     return [_serialize_platform_feedback(fb) for fb in rows]
 
 
-def get_visitor_data(session, client_id: int = None, bot_id: int = None, *, limit: int = 500, offset: int = 0):
+def get_visitor_data(
+    session,
+    client_id: int = None,
+    bot_id: int = None,
+    *,
+    limit: int = 500,
+    offset: int = 0,
+    created_after=None,
+):
     """Retrieve visitor sessions for the admin dashboard (most-recent first).
 
     Bounded by ``limit``/``offset`` (audit F26): the query previously loaded
     every ChatSession for the workspace into memory, which grows without limit.
+
+    ``created_after`` is the plan retention cutoff (see
+    ``plan_entitlements_service.get_chat_history_retention_days``). When
+    supplied, chats older than that timestamp are excluded — a Free customer
+    with 7-day retention only sees the last week even if the DB holds a full
+    trial's worth of transcripts. Pass ``None`` (default) to disable the
+    filter for unlimited-history plans or non-admin callers.
     """
     sf = _session_owner_filter(bot_id, client_id)
+    filters = [sf]
+    if created_after is not None:
+        filters.append(ChatSession.created_at >= created_after)
     stmt = (
         select(ChatSession, func.count(ChatMessage.id).label("message_count"))
         .outerjoin(ChatMessage)
-        .where(sf)
+        .where(*filters)
         .group_by(ChatSession.id)
         .order_by(ChatSession.created_at.desc())
         .limit(limit)

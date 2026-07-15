@@ -370,7 +370,9 @@ body {
 ):focus-visible {
   outline: 1.5px solid var(--ring);
   outline-offset: 1px;
-  border-radius: 6px;
+  /* No border-radius here — a CSS outline automatically follows the element's
+     own border-radius, so forcing a fixed radius (was 6px) made the focus ring
+     mismatch rounded controls like inputs (rounded-xl = 12px). */
 }
 
 /* Form controls already render their own soft focus ring + primary border

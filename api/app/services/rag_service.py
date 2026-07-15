@@ -33,7 +33,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.security.injection_patterns import compile_detection_pattern
-from app.services import runtime_config
+from app.services import plan_entitlements_service, runtime_config
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
@@ -1041,7 +1041,7 @@ def _card_already_shown(chat_session, card_key: str) -> bool:
     """Return True if `card_key` has already been surfaced for this session.
 
     Reads ChatSession.inline_cards_shown JSONB. `card_key` values in use:
-    'leave_message', 'meeting'.
+    'leave_message', 'meeting', 'team_connect'.
     """
     if chat_session is None:
         return False
@@ -1060,6 +1060,25 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
     shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
     shown[card_key] = True
     chat_session.inline_cards_shown = shown
+
+
+def _count_marked_bant_dimensions(bant_state: dict | None) -> int:
+    """Count BANT dimensions with any signal (score > 0 OR text value present).
+
+    Mirrors the ``bant_marked`` calculation in ``_background_bant_extraction``
+    so the "≥2 dimensions qualified" trigger stays coherent with the
+    qualified-lead broadcast to operators.
+    """
+    if not bant_state:
+        return 0
+    dimensions = ("budget", "authority", "need", "timeline")
+    marked = 0
+    for dim in dimensions:
+        score = int(bant_state.get(f"{dim}_score", 0) or 0)
+        value = (bant_state.get(dim) or "").strip() if isinstance(bant_state.get(dim), str) else bant_state.get(dim)
+        if score > 0 or value:
+            marked += 1
+    return marked
 
 
 def _safety_net_metric(name: str, **tags) -> None:
@@ -2669,6 +2688,7 @@ def build_hybrid_prompt(
     # ``list[{name, url}]`` shape — normalized inside the function.
     services: list[str | dict] | None = None,
     services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
+    team_connect_offer: bool = False,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -2851,6 +2871,19 @@ If their message shows real intent (not just a greeting or one-word opener), clo
 - FORMAT: Put the follow-up question on its OWN line, separated from your answer by a blank line.
 - Never begin the question with "Out of curiosity"; vary your phrasing or ask directly.
 - For greetings or very short openers ("hi", "hello", "hey"): skip the probe; just answer warmly."""
+
+        if team_connect_offer:
+            probing_instruction = """TEAM CONNECT OFFER (ONE-TIME, THIS TURN ONLY):
+The visitor has now shown enough qualification signals (2+ BANT dimensions marked) that they're a warm lead. Instead of probing another dimension, extend a soft handoff to the team.
+
+RULES:
+- Answer the visitor's question FIRST — do not skip or shortcut the answer.
+- End your reply with EXACTLY ONE follow-up question on its OWN line, separated from the answer by a BLANK LINE (two newlines): "Would you like to connect with our team?"
+- Do NOT append any [CTA:…] or [CTA_Q:…] marker for this turn. The team-connect offer stands on its own as a plain-text question.
+- Do NOT emit [LEAVE_MESSAGE_CARD] or a meeting card unless the visitor explicitly asks in this turn.
+- Rephrasing is allowed but must keep the same intent and be one short sentence (≤14 words). Examples: "Would you like to connect with our team?" · "Want me to loop in someone from our team?" · "Happy to connect you with our team if that helps — want me to?"
+- CLOSURE OVERRIDE still wins: if the visitor's latest message is a farewell/thanks, skip the offer and just acknowledge.
+- This offer is being extended once for the entire session. Do not re-issue it on future turns even if BANT changes."""
 
         qualification_section = f"""
 5. LEAD QUALIFICATION (ACTIVE & CONVERSATIONAL):
@@ -4813,8 +4846,22 @@ def rag_pipeline(
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "nonstream")
 
-            is_bant_enabled = getattr(client, "bant_enabled", True)
+            # BANT is a plan-gated feature (Standard / Enterprise). Both
+            # gates must pass: the plan must include ``features.bant`` AND
+            # the bot's own ``bant_enabled`` toggle must be on. A customer
+            # who downgrades from Standard to Free/Starter keeps their
+            # bot's config but new chats stop running qualification —
+            # historical BANT signals remain visible in Insights. Deny by
+            # default on entitlements lookup failure.
+            plan_allows_bant = plan_entitlements_service.is_bant_enabled_for_plan(cid, session) if cid else False
+            is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
+
+            _team_connect_offer = (
+                is_bant_enabled
+                and _count_marked_bant_dimensions(current_bant) >= 2
+                and not _card_already_shown(chat_session, "team_connect")
+            )
 
             system_prompt, prompt = build_hybrid_prompt(
                 client,
@@ -4833,6 +4880,7 @@ def rag_pipeline(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
+                team_connect_offer=_team_connect_offer,
             )
 
             # temperature=0.3: low enough that "what services do you offer"
@@ -5110,10 +5158,16 @@ def rag_pipeline(
                         session=session_id,
                     )
 
+            # Team-connect offer was injected into the prompt this turn — flag
+            # it as shown so the offer never repeats in this session, even if
+            # the LLM's paraphrase drifts or a later turn's BANT state changes.
+            if _team_connect_offer:
+                _mark_card_shown(chat_session, "team_connect")
+
             # Persist any inline_cards_shown mutation from _mark_card_shown().
             # The earlier session.commit() ran before card resolution; without
             # this second commit the dedupe flag would be lost on close.
-            if _meeting_card_detected or _leave_msg_card_detected:
+            if _meeting_card_detected or _leave_msg_card_detected or _team_connect_offer:
                 session.commit()
 
             # Cache the answer for identical future questions.
@@ -5602,8 +5656,17 @@ async def rag_pipeline_stream(
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "stream")
 
-            is_bant_enabled = getattr(client, "bant_enabled", True)
+            # BANT is plan-gated (Standard / Enterprise) — see the mirror
+            # gate on the non-streaming path above for the full rationale.
+            plan_allows_bant = plan_entitlements_service.is_bant_enabled_for_plan(cid, session) if cid else False
+            is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
+
+            _team_connect_offer = (
+                is_bant_enabled
+                and _count_marked_bant_dimensions(current_bant) >= 2
+                and not _card_already_shown(chat_session, "team_connect")
+            )
 
             system_prompt, prompt = build_hybrid_prompt(
                 client,
@@ -5622,6 +5685,7 @@ async def rag_pipeline_stream(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
+                team_connect_offer=_team_connect_offer,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -6007,6 +6071,12 @@ async def rag_pipeline_stream(
                             if show_for_sql:
                                 final_meta.update(bant_meeting)
                                 _mark_card_shown(chat_session, "meeting")
+
+                    # Team-connect offer was injected into the prompt this turn;
+                    # flag it as shown so the offer never repeats in this session,
+                    # regardless of the LLM's paraphrase fidelity.
+                    if _team_connect_offer:
+                        _mark_card_shown(chat_session, "team_connect")
 
                     # Persist any mutation made to chat_session.inline_cards_shown
                     # by the _mark_card_shown calls above.

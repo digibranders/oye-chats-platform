@@ -7,6 +7,7 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
 import TrialBanner from '../components/TrialBanner';
+import VerifyEmailBanner from '../components/VerifyEmailBanner';
 import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
 import WorkspaceAccessDeniedModal from '../components/WorkspaceAccessDeniedModal';
@@ -14,7 +15,9 @@ import { PushProvider, usePush } from '../context/PushContext';
 import { BotProvider } from '../context/BotContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
+import { PageHeaderProvider } from '../context/PageHeaderContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
+import InstallBanner from '../components/InstallBanner';
 
 const MD_BREAKPOINT = 768;
 const LG_BREAKPOINT = 1024;
@@ -144,7 +147,7 @@ function AdminLayoutInner() {
 
       <Sidebar isOpen={isSidebarOpen} isMobile={isMobile} onClose={closeSidebar} />
 
-      <div className={`flex-1 flex flex-col transition-all duration-300 ${getMarginClass()}`}>
+      <div className={`flex-1 min-w-0 flex flex-col transition-all duration-300 ${getMarginClass()}`}>
         <TopBar
           isSidebarOpen={isSidebarOpen}
           isMobile={isMobile}
@@ -155,6 +158,11 @@ function AdminLayoutInner() {
         {/* Persistent trial-state banner. Renders nothing for paying customers,
             operators, or while /auth/me is in flight — see TrialBanner.jsx. */}
         <TrialBanner />
+
+        {/* Deferred email-verification nudge — renders only for unverified
+            client accounts (hidden for operators, verified users, and once
+            dismissed for the session). See VerifyEmailBanner.jsx. */}
+        <VerifyEmailBanner />
 
         {/* Web Push status banner — only renders for operators on a supported
             browser whose permission is "default" (offer to enable), "denied"
@@ -168,7 +176,7 @@ function AdminLayoutInner() {
             Appearance editor) doesn't shift the entire layout by ~15px
             as the scrollbar appears/disappears. */}
         <main
-          className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto min-h-0"
+          className="flex-1 p-4 pb-28 md:p-6 md:pb-6 lg:p-8 lg:pb-8 overflow-y-auto min-h-0"
           style={{ scrollbarGutter: 'stable' }}
         >
           <div className="max-w-7xl mx-auto h-full">
@@ -199,7 +207,7 @@ function AdminLayoutInner() {
         }}
         aria-label="Send feedback"
         title="Send feedback"
-        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#a21caf] to-[#86198f] shadow-[-6px_0_30px_rgba(162,28,175,0.5)] z-40 cursor-pointer"
+        className="hidden md:flex fixed right-0 top-1/2 -translate-y-1/2 origin-right hover:scale-105 hover:brightness-110 active:brightness-95 transition-[transform,filter] duration-300 ease-in-out flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#a21caf] to-[#86198f] shadow-[-6px_0_30px_rgba(162,28,175,0.5)] z-40 cursor-pointer"
       >
         <MessageCircle size={20} className="text-white flex-shrink-0" />
         <span
@@ -222,6 +230,9 @@ function AdminLayoutInner() {
         defaultTab={feedbackTab}
         highlightId={feedbackHighlightId}
       />
+
+      {/* Floating in-app banner for PWA installation prompts. */}
+      <InstallBanner />
 
       {/* Floating in-app banner for incoming live-chat handoffs. Suppresses
           itself on /support so the live-chat console isn't covered by a
@@ -248,7 +259,13 @@ export default function AdminLayout() {
       <NotificationProvider>
         <BotProvider>
           <PushProvider>
-            <AdminLayoutInner />
+            {/* PageHeaderProvider wraps the layout so both TopBar and the
+                routed page (<Outlet/>) share the contextual app-bar state:
+                pages publish crumbs/title/actions via <PageHeader/>, TopBar
+                renders them. */}
+            <PageHeaderProvider>
+              <AdminLayoutInner />
+            </PageHeaderProvider>
           </PushProvider>
         </BotProvider>
       </NotificationProvider>

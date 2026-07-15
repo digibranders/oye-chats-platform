@@ -6,7 +6,7 @@ import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv, markLeadViewed, 
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { cn, formatVisitorLocation } from '../lib/utils';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { Lock, Crown, ArrowRight } from 'lucide-react';
 import useEntitlements from '../hooks/useEntitlements';
@@ -15,13 +15,13 @@ import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
     unqualified: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    mql: { label: 'MQL', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400' },
-    sal: { label: 'SAL', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' },
+    mql: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
+    sal: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
     sql: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
     // backward-compat aliases
     cold: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    warm: { label: 'MQL', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400' },
-    hot: { label: 'SAL', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' },
+    warm: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
+    hot: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
     qualified: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
 };
 
@@ -49,6 +49,67 @@ const UTM_SOURCE_CHIP = {
 };
 
 const DEFAULT_SOURCE_CHIP_COLOR = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300';
+
+/**
+ * Format a duration in seconds as a compact human-readable string. Used
+ * on the journey timeline to show how long the visitor spent on each
+ * page before moving on. Handles the three plausible ranges:
+ *
+ *   3s              — under a minute
+ *   2m 15s          — minutes + seconds
+ *   1h 5m           — hours + minutes (rare — a visitor camped on a
+ *                     tab overnight, or the widget kept re-mounting)
+ *
+ * Returns ``null`` when the duration can't be trusted (negative, absent,
+ * or beyond a reasonable ceiling) so the caller can render a neutral
+ * fallback instead of "-2s" or "9999h".
+ */
+const formatJourneyDuration = (seconds) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return null;
+    if (seconds > 24 * 60 * 60) return null; // sanity ceiling — 1 day
+    if (seconds < 1) return '< 1s';
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) {
+        const m = Math.floor(seconds / 60);
+        const s = Math.round(seconds - m * 60);
+        return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    }
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds - h * 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+};
+
+/**
+ * Build a display row per journey entry, deriving each page's dwell time
+ * from the delta between its ``ts`` and the next entry's ``ts``. The last
+ * entry has no successor — its duration is ``null`` and the caller
+ * renders "opened chat here" instead of a stopwatch value.
+ *
+ * Timestamps come from the widget as ISO 8601 strings. Anything that
+ * fails to parse falls through with a ``null`` duration so a partially
+ * malformed journey (e.g. a widget bug shipping strings from a bad clock)
+ * still renders the list cleanly instead of showing NaN everywhere.
+ */
+const buildJourneyRows = (journey) => {
+    if (!Array.isArray(journey) || journey.length === 0) return [];
+    return journey.map((entry, idx) => {
+        const next = journey[idx + 1];
+        let durationLabel = null;
+        if (next && typeof entry?.ts === 'string' && typeof next?.ts === 'string') {
+            const start = Date.parse(entry.ts);
+            const end = Date.parse(next.ts);
+            if (Number.isFinite(start) && Number.isFinite(end)) {
+                durationLabel = formatJourneyDuration((end - start) / 1000);
+            }
+        }
+        return {
+            path: entry?.path || '',
+            ts: entry?.ts || null,
+            durationLabel,
+            isLast: idx === journey.length - 1,
+        };
+    });
+};
 
 /**
  * Resolve a lead's ``source`` payload into a chip descriptor. Returns
@@ -124,7 +185,7 @@ const BantScoreGauge = ({ score }) => {
     
     // Smooth floating point value for sub-pixel circle stroke offsets
     const dashOffset = circumference - (animatedScore / 100) * circumference;
-    const color = score >= 75 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 25 ? '#a21caf' : '#94a3b8';
+    const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f97316' : score >= 25 ? '#eab308' : '#94a3b8';
 
     return (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
@@ -190,6 +251,12 @@ export default function Leads() {
     // makes the surface honest about why.
     const { entitlements: ent } = useEntitlements();
     const sourceAttributionEnabled = SOURCE_ATTRIBUTION_PLAN_SLUGS.has(ent.planSlug);
+    // BANT qualification (score gauge, N/B/A/T dimension chips, evidence
+    // trail) is gated on the ``bant`` plan feature. Starter+Free plans see
+    // locked columns and a detail-drawer upgrade card instead — the row
+    // still renders so operators can still open the chat and read contact
+    // info, they just can't act on qualification signals until they upgrade.
+    const bantEnabled = ent.hasFeature('bant');
     const { requestUpgrade } = useUpgradeModal();
     const [leads, setLeads] = useState([]);
     const [stats, setStats] = useState(null);
@@ -404,38 +471,41 @@ export default function Leads() {
     );
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-                <PageHeader title="Leads" subtitle="Track and qualify your sales leads with BANT scoring" />
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={handleMarkAllRead}
-                        disabled={!hasUnreadLeads}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
-                    >
-                        <CheckCheck className="w-4 h-4" />
-                        Mark all as read
-                    </button>
-                    <button
-                        onClick={handleExport}
-                        disabled={isExporting || leads.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
-                    >
-                        {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                        Export CSV
-                    </button>
-                </div>
-            </div>
+        <div className="space-y-6 animate-fade-in -mt-2">
+            <PageHeader
+                crumbs={[{ label: 'Home', to: '/' }, { label: 'Leads' }]}
+                title="Leads"
+                actions={(
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleMarkAllRead}
+                            disabled={!hasUnreadLeads}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
+                        >
+                            <CheckCheck className="w-4 h-4" />
+                            Mark all as read
+                        </button>
+                        <button
+                            onClick={handleExport}
+                            disabled={isExporting || leads.length === 0}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
+                        >
+                            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                            Export CSV
+                        </button>
+                    </div>
+                )}
+            />
 
             {/* Stats Cards */}
             {stats && (
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {[
                         { label: 'Total', value: stats.total, color: 'text-surface-900 dark:text-surface-100' },
-                        { label: 'Cold', value: stats.cold, color: 'text-surface-500 dark:text-surface-400' },
-                        { label: 'Warm', value: stats.warm, color: 'text-primary-600 dark:text-primary-400' },
-                        { label: 'Hot', value: stats.hot, color: 'text-amber-600 dark:text-amber-400' },
+                        { label: 'Cold', value: stats.cold, color: 'text-sky-600 dark:text-sky-400' },
+                        { label: 'Warm', value: stats.warm, color: 'text-yellow-600 dark:text-yellow-400' },
+                        { label: 'Hot', value: stats.hot, color: 'text-orange-600 dark:text-orange-400' },
                         { label: 'Qualified', value: stats.qualified, color: 'text-emerald-600 dark:text-emerald-400' },
                     ].map(s => (
                         <button
@@ -445,11 +515,11 @@ export default function Leads() {
                                 'p-4 rounded-xl border transition-all',
                                 (statusFilter === s.label.toLowerCase() || (!statusFilter && s.label === 'Total'))
                                     ? 'border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10 ring-1 ring-primary-200 dark:ring-primary-500/30'
-                                    : 'border-surface-200 dark:border-surface-700 bg-[var(--bg-card)] dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600'
+                                    : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600'
                             )}
                         >
                             <p className="text-[12px] font-medium text-surface-500 dark:text-surface-400">{s.label}</p>
-                            <p className={cn('text-2xl font-bold tabular-nums', s.color)}>{s.value}</p>
+                            <p className={cn('text-2xl font-bold', s.color)}>{s.value}</p>
                         </button>
                     ))}
                 </div>
@@ -501,7 +571,7 @@ export default function Leads() {
                         <span className="text-sm font-medium text-primary-700 dark:text-primary-300">{selectedIds.size} selected</span>
                         <button
                             onClick={exportSelected}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--bg-card)] dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
                         >
                             <Download size={13} /> Export selected
                         </button>
@@ -516,7 +586,7 @@ export default function Leads() {
             </AnimatePresence>
 
             {/* Leads Table */}
-            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                 {isLoading ? (
                     <SkeletonTable rows={8} cols={6} />
                 ) : filtered.length === 0 ? (
@@ -539,7 +609,8 @@ export default function Leads() {
                         )}
                     </div>
                 ) : (
-                    <table className="w-full text-sm">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[860px] text-sm">
                         <thead>
                             <tr className="border-b border-surface-100 dark:border-surface-800">
                                 <th className="px-4 py-3 w-10">
@@ -549,12 +620,12 @@ export default function Leads() {
                                             : <Square size={15} className="text-surface-400 dark:text-surface-500" />}
                                     </button>
                                 </th>
-                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Contact</th>
-                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Score</th>
-                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Status</th>
-                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
-                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Location</th>
-                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Last Active</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Contact</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Score</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Status</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Location</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Last Active</th>
                                 <th className="px-4 py-3"></th>
                             </tr>
                         </thead>
@@ -564,7 +635,7 @@ export default function Leads() {
                                 return (
                                     <tr
                                         key={lead.session_id}
-                                        className="border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
+                                        className="border-b border-surface-50 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
                                     >
                                         <td className="px-4 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(lead.session_id); }}>
                                             {selectedIds.has(lead.session_id)
@@ -611,47 +682,69 @@ export default function Leads() {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-12 h-2 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
-                                                    <div
-                                                        className="h-full rounded-full transition-all"
-                                                        style={{
-                                                            width: `${lead.score}%`,
-                                                            backgroundColor: lead.score >= 75 ? '#10b981' : lead.score >= 50 ? '#f59e0b' : lead.score >= 25 ? '#a21caf' : '#94a3b8',
-                                                        }}
-                                                    />
+                                        <td className="px-4 py-3" onClick={(e) => { if (!bantEnabled) { e.stopPropagation(); requestUpgrade({ feature: 'bant' }); return; } handleViewLead(lead.session_id); }}>
+                                            {bantEnabled ? (
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-12 h-2 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full rounded-full transition-all"
+                                                            style={{
+                                                                width: `${lead.score}%`,
+                                                                backgroundColor: lead.score >= 75 ? '#22c55e' : lead.score >= 50 ? '#f97316' : lead.score >= 25 ? '#eab308' : '#94a3b8',
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <span
+                                                        className="text-[12px] font-bold text-surface-700 dark:text-surface-300"
+                                                        title={`BANT: ${lead.bant_score ?? lead.score}${lead.behavioral_score ? ` + Behavioral: ${lead.behavioral_score}` : ''}`}
+                                                    >
+                                                        {lead.score}
+                                                    </span>
                                                 </div>
-                                                <span
-                                                    className="text-[12px] font-bold text-surface-700 dark:text-surface-300 tabular-nums"
-                                                    title={`BANT: ${lead.bant_score ?? lead.score}${lead.behavioral_score ? ` + Behavioral: ${lead.behavioral_score}` : ''}`}
-                                                >
-                                                    {lead.score}
-                                                </span>
-                                            </div>
+                                            ) : (
+                                                <LockedCellPill label="Upgrade to unlock" onClick={() => requestUpgrade({ feature: 'bant' })} />
+                                            )}
                                         </td>
                                         <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
                                             <span className={cn('px-2.5 py-1 rounded-full text-[11px] font-bold', sc.color)}>
                                                 {sc.label}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
-                                            <div className="flex gap-1">
-                                                {Object.entries(BANT_LABELS).map(([key, label]) => (
-                                                    <span
-                                                        key={key}
-                                                        className={cn(
-                                                            'w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center',
-                                                            (lead.bant?.[key]?.score || 0) > 0
-                                                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
-                                                                : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-500'
-                                                        )}
-                                                        title={`${label}: ${lead.bant?.[key]?.value || 'Not captured'} (${lead.bant?.[key]?.score || 0}/25)`}
-                                                    >
-                                                        {label[0]}
-                                                    </span>
-                                                ))}
-                                            </div>
+                                        <td className="px-4 py-3" onClick={(e) => { if (!bantEnabled) { e.stopPropagation(); requestUpgrade({ feature: 'bant' }); return; } handleViewLead(lead.session_id); }}>
+                                            {bantEnabled ? (
+                                                <div className="flex gap-1">
+                                                    {Object.entries(BANT_LABELS).map(([key, label]) => (
+                                                        <span
+                                                            key={key}
+                                                            className={cn(
+                                                                'w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center',
+                                                                (lead.bant?.[key]?.score || 0) > 0
+                                                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
+                                                                    : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-500'
+                                                            )}
+                                                            title={`${label}: ${lead.bant?.[key]?.value || 'Not captured'} (${lead.bant?.[key]?.score || 0}/25)`}
+                                                        >
+                                                            {label[0]}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div
+                                                    className="flex gap-1"
+                                                    title="Upgrade to Standard to unlock BANT qualification"
+                                                >
+                                                    {Object.values(BANT_LABELS).map((label) => (
+                                                        <span
+                                                            key={label}
+                                                            aria-hidden="true"
+                                                            className="w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center bg-surface-100 text-surface-300 dark:bg-surface-800 dark:text-surface-600 blur-[1.5px] select-none"
+                                                        >
+                                                            {label[0]}
+                                                        </span>
+                                                    ))}
+                                                    <Lock size={11} className="ml-0.5 self-center text-primary-500 dark:text-primary-400" />
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3 text-[12px] text-surface-600 dark:text-surface-400 max-w-[120px] truncate" onClick={() => handleViewLead(lead.session_id)}>
                                             {formatVisitorLocation(lead.location) || '—'}
@@ -679,6 +772,7 @@ export default function Leads() {
                             })}
                         </tbody>
                     </table>
+                    </div>
                 )}
             </div>
 
@@ -698,11 +792,11 @@ export default function Leads() {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                            className="relative w-full max-w-lg bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl overflow-y-auto"
+                            className="relative w-full max-w-lg bg-white dark:bg-surface-900 shadow-2xl overflow-y-auto"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Drawer Header */}
-                            <div className="sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between">
+                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-6 py-4 flex items-center justify-between">
                                 <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">Lead Detail</h2>
                                 <button onClick={() => { setSelectedLead(null); setLeadDetail(null); }} className="text-surface-400 hover:text-surface-600 dark:text-surface-500 dark:hover:text-surface-300">
                                     <X className="w-5 h-5" />
@@ -728,70 +822,24 @@ export default function Leads() {
                                     </div>
 
                                     {/* Score + Status with circular gauge matching first image */}
-                                    <div className="flex flex-col items-center justify-center p-6 bg-surface-50 dark:bg-surface-800/40 rounded-2xl border border-surface-200 dark:border-surface-800/50">
-                                        <div className="relative flex flex-col items-center">
-                                            {/* key={score} forces a remount when the score changes
-                                                so the gauge animation always plays from 0 → new value.
-                                                See BantScoreGauge doc-comment above for why. */}
-                                            <BantScoreGauge key={leadDetail.score} score={leadDetail.score} />
-                                        </div>
-                                        <span className={cn('inline-block mt-3 px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-sm', STATUS_CONFIG[leadDetail.status]?.color)}>
-                                            {STATUS_CONFIG[leadDetail.status]?.label}
-                                        </span>
-                                    </div>
-
-                                    {/* Tags */}
-                                    <div className="space-y-2">
-                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 flex items-center gap-1.5">
-                                            <Tag size={12} /> Tags
-                                        </h3>
-                                        <div className="flex flex-wrap gap-1.5 mb-2">
-                                            {(tagsByLead[selectedLead] || []).map(tag => (
-                                                <span key={tag} className="px-2.5 py-0.5 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 text-[11px] font-medium rounded-full border border-primary-200 dark:border-primary-500/30">
-                                                    {tag}
-                                                </span>
-                                            ))}
-                                        </div>
-                                        <input
-                                            type="text"
-                                            placeholder="Add tags (comma-separated)"
-                                            value={tagInput}
-                                            onChange={(e) => setTagInput(e.target.value)}
-                                            onKeyDown={(e) => { if (e.key === 'Enter') { saveTags(selectedLead, tagInput); setTagInput(''); } }}
-                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-[var(--focus)]"
-                                        />
-                                        <p className="text-[10px] text-surface-400">Press Enter to save · stored on this device only</p>
-                                    </div>
-
-                                    {/* Notes */}
-                                    <div className="space-y-2">
-                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 flex items-center gap-1.5">
-                                            <FileText size={12} /> Notes
-                                        </h3>
-                                        {notesByLead[selectedLead] && (
-                                            <div className="p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg text-xs text-surface-700 dark:text-surface-300 mb-2">
-                                                <p>{notesByLead[selectedLead].text}</p>
-                                                <p className="text-[10px] text-surface-400 mt-1">{new Date(notesByLead[selectedLead].ts).toLocaleDateString()}</p>
+                                    {bantEnabled ? (
+                                        <div className="flex flex-col items-center justify-center p-6 bg-surface-50 dark:bg-surface-800/40 rounded-2xl border border-surface-200 dark:border-surface-800/50">
+                                            <div className="relative flex flex-col items-center">
+                                                {/* key={score} forces a remount when the score changes
+                                                    so the gauge animation always plays from 0 → new value.
+                                                    See BantScoreGauge doc-comment above for why. */}
+                                                <BantScoreGauge key={leadDetail.score} score={leadDetail.score} />
                                             </div>
-                                        )}
-                                        <textarea
-                                            rows={3}
-                                            placeholder="Add a note about this lead..."
-                                            value={noteInput}
-                                            onChange={(e) => setNoteInput(e.target.value)}
-                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-[var(--focus)] resize-none"
-                                        />
-                                        <button
-                                            onClick={() => { saveNote(selectedLead); setNoteInput(''); }}
-                                            disabled={!noteInput.trim()}
-                                            className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-40"
-                                        >
-                                            Save note
-                                        </button>
-                                        <p className="text-[10px] text-surface-400">Saved on this device only — not synced to your team.</p>
-                                    </div>
+                                            <span className={cn('inline-block mt-3 px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-sm', STATUS_CONFIG[leadDetail.status]?.color)}>
+                                                {STATUS_CONFIG[leadDetail.status]?.label}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <LockedBantUpgradeCard onUpgrade={() => requestUpgrade({ feature: 'bant' })} />
+                                    )}
 
                                     {/* BANT Breakdown */}
+                                    {bantEnabled && (
                                     <div className="space-y-3">
                                         <h3 className="text-[13px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT Qualification</h3>
                                         <div className="space-y-2">
@@ -802,13 +850,13 @@ export default function Leads() {
                                                     <div key={key} className="bg-surface-50 dark:bg-surface-800 rounded-lg px-4 py-3">
                                                         <div className="flex items-center justify-between mb-1">
                                                             <span className="text-[12px] font-bold text-surface-600 dark:text-surface-300">{label}</span>
-                                                            <span className="text-[11px] font-bold text-surface-500 dark:text-surface-400 tabular-nums">{dimScore}/25</span>
+                                                            <span className="text-[11px] font-bold text-surface-500 dark:text-surface-400">{dimScore}/25</span>
                                                         </div>
                                                         <div className="w-full bg-surface-200 dark:bg-surface-700 rounded-full h-1.5 mb-1.5">
                                                             <div
                                                                 className={cn(
                                                                     'h-1.5 rounded-full transition-all',
-                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-primary-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
+                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-sky-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
                                                                 )}
                                                                 style={{ width: `${(dimScore / 25) * 100}%` }}
                                                             />
@@ -827,7 +875,7 @@ export default function Leads() {
                                                 <h4 className="text-[12px] font-bold text-surface-500 dark:text-surface-400 mb-2">Evidence Trail</h4>
                                                 <div className="space-y-2 max-h-48 overflow-y-auto">
                                                     {leadDetail.signals.map((s, i) => (
-                                                        <div key={i} className="bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-100 dark:border-surface-700 rounded-lg px-3 py-2">
+                                                        <div key={i} className="bg-white dark:bg-surface-900 border border-surface-100 dark:border-surface-700 rounded-lg px-3 py-2">
                                                             <div className="flex items-center gap-2 mb-1">
                                                                 <span className="text-[10px] font-bold uppercase text-surface-400 dark:text-surface-500">{s.dimension}</span>
                                                                 <span className={cn(
@@ -835,7 +883,7 @@ export default function Leads() {
                                                                     s.confidence === 'high'
                                                                         ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                                                                         : s.confidence === 'medium'
-                                                                            ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400'
+                                                                            ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400'
                                                                             : 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400'
                                                                 )}>{s.confidence}</span>
                                                                 <span className="text-[10px] text-surface-400 dark:text-surface-500 ml-auto">{s.score_before} → {s.score_after}</span>
@@ -847,6 +895,7 @@ export default function Leads() {
                                             </div>
                                         )}
                                     </div>
+                                    )}
 
                                     {sourceAttributionEnabled ? (
                                         (() => {
@@ -914,28 +963,42 @@ export default function Leads() {
                                                             </div>
                                                         )}
                                                     </div>
-                                                    {journey.length > 0 && (
-                                                        <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4">
-                                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400 mb-2">
-                                                                Journey before chat · {journey.length} {journey.length === 1 ? 'page' : 'pages'}
-                                                            </p>
-                                                            <ol className="space-y-1.5">
-                                                                {journey.slice(-8).map((entry, idx) => (
-                                                                    <li key={`${entry.path}-${entry.ts || idx}`} className="flex items-start gap-2 text-[12px]">
-                                                                        <span className="text-surface-400 dark:text-surface-500 shrink-0 tabular-nums">
-                                                                            {idx + 1 + Math.max(0, journey.length - 8)}.
-                                                                        </span>
-                                                                        <span className="text-surface-700 dark:text-surface-300 break-all">{entry.path}</span>
-                                                                    </li>
-                                                                ))}
-                                                            </ol>
-                                                            {journey.length > 8 && (
-                                                                <p className="mt-2 text-[11px] text-surface-400 dark:text-surface-500">
-                                                                    Showing the last 8 of {journey.length} pages.
+                                                    {journey.length > 0 && (() => {
+                                                        const rows = buildJourneyRows(journey);
+                                                        const visible = rows.slice(-8);
+                                                        const offset = Math.max(0, rows.length - 8);
+                                                        return (
+                                                            <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4">
+                                                                <p className="text-[11px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400 mb-2">
+                                                                    Journey before chat · {rows.length} {rows.length === 1 ? 'page' : 'pages'}
                                                                 </p>
-                                                            )}
-                                                        </div>
-                                                    )}
+                                                                <ol className="space-y-1.5">
+                                                                    {visible.map((row, idx) => (
+                                                                        <li key={`${row.path}-${row.ts || idx}`} className="flex items-start gap-2 text-[12px]">
+                                                                            <span className="text-surface-400 dark:text-surface-500 shrink-0 tabular-nums">
+                                                                                {idx + 1 + offset}.
+                                                                            </span>
+                                                                            <span className="text-surface-700 dark:text-surface-300 break-all flex-1">{row.path}</span>
+                                                                            {row.isLast ? (
+                                                                                <span className="shrink-0 text-[11px] italic text-primary-600 dark:text-primary-400">
+                                                                                    opened chat here
+                                                                                </span>
+                                                                            ) : row.durationLabel ? (
+                                                                                <span className="shrink-0 text-[11px] tabular-nums text-surface-500 dark:text-surface-400">
+                                                                                    {row.durationLabel}
+                                                                                </span>
+                                                                            ) : null}
+                                                                        </li>
+                                                                    ))}
+                                                                </ol>
+                                                                {rows.length > 8 && (
+                                                                    <p className="mt-2 text-[11px] text-surface-400 dark:text-surface-500">
+                                                                        Showing the last 8 of {rows.length} pages.
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
                                             );
                                         })()
@@ -967,13 +1030,63 @@ export default function Leads() {
                                         </div>
                                     )}
 
+                                    {/* Tags */}
+                                    <div className="space-y-2">
+                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 flex items-center gap-1.5">
+                                            <Tag size={12} /> Tags
+                                        </h3>
+                                        <div className="flex flex-wrap gap-1.5 mb-2">
+                                            {(tagsByLead[selectedLead] || []).map(tag => (
+                                                <span key={tag} className="px-2.5 py-0.5 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 text-[11px] font-medium rounded-full border border-primary-200 dark:border-primary-500/30">
+                                                    {tag}
+                                                </span>
+                                            ))}
+                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="Add tags (comma-separated)"
+                                            value={tagInput}
+                                            onChange={(e) => setTagInput(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') { saveTags(selectedLead, tagInput); setTagInput(''); } }}
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400"
+                                        />
+                                        <p className="text-[10px] text-surface-400">Press Enter to save</p>
+                                    </div>
+
+                                    {/* Notes */}
+                                    <div className="space-y-2">
+                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 flex items-center gap-1.5">
+                                            <FileText size={12} /> Notes
+                                        </h3>
+                                        {notesByLead[selectedLead] && (
+                                            <div className="p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg text-xs text-surface-700 dark:text-surface-300 mb-2">
+                                                <p>{notesByLead[selectedLead].text}</p>
+                                                <p className="text-[10px] text-surface-400 mt-1">{new Date(notesByLead[selectedLead].ts).toLocaleDateString()}</p>
+                                            </div>
+                                        )}
+                                        <textarea
+                                            rows={3}
+                                            placeholder="Add a note about this lead..."
+                                            value={noteInput}
+                                            onChange={(e) => setNoteInput(e.target.value)}
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400 resize-none"
+                                        />
+                                        <button
+                                            onClick={() => { saveNote(selectedLead); setNoteInput(''); }}
+                                            disabled={!noteInput.trim()}
+                                            className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-40"
+                                        >
+                                            Save note
+                                        </button>
+                                    </div>
+
                                     {(leadDetail.behavioral_score > 0 || (leadDetail.behavioral?.visit_count || 0) > 1) && (
                                         <div className="space-y-3">
                                             <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Behavioral Signals</h3>
                                             <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 space-y-2">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-[12px] font-medium text-surface-600 dark:text-surface-400">Engagement Score</span>
-                                                    <span className="text-[12px] font-bold text-surface-900 dark:text-surface-100 tabular-nums">{leadDetail.behavioral_score || 0}/20</span>
+                                                    <span className="text-[12px] font-bold text-surface-900 dark:text-surface-100">{leadDetail.behavioral_score || 0}/20</span>
                                                 </div>
                                                 <div className="w-full bg-surface-200 dark:bg-surface-700 rounded-full h-1.5">
                                                     <div
@@ -982,44 +1095,12 @@ export default function Leads() {
                                                             (leadDetail.behavioral_score || 0) >= 15
                                                                 ? 'bg-emerald-500'
                                                                 : (leadDetail.behavioral_score || 0) >= 8
-                                                                    ? 'bg-primary-500'
+                                                                    ? 'bg-sky-500'
                                                                     : 'bg-amber-400'
                                                         )}
                                                         style={{ width: `${Math.min(((leadDetail.behavioral_score || 0) / 20) * 100, 100)}%` }}
                                                     />
                                                 </div>
-                                                {leadDetail.behavioral?.page_url && (
-                                                    <div className="flex items-start gap-2 text-[12px]">
-                                                        <span className="text-surface-400 dark:text-surface-500 shrink-0">Page:</span>
-                                                        <span className="text-surface-700 dark:text-surface-300 break-all">
-                                                            {leadDetail.behavioral.page_url.length > 80
-                                                                ? leadDetail.behavioral.page_url.substring(0, 80) + '...'
-                                                                : leadDetail.behavioral.page_url}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                {leadDetail.behavioral?.referrer && (
-                                                    <div className="flex items-start gap-2 text-[12px]">
-                                                        <span className="text-surface-400 dark:text-surface-500 shrink-0">Referrer:</span>
-                                                        <span className="text-surface-700 dark:text-surface-300 break-all">
-                                                            {leadDetail.behavioral.referrer.length > 80
-                                                                ? leadDetail.behavioral.referrer.substring(0, 80) + '...'
-                                                                : leadDetail.behavioral.referrer}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                {leadDetail.behavioral?.utm_params && Object.keys(leadDetail.behavioral.utm_params).length > 0 && (
-                                                    <div className="text-[12px]">
-                                                        <span className="text-surface-400 dark:text-surface-500">UTM:</span>
-                                                        <div className="flex flex-wrap gap-1 mt-1">
-                                                            {Object.entries(leadDetail.behavioral.utm_params).map(([k, v]) => (
-                                                                <span key={k} className="px-2 py-0.5 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded text-[10px] text-surface-600 dark:text-surface-400">
-                                                                    {k}: {v}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
                                                 {(leadDetail.behavioral?.visit_count || 0) > 1 && (
                                                     <div className="flex items-center gap-2 text-[12px]">
                                                         <span className="text-surface-400 dark:text-surface-500">Return visitor:</span>
@@ -1068,13 +1149,13 @@ export default function Leads() {
                             animate={{ x: 0 }}
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', damping: 32, stiffness: 320 }}
-                            className="relative w-full max-w-md bg-[var(--bg-card)] dark:bg-surface-900 shadow-2xl flex flex-col"
+                            className="relative w-full max-w-md bg-white dark:bg-surface-900 shadow-2xl flex flex-col"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header: contact + meta + close. Mirrors the
                                 live-chat header so the two views feel like
                                 one product. */}
-                            <div className="sticky top-0 z-10 bg-[var(--bg-card)] dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
+                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
                                 <div className="flex items-start gap-3">
                                     <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center shrink-0">
                                         <MessageCircle className="w-4 h-4 text-primary-600 dark:text-primary-400" />
@@ -1201,6 +1282,77 @@ export default function Leads() {
 }
 
 /**
+ * LockedCellPill — compact "Upgrade to unlock" chip used in table cells
+ * where the underlying data (BANT-driven score) is plan-gated. Kept inline
+ * with the row so operators still see the column and understand it exists,
+ * but the value is hidden behind a click that triggers the upgrade modal.
+ */
+function LockedCellPill({ label, onClick }) {
+    return (
+        <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+            title="Upgrade to Standard to unlock BANT qualification"
+            className={cn(
+                'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold',
+                'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300',
+                'border border-primary-200/60 dark:border-primary-500/30',
+                'hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors',
+            )}
+        >
+            <Lock size={10} strokeWidth={2.4} />
+            {label}
+        </button>
+    );
+}
+
+/**
+ * LockedBantUpgradeCard — replaces the BANT score gauge + breakdown +
+ * evidence trail in the lead detail drawer for plans without the ``bant``
+ * feature. One card covers all three sections so the drawer doesn't feel
+ * riddled with locks — the caller hides the individual BANT blocks and
+ * renders this once in place of the gauge.
+ */
+function LockedBantUpgradeCard({ onUpgrade }) {
+    return (
+        <button
+            type="button"
+            onClick={onUpgrade}
+            className={cn(
+                'w-full text-left group relative overflow-hidden rounded-2xl border',
+                'border-primary-200/60 dark:border-primary-500/25',
+                'bg-gradient-to-br from-primary-50 to-fuchsia-50/40',
+                'dark:from-primary-500/10 dark:to-fuchsia-500/5',
+                'px-5 py-5 transition-colors',
+                'hover:from-primary-100 dark:hover:from-primary-500/15',
+            )}
+        >
+            <div className="flex items-start gap-3">
+                <div className="mt-0.5 w-9 h-9 rounded-xl bg-primary-500/90 text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <Crown size={16} strokeWidth={2.2} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary-700 dark:text-primary-300">
+                        <Lock size={9} strokeWidth={2.6} />
+                        BANT qualification is locked
+                    </p>
+                    <h3 className="mt-1.5 text-[15px] font-bold text-surface-900 dark:text-surface-50 leading-snug">
+                        Upgrade to Standard to enjoy BANT scoring
+                    </h3>
+                    <p className="mt-1 text-[12px] leading-relaxed text-surface-600 dark:text-surface-400">
+                        See a live budget, authority, need &amp; timeline read-out for every conversation, plus an evidence trail linking each score to the exact visitor message.
+                    </p>
+                    <span className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors">
+                        Upgrade to Standard
+                        <ArrowRight size={12} className="transition-transform group-hover:translate-x-0.5" />
+                    </span>
+                </div>
+            </div>
+        </button>
+    );
+}
+
+/**
  * LockedLeadsPage — shown when a Free user lands on /leads via URL walk
  * or a stale deep link. Mirrors the dashboard lock card so the customer
  * sees the same upsell shape across surfaces. Clicking anywhere fires
@@ -1208,8 +1360,8 @@ export default function Leads() {
  */
 function LockedLeadsPage({ onUpgrade }) {
     return (
-        <div className="flex flex-col gap-6">
-            <PageHeader title="Leads" subtitle="Capture, qualify, and route every visitor" />
+        <div className="flex flex-col gap-6 -mt-2">
+            <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Leads' }]} title="Leads" />
             <button
                 type="button"
                 onClick={onUpgrade}

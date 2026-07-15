@@ -34,6 +34,7 @@ export function oyechatsPwaPlugin() {
   return {
     name: 'oyechats-pwa',
     apply: 'build',
+    enforce: 'post',
     configResolved(config) {
       outDir = config.build.outDir || 'dist';
     },
@@ -44,9 +45,14 @@ export function oyechatsPwaPlugin() {
       let sw;
       try {
         sw = readFileSync(swPath, 'utf8');
-      } catch (err) {
-        this.error(`[oyechats-pwa] sw.js not found at ${swPath}: ${err.message}`);
-        return;
+      } catch {
+        const publicSwPath = path.join(distDir, '..', 'public', 'sw.js');
+        try {
+          sw = readFileSync(publicSwPath, 'utf8');
+        } catch (fallbackErr) {
+          this.error(`[oyechats-pwa] sw.js not found at ${swPath} or ${publicSwPath}: ${fallbackErr.message}`);
+          return;
+        }
       }
 
       const assetsDir = path.join(distDir, 'assets');

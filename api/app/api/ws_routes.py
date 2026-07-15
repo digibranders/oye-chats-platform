@@ -586,10 +586,22 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
         ).scalar_one_or_none()
 
         if not operator:
+            # bot_id is NOT NULL on operators (one operator, one bot — see
+            # b1c7e9d3f2a5_operator_bot_one_to_one.py). Bind the auto-provisioned
+            # owner to the client's oldest bot, matching that migration's backfill
+            # rule. Clients with no bots yet can't use the operator dashboard —
+            # fail auth cleanly rather than crashing on a NOT NULL violation.
+            first_bot_id = session.execute(
+                select(Bot.id).where(Bot.client_id == client.id).order_by(Bot.created_at.asc()).limit(1)
+            ).scalar_one_or_none()
+            if first_bot_id is None:
+                return None
+
             import uuid as _uuid
 
             operator = Operator(
                 client_id=client.id,
+                bot_id=first_bot_id,
                 name=client.name,
                 email=client.email,
                 is_online=True,

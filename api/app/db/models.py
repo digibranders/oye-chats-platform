@@ -64,6 +64,12 @@ class Client(Base):
     email_otp = Column(String, nullable=True)
     email_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # First-run onboarding wizard completion. Starts False for every new
+    # account (both email/password and OAuth signups) and flips True once the
+    # user finishes the dashboard's guided setup. The admin app reads this off
+    # /auth/me to decide whether to route into the onboarding flow.
+    onboarding_complete = Column(Boolean, default=False, server_default="false", nullable=False)
+
     # Password reset fields
     reset_otp = Column(String, nullable=True)
     reset_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -228,6 +234,11 @@ class Bot(Base):
     brand_tone_preset = Column(String, nullable=True)
     company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
     company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
+    # Cached onboarding "seed questions" — LLM-proposed + retrieval-verified as
+    # answerable from this bot's content (see seed_questions_service). Computed
+    # once during the Build Studio Prove step; null = not computed yet, [] =
+    # computed but nothing passed verification (show only the open input).
+    seed_questions = Column(JSONB, nullable=True)
     # Names of auto-fillable fields the customer has edited by hand
     # (subset of {"company_name", "company_description", "brand_tone"}). A field
     # listed here is "locked" and the website crawl leaves it untouched; fields
@@ -627,6 +638,25 @@ class BotGrowthEvent(Base):
             name="ck_bot_growth_events_event_type",
         ),
     )
+
+
+class ActivationEvent(Base):
+    """Onboarding activation milestones emitted by a client account.
+
+    Unlike ``BotGrowthEvent`` (which restricts ``event_type`` to a fixed set),
+    ``event_type`` here is intentionally free-form so new activation milestones
+    can be added without a schema/constraint change. Rows are best-effort
+    instrumentation, scoped to the emitting client (optionally a specific bot).
+    """
+
+    __tablename__ = "activation_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True)
+    event_type = Column(String, nullable=False, index=True)  # free-form; NO CheckConstraint
+    event_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class Webhook(Base):

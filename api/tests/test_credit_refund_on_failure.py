@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import get_current_bot
+from app.api.auth import get_bot_for_chat, get_current_bot
 from app.api.chat_routes import (
     _final_metadata_failure_flag,
     _refund_ai_chat_credit,
@@ -170,6 +170,9 @@ def _client():
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_current_bot] = lambda: BOT
+    # /chat resolves its bot via get_bot_for_chat (preview-aware), so override
+    # that too — otherwise the route 401s before the refund logic runs.
+    app.dependency_overrides[get_bot_for_chat] = lambda: BOT
     return TestClient(app)
 
 

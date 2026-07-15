@@ -31,6 +31,11 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  // Email/password is the secondary sign-in path — kept behind a "Continue
+  // with email" disclosure so Google SSO stays the primary call-to-action.
+  // Auto-expanded when an email is pre-filled (invite airlock round-trip) so
+  // invitees see the form directly instead of an extra click.
+  const [showEmailForm, setShowEmailForm] = useState(Boolean(_initialEmail));
   const navigate = useNavigate();
   // Affiliate invite round-trip: if the user arrived via the Partners
   // invite landing page, we route them back there after login so the
@@ -67,10 +72,10 @@ export default function Login() {
         // previous account in this tab. Done before the toast flag so a
         // failed read can't accidentally suppress the new user's banner.
         clearTrialBannerDismissals();
-        // ``rememberMe`` drives where the auth bundle lands: localStorage
-        // (persists across browser restarts) when checked, sessionStorage
-        // (cleared on tab close) when not. All keys go to the SAME store
-        // so the user-info bundle stays consistent with the token.
+        // Auth always lives in localStorage (shared across tabs). ``rememberMe``
+        // no longer changes WHERE the bundle lands — it drives the absolute
+        // session TTL armed in setAuthBundle: checked → 30 days, unchecked →
+        // 1 day. main.jsx wipes the session once that expiry passes.
         setAuthBundle(
           {
             admin_token: data.access_token,
@@ -117,9 +122,13 @@ export default function Login() {
         );
         sessionStorage.setItem('login_toast', '1');
 
-        if (!data.is_verified) {
-          navigate(`/verify-email?email=${encodeURIComponent(email)}`);
-        } else if (affiliateToken) {
+        // Email verification is no longer a hard wall for organic logins.
+        // An unverified client proceeds to their normal destination and is
+        // nudged by the dismissible VerifyEmailBanner instead; verification
+        // stays enforced server-side on billing/invite mutations. The
+        // ``admin_is_verified`` flag persisted in the bundle above lets the
+        // banner read state without an extra round-trip.
+        if (affiliateToken) {
           // Affiliate token always wins over the default landing target.
           navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
         } else if (safeNext) {
@@ -140,17 +149,11 @@ export default function Login() {
   };
 
   if (getAuthItem('admin_token')) {
-    if (getAuthItem('admin_is_verified') === 'false') {
-      const pending = getAuthItem('admin_pending_email') || '';
-      // Preserve the deep-link ``next`` (e.g. ``/invite/<token>``) through
-      // the verification bounce so an already-logged-in but unverified user
-      // clicking an invite link still lands on the airlock after OTP entry.
-      const verifyParams = new URLSearchParams();
-      if (pending) verifyParams.set('email', pending);
-      if (safeNext) verifyParams.set('next', safeNext);
-      const q = verifyParams.toString();
-      return <Navigate to={`/verify-email${q ? `?${q}` : ''}`} replace />;
-    }
+    // Verification is no longer a hard wall — an already-authenticated but
+    // unverified client falls through to their normal destination and gets
+    // nudged by the VerifyEmailBanner rather than being trapped on
+    // /verify-email. Verification stays enforced server-side on
+    // billing/invite mutations.
     const isOperator = localStorage.getItem('auth_type') === 'operator';
     // Deep-link ``next`` wins over defaults — invite airlock, push-notification
     // click, etc. Without this, an already-logged-in user clicking an invite
@@ -292,10 +295,11 @@ export default function Login() {
             </motion.div>
           )}
 
-          {/* Google OAuth — same backend endpoint as the signup page. The
-              button hides itself if /auth/google/status returns enabled=false,
-              so misconfigured envs degrade gracefully. */}
-          <div className="mb-5">
+          {/* Google OAuth — the PRIMARY sign-in path. Same backend endpoint
+              as the signup page; the button hides itself if
+              /auth/google/status returns enabled=false, so misconfigured envs
+              degrade gracefully. */}
+          <div className="mb-4">
             {/* Preserve the deep-link ``next`` (e.g. ``/invite/<token>``)
                 so a Google sign-in from the invite airlock lands the user
                 BACK on the airlock to accept, not on the dashboard root.
@@ -310,13 +314,39 @@ export default function Login() {
             />
           </div>
 
-          <div className="flex items-center gap-3 mb-5">
-            <div className="flex-1 h-px bg-surface-200" />
-            <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
-            <div className="flex-1 h-px bg-surface-200" />
-          </div>
+          {/* Secondary email/password path, disclosed on demand so Google
+              stays the visual primary. All handlers, "Remember me", the
+              forgot-password link and error handling are unchanged. */}
+          {!showEmailForm ? (
+            <>
+              <div className="flex items-center gap-3 my-5">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailForm(true)}
+                className={cn(
+                  'w-full py-2.5 rounded-xl border border-surface-200 bg-white text-surface-700',
+                  'font-medium text-sm hover:bg-surface-50 transition-colors',
+                  'flex items-center justify-center gap-2'
+                )}
+                tabIndex={0}
+              >
+                <Mail size={16} className="text-surface-400" />
+                Continue with email
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or continue with email</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
+              <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
                 Email address
@@ -410,7 +440,9 @@ export default function Login() {
                 </>
               )}
             </button>
-          </form>
+              </form>
+            </>
+          )}
 
           <p className="text-center text-sm text-surface-500 mt-8">
             Don&apos;t have an account?{' '}

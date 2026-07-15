@@ -4,6 +4,28 @@ import { clearTrialBannerDismissals } from '../utils/trialBanner';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
+// Public / auth routes where a background 401 (e.g. a stale token left in
+// storage) must NOT force-redirect the visitor to /login. Otherwise landing
+// on /register from the marketing "Start free" CTA with a lapsed token would
+// bounce straight to /login. On these pages we still clear the bad token, we
+// just leave the user where they intended to be.
+const PUBLIC_AUTH_PATHS = [
+    '/login',
+    '/register',
+    '/forgot-password',
+    '/verify-email',
+    '/auth/callback',
+    '/affiliate-invite',
+    '/affiliate-accept',
+    '/invite',
+];
+
+function isOnPublicAuthPath() {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname;
+    return PUBLIC_AUTH_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
 const api = axios.create({
     baseURL: API_BASE_URL,
     headers: {
@@ -98,6 +120,19 @@ api.interceptors.request.use(
                 if (workspaceId) {
                     config.headers['X-Workspace-Id'] = workspaceId;
                 }
+                // ``X-Acting-Role`` communicates which persona the switcher
+                // pill is currently in. Backend uses it to scope endpoints
+                // like ``GET /bots`` and ``GET /offline-messages`` to the
+                // caller's self-operator bot when they've added themselves
+                // as an operator in their OWN workspace (auth resolves as
+                // ``client`` there — no X-Workspace-Id is sent because it's
+                // their own workspace — so without this hint we can't tell
+                // "owner viewing their workspace as owner" from "owner
+                // viewing their workspace as operator").
+                const workspaceRole = getAuthItem('current_workspace_role');
+                if (workspaceRole) {
+                    config.headers['X-Acting-Role'] = workspaceRole;
+                }
             }
         }
         // Opt every request into the workspace-scoped abort controller unless
@@ -146,7 +181,27 @@ api.interceptors.response.use(
             return Promise.reject(error);
         }
 
-        if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
+        // Public routes must NOT trigger the auto-logout redirect. A stray
+        // 401 from a speculative call (entitlements fired at app root, an
+        // authed hook that happens to be mounted) would bounce an
+        // unauthenticated visitor OFF the invite airlock, register form,
+        // or verify-email page — turning legitimate public-page visits
+        // into infinite login redirects. The 401 still propagates as a
+        // rejected promise so callers can handle it; we just skip the
+        // catastrophic side-effect.
+        const publicPath = window.location.pathname;
+        const isOnPublicRoute = (
+            publicPath === '/login'
+            || publicPath === '/register'
+            || publicPath === '/verify-email'
+            || publicPath === '/forgot-password'
+            || publicPath === '/auth/callback'
+            || publicPath === '/affiliate-invite'
+            || publicPath === '/affiliate-accept'
+            || publicPath.startsWith('/invite/')
+        );
+
+        if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint && !isOnPublicRoute) {
             // Clear from BOTH stores so a session-only login that auto-
             // logs-out doesn't leave a stale localStorage shadow (or
             // vice versa).
@@ -155,7 +210,10 @@ api.interceptors.response.use(
             // wipe them on auto-logout so the next account sees a fresh
             // trial banner.
             clearTrialBannerDismissals();
-            if (window.location.pathname !== '/login') {
+            // Only force the user to /login from a PROTECTED page. On public
+            // auth pages (notably /register from the "Start free" CTA) a stale
+            // token's 401 must not hijack the page — clear it and stay put.
+            if (!isOnPublicAuthPath()) {
                 window.location.href = '/login';
             }
         }
@@ -1048,6 +1106,79 @@ export const createBot = async (data) => {
 };
 
 /**
+ * Fetch the onboarding "seed questions" for a bot — LLM-proposed and
+ * retrieval-verified as answerable from the bot's content (see the backend
+ * seed_questions_service). Returns an array of 0–3 question strings; an empty
+ * array is normal ("show only the open input"), so this resolves to `[]` on any
+ * error rather than throwing — the Prove step must never be blocked by it.
+ * @param {number} botId
+ * @returns {Promise<string[]>}
+ */
+export const getSeedQuestions = async (botId) => {
+    try {
+        const response = await api.post(`/bots/${botId}/seed-questions`);
+        const questions = response.data?.questions;
+        return Array.isArray(questions) ? questions : [];
+    } catch (error) {
+        console.error('API Error fetching seed questions:', error);
+        return [];
+    }
+};
+
+/**
+ * Records an onboarding/activation milestone event. Best-effort: it must NEVER
+ * throw, so instrumentation can't break the flow it measures.
+ * @param {string} eventType - e.g. 'studio_opened', 'bot_created', 'crawl_completed'
+ * @param {{ botId?: number|null, eventData?: Object|null }} [opts]
+ */
+export const recordActivationEvent = async (eventType, { botId = null, eventData = null } = {}) => {
+    try {
+        await api.post('/activation/events', {
+            event_type: eventType,
+            bot_id: botId,
+            event_data: eventData,
+        });
+    } catch (error) {
+        // Instrumentation is fire-and-forget — swallow failures.
+        console.warn('Activation event failed (non-fatal):', eventType, error?.message);
+    }
+};
+
+/**
+ * Free, origin-exempt preview chat against one of the client's OWN bots — used
+ * by the Build Studio "Test & trust" milestone. Authenticated via the admin
+ * X-API-Key (auto-attached); the backend `?preview=true` path skips credits and
+ * the domain allowlist. Returns `{ answer, sources, session_id, ... }`.
+ * @param {number} botId
+ * @param {string} question
+ * @param {string} [sessionId]
+ */
+export const previewChat = async (botId, question, sessionId) => {
+    // AI replies (cold LLM + RAG) can take well over the default timeout — give
+    // the preview a generous 60s window before surfacing a timeout error.
+    const { data } = await api.post(
+        `/chat?preview=true&bot_id=${botId}`,
+        { question, session_id: sessionId },
+        { timeout: 60000 }
+    );
+    return data;
+};
+
+/**
+ * Marks the account's guided onboarding (Build Studio) as complete. Best-effort —
+ * never throws, so finishing the flow can't be blocked by a transient failure.
+ */
+export const completeOnboarding = async () => {
+    try {
+        const { data } = await api.post('/auth/onboarding/complete');
+        return data;
+    } catch (error) {
+        console.warn('completeOnboarding failed (non-fatal):', error?.message);
+        return null;
+    }
+};
+
+/**
  * Gets details of a specific bot.
  * @param {number} botId
  * @returns {Promise<Object>} Bot details
@@ -1372,9 +1503,17 @@ export const transferChat = async (sessionId, data) => {
     }
 };
 
-export const toggleOperatorStatus = async () => {
+export const toggleOperatorStatus = async ({ isOnline, botId } = {}) => {
     try {
-        const response = await api.post('/operators/status');
+        const body = {};
+        if (typeof isOnline === 'boolean') body.is_online = isOnline;
+        if (botId) body.bot_id = botId;
+        // Only send a body when the caller actually populated a field —
+        // preserves the legacy no-body toggle semantics the backend still
+        // supports for older callers.
+        const response = Object.keys(body).length > 0
+            ? await api.post('/operators/status', body)
+            : await api.post('/operators/status');
         return response.data;
     } catch (error) {
         console.error('API Error toggling status:', error);
@@ -1382,9 +1521,10 @@ export const toggleOperatorStatus = async () => {
     }
 };
 
-export const getMyOperatorStatus = async () => {
+export const getMyOperatorStatus = async ({ botId } = {}) => {
     try {
-        const response = await api.get('/operators/me/status');
+        const params = botId ? { bot_id: botId } : {};
+        const response = await api.get('/operators/me/status', { params });
         return response.data;
     } catch (error) {
         console.error('API Error getting operator status:', error);
@@ -1739,10 +1879,11 @@ export const createCheckoutSession = async (planId, billingCycle = 'monthly', bi
 };
 
 /**
- * Start a 14-day free trial of the named paid plan.
+ * Start the paid plan's configured free trial (currently Standard, 7 days).
  *
  * The customer must be on the free tier (or have no subscription) and must
- * not have used a trial on this plan before. The backend cancels their
+ * not have used a trial before — one free trial per client, lifetime, across
+ * every trial-eligible plan. The backend cancels their
  * existing free subscription, creates a trialing one on the new plan, and
  * grants the plan's full monthly credit allowance. No card is collected
  * — the conversion path runs through createCheckoutSession on day 14.
@@ -2439,10 +2580,11 @@ export const regenerateClientApiKey = async () => {
  * Returns ``{ invite, accept_url }`` — the URL is included so a copy-to-clipboard
  * affordance is possible; the email is fired backend-side.
  */
-export const createOperatorInvite = async ({ email, role = 'operator', departmentId = null }) => {
+export const createOperatorInvite = async ({ email, botId, role = 'operator', departmentId = null }) => {
     try {
         const response = await api.post('/invites', {
             email,
+            bot_id: botId,
             role,
             department_id: departmentId,
         });
@@ -2539,9 +2681,9 @@ export const getMyWorkspaces = async () => {
  * Returns ``{ operator_id, role, is_active, was_existing }``. UI can toast
  * "Welcome back to live chat" when ``was_existing`` is true.
  */
-export const addSelfAsOperator = async () => {
+export const addSelfAsOperator = async (botId) => {
     try {
-        const response = await api.post('/me/self-operator');
+        const response = await api.post('/me/self-operator', { bot_id: botId });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to add yourself as an operator');

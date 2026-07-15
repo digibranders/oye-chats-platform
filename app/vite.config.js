@@ -10,6 +10,18 @@ export default defineConfig({
     tailwindcss(),
     oyechatsPwaPlugin(),
   ],
+  build: {
+    rolldownOptions: {
+      output: {
+        minify: {
+          compress: {
+            dropConsole: true,
+            dropDebugger: true,
+          },
+        },
+      },
+    },
+  },
   server: {
     port: 5174,
     strictPort: true,

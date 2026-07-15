@@ -77,7 +77,7 @@ class CreatePlanRequest(BaseModel):
     annual_price_usd_cents: int | None = Field(None, ge=0)
     extra_seat_price_usd_cents: int | None = Field(None, ge=0)
     annual_discount_percent: int = Field(30, ge=0, le=100)
-    trial_days: int = Field(14, ge=0)
+    trial_days: int = Field(7, ge=0)
     limits: dict | None = None
     features: dict | None = None
     marketing: dict | None = None

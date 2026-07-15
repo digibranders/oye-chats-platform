@@ -19,7 +19,7 @@ import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
 import { AreaTrendChart, CHART_COLORS } from '../components/ui/charts';
 import StatCard from '../components/ui/StatCard';
-import PageHeader from '../components/ui/PageHeader';
+import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 
 const stagger = {
@@ -152,9 +152,9 @@ export default function Analytics({ embedded = false }) {
             variants={stagger}
             initial="initial"
             animate="animate"
-            className={cn('space-y-6', !embedded && 'animate-fade-in')}
+            className={cn('space-y-6', !embedded && 'animate-fade-in -mt-2')}
         >
-            {!embedded && <PageHeader title="Analytics" subtitle="Understand how your chatbot performs" />}
+            {!embedded && <PageHeader crumbs={[{ label: 'Home', to: '/' }, { label: 'Analytics' }]} title="Analytics" />}
 
             {/* Tab Navigation */}
             {!embedded && (

@@ -115,10 +115,14 @@ async def _fetch_pages(urls: list[str], client_id: int) -> tuple[list[dict], lis
     fetched_pages: list[dict] = []
     for page in result.get("results", []):
         url = page.get("url")
-        # Providers return the cleaned text under ``text``; fall back to raw
-        # HTML for a legacy provider that only surfaces that field. Anything
-        # empty is treated as a fetch failure so the summary is honest.
-        content = page.get("text") or page.get("html") or ""
+        # Every current provider (Spider, Jina) writes the cleaned page body
+        # under ``content`` — the payload shape docstring on
+        # ``jina_service.fetch_urls`` is the canonical contract. The
+        # ``text`` / ``html`` fallbacks are here for a legacy provider that
+        # never actually reached prod; without ``content`` as the primary
+        # read, every recrawl silently marked every URL failed even though
+        # the provider fetched them successfully.
+        content = page.get("content") or page.get("text") or page.get("html") or ""
         if not url or not content.strip():
             continue
         fetched_pages.append({"url": url, "content": content})

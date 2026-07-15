@@ -24,6 +24,10 @@ import { cn } from '../../lib/utils';
  * @param {string} [props.placeholder] - trigger text while nothing is selected.
  * @param {boolean} [props.searchable] - show a filter box in the open panel.
  * @param {boolean} [props.disabled]
+ * @param {boolean} [props.light] - force light-only styling (suppress `dark:`
+ *   variants). Use on surfaces that are hardcoded light regardless of the app
+ *   theme, e.g. the auth pages, so the control doesn't render dark under a
+ *   `.dark` <html> while its parent form stays light.
  * @param {string} [props.className] - extra classes for the trigger button.
  */
 export default function Select({
@@ -34,8 +38,11 @@ export default function Select({
   placeholder = 'Select…',
   searchable = false,
   disabled = false,
+  light = false,
   className,
 }) {
+  // Drops a `dark:` class when the control is pinned to light styling.
+  const dk = (cls) => (light ? '' : cls);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -154,14 +161,16 @@ export default function Select({
         onClick={() => (open ? setOpen(false) : openList())}
         onKeyDown={handleTriggerKeyDown}
         className={cn(
-          'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-600 text-sm',
-          'bg-white dark:bg-surface-800 text-left',
+          'w-full px-3 py-2 rounded-xl border border-surface-200 text-sm',
+          dk('dark:border-surface-600'),
+          'bg-white text-left',
+          dk('dark:bg-surface-800'),
           'focus:ring-1 focus:ring-[var(--focus-ring)] focus:border-[var(--focus)] outline-none transition-all',
           'disabled:opacity-60 disabled:cursor-not-allowed',
           'flex items-center justify-between gap-2',
           selected
-            ? 'text-surface-900 dark:text-surface-100'
-            : 'text-surface-400 dark:text-surface-500',
+            ? cn('text-surface-900', dk('dark:text-surface-100'))
+            : cn('text-surface-400', dk('dark:text-surface-500')),
           className,
         )}
       >
@@ -178,12 +187,14 @@ export default function Select({
         <div
           className={cn(
             'absolute z-50 mt-1 w-full rounded-xl overflow-hidden',
-            'border border-surface-200 dark:border-surface-600',
-            'bg-white dark:bg-surface-800 shadow-lg',
+            'border border-surface-200',
+            dk('dark:border-surface-600'),
+            'bg-white shadow-lg',
+            dk('dark:bg-surface-800'),
           )}
         >
           {searchable && (
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-surface-100 dark:border-surface-700">
+            <div className={cn('flex items-center gap-2 px-3 py-2 border-b border-surface-100', dk('dark:border-surface-700'))}>
               <Search className="w-3.5 h-3.5 shrink-0 text-surface-400" />
               <input
                 ref={searchRef}
@@ -197,15 +208,17 @@ export default function Select({
                 placeholder="Search…"
                 className={cn(
                   'w-full bg-transparent text-sm outline-none border-none p-0',
-                  'text-surface-900 dark:text-surface-100',
-                  'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                  'text-surface-900',
+                  dk('dark:text-surface-100'),
+                  'placeholder:text-surface-400',
+                  dk('dark:placeholder:text-surface-500'),
                 )}
               />
             </div>
           )}
           <ul ref={listRef} id={listboxId} role="listbox" className="max-h-64 overflow-auto py-1">
             {visible.length === 0 && (
-              <li className="px-3 py-2 text-sm text-surface-400 dark:text-surface-500">
+              <li className={cn('px-3 py-2 text-sm text-surface-400', dk('dark:text-surface-500'))}>
                 No matches
               </li>
             )}
@@ -221,10 +234,10 @@ export default function Select({
                 onClick={() => commit(index)}
                 className={cn(
                   'px-3 py-2 text-sm cursor-pointer flex items-center justify-between gap-2',
-                  index === activeIndex ? 'bg-surface-100 dark:bg-surface-700' : 'bg-transparent',
+                  index === activeIndex ? cn('bg-surface-100', dk('dark:bg-surface-700')) : 'bg-transparent',
                   opt.value === value
-                    ? 'font-medium text-primary-600 dark:text-primary-400'
-                    : 'text-surface-700 dark:text-surface-200',
+                    ? cn('font-medium text-primary-600', dk('dark:text-primary-400'))
+                    : cn('text-surface-700', dk('dark:text-surface-200')),
                 )}
               >
                 <span className="truncate">{opt.label}</span>

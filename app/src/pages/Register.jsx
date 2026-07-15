@@ -1,13 +1,23 @@
-import { useRef, useState } from 'react';
-import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
-import { setAuthBundle, getAuthItem } from '../utils/authStorage';
+import { setAuthBundle } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
+import Select from '../components/ui/Select';
+
+// Billing-country choices for the custom Select. An empty-value first option
+// keeps "Detect automatically" (currency inferred from the request IP) both
+// selectable and revertable — value '' shows this label, any code shows the
+// picked country. Built once at module load (COUNTRY_OPTIONS is static).
+const BILLING_COUNTRY_OPTIONS = [
+  { value: '', label: 'Detect automatically', search: 'detect automatically auto' },
+  ...COUNTRY_OPTIONS,
+];
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -32,11 +42,12 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
-  const [termsHighlight, setTermsHighlight] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const termsCheckboxRef = useRef(null);
+  // Email/password is the secondary signup path — revealed behind a "Continue
+  // with email" disclosure so Google SSO stays the primary call-to-action.
+  // Auto-expanded when an email is pre-filled (invite airlock round-trip).
+  const [showEmailForm, setShowEmailForm] = useState(Boolean(_initialEmail));
   const navigate = useNavigate();
   // Affiliate invite round-trip — see Login.jsx for the rationale. New
   // sign-ups arrived from the Partners invite landing get routed back
@@ -57,18 +68,6 @@ export default function Register() {
   const passwordsMatch = password && confirmPassword && password === confirmPassword;
   const strengthScore = [hasMinLength, hasLetter, hasNumber].filter(Boolean).length;
 
-  // Shared "you must accept the Terms first" gate — used by both the
-  // email/password submit and the Google OAuth button (which redirects the
-  // full page, so it has to be blocked synchronously on click). Surfaces the
-  // error banner AND highlights + scrolls to the checkbox itself, since
-  // Google's button sits above the checkbox in the layout.
-  const blockOnTerms = () => {
-    setError('Terms required — please agree to the Terms and Privacy Policy to continue.');
-    setTermsHighlight(true);
-    termsCheckboxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    termsCheckboxRef.current?.focus();
-  };
-
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
@@ -87,10 +86,6 @@ export default function Register() {
     }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
-      return;
-    }
-    if (!agreedToTerms) {
-      blockOnTerms();
       return;
     }
 
@@ -127,13 +122,16 @@ export default function Register() {
       // flag set by a previous account.
       clearTrialBannerDismissals();
 
-      // Navigate to email verification — the guard below also handles the
-      // re-render case (setIsLoading(false) fires after navigate). Preserve
-      // ``next`` through the verification bounce so an invite-flow signup
-      // still lands back on the invite airlock after OTP entry.
-      const verifyParams = new URLSearchParams({ email: email.trim() });
-      if (safeNext) verifyParams.set('next', safeNext);
-      navigate(`/verify-email?${verifyParams.toString()}`);
+      // Email/password signups MUST verify their email before entering the
+      // product — this closes the abuse vector where fake/nonexistent emails
+      // farm free trial credits + crawl compute (the backend now also 403s
+      // create-bot/crawl/ingest for unverified workspaces). Google SSO is
+      // exempt: those emails are provider-verified at the source. We route to
+      // the OTP screen, preserving any invite/affiliate deep-link as ``next``
+      // so recipients still round-trip back to their airlock after verifying.
+      const postVerifyNext =
+        safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '');
+      navigate(postVerifyNext ? `/verify-email?next=${encodeURIComponent(postVerifyNext)}` : '/verify-email');
     } catch (err) {
       // Detect the "email already registered" backend rejection so we can
       // offer a one-click redirect to Login with the current query params
@@ -160,16 +158,13 @@ export default function Register() {
     }
   };
 
-  if (getAuthItem('admin_token')) {
-    if (getAuthItem('admin_is_verified') === 'false') {
-      const pending = getAuthItem('admin_pending_email') || '';
-      return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
-    }
-    if (affiliateToken) {
-      return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
-    }
-    return <Navigate to="/" />;
-  }
+  // NOTE: /register intentionally has NO "already authenticated → redirect"
+  // guard. It's the target of the marketing site's "Start free" CTA, so it
+  // must always render the form. The old guard redirected on mere token
+  // PRESENCE — a stale/server-invalidated token (common after a session
+  // lapse) sent the visitor to "/", which then 401'd and bounced them to
+  // /login, trapping the sign-up flow. New users, stale-token users, and
+  // logged-in users all reliably land on the form now.
 
   const strengthColor = strengthScore === 3 ? 'bg-emerald-500' : strengthScore === 2 ? 'bg-amber-500' : strengthScore === 1 ? 'bg-rose-500' : 'bg-surface-200';
 
@@ -292,11 +287,8 @@ export default function Register() {
           {/* Google OAuth signup — backend uses the same endpoint as login;
               it decides "new account" vs "returning" by looking up the
               provider subject + email. Hidden when the server reports
-              Google OAuth is not configured. Gated on the Terms/Privacy
-              checkbox below, same as the email/password form — Google is a
-              full-page redirect, so the gate has to run on click via
-              onBlockedClick rather than a disabled attribute. */}
-          <div className="mb-4">
+              Google OAuth is not configured. */}
+          <div className="mb-3">
             <GoogleAuthButton
               label="Sign up with Google"
               mode="register"
@@ -305,21 +297,68 @@ export default function Register() {
               // back to the affiliate-invite deep link, then to root.
               next={safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/')}
               tabIndex={0}
-              onBlockedClick={() => {
-                if (agreedToTerms) return false;
-                blockOnTerms();
-                return true;
-              }}
             />
           </div>
 
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-1 h-px bg-surface-200" />
-            <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
-            <div className="flex-1 h-px bg-surface-200" />
-          </div>
+          {/* Implicit consent — the industry-standard pattern (Google, Stripe,
+              Vercel, Linear, Notion): one statement covering BOTH signup
+              methods, no checkbox, buttons never disabled. Signing up is the
+              consenting action; this notice sits under the primary CTA so it's
+              always visible regardless of whether the email form is expanded. */}
+          <p className="mb-4 text-xs leading-relaxed text-surface-500">
+            By signing up, you agree to our{' '}
+            <a
+              href="https://oyechats.com/legal/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-600 hover:text-primary-700 font-medium"
+            >
+              Terms
+            </a>{' '}
+            and{' '}
+            <a
+              href="https://oyechats.com/legal/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-600 hover:text-primary-700 font-medium"
+            >
+              Privacy Policy
+            </a>.
+          </p>
 
-          <form onSubmit={handleRegister} className="space-y-3.5">
+          {/* Secondary email/password path, disclosed on demand. All fields
+              and handlers are unchanged; only the Terms gate was lifted out
+              (above) so it stays reachable while collapsed. */}
+          {!showEmailForm ? (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailForm(true)}
+                className={cn(
+                  'w-full py-2.5 rounded-xl border border-surface-200 bg-white text-surface-700',
+                  'font-medium text-sm hover:bg-surface-50 transition-colors',
+                  'flex items-center justify-center gap-2'
+                )}
+                tabIndex={0}
+              >
+                <Mail size={16} className="text-surface-400" />
+                Continue with email
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 h-px bg-surface-200" />
+                <span className="text-xs text-surface-400 uppercase tracking-wider">or sign up with email</span>
+                <div className="flex-1 h-px bg-surface-200" />
+              </div>
+
+              <form onSubmit={handleRegister} className="space-y-3.5">
             <div>
               <label className="block text-[13px] font-medium text-surface-600 mb-1.5">Full name</label>
               <div className="relative group">
@@ -352,30 +391,43 @@ export default function Register() {
                 </label>
                 <div className="relative group">
                   <Globe size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
-                  <input type="url" value={website} onChange={(e) => setWebsite(e.target.value)} className={inputCls} placeholder="https://..." autoComplete="url" tabIndex={4} />
+                  <input
+                    type="url"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    onBlur={(e) => {
+                      // Auto-prepend https:// so a bare host (e.g. www.oyechats.com)
+                      // passes the native URL validation instead of erroring. We
+                      // only add the protocol — no validation/clearing — so partial
+                      // input the user is still working on is never discarded.
+                      const v = e.target.value.trim();
+                      if (v && !/^https?:\/\//i.test(v)) setWebsite(`https://${v}`);
+                    }}
+                    className={inputCls}
+                    placeholder="www.example.com"
+                    autoComplete="url"
+                    tabIndex={4}
+                  />
                 </div>
               </div>
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-surface-600 mb-1.5">
+              <label htmlFor="billingCountry" className="block text-[13px] font-medium text-surface-600 mb-1.5">
                 Billing country <span className="text-surface-400 font-normal text-[11px]">(sets your currency)</span>
               </label>
               <div className="relative group">
-                <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
-                <select
+                <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 z-10 pointer-events-none text-surface-400 group-focus-within:text-primary-500 transition-colors" />
+                <Select
+                  id="billingCountry"
                   value={billingCountry}
-                  onChange={(e) => setBillingCountry(e.target.value)}
-                  className={cn(inputCls, 'appearance-none cursor-pointer')}
-                  tabIndex={5}
-                >
-                  <option value="" className="bg-white text-surface-900">Detect automatically</option>
-                  {COUNTRY_OPTIONS.map((c) => (
-                    <option key={c.value} value={c.value} className="bg-white text-surface-900">
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setBillingCountry}
+                  options={BILLING_COUNTRY_OPTIONS}
+                  placeholder="Detect automatically"
+                  searchable
+                  light
+                  className="pl-10 pr-4 py-2.5 rounded-xl"
+                />
               </div>
               <p className="mt-1 text-[11px] text-surface-400">India is billed in ₹ INR; other countries in $ USD.</p>
             </div>
@@ -444,61 +496,9 @@ export default function Register() {
               )}
             </div>
 
-            <label className="flex items-start gap-2.5 pt-1 cursor-pointer group">
-              <div className="relative flex items-center justify-center mt-0.5 flex-shrink-0">
-                <input
-                  ref={termsCheckboxRef}
-                  type="checkbox"
-                  checked={agreedToTerms}
-                  onChange={(e) => {
-                    setAgreedToTerms(e.target.checked);
-                    if (e.target.checked) {
-                      setTermsHighlight(false);
-                      setError('');
-                    }
-                  }}
-                  className={cn(
-                    'peer appearance-none w-4 h-4 border rounded bg-white',
-                    'checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-1 transition-all cursor-pointer',
-                    termsHighlight
-                      ? 'border-rose-500 ring-2 ring-rose-500/40'
-                      : 'border-surface-300 focus:ring-[var(--focus-ring)]'
-                  )}
-                  tabIndex={8}
-                />
-                <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <span className={cn('text-xs leading-relaxed', termsHighlight ? 'text-rose-600' : 'text-surface-500')}>
-                {termsHighlight && <span className="font-semibold">Terms required — </span>}
-                I agree to the{' '}
-                <a
-                  href="https://oyechats.com/legal/terms"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  tabIndex={-1}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-primary-600 hover:text-primary-700"
-                >
-                  Terms
-                </a>{' '}
-                and{' '}
-                <a
-                  href="https://oyechats.com/legal/privacy"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  tabIndex={-1}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-primary-600 hover:text-primary-700"
-                >
-                  Privacy Policy
-                </a>.
-              </span>
-            </label>
-
             <button
-              type="submit" disabled={isLoading || !agreedToTerms}
+              type="submit"
+              disabled={isLoading}
               className={cn(
                 'w-full py-2.5 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
                 'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
@@ -508,7 +508,9 @@ export default function Register() {
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
             </button>
-          </form>
+              </form>
+            </>
+          )}
 
           <p className="text-center text-sm text-surface-500 mt-6">
             Already have an account?{' '}
