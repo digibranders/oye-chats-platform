@@ -168,7 +168,7 @@ export default function BuildStudio() {
                                 >
                                     <OyeChatsMark size={28} />
                                 </div>
-                                <div className="rounded-2xl rounded-tl-md bg-[var(--bg-muted)] px-4 py-3 text-sm text-[var(--text-secondary)] max-w-prose">
+                                <div className="rounded-2xl rounded-tl-md bg-[var(--bg-muted)] px-4 py-3 text-sm text-[var(--text)] max-w-prose">
                                     {OTTO[milestone.key]}
                                 </div>
                             </div>
