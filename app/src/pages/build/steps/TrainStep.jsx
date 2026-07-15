@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Loader2, Check, Globe, RefreshCw, ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Loader2, Check, Globe, RefreshCw, ArrowRight, Sparkles } from 'lucide-react';
 import { useCrawl } from '../../../context/CrawlContext';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
+import useEntitlements from '../../../hooks/useEntitlements';
 import { discoverCrawlUrls, recordActivationEvent } from '../../../services/api';
 import { Button } from '../../../components/ui/Button';
 import Progress from '../../../components/ui/Progress';
@@ -36,6 +38,7 @@ export default function TrainStep({ onDone }) {
     const { selectedBot } = useBotContext();
     const { crawl, startCrawl } = useCrawl();
     const { showToast } = useToast();
+    const { entitlements } = useEntitlements();
     const website = selectedBot?.website || '';
     const host = hostOf(website);
     const botId = selectedBot?.id;
@@ -205,6 +208,11 @@ export default function TrainStep({ onDone }) {
 
     // ---- Review: discovered pages + selection ----
     const selectedCount = urls.filter((u) => selected.has(u)).length;
+    // Contextual plan awareness (ADR: value-first, upgrade nudges only when a
+    // real limit is hit — never a plan gate up front). page_scraping is the
+    // per-plan crawl-page ceiling; -1 means unlimited.
+    const pageCap = entitlements.limitFor('page_scraping');
+    const overCap = pageCap > 0 && selectedCount > pageCap;
     return (
         <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2.5 text-sm">
@@ -214,6 +222,21 @@ export default function TrainStep({ onDone }) {
                     <span className="font-mono text-[var(--text-secondary)]">{host}</span>. Pick which to train on.
                 </span>
             </div>
+
+            {overCap && (
+                <div className="flex items-start gap-2.5 rounded-xl border border-primary-500/25 bg-primary-500/[0.06] px-3.5 py-3">
+                    <Sparkles size={15} className="mt-0.5 shrink-0 text-primary-500" />
+                    <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">
+                        Your <span className="font-medium text-[var(--text)]">{entitlements.planName}</span> plan trains up
+                        to <span className="font-medium text-[var(--text)]">{pageCap}</span> pages — the first {pageCap} of
+                        your selection will be trained.{' '}
+                        <Link to="/billing" className="font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">
+                            Upgrade
+                        </Link>{' '}
+                        to train your whole site.
+                    </p>
+                </div>
+            )}
 
             <div className="max-h-64 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)] divide-y divide-[var(--border)]">
                 {urls.map((u) => (

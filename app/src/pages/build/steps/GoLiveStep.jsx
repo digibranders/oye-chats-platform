@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Check, Loader2, ArrowRight } from 'lucide-react';
 import { getBot, recordActivationEvent, completeOnboarding } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
+import useEntitlements from '../../../hooks/useEntitlements';
 import { Button } from '../../../components/ui/Button';
 import { cn } from '../../../lib/utils';
 import { platforms } from '../../../data/platformIntegrations';
@@ -28,6 +29,7 @@ export default function GoLiveStep() {
     const navigate = useNavigate();
     const { selectedBot } = useBotContext();
     const { showToast } = useToast();
+    const { entitlements } = useEntitlements();
     const botId = selectedBot?.id;
     const host = hostOf(selectedBot?.website);
 
@@ -127,11 +129,22 @@ export default function GoLiveStep() {
                 )}
             </div>
 
-            <div>
+            <div className="flex flex-col gap-3">
                 <Button size="lg" variant={liveAt ? 'success' : 'primary'} onClick={finish}>
                     {liveAt ? 'Finish setup' : 'Go to dashboard'}
                     <ArrowRight size={16} />
                 </Button>
+                {/* Contextual plan awareness at the commitment moment — a quiet,
+                    informational line, not a hard sell. Hidden on Enterprise
+                    (no higher tier to move to). */}
+                {!entitlements.isEnterprise && (
+                    <p className="text-xs text-[var(--text-muted)]">
+                        You&rsquo;re on the <span className="font-medium text-[var(--text-secondary)]">{entitlements.planName}</span> plan.{' '}
+                        <Link to="/billing" className="font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">
+                            Compare plans
+                        </Link>
+                    </p>
+                )}
             </div>
         </div>
     );
