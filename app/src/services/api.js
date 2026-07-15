@@ -1073,6 +1073,26 @@ export const createBot = async (data) => {
 };
 
 /**
+ * Fetch the onboarding "seed questions" for a bot — LLM-proposed and
+ * retrieval-verified as answerable from the bot's content (see the backend
+ * seed_questions_service). Returns an array of 0–3 question strings; an empty
+ * array is normal ("show only the open input"), so this resolves to `[]` on any
+ * error rather than throwing — the Prove step must never be blocked by it.
+ * @param {number} botId
+ * @returns {Promise<string[]>}
+ */
+export const getSeedQuestions = async (botId) => {
+    try {
+        const response = await api.post(`/bots/${botId}/seed-questions`);
+        const questions = response.data?.questions;
+        return Array.isArray(questions) ? questions : [];
+    } catch (error) {
+        console.error('API Error fetching seed questions:', error);
+        return [];
+    }
+};
+
+/**
  * Records an onboarding/activation milestone event. Best-effort: it must NEVER
  * throw, so instrumentation can't break the flow it measures.
  * @param {string} eventType - e.g. 'studio_opened', 'bot_created', 'crawl_completed'
