@@ -1495,6 +1495,37 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         return {"brand_tone": bot.brand_tone, "brand_tone_preset": key}
 
 
+@router.post("/{bot_id}/seed-questions")
+@limiter.limit("10/minute")
+def get_seed_questions(
+    bot_id: int,
+    request: Request,
+    force: bool = Query(default=False),
+    auth=Depends(get_current_client_or_operator),
+    _verified=Depends(require_verified_email_for_workspace),
+):
+    """Onboarding "seed questions" for the Build Studio Prove step.
+
+    LLM-proposed from the bot's auto-extracted company context, then each is
+    verified answerable by the same retrieval the live bot uses (see
+    ``seed_questions_service``). Cached on the bot after the first computation;
+    pass ``force=true`` to recompute. Returns ``{"questions": [...]}`` (0-3). An
+    empty list is a normal outcome ("show only the open input"), never an error.
+    Verified-email gated like the other resource endpoints.
+    """
+    from app.services.seed_questions_service import build_seed_questions
+
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        if bot.seed_questions is not None and not force:
+            return {"questions": bot.seed_questions}
+        questions = build_seed_questions(session, bot)
+        bot.seed_questions = questions
+        session.commit()
+        return {"questions": questions}
+
+
 @router.post("/{bot_id}/brand-tone/preview")
 @limiter.limit("15/minute")
 def preview_brand_tone(

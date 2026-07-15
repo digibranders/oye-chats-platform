@@ -234,6 +234,11 @@ class Bot(Base):
     brand_tone_preset = Column(String, nullable=True)
     company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
     company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
+    # Cached onboarding "seed questions" — LLM-proposed + retrieval-verified as
+    # answerable from this bot's content (see seed_questions_service). Computed
+    # once during the Build Studio Prove step; null = not computed yet, [] =
+    # computed but nothing passed verification (show only the open input).
+    seed_questions = Column(JSONB, nullable=True)
     # Names of auto-fillable fields the customer has edited by hand
     # (subset of {"company_name", "company_description", "brand_tone"}). A field
     # listed here is "locked" and the website crawl leaves it untouched; fields
