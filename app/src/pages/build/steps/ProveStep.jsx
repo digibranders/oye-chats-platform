@@ -114,6 +114,18 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         if (!botId) return undefined;
         let cancelled = false;
         (async () => {
+            // Prefer the durable per-bot trained fact (stamped by the crawl
+            // orchestrator on completion) over racing the ephemeral crawl
+            // progress or an extra document round-trip. Fall back to a document
+            // check for bots trained before this field existed (or when the
+            // in-context bot copy predates the just-finished crawl).
+            if (selectedBot?.crawl_completed_at || selectedBot?.last_crawl_status === 'done') {
+                if (!cancelled) {
+                    setTrained(true);
+                    setPrecheck('trained');
+                }
+                return;
+            }
             try {
                 const docs = await getDocuments(botId);
                 if (cancelled) return;
@@ -132,7 +144,7 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         return () => {
             cancelled = true;
         };
-    }, [botId]);
+    }, [botId, selectedBot?.crawl_completed_at, selectedBot?.last_crawl_status]);
 
     // Discover pages on arrival (fresh bots only), then DEFAULT-ALL: auto-start
     // the crawl on every discovered page for momentum. "Customize" (during the

@@ -330,6 +330,11 @@ class BotResponse(BaseModel):
     # Set once the embedded widget has been seen live on a real external site;
     # None until then. Drives the "widget installed" setup-checklist step.
     widget_installed_at: datetime | None = None
+    # Durable per-bot ingestion ("trained") state — a persistent fact the UI can
+    # read instead of racing the ephemeral /crawl/progress toast.
+    last_crawl_status: str | None = None
+    crawl_completed_at: datetime | None = None
+    indexed_chunk_count: int = 0
     operator_timeout_seconds: int = 120
     live_chat_queue_timeout_seconds: int = 20
     live_chat_max_queue_size: int = 10
@@ -412,6 +417,9 @@ def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
         email_visitor_confirmation=bot.email_visitor_confirmation,
         live_chat_enabled=bot.live_chat_enabled,
         widget_installed_at=bot.widget_installed_at,
+        last_crawl_status=bot.last_crawl_status,
+        crawl_completed_at=bot.crawl_completed_at,
+        indexed_chunk_count=bot.indexed_chunk_count or 0,
         operator_timeout_seconds=bot.operator_timeout_seconds,
         live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
         live_chat_max_queue_size=bot.live_chat_max_queue_size,
@@ -1268,6 +1276,9 @@ def list_bots(
                     email_visitor_confirmation=b.email_visitor_confirmation,
                     live_chat_enabled=b.live_chat_enabled,
                     widget_installed_at=b.widget_installed_at,
+                    last_crawl_status=b.last_crawl_status,
+                    crawl_completed_at=b.crawl_completed_at,
+                    indexed_chunk_count=b.indexed_chunk_count or 0,
                     operator_timeout_seconds=b.operator_timeout_seconds,
                     live_chat_queue_timeout_seconds=b.live_chat_queue_timeout_seconds,
                     live_chat_max_queue_size=b.live_chat_max_queue_size,

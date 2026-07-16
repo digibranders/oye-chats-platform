@@ -239,6 +239,16 @@ class Bot(Base):
     # once during the Build Studio Prove step; null = not computed yet, [] =
     # computed but nothing passed verification (show only the open input).
     seed_questions = Column(JSONB, nullable=True)
+    # Durable per-bot ingestion ("trained") state, written by the crawl
+    # orchestrator when a crawl reaches a terminal state. Lets the frontend read
+    # a persistent fact instead of racing the ephemeral, client-scoped
+    # /crawl/progress toast (which CrawlContext clears a few seconds after
+    # completion). ``last_crawl_status`` ∈ {'done','failed','cancelled'};
+    # ``crawl_completed_at`` is set on a successful/partial ingest;
+    # ``indexed_chunk_count`` is the chunk total from the last completed crawl.
+    last_crawl_status = Column(String, nullable=True)
+    crawl_completed_at = Column(DateTime(timezone=True), nullable=True)
+    indexed_chunk_count = Column(Integer, default=0, server_default="0", nullable=False)
     # Names of auto-fillable fields the customer has edited by hand
     # (subset of {"company_name", "company_description", "brand_tone"}). A field
     # listed here is "locked" and the website crawl leaves it untouched; fields

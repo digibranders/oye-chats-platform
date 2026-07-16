@@ -142,6 +142,10 @@ class TestCreateBot:
         assert data["id"] == 42
         assert data["bot_key"].startswith("bot-")
         assert data["name"] == "My Bot"
+        # Durable crawl-state fields default to "never trained" on a new bot.
+        assert data["last_crawl_status"] is None
+        assert data["crawl_completed_at"] is None
+        assert data["indexed_chunk_count"] == 0
         # Two rows are persisted on a successful create: the Bot itself and
         # an in-app ``bot_created`` Notification dropped into the
         # workspace's notification feed.
