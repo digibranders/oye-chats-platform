@@ -612,6 +612,12 @@ def create_seat_addon_subscription(
     if extra_seats < 1:
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
 
+    if not RAZORPAY_SEAT_PLAN_ID:
+        raise RazorpayBillingError(
+            "Extra-seat billing is not configured (RAZORPAY_SEAT_PLAN_ID is unset). "
+            "Set it to the environment's ₹499 seat add-on plan id."
+        )
+
     rzp = _get_razorpay()
     try:
         subscription = rzp.subscription.create(
