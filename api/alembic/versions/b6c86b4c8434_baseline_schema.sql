@@ -804,7 +804,7 @@ CREATE TABLE public.plans (
     monthly_price_cents integer DEFAULT 0 NOT NULL,
     annual_price_cents integer DEFAULT 0 NOT NULL,
     annual_discount_percent integer DEFAULT 30 NOT NULL,
-    trial_days integer DEFAULT 14 NOT NULL,
+    trial_days integer DEFAULT 7 NOT NULL,
     limits jsonb DEFAULT '{"url_scans": 50, "storage_mb": 5, "ai_messages": 250, "email_summaries": 0, "knowledge_pages": 50, "chat_history_days": 7, "live_chat_messages": 0, "email_notifications": 0}'::jsonb NOT NULL,
     features jsonb DEFAULT '{"sso": false, "bant": false, "webhooks": false, "live_chat": false, "api_access": false, "custom_sla": false, "whitelabel": false, "dedicated_csm": false, "advanced_analytics": false, "branding_removable": false}'::jsonb NOT NULL,
     overage_rate_cents integer DEFAULT 0 NOT NULL,

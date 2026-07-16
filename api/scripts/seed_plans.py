@@ -89,7 +89,7 @@ _PLANS: list[dict] = [
         "monthly_price_usd_cents": 900,  # $9
         "annual_price_usd_cents": 8400,  # $84 ($7/mo × 12)
         "annual_discount_percent": 20,
-        "trial_days": 14,
+        "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 1,
         "extra_seat_price_cents": 49900,  # ₹499
         "extra_seat_price_usd_cents": 500,  # $5
@@ -130,7 +130,7 @@ _PLANS: list[dict] = [
         "monthly_price_usd_cents": 1900,  # $19
         "annual_price_usd_cents": 18000,  # $180 ($15/mo × 12)
         "annual_discount_percent": 20,
-        "trial_days": 14,
+        "trial_days": 7,  # the 7-day full-Standard trial
         "included_operator_seats": 2,
         "extra_seat_price_cents": 49900,
         "extra_seat_price_usd_cents": 500,
@@ -174,7 +174,7 @@ _PLANS: list[dict] = [
         "monthly_price_usd_cents": 3900,  # $39
         "annual_price_usd_cents": 37200,  # $372 ($31/mo × 12)
         "annual_discount_percent": 20,
-        "trial_days": 14,
+        "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 3,
         "extra_seat_price_cents": 49900,
         "extra_seat_price_usd_cents": 500,

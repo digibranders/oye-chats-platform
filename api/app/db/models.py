@@ -1061,8 +1061,9 @@ class Plan(Base):
     annual_price_cents = Column(Integer, default=0, server_default="0", nullable=False)  # total annual price
     annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
 
-    # Trial
-    trial_days = Column(Integer, default=14, server_default="14", nullable=False)
+    # Trial. Default 7 = the Standard-only free-trial length; seed_plans sets
+    # trial_days per tier (Standard 7, all others 0 — trials are Standard-only).
+    trial_days = Column(Integer, default=7, server_default="7", nullable=False)
 
     # Usage limits — JSONB allows flexible addition of new limit types without migrations
     limits = Column(

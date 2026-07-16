@@ -684,7 +684,7 @@ function FocusedPlan({
 }) {
     const meta = TIER_META[plan.slug] || { icon: Sparkles, accent: 'slate', description: '' };
     const accent = ACCENTS[meta.accent] || ACCENTS.slate;
-    const features = useMemo(() => buildFeatureList(plan), [plan]);
+    const features = useMemo(() => buildFeatureList(plan, geo), [plan, geo]);
     const isFree = plan.slug === 'free';
     const isEnterprise = plan.slug === 'enterprise';
     const currentPrice = Number(currentPlan?.monthly_price_usd_cents || currentPlan?.monthly_price_cents || 0);
@@ -1291,19 +1291,20 @@ const CRAWL_FALLBACK_BY_SLUG = {
     enterprise: { pages: 10000, depth: 5 },
 };
 
-function buildFeatureList(plan) {
+function buildFeatureList(plan, geo) {
     const out = [];
     const credits = plan.credits_per_month;
     const seats = plan.included_operator_seats || 0;
-    // Prefer USD seat price; fall back to INR cents for legacy rows. The
-    // symbol MUST match the currency of the amount we actually picked —
-    // hardcoding '$' rendered a rupee legacy price as "$X". Tie the symbol to
-    // the source field so the two can never disagree.
-    const hasUsdSeat = plan.extra_seat_price_usd_cents != null;
-    const seatCents = hasUsdSeat
+    // Seat price in the VIEWER's display currency — mirror renderPriceLabel.
+    // Show the USD headline ($5) only when the account displays in USD;
+    // otherwise show the native INR price (₹499). The previous logic keyed off
+    // "does a USD column exist", so INR customers wrongly saw "+$5/mo".
+    const seatCurrency = (geo?.display_currency || plan.currency || 'INR').toUpperCase();
+    const useUsdSeat = seatCurrency === 'USD' && plan.extra_seat_price_usd_cents != null;
+    const seatCents = useUsdSeat
         ? plan.extra_seat_price_usd_cents
         : (plan.extra_seat_price_cents ?? 0);
-    const sym = hasUsdSeat ? '$' : '₹';
+    const sym = useUsdSeat ? '$' : '₹';
 
     // Plan-aware crawl limits — read from ``plan.limits`` first (source of
     // truth once the migration has run), then fall back to the per-slug
@@ -1364,7 +1365,7 @@ function buildFeatureList(plan) {
     const features = plan.features || {};
     if (features.live_chat) out.push('Live chat enabled');
     if (features.bant)      out.push('BANT lead qualification scoring');
-    if (features.live_chat) out.push('Webhooks (5 event types)');
+    if (features.webhooks)  out.push('Webhooks (5 event types)');
 
     if (plan.slug === 'free') {
         // Marketing-site-aligned bullets so the free tier doesn't feel empty.
@@ -1375,13 +1376,18 @@ function buildFeatureList(plan) {
         if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
         out.push('Priority email support');
     } else if (plan.slug === 'standard') {
-        // Behavioural tracking + UTM capture is a Standard-only positioning
-        // bullet — the underlying capability is gated by ``features.bant``
-        // (Starter has it too) but it stopped being surfaced on Starter as
-        // part of tightening that card's feature list. Kept as a slug check
-        // rather than a new plan.features flag because the difference is
-        // pure marketing framing, not a runtime entitlement.
+        // Behavioural tracking + UTM capture is a Standard-tier positioning
+        // bullet. Kept as a slug check rather than a new plan.features flag
+        // because the difference is pure marketing framing, not a runtime
+        // entitlement.
         out.push('Behavioral tracking & UTM capture');
+        if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
+    } else if (plan.slug === 'professional') {
+        // Professional's differentiators over Standard (marketing framing).
+        out.push('Behavioral tracking & UTM capture');
+        out.push('MEDDIC / CHAMP frameworks');
+        out.push('White-label custom domain');
+        out.push('Priority chat support');
         if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
     }
 
