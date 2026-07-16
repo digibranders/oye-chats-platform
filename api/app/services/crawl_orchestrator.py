@@ -78,6 +78,35 @@ def _record_bot_crawl_state(bot_id: int | None, status: str, chunk_count: int | 
         logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
 
 
+def _precompute_seed_questions(bot_id: int | None) -> None:
+    """Warm the bot's seed-question cache right after ingestion completes.
+
+    Seed generation is an LLM call + several embedding round-trips. Running it
+    here (in the worker / background crawl task, off the request path) means the
+    Build Studio Prove step reads a cached value instead of paying that latency
+    while the user waits. Best-effort; the on-demand endpoint stays as a fallback
+    if this hasn't finished (or failed) by the time the user asks. Only caches an
+    authoritative result — mirrors the endpoint's guard so an empty list is never
+    persisted before content exists (documents do exist here, but stay defensive).
+    """
+    if not bot_id:
+        return
+    try:
+        from app.db.repository import count_documents_for_bot
+        from app.services.seed_questions_service import build_seed_questions
+
+        with get_session() as session:
+            bot = session.get(Bot, bot_id)
+            if bot is None or bot.seed_questions is not None:
+                return  # already computed (or bot gone) — never recompute here
+            questions = build_seed_questions(session, bot)
+            if questions or count_documents_for_bot(session, bot_id=bot.id, client_id=bot.client_id) > 0:
+                bot.seed_questions = questions
+                session.commit()
+    except Exception:
+        logger.warning("seed-question precompute failed for bot %s (non-fatal)", bot_id, exc_info=True)
+
+
 # Path keywords used to auto-detect a "services" page from a freshly crawled site,
 # in priority order. Matched against the URL path only (not querystring), so a
 # blog post titled "our services" doesn't accidentally win.
@@ -700,6 +729,9 @@ async def run_full_crawl(
             result=result_payload,
         )
         _record_bot_crawl_state(bot_id, "done", total_chunks)
+        # Warm the seed-question cache now (worker/background), so the Prove step
+        # reads a cached value instead of paying LLM + embedding latency live.
+        _precompute_seed_questions(bot_id)
 
         # Drop an in-app notification so the user sees the result in the bell
         # even if they navigated away. Best-effort — never fail the crawl on it.
