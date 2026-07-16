@@ -232,11 +232,16 @@ def test_create_seat_addon_subscription():
     fake = MagicMock()
     fake.subscription.create.return_value = {"id": "sub_seats", "status": "created"}
 
-    with patch.object(razorpay_service, "_get_razorpay", return_value=fake):
+    # RAZORPAY_SEAT_PLAN_ID has no baked-in default (it is env-only), so the seat
+    # add-on plan must be configured for this flow to run.
+    with (
+        patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_test_seat"),
+        patch.object(razorpay_service, "_get_razorpay", return_value=fake),
+    ):
         result = razorpay_service.create_seat_addon_subscription(MagicMock(), _make_client(), extra_seats=3)
 
     sent = fake.subscription.create.call_args.kwargs["data"]
-    assert sent["plan_id"] == razorpay_service.RAZORPAY_SEAT_PLAN_ID
+    assert sent["plan_id"] == "plan_test_seat"
     assert sent["quantity"] == 3
     assert sent["total_count"] == 120
     assert sent["notes"]["purpose"] == "seat_addon"

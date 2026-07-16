@@ -253,10 +253,11 @@ RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 # RAZORPAY_SEAT_PLAN_ID — Razorpay Plan ID for the ₹499/month extra-seat add-on.
 #   Extra operator seats are billed on a SEPARATE add-on subscription against
 #   this plan (quantity = number of extra seats); never as quantity on the main
-#   plan, which would multiply the whole plan price. The default is the LIVE
-#   plan; local/staging overrides it with the test-mode plan id via .env so
-#   production never accidentally references a test plan.
-RAZORPAY_SEAT_PLAN_ID: str = os.getenv("RAZORPAY_SEAT_PLAN_ID", "plan_T5rNFpt3vSkl4R")
+#   plan, which would multiply the whole plan price. Env-driven with NO baked-in
+#   default — set the test-mode plan id in local/staging .env and the live plan id
+#   in production, so a plan id is never hardcoded in the repo. Empty/unset means
+#   the seat add-on is disabled until configured.
+RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
 
 # The per-seat price that ``RAZORPAY_SEAT_PLAN_ID`` ACTUALLY charges (INR minor
 # units). All extra seats bill against that single global plan, so this — not a

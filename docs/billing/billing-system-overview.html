@@ -186,17 +186,20 @@
 
   <!-- 3 -->
   <h2 id="plans">3. Subscription plans <span class="badge b-done">created</span></h2>
-  <p>Four customer tiers (Free, Starter, Standard, Enterprise) plus two operational plans (Extra Seat, Test). All six are
-  live in the Razorpay dashboard:</p>
+  <p>Customer tiers (Free, Starter, Standard, Professional) plus two operational plans (Extra Seat, ₹1 Test).
+  New-pricing tier plans are created in Razorpay <b>Test</b> mode for the relaunch; the Live tier plans and the
+  add-on / ₹1-test plans are created fresh at go-live. Canonical source: <span class="mono">docs/billing/razorpay-plan-ids.md</span>.</p>
 
   <table>
-    <tr><th>Plan</th><th>Razorpay Plan ID</th><th class="num">INR</th><th class="num">USD anchor</th><th>Cycle</th></tr>
-    <tr><td>Starter Monthly</td><td class="mono">plan_T5rJrWjfvN3Fk1</td><td class="num">₹1,799</td><td class="num">$19</td><td>Monthly</td></tr>
-    <tr><td>Starter Annual</td><td class="mono">plan_T5rLP2lT30ZQuv</td><td class="num">₹17,299</td><td class="num">$182</td><td>Yearly (20% off)</td></tr>
-    <tr><td>Standard Monthly</td><td class="mono">plan_T5rLzlUCdXWQoD</td><td class="num">₹4,599</td><td class="num">$49</td><td>Monthly</td></tr>
-    <tr><td>Standard Annual</td><td class="mono">plan_T5rMa0eevGsFPm</td><td class="num">₹44,099</td><td class="num">$470</td><td>Yearly (20% off)</td></tr>
-    <tr><td>Extra Seat Monthly</td><td class="mono">plan_T5rNFpt3vSkl4R</td><td class="num">₹499</td><td class="num">$5</td><td>Monthly</td></tr>
-    <tr><td>Test Plan</td><td class="mono">plan_T5rNgByd3zStZx</td><td class="num">₹1</td><td class="num">—</td><td>Monthly</td></tr>
+    <tr><th>Plan</th><th>Razorpay Plan ID (Test)</th><th class="num">INR</th><th class="num">USD</th><th>Cycle</th></tr>
+    <tr><td>Starter Monthly</td><td class="mono">plan_TE3II9mLg0dQxp</td><td class="num">₹449</td><td class="num">$9</td><td>Monthly</td></tr>
+    <tr><td>Starter Annual</td><td class="mono">plan_TE3MuL8gS38Ewv</td><td class="num">₹4,308</td><td class="num">$84</td><td>Yearly (20% off)</td></tr>
+    <tr><td>Standard Monthly</td><td class="mono">plan_TE3OX0Hws0c6Q7</td><td class="num">₹949</td><td class="num">$19</td><td>Monthly</td></tr>
+    <tr><td>Standard Annual</td><td class="mono">plan_TE3QE2KpwbeQTd</td><td class="num">₹9,108</td><td class="num">$180</td><td>Yearly (20% off)</td></tr>
+    <tr><td>Professional Monthly</td><td class="mono">plan_TE3Rj85kkmkhQx</td><td class="num">₹1,399</td><td class="num">$39</td><td>Monthly</td></tr>
+    <tr><td>Professional Annual</td><td class="mono">plan_TE3TU2vQsQJtHQ</td><td class="num">₹13,428</td><td class="num">$372</td><td>Yearly (20% off)</td></tr>
+    <tr><td>Extra Seat Monthly</td><td class="mono">(env-set)</td><td class="num">₹499</td><td class="num">$5</td><td>Monthly</td></tr>
+    <tr><td>₹1 Test Plan</td><td class="mono">(env-set)</td><td class="num">₹1</td><td class="num">—</td><td>Monthly</td></tr>
   </table>
   <p class="small">Free &amp; Enterprise have no Razorpay plan — Free is ₹0 (no checkout) and Enterprise is contact-sales (custom contract).</p>
 
@@ -240,7 +243,7 @@
     <span class="t">Fixed (P0-3, shipped 2026-07-08).</span>
     The base subscription is now hard-pinned to <code>quantity = 1</code> (<span class="mono">razorpay_service.py</span> —
     <code>create_subscription</code>) — the flat plan price already covers the bundled seats. Extra seats are billed on a
-    <b>separate add-on subscription</b> against the Extra Seat plan (<span class="mono">plan_T5rNFpt3vSkl4R</span>, ₹499) via
+    <b>separate add-on subscription</b> against the Extra Seat plan (<span class="mono">RAZORPAY_SEAT_PLAN_ID</span>, ₹499) via
     <code>create_seat_addon_subscription</code> / <code>edit_seat_addon_quantity</code>, with
     <code>quantity = number of extra seats</code>. The old whole-plan-multiplying path
     (<code>update_subscription_quantity</code>) is no longer called from any route. A regression test
@@ -518,7 +521,7 @@
   <ol>
     <li>Run the INR-paise migration: <code>alembic upgrade head</code></li>
     <li>Store the 6 plan IDs: <code>set_razorpay_plan_ids.py --apply</code></li>
-    <li>Set <code>RAZORPAY_TEST_PLAN_ID=plan_T5rNgByd3zStZx</code> in env</li>
+    <li>Set <code>RAZORPAY_TEST_PLAN_ID=&lt;live ₹1 plan id&gt;</code> in env</li>
   </ol>
 
   <h3>Phase 1 — Pricing foundation <span class="badge b-done">done</span></h3>

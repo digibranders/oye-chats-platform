@@ -621,7 +621,7 @@ Design intent (per `multicurrency-model-decision`, Plan Rev 3): geo-split — IN
 | `INVOICE_EMAILS_ENABLED`                               | `true`                | Customer delivery + serial exposure                       |
 | `WEBHOOK_RETRY_ON_ERROR`                               | `true`                | 5xx-on-error so Razorpay retries (safe via idempotency)   |
 | `PRORATED_UPGRADES_ENABLED`                            | `false`               | Phase-6 prorated upgrades (off → cancel-and-recreate)    |
-| `RAZORPAY_SEAT_PLAN_ID`                                | `plan_T5rNFpt3vSkl4R` | ₹499 seat add-on plan                                    |
+| `RAZORPAY_SEAT_PLAN_ID`                                | _(env-set, no default)_ | ₹499 seat add-on plan — set per environment              |
 | `CHECKOUT_TEST_CLIENT_IDS` / `RAZORPAY_TEST_PLAN_ID` | empty                   | Production-safe ₹1 test checkout for specific client ids |
 
 ---

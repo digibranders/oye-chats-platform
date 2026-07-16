@@ -58,6 +58,10 @@ jobs:
           DB_URL: postgresql://test:test@localhost:5432/test
           GOOGLE_API_KEY: test-key
           APP_ENV: testing
+          # Seat add-on billing is env-configured (no hardcoded default). Every
+          # real environment sets this; provide a dummy id so the seat-path
+          # tests run instead of tripping the "not configured" guard.
+          RAZORPAY_SEAT_PLAN_ID: plan_test_seat
         run: |
           ~/.local/bin/uv run pytest -x -q --cov=app --cov-report=term-missing
 

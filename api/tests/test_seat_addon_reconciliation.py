@@ -59,7 +59,7 @@ def _gateway_addon(sub_id: str, *, status: str = "active", plan_id: str | None =
     return {
         "id": sub_id,
         "status": status,
-        "plan_id": plan_id or razorpay_service.RAZORPAY_SEAT_PLAN_ID,
+        "plan_id": plan_id or "plan_test_seat",
         "notes": {"purpose": "seat_addon"},
     }
 
