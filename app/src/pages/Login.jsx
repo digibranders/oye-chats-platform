@@ -64,48 +64,18 @@ export default function Login() {
 
     try {
       setIsLoading(true);
-      let loggedIn = false;
-
+      // Try the client/admin login FIRST — it's the common case. Only fall back
+      // to the operator login (a separate credential + endpoint) when the admin
+      // login fails. Previously the operator login ran first on every sign-in,
+      // so the client majority always ate a guaranteed-failing operator 401
+      // before their real login — doubling perceived latency and flooding auth
+      // logs / rate limiters with expected failures. ``rememberMe`` drives the
+      // absolute session TTL armed in setAuthBundle (checked → 30 days,
+      // unchecked → 1 day); main.jsx wipes the session once that expiry passes.
       try {
-        const data = await loginOperator(email, password);
-        // Fresh login → clear any banner dismissals carried over from a
-        // previous account in this tab. Done before the toast flag so a
-        // failed read can't accidentally suppress the new user's banner.
-        clearTrialBannerDismissals();
-        // Auth always lives in localStorage (shared across tabs). ``rememberMe``
-        // no longer changes WHERE the bundle lands — it drives the absolute
-        // session TTL armed in setAuthBundle: checked → 30 days, unchecked →
-        // 1 day. main.jsx wipes the session once that expiry passes.
-        setAuthBundle(
-          {
-            admin_token: data.access_token,
-            admin_name: data.name,
-            admin_client_id: data.client_id,
-            auth_type: 'operator',
-            operator_role: data.role,
-            operator_id: data.operator_id,
-            is_superadmin: 'false',
-            company_name: data.company_name || '',
-            company_website: data.website || '',
-            onboarding_complete: 'true',
-            selected_bot_id: data.default_bot_id ?? undefined,
-          },
-          rememberMe,
-        );
-        sessionStorage.setItem('login_toast', '1');
-        loggedIn = true;
-        // Operators are never affiliates by design — backend always
-        // returns is_affiliate=false for X-Operator-Key principals. So
-        // even when an affiliate_token is present we route to the deep-link
-        // target (push-notification round-trip) or /support; any logged-in
-        // affiliate redeeming an invite must use a client login.
-        navigate(safeNext || '/support');
-      } catch {
-        // Operator login failed — try admin login
-      }
-
-      if (!loggedIn) {
         const data = await loginAdmin(email, password);
+        // Fresh login → clear any banner dismissals carried over from a
+        // previous account in this tab.
         clearTrialBannerDismissals();
         setAuthBundle(
           {
@@ -125,9 +95,7 @@ export default function Login() {
         // Email verification is no longer a hard wall for organic logins.
         // An unverified client proceeds to their normal destination and is
         // nudged by the dismissible VerifyEmailBanner instead; verification
-        // stays enforced server-side on billing/invite mutations. The
-        // ``admin_is_verified`` flag persisted in the bundle above lets the
-        // banner read state without an extra round-trip.
+        // stays enforced server-side on billing/invite mutations.
         if (affiliateToken) {
           // Affiliate token always wins over the default landing target.
           navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
@@ -139,6 +107,36 @@ export default function Login() {
           // Super-admins log into the dedicated console at admin.oyechats.com,
           // not this dashboard — route them to "/" like any other client.
           navigate('/');
+        }
+      } catch (adminErr) {
+        // Admin login failed — likely a team-member operator, whose credentials
+        // live on a separate endpoint. Try that before surfacing an error; if it
+        // also fails, surface the admin error (the common-case message).
+        try {
+          const data = await loginOperator(email, password);
+          clearTrialBannerDismissals();
+          setAuthBundle(
+            {
+              admin_token: data.access_token,
+              admin_name: data.name,
+              admin_client_id: data.client_id,
+              auth_type: 'operator',
+              operator_role: data.role,
+              operator_id: data.operator_id,
+              is_superadmin: 'false',
+              company_name: data.company_name || '',
+              company_website: data.website || '',
+              onboarding_complete: 'true',
+              selected_bot_id: data.default_bot_id ?? undefined,
+            },
+            rememberMe,
+          );
+          sessionStorage.setItem('login_toast', '1');
+          // Operators are never affiliates by design — route to the deep-link
+          // target (push-notification round-trip) or /support.
+          navigate(safeNext || '/support');
+        } catch {
+          throw adminErr;
         }
       }
     } catch (err) {

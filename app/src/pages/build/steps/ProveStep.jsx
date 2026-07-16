@@ -80,6 +80,7 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     const doneFiredRef = useRef(false);
     const autoStartRef = useRef(false);
     const autoAskedRef = useRef(false);
+    const autoFirstAskRef = useRef(false);
 
     const beginCrawl = async (orderedUrls, discoveredTotal) => {
         if (!orderedUrls.length) {
@@ -192,6 +193,21 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
                 .finally(() => setLoadingSeeds(false));
         }
     }, [trained, seeds, loadingSeeds, botId]);
+
+    // Demonstrate the aha: auto-ask the FIRST verified seed question once, so the
+    // user sees the agent answer from their own site without lifting a finger.
+    // Fires only when nothing's been asked yet and the agent isn't busy; uses a
+    // distinct activation event so it doesn't inflate the user-initiated
+    // `first_test_asked` metric (that still fires on their real first ask).
+    useEffect(() => {
+        if (autoFirstAskRef.current) return;
+        if (!trained || sending || askedCount > 0) return;
+        const chips = Array.isArray(seeds) ? seeds : null;
+        if (!chips || chips.length === 0) return;
+        autoFirstAskRef.current = true;
+        recordActivationEvent('first_test_auto', { botId });
+        onAsk?.(chips[0]);
+    }, [trained, seeds, sending, askedCount, botId, onAsk]);
 
     const ask = (q) => {
         const question = (q ?? openQ).trim();

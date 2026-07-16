@@ -26,7 +26,7 @@ const OTTO = {
     golive: "Last step — put it on your site. I'll tell you the moment it's live.",
 };
 
-function Stepper({ current, onStep }) {
+function Stepper({ current, maxReached, onStep }) {
     return (
         <div className="relative">
             <div className="absolute top-[13px] left-0 right-0 h-[2px] rounded-full bg-[var(--border)]" />
@@ -39,14 +39,19 @@ function Stepper({ current, onStep }) {
                 {MILESTONES.map((m, i) => {
                     const done = i < current;
                     const active = i === current;
+                    // Steps beyond the furthest legitimately reached are locked —
+                    // a forward jump must not skip the aha (e.g. Go live before
+                    // the agent is trained). Back-navigation stays free.
+                    const locked = i > maxReached;
                     return (
                         <li key={m.key}>
                             <button
                                 type="button"
-                                onClick={() => onStep(i)}
+                                onClick={() => !locked && onStep(i)}
+                                disabled={locked}
                                 aria-current={active ? 'step' : undefined}
                                 aria-label={`Step ${i + 1}: ${m.label}`}
-                                className="group flex flex-col items-center gap-2"
+                                className={cn('group flex flex-col items-center gap-2', locked && 'cursor-not-allowed')}
                             >
                                 <span
                                     className={cn(
@@ -111,11 +116,19 @@ export default function BuildStudio() {
     const [previewPending, setPreviewPending] = useState(false);
     const previewSessionRef = useRef(`studio-preview-${Math.floor(performance.now())}`);
 
+    // Furthest milestone legitimately reached — gates forward stepper jumps.
+    // Updated during render (lint-safe) whenever the URL step moves past it,
+    // which covers both goNext and a deep-linked resume.
+    const [maxReached, setMaxReached] = useState(current);
+    if (current > maxReached) setMaxReached(current);
+
     const goTo = (i) => {
         const clamped = Math.max(0, Math.min(MILESTONES.length - 1, i));
         setPreviewColor(null);
-        setPreviewMessages([]);
         setPreviewPending(false);
+        // Note: previewMessages is intentionally NOT cleared — the proof the
+        // user generated in the Prove step should survive navigation (e.g.
+        // stepping back to re-test) instead of evaporating.
         setParams({ m: MILESTONES[clamped].key });
     };
     const goNext = () => goTo(current + 1);
@@ -192,7 +205,7 @@ export default function BuildStudio() {
             <MotionConfig reducedMotion="user">
                 {/* Stepper */}
                 <div className="max-w-2xl mx-auto pt-1 pb-8">
-                    <Stepper current={current} onStep={goTo} />
+                    <Stepper current={current} maxReached={maxReached} onStep={goTo} />
                 </div>
 
                 {/* Body */}
