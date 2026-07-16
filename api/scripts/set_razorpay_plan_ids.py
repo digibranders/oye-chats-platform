@@ -21,9 +21,13 @@ Add --apply to commit:
         --apply
 
 Optional extras:
-    --enterprise-monthly plan_XXXXXXXXXXXXXXXX
-    --enterprise-annual  plan_XXXXXXXXXXXXXXXX
-    --seat-monthly       plan_XXXXXXXXXXXXXXXX  (extra seat add-on)
+    --professional-monthly plan_XXXXXXXXXXXXXXXX
+    --professional-annual  plan_XXXXXXXXXXXXXXXX
+    --enterprise-monthly   plan_XXXXXXXXXXXXXXXX
+    --enterprise-annual    plan_XXXXXXXXXXXXXXXX
+
+The extra-seat add-on plan is NOT stored on a plan row — it is configured via
+the ``RAZORPAY_SEAT_PLAN_ID`` environment variable (per Razorpay account/mode).
 
 To clear a plan ID (set it back to NULL), pass the literal string 'null'.
 
@@ -48,6 +52,7 @@ from app.db.session import get_session
 _SLUG_TO_ARGS: dict[str, tuple[str, str]] = {
     "starter": ("starter_monthly", "starter_annual"),
     "standard": ("standard_monthly", "standard_annual"),
+    "professional": ("professional_monthly", "professional_annual"),
     "enterprise": ("enterprise_monthly", "enterprise_annual"),
 }
 
@@ -79,7 +84,7 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             print("Current Razorpay plan IDs in DB:")
             print(f"{'Slug':<12} {'Monthly':<32} {'Annual':<32}")
             print("-" * 76)
-            for slug in ("starter", "standard", "enterprise"):
+            for slug in ("starter", "standard", "professional", "enterprise"):
                 p = plan_map.get(slug)
                 if p:
                     mo = p.razorpay_plan_id_monthly or "(none)"
@@ -123,6 +128,8 @@ def main() -> int:
     parser.add_argument("--starter-annual", metavar="PLAN_ID", help="plan_XXX for Starter annual")
     parser.add_argument("--standard-monthly", metavar="PLAN_ID", help="plan_XXX for Standard monthly")
     parser.add_argument("--standard-annual", metavar="PLAN_ID", help="plan_XXX for Standard annual")
+    parser.add_argument("--professional-monthly", metavar="PLAN_ID", help="plan_XXX for Professional monthly")
+    parser.add_argument("--professional-annual", metavar="PLAN_ID", help="plan_XXX for Professional annual")
     parser.add_argument("--enterprise-monthly", metavar="PLAN_ID", help="plan_XXX for Enterprise monthly")
     parser.add_argument("--enterprise-annual", metavar="PLAN_ID", help="plan_XXX for Enterprise annual")
 

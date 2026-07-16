@@ -93,11 +93,17 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS citext;
 SQL
 
-# ── 3. Rebuild schema + seed billing baseline via migrations ─────────────────
-echo "==> alembic upgrade head (schema + plans + pricing_config)"
+# ── 3. Rebuild schema via migrations ─────────────────────────────────────────
+echo "==> alembic upgrade head (schema)"
 "$PY" -m alembic upgrade head
 
-# ── 4. Seed super-admin ──────────────────────────────────────────────────────
+# ── 4. Seed the canonical plan matrix + credit pricing config ────────────────
+echo "==> Seeding plans (Free/Starter/Standard/Professional/Enterprise)"
+"$PY" scripts/seed_plans.py --apply
+echo "==> Seeding pricing_config (credit costs, seat price, top-up packs)"
+"$PY" scripts/seed_pricing_config.py --apply
+
+# ── 5. Seed super-admin ──────────────────────────────────────────────────────
 if [ "$SEED_SUPERADMIN" -eq 1 ]; then
   echo "==> Seeding super-admin account"
   "$PY" scripts/seed_superadmin.py
@@ -107,4 +113,9 @@ fi
 
 echo ""
 echo "==> Done. Database reset and seeded."
-echo "    Sign up a fresh account in the dashboard to test onboarding end-to-end."
+echo "    Next: set Razorpay plan IDs for this environment, e.g."
+echo "      uv run python scripts/set_razorpay_plan_ids.py --apply \\"
+echo "        --starter-monthly <id> --starter-annual <id> \\"
+echo "        --standard-monthly <id> --standard-annual <id> \\"
+echo "        --professional-monthly <id> --professional-annual <id>"
+echo "    Then sign up a fresh account in the dashboard to test onboarding."
