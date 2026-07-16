@@ -4,7 +4,6 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { getCurrentUser } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, setAuthItem } from '../utils/authStorage';
-import { STUDIO_ENABLED } from '../utils/flags';
 
 /**
  * Maps the machine-readable error codes returned by the backend OAuth
@@ -153,7 +152,7 @@ export default function OAuthCallback() {
                     // New (botless, not-yet-onboarded) accounts start in the guided
                     // Build Studio; everyone else lands on the dashboard root.
                     destination =
-                        STUDIO_ENABLED && !me?.onboarding_complete && (me?.bot_count ?? 0) === 0 ? '/build' : '/';
+                        !me?.onboarding_complete && (me?.bot_count ?? 0) === 0 ? '/build' : '/';
                 }
 
                 navigate(destination, { replace: true });

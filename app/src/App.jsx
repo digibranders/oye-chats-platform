@@ -45,7 +45,6 @@ import BuildStudio from './pages/build/BuildStudio';
 // Components
 import AccessDenied from './components/AccessDenied';
 import { getAuthItem } from './utils/authStorage';
-import { STUDIO_ENABLED } from './utils/flags';
 
 // Build a "?next=..." login URL that round-trips the deep-link target through
 // authentication. Used so push-notification clicks (which land on a specific
@@ -119,7 +118,7 @@ const RootRedirect = ({ fallback }) => {
                 if (cancelled) return;
                 if (me?.is_affiliate_only) {
                     setDestination('/affiliate');
-                } else if (STUDIO_ENABLED && !me?.onboarding_complete && (me?.bot_count ?? 0) === 0) {
+                } else if (!me?.onboarding_complete && (me?.bot_count ?? 0) === 0) {
                     // Brand-new (botless, not-yet-onboarded) account. Email must
                     // be verified before onboarding — the backend 403s
                     // create-bot/crawl/ingest for unverified workspaces, so send

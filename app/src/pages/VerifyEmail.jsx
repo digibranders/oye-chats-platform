@@ -5,7 +5,6 @@ import { motion } from 'framer-motion';
 import { verifyEmail, resendVerification } from '../services/api';
 import { cn } from '../lib/utils';
 import { getAuthItem, setAuthItem, removeAuthItem, clearAuthStorage } from '../utils/authStorage';
-import { STUDIO_ENABLED } from '../utils/flags';
 
 const RESEND_COOLDOWN = 30;
 const OTP_LENGTH = 6;
@@ -120,7 +119,7 @@ export default function VerifyEmail() {
       // ``/invite/<token>`` here so the airlock's own logged-in branch
       // auto-detects the freshly-verified session and shows the Accept
       // button. Fallback to dashboard root for organic signups.
-      navigate(safeNext || (STUDIO_ENABLED ? '/build' : '/'), { replace: true });
+      navigate(safeNext || '/build', { replace: true });
     } catch (err) {
       setError(err.message || 'Invalid code. Please try again.');
       setOtp(Array(OTP_LENGTH).fill(''));
