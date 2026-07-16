@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
@@ -9,7 +9,7 @@ import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
 import { useBotContext } from '../../context/BotContext';
 import { previewChat } from '../../services/api';
-import { MILESTONES, milestoneIndex } from './studioMilestones';
+import { MILESTONES, milestoneIndex, STUDIO_RESUME_KEY } from './studioMilestones';
 import ConnectStep from './steps/ConnectStep';
 import ProveStep from './steps/ProveStep';
 import PersonalizeStep from './steps/PersonalizeStep';
@@ -88,6 +88,21 @@ export default function BuildStudio() {
     const [params, setParams] = useSearchParams();
     const current = milestoneIndex(params.get('m'));
     const milestone = MILESTONES[current];
+
+    // Persist the furthest-reached milestone so the Dashboard "Resume setup"
+    // nudge can deep-link the user back here (?m=<key>) instead of restarting
+    // them at a blank step 1. Only advance the marker — never rewind it when the
+    // user steps Back — so resume always points at the deepest progress.
+    useEffect(() => {
+        try {
+            const savedIndex = milestoneIndex(localStorage.getItem(STUDIO_RESUME_KEY));
+            if (current >= savedIndex) {
+                localStorage.setItem(STUDIO_RESUME_KEY, milestone.key);
+            }
+        } catch {
+            /* localStorage unavailable — resume just falls back to step 1 */
+        }
+    }, [current, milestone.key]);
     // Live override so the Personalize step can recolour the preview in real time.
     const [previewColor, setPreviewColor] = useState(null);
     // Shared Prove-step conversation — the controls live in ProveStep (left) but

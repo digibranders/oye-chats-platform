@@ -10,6 +10,16 @@ export const MILESTONES = [
     { key: 'golive', label: 'Go live', title: 'Put it live' },
 ];
 
+// localStorage key holding the furthest-reached milestone, so the Dashboard's
+// "Resume setup" nudge can deep-link a returning user back to where they left
+// off (?m=<key>) instead of restarting them on a blank step 1.
+export const STUDIO_RESUME_KEY = 'oc_studio_resume_m';
+
+// True when `key` names a real milestone — guards a stale/hand-edited ?m= value.
+export function isMilestoneKey(key) {
+    return MILESTONES.some((m) => m.key === key);
+}
+
 // Resolve a milestone key (from the ?m= param) to its index, defaulting to the
 // first milestone for a missing/unknown key.
 export function milestoneIndex(key) {

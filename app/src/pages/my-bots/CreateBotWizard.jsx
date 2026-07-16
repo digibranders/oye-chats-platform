@@ -133,13 +133,13 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
         try {
             const result = await createBot({ name: newBotName.trim(), website: normalizedWebsite || undefined });
             if (normalizedWebsite) {
-                crawlWebsite(normalizedWebsite, result.bot_id).catch((err) => {
+                crawlWebsite(normalizedWebsite, result.id).catch((err) => {
                     console.error('Background website crawl failed:', err);
                     showToast('error', err.message || 'Failed to crawl website');
                 });
             }
             showToast('success', `Bot "${result.name}" created!`);
-            onCreated?.(result.bot_id);
+            onCreated?.(result.id);
         } catch (err) {
             // Edge case — Free path should never 402 (bot count was 0 when the
             // modal opened) but handle defensively if a sibling tab raced.

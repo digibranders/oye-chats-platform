@@ -29,11 +29,43 @@ function placeholderNameFromUrl(url) {
     }
 }
 
+// Light client-side check so an obvious typo ("acme", "htp://…") is caught
+// inline before we spend a full create+discover round-trip on the backend.
+// Intentionally permissive: any host with a dot passes; the crawler does the
+// authoritative reachability check.
+function websiteError(raw) {
+    const value = (raw || '').trim();
+    if (!value) return 'Enter your website address.';
+    let host;
+    try {
+        host = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`).hostname;
+    } catch {
+        return 'That doesn’t look like a valid website — try something like acme.com';
+    }
+    if (!host.includes('.') || host.startsWith('.') || host.endsWith('.')) {
+        return 'That doesn’t look like a valid website — try something like acme.com';
+    }
+    return '';
+}
+
 export default function ConnectStep({ onConnected }) {
     const { bots, selectBot, refreshBots } = useBotContext();
     const { showToast } = useToast();
     const [website, setWebsite] = useState('');
+    const [error, setError] = useState('');
     const [submitting, setSubmitting] = useState(false);
+
+    // On the resume path a bot already exists — prefill its stored website so the
+    // returning user isn't forced to re-type a URL they already gave us. `bots`
+    // can load after mount, so we use React's "adjust state during render"
+    // pattern (not an effect): it fires once, before the user has typed, and the
+    // `prefilledFrom` guard stops it from clobbering later edits or a cleared field.
+    const [prefilledFrom, setPrefilledFrom] = useState(null);
+    const existingSite = bots?.[0]?.website || '';
+    if (existingSite && !website && prefilledFrom !== existingSite) {
+        setPrefilledFrom(existingSite);
+        setWebsite(existingSite);
+    }
 
     const canSubmit = website.trim() && !submitting;
 
@@ -48,6 +80,12 @@ export default function ConnectStep({ onConnected }) {
 
     const handleConnect = async () => {
         if (!canSubmit) return;
+        const validationError = websiteError(website);
+        if (validationError) {
+            setError(validationError);
+            return;
+        }
+        setError('');
         setSubmitting(true);
         try {
             const url = website.trim();
@@ -66,13 +104,12 @@ export default function ConnectStep({ onConnected }) {
                 advanceWith(fresh.find((b) => b.id === existing.id) || existing);
                 return;
             }
-            const result = await createBot({ name: placeholderNameFromUrl(url), website: url });
-            recordActivationEvent('bot_created', { botId: result.bot_id });
-            const fresh = await refreshBots();
-            const bot = fresh.find((b) => b.id === result.bot_id);
-            if (!bot) {
-                throw new Error('Your agent was created but could not be loaded. Refresh and try again.');
-            }
+            // create now returns the full bot object, so we can select it
+            // directly — no fragile re-fetch-and-find. Still refresh the list so
+            // the sidebar/bot switcher reflects the new bot.
+            const bot = await createBot({ name: placeholderNameFromUrl(url), website: url });
+            recordActivationEvent('bot_created', { botId: bot.id });
+            await refreshBots();
             advanceWith(bot);
         } catch (err) {
             showToast('error', err?.message || 'Could not connect your site. Please try again.');
@@ -91,17 +128,28 @@ export default function ConnectStep({ onConnected }) {
                     />
                     <Input
                         value={website}
-                        onChange={(e) => setWebsite(e.target.value)}
+                        onChange={(e) => {
+                            setWebsite(e.target.value);
+                            if (error) setError('');
+                        }}
                         onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
                         placeholder="acme.com"
                         aria-label="Website URL"
+                        aria-invalid={error ? true : undefined}
+                        aria-describedby={error ? 'connect-website-error' : undefined}
                         className="font-mono pl-10"
                     />
                 </div>
-                <p className="mt-1.5 text-xs text-[var(--text-muted)]">
-                    That&rsquo;s all I need — I&rsquo;ll read your site, learn your brand, and suggest a name. You can
-                    rename it later.
-                </p>
+                {error ? (
+                    <p id="connect-website-error" role="alert" className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">
+                        {error}
+                    </p>
+                ) : (
+                    <p className="mt-1.5 text-xs text-[var(--text-muted)]">
+                        That&rsquo;s all I need — I&rsquo;ll read your site, learn your brand, and suggest a name. You can
+                        rename it later.
+                    </p>
+                )}
             </div>
 
             <Button size="lg" className="self-start" onClick={handleConnect} disabled={!canSubmit} loading={submitting}>

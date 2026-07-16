@@ -56,7 +56,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         if (!cancelled) setPacks(Array.isArray(data) ? data : []);
       })
       .catch((err) => {
-        if (!cancelled) showToast(err?.message || 'Failed to load top-up packs', 'error');
+        if (!cancelled) showToast('error', err?.message || 'Failed to load top-up packs');
       })
       .finally(() => {
         if (!cancelled) setLoadingPacks(false);
@@ -75,7 +75,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
   async function handleBuy(pack) {
     const amount = Number(pack.amount ?? pack.usd ?? 0);
     if (!amount) {
-      showToast('Pack is misconfigured (missing amount).', 'error');
+      showToast('error', 'Pack is misconfigured (missing amount).');
       return;
     }
     setSubmittingPack(amount);
@@ -95,19 +95,19 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         await verifyTopupPayment(response);
       } catch (verifyErr) {
         showToast(
+          'error',
           verifyErr?.message ||
             'Payment received but verification failed. Contact support if credits don\'t appear shortly.',
-          'error',
         );
         return;
       }
-      showToast('Payment successful — credits will appear in a few seconds.', 'success');
+      showToast('success', 'Payment successful — credits will appear in a few seconds.');
       onSuccess?.();
       onClose?.();
     } catch (err) {
       // openRazorpayCheckout throws on dismiss with code 'dismissed' — silent.
       if (err?.code === 'dismissed') return;
-      showToast(err?.message || 'Failed to start checkout', 'error');
+      showToast('error', err?.message || 'Failed to start checkout');
     } finally {
       setSubmittingPack(null);
     }
@@ -134,6 +134,11 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
           <div className="flex items-center justify-center py-12 text-surface-500">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
             Loading packs…
+          </div>
+        ) : packs.length === 0 ? (
+          <div className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">
+            No credit packs are available right now. Please try again in a moment — if this keeps happening,
+            contact support.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
