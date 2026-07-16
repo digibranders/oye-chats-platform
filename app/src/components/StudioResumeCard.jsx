@@ -8,10 +8,10 @@ import { Button } from './ui/Button';
 const HIDDEN_KEY = 'oc_studio_resume_hidden';
 
 /**
- * The Build Studio replacement for the legacy SetupChecklist on the Dashboard.
+ * The Build Studio setup nudge on the Dashboard.
  *
- * When the guided Studio is enabled (VITE_STUDIO_ENABLED), a customer who clicks
- * "Skip to dashboard" mid-onboarding lands here. This slim, dismissible banner
+ * A customer who clicks "Skip to dashboard" mid-onboarding lands here. This
+ * slim, dismissible banner
  * nudges them back into /build and self-hides the moment onboarding is complete
  * (server-derived from /auth/me — it can never drift from the truth) or when the
  * user dismisses it. Affiliate-only accounts never see it.
