@@ -53,19 +53,21 @@ add-on is configured via the `RAZORPAY_SEAT_PLAN_ID` env var (not a plan row).
 
 ---
 
-## Live Mode — new pricing (`rzp_live_…`) ⏳ NOT CREATED YET
+## Live Mode — new pricing (`rzp_live_…`) ✅ WIRED (relaunch 16 Jul 2026)
 
-Mint these in the **Live** dashboard only after the Test flow is validated in production. Confirm
-both Annual plans read "Every Year" before wiring.
+Created via the Razorpay API and seeded into the prod `plans` table during the DB reset.
+This is what production currently charges.
 
 | Plan | Plan ID | Amount | Cycle |
 |------|---------|--------|-------|
-| Starter Monthly | _to create_ | ₹449 | Monthly |
-| Starter Annual | _to create_ | ₹4,308 | Yearly |
-| Standard Monthly | _to create_ | ₹949 | Monthly |
-| Standard Annual | _to create_ | ₹9,108 | Yearly |
-| Professional Monthly | _to create_ | ₹1,399 | Monthly |
-| Professional Annual | _to create_ | ₹13,428 | Yearly |
+| Starter Monthly | `plan_TE6Pae1HaV4bNx` | ₹449 | Monthly |
+| Starter Annual | `plan_TE6PasUXZc3sbL` | ₹4,308 | Yearly |
+| Standard Monthly | `plan_TE6Pb9a4XXVKB5` | ₹949 | Monthly |
+| Standard Annual | `plan_TE6PbQEmXZhhtm` | ₹9,108 | Yearly |
+| Professional Monthly | `plan_TE6PbfKUnVNB6q` | ₹1,399 | Monthly |
+| Professional Annual | `plan_TE6Pbuixn7mmDB` | ₹13,428 | Yearly |
+
+Seat add-on (live, unchanged ₹499): `RAZORPAY_SEAT_PLAN_ID=plan_T5rNFpt3vSkl4R` (GHA variable).
 
 ---
 
