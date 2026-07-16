@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Globe } from 'lucide-react';
-import { createBot, recordActivationEvent } from '../../../services/api';
+import { createBot, updateBot, recordActivationEvent } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
 import { Input } from '../../../components/ui/Input';
@@ -30,24 +30,50 @@ function placeholderNameFromUrl(url) {
 }
 
 export default function ConnectStep({ onConnected }) {
-    const { selectBot, refreshBots } = useBotContext();
+    const { bots, selectBot, refreshBots } = useBotContext();
     const { showToast } = useToast();
     const [website, setWebsite] = useState('');
     const [submitting, setSubmitting] = useState(false);
 
     const canSubmit = website.trim() && !submitting;
 
+    // Resolve the just-created/reused bot to its full object before selecting —
+    // BotContext.selectBot expects a bot OBJECT (it reads bot.id); passing a bare
+    // id corrupts selectedBot so every downstream `selectedBot?.website/.id` is
+    // undefined, which is what bounced the flow back to a blank Connect step.
+    const advanceWith = (bot) => {
+        selectBot(bot);
+        onConnected?.(bot.id);
+    };
+
     const handleConnect = async () => {
         if (!canSubmit) return;
         setSubmitting(true);
         try {
             const url = website.trim();
+            // Idempotent create. The /build onboarding is entered botless, but a
+            // prior attempt (or an earlier bounce) can leave a bot already made.
+            // Reuse it instead of creating a second one — free trials cap at one
+            // bot, so a blind re-create 402s ("additional chatbot needs a paid
+            // plan"). We only backfill a missing website; we never clobber an
+            // existing one, and ProveStep skips re-crawling an already-trained bot.
+            const existing = bots?.[0];
+            if (existing) {
+                if (!existing.website && url) {
+                    await updateBot(existing.id, { website: url });
+                }
+                const fresh = await refreshBots();
+                advanceWith(fresh.find((b) => b.id === existing.id) || existing);
+                return;
+            }
             const result = await createBot({ name: placeholderNameFromUrl(url), website: url });
-            const botId = result.bot_id;
-            recordActivationEvent('bot_created', { botId });
-            await refreshBots();
-            selectBot(botId);
-            onConnected?.(botId);
+            recordActivationEvent('bot_created', { botId: result.bot_id });
+            const fresh = await refreshBots();
+            const bot = fresh.find((b) => b.id === result.bot_id);
+            if (!bot) {
+                throw new Error('Your agent was created but could not be loaded. Refresh and try again.');
+            }
+            advanceWith(bot);
         } catch (err) {
             showToast('error', err?.message || 'Could not connect your site. Please try again.');
             setSubmitting(false);

@@ -5,7 +5,7 @@ import { useCrawl } from '../../../context/CrawlContext';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
 import useEntitlements from '../../../hooks/useEntitlements';
-import { discoverCrawlUrls, getSeedQuestions, recordActivationEvent } from '../../../services/api';
+import { discoverCrawlUrls, getDocuments, getSeedQuestions, recordActivationEvent } from '../../../services/api';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import Progress from '../../../components/ui/Progress';
@@ -41,6 +41,14 @@ function pathOf(url) {
  *
  * `onAsk`/`sending` drive the shared preview conversation owned by BuildStudio
  * (so the answer renders in the widget, not a separate panel).
+ *
+ * Completion is latched LOCALLY (`trained`), never derived from the global
+ * `crawl.status`. CrawlContext intentionally resets a finished crawl from
+ * `done` → `idle` after a few seconds (so the floating progress toast clears).
+ * Reading that transient status to decide "am I finished?" made the step fall
+ * back to the crawling spinner — and on any remount re-fire a full crawl (the
+ * "crawling forever / repeated crawl-complete" bug). The latch fixes both: once
+ * done, the prove view stays; and an already-trained bot never re-crawls.
  */
 export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     const { selectedBot } = useBotContext();
@@ -50,6 +58,13 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     const website = selectedBot?.website || '';
     const host = hostOf(website);
     const botId = selectedBot?.id;
+
+    // 'pending' until we know whether this bot already has knowledge. 'trained'
+    // short-circuits straight to the prove view (no discovery, no crawl); 'fresh'
+    // runs the discover + auto-crawl path exactly once.
+    const [precheck, setPrecheck] = useState('pending');
+    const [trained, setTrained] = useState(false);
+    const [trainedPages, setTrainedPages] = useState(null);
 
     const [discovering, setDiscovering] = useState(true);
     const [discoverError, setDiscoverError] = useState(null);
@@ -91,11 +106,39 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         }
     };
 
-    // Discover pages on arrival (and on retry), then DEFAULT-ALL: auto-start the
-    // crawl on every discovered page for momentum. "Customize" (during the feed)
-    // cancels and reveals the selection list. All setState happens post-await.
+    // Precheck: has this bot already been trained? If so, latch `trained` and
+    // skip crawling — this is what makes remounts (Back/forward, a flapped
+    // status) safe instead of kicking off a duplicate crawl.
     useEffect(() => {
-        if (!website) return undefined;
+        if (!botId) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                const docs = await getDocuments(botId);
+                if (cancelled) return;
+                if (Array.isArray(docs) && docs.length > 0) {
+                    setTrained(true);
+                    setPrecheck('trained');
+                } else {
+                    setPrecheck('fresh');
+                }
+            } catch {
+                // Best-effort — if we can't tell, treat it as a fresh bot and
+                // let the crawl run (the crawl itself is idempotent server-side).
+                if (!cancelled) setPrecheck('fresh');
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [botId]);
+
+    // Discover pages on arrival (fresh bots only), then DEFAULT-ALL: auto-start
+    // the crawl on every discovered page for momentum. "Customize" (during the
+    // feed) cancels and reveals the selection list. All setState happens
+    // post-await; auto-start is one-shot via autoStartRef.
+    useEffect(() => {
+        if (precheck !== 'fresh' || !website) return undefined;
         let cancelled = false;
         (async () => {
             try {
@@ -125,27 +168,30 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [website, botId, reloadKey]);
+    }, [precheck, website, botId, reloadKey]);
 
-    // On crawl completion: record + fetch verified seed questions.
+    // Latch completion the first time the crawl reports `done`. We snapshot the
+    // page count here because CrawlContext clears `crawl.result` when it resets
+    // the finished crawl back to idle — reading it later would show 0.
     useEffect(() => {
         if (started && crawl.status === 'done' && !doneFiredRef.current) {
             doneFiredRef.current = true;
-            recordActivationEvent('crawl_completed', {
-                botId,
-                eventData: { pages: crawl.result?.pages_processed ?? null },
-            });
+            const pages = crawl.result?.pages_processed ?? crawl.pagesCrawled ?? total ?? null;
+            setTrainedPages(pages);
+            setTrained(true);
+            recordActivationEvent('crawl_completed', { botId, eventData: { pages } });
         }
-    }, [started, crawl.status, crawl.result, botId]);
+    }, [started, crawl.status, crawl.result, crawl.pagesCrawled, total, botId]);
 
+    // Once trained (fresh crawl or precheck), fetch verified seed questions.
     useEffect(() => {
-        if (started && crawl.status === 'done' && seeds === null && !loadingSeeds && botId) {
+        if (trained && seeds === null && !loadingSeeds && botId) {
             setLoadingSeeds(true);
             getSeedQuestions(botId)
                 .then((qs) => setSeeds(Array.isArray(qs) ? qs : []))
                 .finally(() => setLoadingSeeds(false));
         }
-    }, [started, crawl.status, seeds, loadingSeeds, botId]);
+    }, [trained, seeds, loadingSeeds, botId]);
 
     const ask = (q) => {
         const question = (q ?? openQ).trim();
@@ -162,6 +208,8 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         setDiscovering(true);
         setDiscoverError(null);
         autoStartRef.current = false;
+        doneFiredRef.current = false;
+        setStarted(false);
         setReloadKey((k) => k + 1);
     };
 
@@ -184,18 +232,96 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         }
     };
 
+    // ---- Done: prove it (drives the widget preview on the right) ----
+    // Rendered off the local `trained` latch, NOT crawl.status, so it can't
+    // regress to the spinner when the global crawl state resets to idle.
+    if (trained) {
+        const chips = Array.isArray(seeds) ? seeds : [];
+        return (
+            <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-50 dark:bg-emerald-900/15 px-4 py-3">
+                    <span className="w-6 h-6 rounded-full grid place-items-center bg-emerald-500 text-white shrink-0">
+                        <Check size={13} strokeWidth={3} />
+                    </span>
+                    <p className="text-sm font-medium text-[var(--text)]">
+                        {trainedPages ? (
+                            <>
+                                Trained on {trainedPages} page{trainedPages === 1 ? '' : 's'}. Try it out →
+                            </>
+                        ) : (
+                            <>Your agent is trained on your site. Try it out →</>
+                        )}
+                    </p>
+                </div>
+
+                <p className="text-sm text-[var(--text-secondary)]">
+                    Ask your agent a question — it&rsquo;ll answer right in the preview, using your site.
+                </p>
+
+                {loadingSeeds ? (
+                    <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+                        <Loader2 size={15} className="animate-spin text-primary-500" /> Drafting a few questions to try…
+                    </div>
+                ) : chips.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                        {chips.map((q) => (
+                            <button
+                                key={q}
+                                type="button"
+                                onClick={() => ask(q)}
+                                disabled={sending}
+                                className={cn(
+                                    'px-3.5 py-2 rounded-full text-[13px] border transition-colors disabled:opacity-50',
+                                    'border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-secondary)]',
+                                    'hover:border-primary-500/50 hover:text-primary-600 dark:hover:text-primary-400'
+                                )}
+                            >
+                                {q}
+                            </button>
+                        ))}
+                    </div>
+                ) : null}
+
+                <div className="relative">
+                    <Input
+                        value={openQ}
+                        onChange={(e) => setOpenQ(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && ask()}
+                        placeholder={`Ask ${selectedBot?.company_name || 'your agent'} anything…`}
+                        aria-label="Ask your agent a question"
+                        className="pr-11"
+                        disabled={sending}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => ask()}
+                        disabled={sending || !openQ.trim()}
+                        aria-label="Send"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 grid h-7 w-7 place-items-center rounded-lg text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 transition-colors"
+                    >
+                        {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    </button>
+                </div>
+
+                <div>
+                    <Button size="lg" variant={askedCount > 0 ? 'primary' : 'outline'} className="self-start" onClick={() => onDone?.()}>
+                        {askedCount > 0 ? 'Looks great — continue' : 'Continue'} <ArrowRight size={16} />
+                    </Button>
+                </div>
+            </div>
+        );
+    }
+
     if (!website) {
         return <p className="text-sm text-rose-500">This agent has no website to learn from.</p>;
     }
 
-    // ---- Discovering ----
-    if (discovering) {
+    // ---- Preparing (precheck in flight) ----
+    if (precheck === 'pending') {
         return (
             <div className="flex items-center gap-3">
                 <Loader2 size={18} className="animate-spin text-primary-500" />
-                <p className="text-sm text-[var(--text-secondary)]">
-                    Scanning <span className="font-mono text-[var(--text)]">{host}</span> for pages…
-                </p>
+                <p className="text-sm text-[var(--text-secondary)]">Preparing your agent…</p>
             </div>
         );
     }
@@ -207,6 +333,18 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
                 <Button variant="outline" size="md" className="self-start" onClick={retry}>
                     <RefreshCw size={15} /> Try again
                 </Button>
+            </div>
+        );
+    }
+
+    // ---- Discovering ----
+    if (discovering) {
+        return (
+            <div className="flex items-center gap-3">
+                <Loader2 size={18} className="animate-spin text-primary-500" />
+                <p className="text-sm text-[var(--text-secondary)]">
+                    Scanning <span className="font-mono text-[var(--text)]">{host}</span> for pages…
+                </p>
             </div>
         );
     }
@@ -249,123 +387,52 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         );
     }
 
-    // ---- Crawling: productive activity feed ----
-    if (started && crawl.status !== 'done') {
-        if (crawl.status === 'failed' || crawl.status === 'cancelled') {
-            return (
-                <div className="flex flex-col gap-4">
-                    <p className="text-sm text-rose-500">{crawl.error || 'Training did not finish. You can try again.'}</p>
-                    <Button variant="outline" size="md" className="self-start" onClick={() => setCustomizing(true)}>
-                        <RefreshCw size={15} /> Choose pages
-                    </Button>
-                </div>
-            );
-        }
-        const denom = crawl.discoveredTotal || total || 0;
-        const pages = crawl.pagesCrawled || 0;
-        const brandDetected = (selectedBot?.recommended_colors || []).length > 0;
-        const feed = [
-            { done: true, label: `Found ${total} page${total === 1 ? '' : 's'} on ${host}` },
-            { done: pages > 0, label: pages > 0 ? `Reading your pages — ${pages}${denom ? ` of ${denom}` : ''}` : 'Reading your pages…' },
-            { done: brandDetected, label: brandDetected ? 'Brand style detected' : 'Detecting your brand…' },
-        ];
+    // ---- Crawl failed / cancelled ----
+    if (started && (crawl.status === 'failed' || crawl.status === 'cancelled')) {
         return (
             <div className="flex flex-col gap-4">
-                <div className="flex items-center gap-3">
-                    <Loader2 size={18} className="animate-spin text-primary-500" />
-                    <p className="text-sm font-medium text-[var(--text)]">{crawl.phase || 'Teaching your agent your site…'}</p>
-                </div>
-                {denom > 0 && <Progress value={pages} max={denom} color="primary" size="md" />}
-                <ul className="flex flex-col gap-2">
-                    {feed.map((f, i) => (
-                        <li key={i} className="flex items-center gap-2 text-[13px]">
-                            {f.done ? (
-                                <Check size={14} className="text-emerald-500 shrink-0" strokeWidth={3} />
-                            ) : (
-                                <Loader2 size={13} className="animate-spin text-[var(--text-muted)] shrink-0" />
-                            )}
-                            <span className={f.done ? 'text-[var(--text-secondary)]' : 'text-[var(--text-muted)]'}>{f.label}</span>
-                        </li>
-                    ))}
-                </ul>
-                {crawl.currentUrl && (
-                    <p className="font-mono text-[11px] text-[var(--text-muted)] truncate">{crawl.currentUrl}</p>
-                )}
-                <button type="button" onClick={openCustomize} className="self-start text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline underline-offset-2">
-                    Customize which pages
-                </button>
+                <p className="text-sm text-rose-500">{crawl.error || 'Training did not finish. You can try again.'}</p>
+                <Button variant="outline" size="md" className="self-start" onClick={() => setCustomizing(true)}>
+                    <RefreshCw size={15} /> Choose pages
+                </Button>
             </div>
         );
     }
 
-    // ---- Done: prove it (drives the widget preview on the right) ----
-    const chips = Array.isArray(seeds) ? seeds : [];
+    // ---- Crawling: productive activity feed ----
+    const denom = crawl.discoveredTotal || total || 0;
+    const pages = crawl.pagesCrawled || 0;
+    const brandDetected = (selectedBot?.recommended_colors || []).length > 0;
+    const feed = [
+        { done: true, label: `Found ${total} page${total === 1 ? '' : 's'} on ${host}` },
+        { done: pages > 0, label: pages > 0 ? `Reading your pages — ${pages}${denom ? ` of ${denom}` : ''}` : 'Reading your pages…' },
+        { done: brandDetected, label: brandDetected ? 'Brand style detected' : 'Detecting your brand…' },
+    ];
     return (
         <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-50 dark:bg-emerald-900/15 px-4 py-3">
-                <span className="w-6 h-6 rounded-full grid place-items-center bg-emerald-500 text-white shrink-0">
-                    <Check size={13} strokeWidth={3} />
-                </span>
-                <p className="text-sm font-medium text-[var(--text)]">
-                    Trained on {crawl.result?.pages_processed ?? crawl.pagesCrawled ?? 0} page
-                    {(crawl.result?.pages_processed ?? crawl.pagesCrawled) === 1 ? '' : 's'}. Try it out →
-                </p>
+            <div className="flex items-center gap-3">
+                <Loader2 size={18} className="animate-spin text-primary-500" />
+                <p className="text-sm font-medium text-[var(--text)]">{crawl.phase || 'Teaching your agent your site…'}</p>
             </div>
-
-            <p className="text-sm text-[var(--text-secondary)]">
-                Ask your agent a question — it&rsquo;ll answer right in the preview, using your site.
-            </p>
-
-            {loadingSeeds ? (
-                <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
-                    <Loader2 size={15} className="animate-spin text-primary-500" /> Drafting a few questions to try…
-                </div>
-            ) : chips.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                    {chips.map((q) => (
-                        <button
-                            key={q}
-                            type="button"
-                            onClick={() => ask(q)}
-                            disabled={sending}
-                            className={cn(
-                                'px-3.5 py-2 rounded-full text-[13px] border transition-colors disabled:opacity-50',
-                                'border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-secondary)]',
-                                'hover:border-primary-500/50 hover:text-primary-600 dark:hover:text-primary-400'
-                            )}
-                        >
-                            {q}
-                        </button>
-                    ))}
-                </div>
-            ) : null}
-
-            <div className="relative">
-                <Input
-                    value={openQ}
-                    onChange={(e) => setOpenQ(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && ask()}
-                    placeholder={`Ask ${selectedBot?.company_name || 'your agent'} anything…`}
-                    aria-label="Ask your agent a question"
-                    className="pr-11"
-                    disabled={sending}
-                />
-                <button
-                    type="button"
-                    onClick={() => ask()}
-                    disabled={sending || !openQ.trim()}
-                    aria-label="Send"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 grid h-7 w-7 place-items-center rounded-lg text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 transition-colors"
-                >
-                    {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                </button>
-            </div>
-
-            <div>
-                <Button size="lg" variant={askedCount > 0 ? 'primary' : 'outline'} className="self-start" onClick={() => onDone?.()}>
-                    {askedCount > 0 ? 'Looks great — continue' : 'Continue'} <ArrowRight size={16} />
-                </Button>
-            </div>
+            {denom > 0 && <Progress value={pages} max={denom} color="primary" size="md" />}
+            <ul className="flex flex-col gap-2">
+                {feed.map((f, i) => (
+                    <li key={i} className="flex items-center gap-2 text-[13px]">
+                        {f.done ? (
+                            <Check size={14} className="text-emerald-500 shrink-0" strokeWidth={3} />
+                        ) : (
+                            <Loader2 size={13} className="animate-spin text-[var(--text-muted)] shrink-0" />
+                        )}
+                        <span className={f.done ? 'text-[var(--text-secondary)]' : 'text-[var(--text-muted)]'}>{f.label}</span>
+                    </li>
+                ))}
+            </ul>
+            {crawl.currentUrl && (
+                <p className="font-mono text-[11px] text-[var(--text-muted)] truncate">{crawl.currentUrl}</p>
+            )}
+            <button type="button" onClick={openCustomize} className="self-start text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline underline-offset-2">
+                Customize which pages
+            </button>
         </div>
     );
 }

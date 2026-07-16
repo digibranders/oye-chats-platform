@@ -49,25 +49,19 @@ const nextjs = {
     description: 'App Router or Pages Router',
     getSteps: (botKey, env) => [
         {
-            title: 'Add the Script component to your root layout',
-            description:
-                'Open your root layout file (app/layout.tsx or pages/_app.tsx) and add the OyeChats widget using the next/script component.',
-            code: `import Script from 'next/script';
-
-export default function RootLayout({ children }) {
-  return (
-    <html lang="en">
-      <body>
-        {children}
-        <Script
-          src="${cdnUrl(env)}"
-          data-bot-key="${botKey}"
-          strategy="lazyOnload"
-        />
-      </body>
-    </html>
-  );
-}`,
+            title: 'Import next/script in your root layout',
+            description: 'At the top of your root layout file (app/layout.tsx or pages/_app.tsx), add this import.',
+            code: `import Script from 'next/script';`,
+            language: 'jsx',
+        },
+        {
+            title: 'Add the widget just before </body>',
+            description: 'Drop the OyeChats widget inside your <body>, right after {children}.',
+            code: `<Script
+  src="${cdnUrl(env)}"
+  data-bot-key="${botKey}"
+  strategy="lazyOnload"
+/>`,
             language: 'jsx',
         },
         {
