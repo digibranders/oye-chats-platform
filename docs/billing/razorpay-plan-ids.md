@@ -34,6 +34,10 @@ the full yearly charge at ~20% off monthly.
 | Professional Annual | `plan_TE3TU2vQsQJtHQ` | ₹13,428 | **Yearly** |
 
 ### Seed to a reset DB (Test)
+A fresh DB is built and seeded by `scripts/reset_and_seed.sh` (schema baseline →
+`seed_plans.py` → `seed_pricing_config.py` → `seed_superadmin.py`). That seeds the plan
+rows and pricing config but **not** the Razorpay IDs (they are per-environment). After it
+finishes, attach the Test IDs:
 ```bash
 cd api && uv run python scripts/set_razorpay_plan_ids.py \
   --starter-monthly      plan_TE3II9mLg0dQxp \
@@ -44,9 +48,8 @@ cd api && uv run python scripts/set_razorpay_plan_ids.py \
   --professional-annual  plan_TE3TU2vQsQJtHQ \
   --apply
 ```
-> ⚠️ The `--professional-*` flags **do not exist yet**. `scripts/set_razorpay_plan_ids.py` and the
-> `plans` table currently only model Starter + Standard. Extend both for the new **Professional**
-> tier before this seed will work.
+The `--professional-*` flags and the Professional plan row are both in place. The extra-seat
+add-on is configured via the `RAZORPAY_SEAT_PLAN_ID` env var (not a plan row).
 
 ---
 

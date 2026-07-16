@@ -298,7 +298,7 @@ def get_entitlements(
 # Everyone else (Free / Starter / custom slugs) sees leads without the
 # source badge and journey timeline. The Leads UI renders an upsell tile
 # in the same slot so the feature is discoverable without leaking data.
-LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "enterprise"})
+LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
 
 
 def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> bool:
