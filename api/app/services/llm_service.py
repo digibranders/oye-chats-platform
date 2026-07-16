@@ -345,7 +345,13 @@ def generate_response_checked(
     )
 
 
-def classify_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:
+def classify_brand_tone(
+    content_sample: str,
+    *,
+    metadata: dict | None = None,
+    timeout: float | None = None,
+    num_retries: int | None = None,
+) -> str | None:
     """Classify scraped website content into the closest brand-tone preset key.
 
     Returns a key from :data:`brand_tone.PRESET_KEYS` (e.g. ``"professional"``)
@@ -355,6 +361,11 @@ def classify_brand_tone(content_sample: str, *, metadata: dict | None = None) ->
     Uses the gate-tier model (AR-10): a constrained single-label classification,
     the same cheap-tier judging shape as the relevance gate. No cross-provider
     fallback — the try/except below fails safe (returns None) on any error.
+
+    ``timeout``/``num_retries`` override the default LLM budget. Interactive
+    request-path callers (the "detect tone" endpoint, where a user is waiting)
+    pass a tight bound so a slow model can't pin a worker thread for the full
+    ~180s worst case; background callers keep the generous default.
     """
     if not content_sample.strip():
         return None
@@ -380,8 +391,8 @@ Return ONLY the single preset key (e.g. "professional"), nothing else."""
         }
         _apply_model_family_kwargs(kwargs, _model)
         with langfuse_generation("brand-tone-classification", model=_model, prompt=prompt) as gen:
-            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
-            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
+            kwargs.setdefault("timeout", timeout if timeout is not None else _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", num_retries if num_retries is not None else _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
             raw = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=raw)

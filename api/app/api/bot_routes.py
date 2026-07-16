@@ -1637,7 +1637,10 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         if not sample.strip():
             raise HTTPException(status_code=400, detail="Crawl your website first to detect its tone.")
 
-        key = classify_brand_tone(sample)
+        # Bound the interactive wait: the user is watching a spinner, so cap the
+        # LLM budget (~20s × 1 retry) instead of the default ~180s worst case
+        # that could pin a Gunicorn worker thread under concurrent onboarders.
+        key = classify_brand_tone(sample, timeout=20, num_retries=1)
         if key is None:
             raise HTTPException(status_code=422, detail="Couldn't detect a tone; pick one manually.")
 
