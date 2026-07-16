@@ -8,7 +8,7 @@ import { Button } from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
 import { useBotContext } from '../../context/BotContext';
-import { previewChat } from '../../services/api';
+import { previewChatStream } from '../../services/api';
 import { MILESTONES, milestoneIndex, STUDIO_RESUME_KEY } from './studioMilestones';
 import ConnectStep from './steps/ConnectStep';
 import ProveStep from './steps/ProveStep';
@@ -133,24 +133,42 @@ export default function BuildStudio() {
     };
     const goNext = () => goTo(current + 1);
 
-    // Send a question into the widget preview and stream back a real cited answer.
+    // Send a question into the widget preview and STREAM back a real cited answer
+    // (same SSE path as the live widget) so the aha feels instant and faithful.
     const sendPreview = async (question) => {
         const q = (question || '').trim();
         const botId = selectedBot?.id;
         if (!q || previewPending || !botId) return;
         setPreviewMessages((m) => [...m, { role: 'user', text: q }]);
         setPreviewPending(true);
+        let streamed = '';
+        // Upsert the trailing bot bubble: append it on the first token (so no
+        // empty bubble flashes), then patch it as more text/sources arrive.
+        const upsertBot = (patch) =>
+            setPreviewMessages((m) => {
+                const copy = m.slice();
+                const last = copy[copy.length - 1];
+                if (last && last.role === 'bot') copy[copy.length - 1] = { ...last, ...patch };
+                else copy.push({ role: 'bot', text: '', sources: [], ...patch });
+                return copy;
+            });
         try {
-            const res = await previewChat(botId, q, previewSessionRef.current);
-            setPreviewMessages((m) => [
-                ...m,
-                { role: 'bot', text: res?.answer || '', sources: Array.isArray(res?.sources) ? res.sources : [] },
-            ]);
-        } catch (err) {
-            setPreviewMessages((m) => [
-                ...m,
-                { role: 'bot', text: err?.message || 'The agent could not answer that just now.', sources: [] },
-            ]);
+            await previewChatStream(botId, q, previewSessionRef.current, {
+                onChunk: (t) => {
+                    streamed += t;
+                    upsertBot({ text: streamed });
+                },
+                onFinal: (meta) => {
+                    const sources = Array.isArray(meta?.sources) ? meta.sources : [];
+                    if (!streamed) upsertBot({ text: 'The agent could not answer that just now.', sources: [] });
+                    else upsertBot({ text: streamed, sources });
+                },
+                onError: () => {
+                    // Keep any partial text that already streamed; only show the
+                    // fallback when nothing arrived at all.
+                    if (!streamed) upsertBot({ text: 'The agent could not answer that just now.', sources: [] });
+                },
+            });
         } finally {
             setPreviewPending(false);
         }

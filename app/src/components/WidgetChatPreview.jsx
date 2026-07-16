@@ -54,6 +54,11 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
     // Interactive mode: once a conversation exists, the message area shows the
     // real Q&A instead of the welcome overlay (Build Studio Prove step).
     const hasConversation = state === 'chat' && (messages.length > 0 || pending);
+    // Show the typing dots only while we're waiting for the FIRST token. Once the
+    // trailing bot bubble has streamed text, that bubble IS the "typing" — the
+    // dots would then double up beneath it.
+    const lastMsg = messages[messages.length - 1];
+    const showTyping = pending && !(lastMsg && lastMsg.role === 'bot' && lastMsg.text);
     const scrollRef = useRef(null);
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -164,7 +169,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                 </div>
                             )
                         )}
-                        {pending && (
+                        {showTyping && (
                             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-md bg-white border border-gray-100 px-3.5 py-2.5 self-start shadow-sm">
                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '0ms' }} />
                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '120ms' }} />
