@@ -62,8 +62,12 @@
 - [ ] **Team-member operator** (email is not a client) logs in → still reaches `/support`.
 - [ ] **Owner who is also a self-operator** logs in → lands on their dashboard as client (then can use the workspace switcher). Confirm this matches intent.
 
----
+### 1.5 Streamed preview  ⚠️ billing-sensitive — verify credits
+- [ ] In Prove, ask a question → the answer **streams token-by-token** into the widget preview (not all-at-once after a pause).
+- [ ] A slow first response no longer shows a false "could not answer" — text appears as it generates.
+- [ ] **Billing:** confirm a **preview** reply deducts **0 credits** (check the credit ledger / balance before & after), while a **real widget** reply (embed the widget, ask there) still deducts exactly **1**. Confirm the failed-generation **refund** still works for real widget replies and never fires for previews.
 
-## Not yet implemented (remaining Phase 1)
-- **1.5** Stream the Build Studio preview answer (SSE) — needs `/chat/stream` to support owner-preview + skip credits on the billing path, plus frontend SSE consumption.
-- **1.2** Fast-path crawl (latch "trained" after homepage+nav, background the rest) — crawl-orchestration change.
+### 1.2 Fast-path crawl
+- [ ] On a **large** site (50+ pages), the Prove step latches "trained" and lets you ask a question within ~20-30s (first embedded pages), **without** waiting for the whole crawl — the crawl toast keeps progressing in the background afterward.
+- [ ] **Billing:** confirm the crawl still charges pages **once** (no re-crawl / double charge) — this change only reorders URLs and latches earlier; it does not start a second crawl.
+- [ ] The homepage/nav pages are crawled first (early answers are representative).

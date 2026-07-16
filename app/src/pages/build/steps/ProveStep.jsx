@@ -31,6 +31,25 @@ function pathOf(url) {
     }
 }
 
+// Order URLs so the homepage + shallow nav pages are crawled (and therefore
+// embedded) FIRST. The fast-path early-latch trains on whatever lands first, so
+// prioritizing the most important pages makes the first proof representative.
+// Pure reordering — same set, same page count, so it never changes what's charged.
+function prioritizeUrls(urls) {
+    const depth = (u) => {
+        try {
+            return new URL(u).pathname.replace(/\/+$/, '').split('/').filter(Boolean).length;
+        } catch {
+            return 99;
+        }
+    };
+    return [...urls].sort((a, b) => depth(a) - depth(b) || a.length - b.length);
+}
+
+// A single embedded page is enough to start proving — the crawl keeps indexing
+// the rest in the background after we latch "trained".
+const FAST_PATH_MIN_DOCS = 1;
+
 /**
  * Prove milestone (Prove-it-first step 2) — the emotional peak. Discovers the
  * site, auto-crawls all pages (default-all + opt-in customize), narrates the
@@ -158,18 +177,19 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
                 const res = await discoverCrawlUrls(normalizeUrl(website), botId);
                 if (cancelled) return;
                 const found = Array.isArray(res?.urls) ? res.urls : [];
-                const totalFound = typeof res?.total_found === 'number' ? res.total_found : found.length;
-                setUrls(found);
+                const ordered = prioritizeUrls(found);
+                const totalFound = typeof res?.total_found === 'number' ? res.total_found : ordered.length;
+                setUrls(ordered);
                 setTotal(totalFound);
-                setSelected(new Set(found));
+                setSelected(new Set(ordered));
                 setDiscovering(false);
-                if (found.length === 0) {
+                if (ordered.length === 0) {
                     setDiscoverError('I couldn’t find any readable pages on that site. Check the URL and try again.');
                     return;
                 }
                 if (!autoStartRef.current) {
                     autoStartRef.current = true;
-                    beginCrawl(found, totalFound);
+                    beginCrawl(ordered, totalFound);
                 }
             } catch (err) {
                 if (cancelled) return;
@@ -195,6 +215,37 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
             recordActivationEvent('crawl_completed', { botId, eventData: { pages } });
         }
     }, [started, crawl.status, crawl.result, crawl.pagesCrawled, total, botId]);
+
+    // Fast path: latch "trained" as soon as the FIRST pages are embedded, rather
+    // than waiting for the entire site to finish. Streaming ingest embeds pages
+    // in waves, so documents appear within ~20-30s even on a large site; the user
+    // can prove immediately while the crawl keeps indexing the rest in the
+    // background. Safe because it's the same single crawl (no re-crawl / double
+    // charge). The done-latch above still fires later to record the final count.
+    useEffect(() => {
+        if (trained || !started || !botId) return undefined;
+        let cancelled = false;
+        const id = setInterval(async () => {
+            try {
+                const docs = await getDocuments(botId);
+                if (cancelled) return;
+                if (Array.isArray(docs) && docs.length >= FAST_PATH_MIN_DOCS) {
+                    setTrainedPages(crawl.pagesCrawled || null);
+                    setTrained(true);
+                    recordActivationEvent('trained_fast_path', { botId });
+                }
+            } catch {
+                // Keep waiting — the done-latch is the backstop if polling fails.
+            }
+        }, 4000);
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+        };
+        // crawl.pagesCrawled is read for a best-effort snapshot only; excluding it
+        // keeps the poll interval stable instead of resetting on every progress tick.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [trained, started, botId]);
 
     // Once trained (fresh crawl or precheck), fetch verified seed questions.
     useEffect(() => {
