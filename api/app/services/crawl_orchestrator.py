@@ -78,6 +78,20 @@ def _record_bot_crawl_state(bot_id: int | None, status: str, chunk_count: int | 
         logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
 
 
+def _terminal_status(total_chunks: int, existing_count: int) -> str:
+    """Decide a crawl's terminal status from new-chunk and existing-content counts.
+
+    ``no_content`` means the bot has NO usable knowledge after this crawl —
+    not merely that this particular crawl added nothing. A delta recrawl of an
+    unchanged site legitimately produces ``total_chunks == 0`` (SHA-256 dedup
+    skipped every page) while the bot still holds all its prior content; that
+    is a success, not a JS-render failure. Only report ``no_content`` when
+    both this crawl's new chunks and the bot's pre-existing indexed content
+    are zero.
+    """
+    return "done" if (total_chunks > 0 or existing_count > 0) else "no_content"
+
+
 def _precompute_seed_questions(bot_id: int | None) -> None:
     """Warm the bot's seed-question cache right after ingestion completes.
 
@@ -805,12 +819,30 @@ async def run_full_crawl(
         # A crawl that fetched pages but extracted zero readable text (common on
         # JS-rendered sites where the HTTP-only fetch never sees the hydrated
         # DOM) must NOT report success — there is no knowledge for the bot to
-        # answer from. Surface a distinct terminal status so the frontend can
-        # tell "trained" apart from "crawled nothing," and never latch the
-        # durable "trained" marker (see the ``chunk_count`` guard below and in
-        # ``_record_bot_crawl_state``).
-        crawl_status = "done" if total_chunks > 0 else "no_content"
-        if total_chunks == 0:
+        # answer from. But ``total_chunks == 0`` alone conflates two different
+        # things: a fresh crawl that genuinely found no readable content vs. a
+        # delta recrawl of an unchanged site where SHA-256 dedup skipped every
+        # page while the bot still holds all its prior content. Use the bot's
+        # real indexed document count as the ground truth — ``no_content`` only
+        # when the bot has NO usable knowledge at all, never latching the
+        # durable "trained" marker in that case (see the ``chunk_count`` guard
+        # in ``_record_bot_crawl_state``).
+        bot_content_count = 0
+        if total_chunks == 0 and bot_id is not None:
+            try:
+                from app.db.repository import count_documents_for_bot
+
+                with get_session() as _count_session:
+                    bot_content_count = count_documents_for_bot(_count_session, bot_id=bot_id)
+            except Exception:
+                logger.warning(
+                    "no_content check: failed to count documents for bot %s (treating as done)",
+                    bot_id,
+                    exc_info=True,
+                )
+                bot_content_count = 1  # fail safe toward "done" — never show a false no-content error
+        crawl_status = _terminal_status(total_chunks, bot_content_count)
+        if crawl_status == "no_content":
             result_payload["message"] = (
                 "We reached your pages but couldn't extract readable text to train on. "
                 "This often happens on sites that render content with JavaScript."
@@ -823,7 +855,7 @@ async def run_full_crawl(
             result=result_payload,
         )
         _record_bot_crawl_state(bot_id, crawl_status, total_chunks)
-        if total_chunks > 0:
+        if crawl_status == "done":
             # Warm the seed-question cache now (worker/background), so the Prove
             # step reads a cached value instead of paying LLM + embedding latency
             # live. Skipped for a no-content crawl — there's nothing to seed from.
@@ -833,7 +865,7 @@ async def run_full_crawl(
         # even if they navigated away. Best-effort — never fail the crawl on it.
         # Suppressed for zero-content: that isn't a "crawl completed
         # successfully" event and shouldn't read as one in the notification feed.
-        if total_chunks > 0:
+        if crawl_status == "done":
             try:
                 from app.services.notification_service import notify_crawl_completed
 
