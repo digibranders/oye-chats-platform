@@ -32,9 +32,9 @@ import {
  *      refresh or a fresh tab still picks up an existing crawl.
  *   4. Exposes startCrawl / cancelCrawl / dismissCrawl actions that work the
  *      same from any route.
- *   5. Holds onto terminal state (done / cancelled / failed) until the user
- *      dismisses it — so a brief navigation doesn't make the success toast
- *      disappear before they see it.
+ *   5. Holds onto terminal state (done / cancelled / failed / no_content)
+ *      until the user dismisses it — so a brief navigation doesn't make the
+ *      success toast disappear before they see it.
  */
 
 const POLL_INTERVAL_MS = 2000;
@@ -51,13 +51,19 @@ const IDLE_PROBE_INTERVAL_MS = 30000;
 // toast — that's the "toast every 30s" bug.
 const TERMINAL_HOLD_MS = 4000;
 
-const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'failed']);
+// 'no_content' is a terminal-but-not-successful outcome: the crawl fetched
+// pages but extracted zero readable text (e.g. a JS-rendered site the
+// HTTP-only fetch never sees hydrated). It must be treated as terminal here
+// — otherwise nothing ever calls resetToIdle for it and CrawlContext stays
+// pinned on 'no_content' forever while the server's 1h progress key keeps
+// echoing it back on every poll.
+const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'failed', 'no_content']);
 const ACTIVE_STATUSES = new Set(['running', 'cancelling']);
 
 const CrawlContext = createContext(null);
 
 const initialState = {
-    status: 'idle', // 'idle' | 'running' | 'cancelling' | 'cancelled' | 'done' | 'failed'
+    status: 'idle', // 'idle' | 'running' | 'cancelling' | 'cancelled' | 'done' | 'failed' | 'no_content'
     urls: [],
     pagesCrawled: 0,
     maxPages: null,
@@ -71,7 +77,7 @@ const initialState = {
     rootUrl: null, // domain we asked to crawl, kept across polls so the UI label is stable
     botId: null, // bot ownership for cancel calls
     botName: null, // display name of the owning bot (set client-side, never from server)
-    result: null, // populated on 'done' / 'cancelled'
+    result: null, // populated on 'done' / 'cancelled' / 'no_content'
     error: null, // populated on 'failed'
     cancellable: true,
     isStarting: false, // local state — true between startCrawl() and the first poll seeing 'running'
