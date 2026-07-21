@@ -42,11 +42,27 @@ export interface Workspace {
   bot_count?: number;
 }
 
-export interface DocumentSummary {
-  id: number;
-  title?: string;
-  source_url?: string;
+/** A knowledge source as returned by getDocuments — grouped by website or file. */
+export interface KnowledgeSource {
+  /** URL (website) or filename (document). */
+  name: string;
+  page_count?: number;
+  doc_page_count?: number;
   chunk_count?: number;
+  ingested_at?: string;
+  duration_seconds?: number;
+}
+
+export interface SourcePage {
+  url: string;
+  title?: string;
+}
+
+export interface SourcePagesResult {
+  domain?: string;
+  total_pages?: number;
+  total_chunks?: number;
+  pages: SourcePage[];
 }
 
 export type CrawlStatus =

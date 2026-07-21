@@ -1,38 +1,87 @@
-import { useEffect, useState } from 'react';
-import { FileText, CheckCircle2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { FileText, Link as LinkIcon, CheckCircle2, Upload, Loader2, Plus } from 'lucide-react';
 import { Card, StatusBadge, Skeleton, EmptyState } from '../../../design-system';
-import { getDocuments } from '../../../services/api';
+import { getDocuments, getDocumentPages, uploadDocuments } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
-import type { DocumentSummary } from '../../../types/domain';
+import type { KnowledgeSource, SourcePage } from '../../../types/domain';
+
+function isUrl(name: string): boolean {
+  return name.startsWith('http://') || name.startsWith('https://');
+}
+function toPath(url: string): string {
+  try {
+    const u = new URL(url);
+    return (u.pathname === '/' ? u.hostname : u.pathname) || url;
+  } catch {
+    return url;
+  }
+}
+function pageLabel(source: KnowledgeSource): string {
+  if (isUrl(source.name)) {
+    const n = source.page_count ?? 0;
+    return `${n} page${n === 1 ? '' : 's'}`;
+  }
+  const n = source.doc_page_count ?? source.chunk_count ?? 0;
+  const unit = source.doc_page_count != null ? 'page' : 'section';
+  return `${n} ${unit}${n === 1 ? '' : 's'}`;
+}
 
 /**
- * Step 5 — Knowledge Review. Shows what the agent actually learned (real
- * documents from getDocuments), so the user can confirm coverage before testing.
- * NEW vs. legacy, which showed only a page count.
+ * Step 5 — Knowledge Review. Shows the REAL sources the agent learned from
+ * (getDocuments), the pages under each website (getDocumentPages), and lets the
+ * user add more documents before testing.
  */
 export function ReviewStep(props: StepProps) {
   const { selectedBot } = useBotContext();
-  // `null` = not loaded yet. Loading is derived (no setState-in-effect).
-  const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
-  const loading = Boolean(selectedBot) && docs === null;
-  const sources = docs ?? [];
+  const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
+  const [pagesBySource, setPagesBySource] = useState<Record<string, SourcePage[]>>({});
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!selectedBot) return;
+    try {
+      const data = await getDocuments(selectedBot.id);
+      setSources(data);
+      const urlSources = data.filter((s) => isUrl(s.name));
+      const entries = await Promise.all(
+        urlSources.map(async (s) => {
+          try {
+            const res = await getDocumentPages(s.name, selectedBot.id);
+            return [s.name, res.pages] as const;
+          } catch {
+            return [s.name, [] as SourcePage[]] as const;
+          }
+        }),
+      );
+      setPagesBySource(Object.fromEntries(entries));
+    } catch {
+      setSources([]);
+    }
+  }, [selectedBot]);
 
   useEffect(() => {
-    if (!selectedBot) return;
-    let cancelled = false;
-    getDocuments(selectedBot.id)
-      .then((data) => {
-        if (!cancelled) setDocs(data);
-      })
-      .catch(() => {
-        if (!cancelled) setDocs([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedBot]);
+    void load();
+  }, [load]);
+
+  const handleFiles = async (fileList: FileList) => {
+    if (!selectedBot || fileList.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await uploadDocuments(Array.from(fileList), selectedBot.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const loading = Boolean(selectedBot) && sources === null;
+  const list = sources ?? [];
 
   return (
     <StepShell
@@ -46,46 +95,101 @@ export function ReviewStep(props: StepProps) {
       {loading ? (
         <div className="space-y-2">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-14 w-full" />
+            <Skeleton key={i} className="h-16 w-full" />
           ))}
         </div>
-      ) : sources.length === 0 ? (
-        <EmptyState
-          icon={FileText}
-          title="No sources yet"
-          description="Once training finishes, the pages your agent learned from will appear here."
-        />
       ) : (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-[13px] text-[var(--ds-success)]">
-            <CheckCircle2 size={16} />
-            <span className="font-medium">
-              Trained on {sources.length} source{sources.length === 1 ? '' : 's'}
-            </span>
-          </div>
-          <Card className="divide-y divide-[var(--ds-border)]">
-            {sources.slice(0, 12).map((doc) => (
-              <div key={doc.id} className="flex items-center gap-3 px-4 py-3">
-                <FileText size={16} className="shrink-0 text-[var(--ds-text-subtle)]" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                    {doc.title || doc.source_url || `Source #${doc.id}`}
-                  </p>
-                  {doc.chunk_count != null && (
-                    <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                      {doc.chunk_count} section{doc.chunk_count === 1 ? '' : 's'} learned
-                    </p>
-                  )}
-                </div>
-                <StatusBadge tone="success" dot>
-                  Ready
-                </StatusBadge>
+        <div className="space-y-4">
+          {list.length === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title="No sources yet"
+              description="Add a document below, or go back to connect a website."
+            />
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-[13px] text-[var(--ds-success)]">
+                <CheckCircle2 size={16} />
+                <span className="font-medium">
+                  Trained on {list.length} source{list.length === 1 ? '' : 's'}
+                </span>
               </div>
-            ))}
-          </Card>
-          <p className="text-[12px] text-[var(--ds-text-subtle)]">
-            Missing something? You can add more sources anytime from your agent's Knowledge tab.
-          </p>
+
+              {list.map((source) => {
+                const url = isUrl(source.name);
+                const pages = pagesBySource[source.name] ?? [];
+                return (
+                  <Card key={source.name} className="overflow-hidden">
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                        {url ? <LinkIcon size={15} /> : <FileText size={15} />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
+                          {source.name}
+                        </p>
+                        <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                          {url ? 'Website' : 'Document'} · {pageLabel(source)}
+                        </p>
+                      </div>
+                      <StatusBadge tone="success" dot>
+                        Ready
+                      </StatusBadge>
+                    </div>
+
+                    {url && pages.length > 0 && (
+                      <ul className="divide-y divide-[var(--ds-border)] border-t border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]/40">
+                        {pages.slice(0, 8).map((page) => (
+                          <li key={page.url} className="flex items-center gap-2.5 px-4 py-2 pl-14">
+                            <FileText size={13} className="shrink-0 text-[var(--ds-text-subtle)]" />
+                            <span className="truncate text-[12.5px] text-[var(--ds-text-muted)]">
+                              {page.title || toPath(page.url)}
+                            </span>
+                          </li>
+                        ))}
+                        {pages.length > 8 && (
+                          <li className="px-4 py-2 pl-14 text-[12px] text-[var(--ds-text-subtle)]">
+                            + {pages.length - 8} more page{pages.length - 8 === 1 ? '' : 's'}
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </Card>
+                );
+              })}
+            </>
+          )}
+
+          {/* Add more knowledge */}
+          <label className="block cursor-pointer">
+            <div className="flex items-center gap-3 rounded-xl border border-dashed border-[var(--ds-border)] px-4 py-3 transition-colors hover:border-[var(--ds-accent)]">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                {uploading ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-[var(--ds-text)]">
+                  {uploading ? 'Adding…' : 'Add more knowledge'}
+                </p>
+                <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                  Upload PDFs, docs or text to teach your agent more.
+                </p>
+              </div>
+              <Upload size={15} className="ml-auto shrink-0 text-[var(--ds-text-subtle)]" />
+            </div>
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.md,image/*"
+              className="hidden"
+              disabled={uploading}
+              onChange={(event) => {
+                if (event.target.files) handleFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+          </label>
+
+          {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
         </div>
       )}
     </StepShell>

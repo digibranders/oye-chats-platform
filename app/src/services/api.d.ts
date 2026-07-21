@@ -3,7 +3,13 @@
  * The `.js` stays the runtime source; this only supplies types to new TS code.
  * Only the exports the new app consumes are declared — widen as needed.
  */
-import type { Bot, CurrentUser, DocumentSummary, Workspace } from '../types/domain';
+import type {
+  Bot,
+  CurrentUser,
+  KnowledgeSource,
+  SourcePagesResult,
+  Workspace,
+} from '../types/domain';
 
 export function createBot(data: { name: string; website?: string; system_prompt?: string }): Promise<Bot>;
 export function updateBot(botId: number, data: Record<string, unknown>): Promise<Bot>;
@@ -14,7 +20,8 @@ export function discoverCrawlUrls(
   url: string,
   botId?: number,
 ): Promise<{ url: string; total_found: number; capped: boolean; plan_max: number }>;
-export function getDocuments(botId?: number): Promise<DocumentSummary[]>;
+export function getDocuments(botId?: number): Promise<KnowledgeSource[]>;
+export function getDocumentPages(source: string, botId?: number): Promise<SourcePagesResult>;
 
 export function getSeedQuestions(botId: number): Promise<string[]>;
 export function previewChatStream(
