@@ -57,6 +57,7 @@ async def task_crawl_and_ingest(
     concurrency: int | None = None,
     ordered_urls: list[str] | None = None,
     force_reingest: bool = False,
+    lock_token: str | None = None,
     **_unused_kwargs,
 ) -> dict:
     """Run a full website crawl + ingestion pipeline in the background.
@@ -104,6 +105,10 @@ async def task_crawl_and_ingest(
         concurrency=concurrency,
         ordered_urls=ordered_urls,
         force_reingest=force_reingest,
+        # Ownership token for the per-client crawl lock: the orchestrator's
+        # finally block releases with it so only this run can free the lock.
+        # ``None`` for jobs enqueued by an older API node (rolling-deploy safe).
+        lock_token=lock_token,
         # Stable across ARQ retries → per-page charge idempotency (finding H).
         crawl_job_id=ctx.get("job_id"),
     )

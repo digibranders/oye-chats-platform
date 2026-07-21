@@ -1088,7 +1088,8 @@ async def crawl_endpoint(
     # process see the same state. SETNX with TTL means a crashed holder
     # eventually frees the lock automatically. The lock is released by
     # ``run_full_crawl``'s finally block, regardless of which process runs it.
-    if not acquire_crawl_lock(client_id):
+    lock_token = acquire_crawl_lock(client_id)
+    if lock_token is None:
         raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
 
     # Clear any leftover cancel flag from a PREVIOUS crawl before this one runs.
@@ -1132,6 +1133,7 @@ async def crawl_endpoint(
                 plan_concurrency,
                 ordered_urls=ordered_urls,
                 force_reingest=force_reingest,
+                lock_token=lock_token,
             )
             job_id = job.job_id if job is not None else None
             logger.info(
@@ -1162,6 +1164,7 @@ async def crawl_endpoint(
                 concurrency=plan_concurrency,
                 ordered_urls=ordered_urls,
                 force_reingest=force_reingest,
+                lock_token=lock_token,
             )
             logger.info(
                 "Crawl scheduled inline (WORKER_ENABLED=false) for client %s (plan=%s, pages=%d, depth=%d)",
@@ -1172,8 +1175,9 @@ async def crawl_endpoint(
             )
     except Exception as exc:
         # Enqueue failed before the orchestrator could take ownership of the
-        # lock — release it here so the user isn't locked out indefinitely.
-        release_crawl_lock(client_id)
+        # lock — release it here (ownership-checked with our token) so the user
+        # isn't locked out indefinitely.
+        release_crawl_lock(client_id, lock_token)
         set_crawl_progress(client_id, status="failed", error="Failed to start crawl.")
         logger.exception("Failed to enqueue crawl for client %s: %s", client_id, exc)
         raise HTTPException(status_code=503, detail="Could not start crawl. Please try again.") from exc

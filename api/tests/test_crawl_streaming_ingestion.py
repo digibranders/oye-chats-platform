@@ -32,7 +32,7 @@ def harness(monkeypatch):
     production.
     """
     monkeypatch.setattr(orch, "crawl_heartbeat", _noop_heartbeat)
-    monkeypatch.setattr(orch, "release_crawl_lock", lambda cid: None)
+    monkeypatch.setattr(orch, "release_crawl_lock", lambda *a, **k: None)
     progress: list[dict] = []
     monkeypatch.setattr(orch, "set_crawl_progress", lambda cid, **kw: progress.append(kw))
 

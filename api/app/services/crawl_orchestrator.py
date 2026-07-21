@@ -314,6 +314,7 @@ async def run_full_crawl(
     ordered_urls: list[str] | None = None,
     force_reingest: bool = False,
     crawl_job_id: str | None = None,
+    lock_token: str | None = None,
 ) -> dict:
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
@@ -959,4 +960,7 @@ async def run_full_crawl(
             footer_task.cancel()
             with contextlib.suppress(BaseException):
                 await footer_task
-        release_crawl_lock(client_id)
+        # Ownership-checked release: only frees the lock if this run still owns
+        # it. ``lock_token=None`` (job enqueued by an older API node during a
+        # rolling deploy) falls back to the legacy unconditional delete.
+        release_crawl_lock(client_id, lock_token)

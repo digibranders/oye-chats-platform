@@ -186,7 +186,8 @@ async def recrawl_bot(bot_id: int) -> dict:
     # double-ingests the same URLs → duplicate chunks that permanently
     # degrade retrieval (there is no unique index on Document to catch it at
     # the DB layer).
-    if not acquire_crawl_lock(client_id):
+    lock_token = acquire_crawl_lock(client_id, kind="recrawl")
+    if lock_token is None:
         logger.info(
             "recrawl_bot: a crawl is already in progress for client %s (bot %s) — skipping this cycle",
             client_id,
@@ -251,7 +252,7 @@ async def recrawl_bot(bot_id: int) -> dict:
         _persist_summary(bot_id, summary, status, now)
         return {"status": status, **summary}
     finally:
-        release_crawl_lock(client_id)
+        release_crawl_lock(client_id, lock_token)
 
 
 def _persist_summary(bot_id: int, summary: dict, status: str, now: datetime) -> None:

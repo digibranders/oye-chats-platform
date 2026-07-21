@@ -88,7 +88,9 @@ def test_lock_held_skips_without_ingest_or_reschedule(db, monkeypatch):
     _, bot, original_next = _mk_recrawlable_bot(db, "rc-lock-held")
 
     monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
-    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id: False)
+    # Lock already held → acquire returns None (the new ownership-aware API
+    # returns a token string on success, None on contention).
+    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id, **kw: None)
 
     ingest_calls: list[tuple] = []
     monkeypatch.setattr(
@@ -112,10 +114,16 @@ def test_lock_free_runs_and_releases(db, monkeypatch):
     _, bot, _ = _mk_recrawlable_bot(db, "rc-lock-free")
 
     monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
-    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id: True)
+    # Lock free → acquire hands back an ownership token; the finally must
+    # release with that exact token.
+    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id, **kw: "recrawl:tok-free")
 
-    released: list[int] = []
-    monkeypatch.setattr(recrawl_service, "release_crawl_lock", lambda client_id: released.append(client_id))
+    released: list[tuple[int, str | None]] = []
+    monkeypatch.setattr(
+        recrawl_service,
+        "release_crawl_lock",
+        lambda client_id, token=None: released.append((client_id, token)),
+    )
 
     async def _fake_fetch(urls, **kw):
         return {"results": [{"url": "https://a.test/page1", "content": "fresh content"}]}
@@ -132,17 +140,22 @@ def test_lock_free_runs_and_releases(db, monkeypatch):
     assert result["status"] in {"success", "partial", "failed"}
     assert result["status"] != "skipped"
     db.refresh(bot)
-    assert released == [bot.client_id]
+    # Released exactly once, with the token acquire handed back (ownership-checked).
+    assert released == [(bot.client_id, "recrawl:tok-free")]
 
 
 def test_lock_released_on_ingest_failure(db, monkeypatch):
     _, bot, _ = _mk_recrawlable_bot(db, "rc-lock-fail")
 
     monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
-    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id: True)
+    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id, **kw: "recrawl:tok-fail")
 
-    released: list[int] = []
-    monkeypatch.setattr(recrawl_service, "release_crawl_lock", lambda client_id: released.append(client_id))
+    released: list[tuple[int, str | None]] = []
+    monkeypatch.setattr(
+        recrawl_service,
+        "release_crawl_lock",
+        lambda client_id, token=None: released.append((client_id, token)),
+    )
 
     async def _fake_fetch(urls, **kw):
         return {"results": [{"url": "https://a.test/page1", "content": "fresh content"}]}
@@ -160,4 +173,4 @@ def test_lock_released_on_ingest_failure(db, monkeypatch):
 
     assert result is not None
     db.refresh(bot)
-    assert released == [bot.client_id]
+    assert released == [(bot.client_id, "recrawl:tok-fail")]
