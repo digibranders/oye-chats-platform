@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { Button, Input, Modal } from '../../../design-system';
 import { useCurrency } from '../../../context/CurrencyContext';
@@ -33,6 +33,14 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
+  // Keep the latest account country in a ref so the fetch effect can seed the
+  // form with it WITHOUT depending on it. Depending on `acctCountry` would
+  // re-run the effect (and re-seed the form) when /geo resolves mid-edit,
+  // silently wiping whatever the user has already typed.
+  const acctCountryRef = useRef(acctCountry);
+  acctCountryRef.current = acctCountry;
+
+  // Fetch + seed once per open transition only.
   useEffect(() => {
     if (!open) return undefined;
     let cancelled = false;
@@ -44,7 +52,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
         if (cancelled) return;
         const raw = (data as BillingDetailsRaw) ?? null;
         setDetails(raw);
-        setForm(detailsToForm(raw, acctCountry));
+        setForm(detailsToForm(raw, acctCountryRef.current));
       })
       .catch((err: unknown) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Failed to load billing details');
@@ -55,7 +63,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
     return () => {
       cancelled = true;
     };
-  }, [open, acctCountry]);
+  }, [open]);
 
   const setField =
     (key: keyof BillingDetailsForm) =>

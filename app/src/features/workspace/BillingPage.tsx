@@ -263,6 +263,7 @@ export function BillingPage(): ReactElement {
           currentBillingCycle={(subscription?.billingCycle as BillingCycle) ?? 'monthly'}
           hasActiveSubscription={Boolean(subscription?.hasActive)}
           trialEndIso={subscription?.trialEnd ?? null}
+          dataRetentionUntilIso={subscription?.dataRetentionUntil ?? null}
           initialSlug={planModal.initialSlug}
           onSuccess={handleSuccess}
         />

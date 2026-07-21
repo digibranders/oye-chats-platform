@@ -129,12 +129,18 @@ export function PlanModal({
     setAppliedCode(null);
     setDiscountPct(0);
 
-    getReferralStatus().then((rs) => {
-      if (cancelled || !rs?.attributed) return;
-      setReferralStatus('applied');
-      setAppliedCode(rs.code ?? null);
-      setDiscountPct(Number(rs.discount_pct) || 0);
-    });
+    // Standing attribution is optional — a flaky /referrals/status must never
+    // become an unhandled rejection (the modal works fine without it).
+    getReferralStatus()
+      .then((rs) => {
+        if (cancelled || !rs?.attributed) return;
+        setReferralStatus('applied');
+        setAppliedCode(rs.code ?? null);
+        setDiscountPct(Number(rs.discount_pct) || 0);
+      })
+      .catch(() => {
+        /* no standing referral / endpoint unavailable — ignore */
+      });
 
     Promise.all([getSubscriptionPlans(), getBillingGeo().catch(() => null)])
       .then(([rows, geoProfile]) => {
@@ -254,8 +260,15 @@ export function PlanModal({
       const status = String(res?.status || '').toLowerCase();
 
       if (provider === 'razorpay' && res?.subscription_id) {
+        if (!res.key_id) {
+          setSubmitError('Checkout is temporarily unavailable. Please try again in a moment.');
+          return;
+        }
+        // Stage 1 — the charge/authorisation. A throw here means the payment did
+        // NOT go through (dismissed, card declined); safe to surface as an error.
+        let cb: Awaited<ReturnType<typeof openRazorpayCheckout>>;
         try {
-          const cb = await openRazorpayCheckout({
+          cb = await openRazorpayCheckout({
             key: String(res.key_id),
             subscription_id: String(res.subscription_id),
             name: res.name as string | undefined,
@@ -264,18 +277,6 @@ export function PlanModal({
             theme: res.theme as Record<string, unknown> | undefined,
             method: { card: true, upi: true },
           });
-          await verifyRazorpaySubscription({
-            razorpay_payment_id: cb.razorpay_payment_id,
-            razorpay_subscription_id: cb.razorpay_subscription_id || String(res.subscription_id),
-            razorpay_signature: cb.razorpay_signature,
-          });
-          onSuccess?.(
-            hasActiveSubscription
-              ? `Your plan changed to ${selected.name}.`
-              : `You’re now subscribed to ${selected.name}.`,
-          );
-          onClose();
-          return;
         } catch (cbErr: unknown) {
           if ((cbErr as { code?: string })?.code === 'dismissed') {
             setSubmitNotice('Payment cancelled — you have not been charged.');
@@ -283,6 +284,33 @@ export function PlanModal({
           }
           throw cbErr;
         }
+
+        // Stage 2 — server-side signature verification. The customer has ALREADY
+        // been charged by this point, so a failure here must NOT read as a
+        // payment error. The activation webhook is the authoritative reconciler;
+        // reassure and let the reloaded page reflect the new plan once it lands.
+        try {
+          await verifyRazorpaySubscription({
+            razorpay_payment_id: cb.razorpay_payment_id,
+            razorpay_subscription_id: cb.razorpay_subscription_id || String(res.subscription_id),
+            razorpay_signature: cb.razorpay_signature,
+          });
+        } catch {
+          setSubmitNotice(
+            'Payment received — we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
+          );
+          onSuccess?.('Payment received — finalising your subscription.');
+          onClose();
+          return;
+        }
+
+        onSuccess?.(
+          hasActiveSubscription
+            ? `Your plan changed to ${selected.name}.`
+            : `You’re now subscribed to ${selected.name}.`,
+        );
+        onClose();
+        return;
       }
 
       if (status === 'switched') {

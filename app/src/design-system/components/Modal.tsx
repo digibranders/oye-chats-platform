@@ -42,6 +42,27 @@ const SIZE_CLASS: Record<ModalSize, string> = {
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
+// Body scroll-lock is ref-counted across every open Modal instance so that
+// closing one dialog while another is still open does NOT prematurely restore
+// scrolling (each instance restoring its own snapshot would race).
+let scrollLockCount = 0;
+let scrollLockPrevOverflow = '';
+
+function acquireScrollLock(): void {
+  if (scrollLockCount === 0) {
+    scrollLockPrevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+  }
+  scrollLockCount += 1;
+}
+
+function releaseScrollLock(): void {
+  scrollLockCount = Math.max(0, scrollLockCount - 1);
+  if (scrollLockCount === 0) {
+    document.body.style.overflow = scrollLockPrevOverflow;
+  }
+}
+
 /**
  * Modal — the design-system dialog shell (mandate shared component). Renders
  * into a portal with a scrim, an accessible `role="dialog" aria-modal` surface,
@@ -75,8 +96,7 @@ export function Modal({
   useEffect(() => {
     if (!open) return undefined;
     restoreFocusRef.current = document.activeElement as HTMLElement | null;
-    const { overflow } = document.body.style;
-    document.body.style.overflow = 'hidden';
+    acquireScrollLock();
 
     // Focus the first focusable node (or the panel itself) after paint.
     const raf = requestAnimationFrame(() => {
@@ -88,7 +108,7 @@ export function Modal({
 
     return () => {
       cancelAnimationFrame(raf);
-      document.body.style.overflow = overflow;
+      releaseScrollLock();
       restoreFocusRef.current?.focus?.();
     };
   }, [open]);

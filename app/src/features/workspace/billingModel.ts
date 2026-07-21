@@ -73,6 +73,8 @@ export interface SubscriptionView {
   seats: number;
   trialEnd: string | null;
   currentPeriodEnd: string | null;
+  /** Post-trial grace deadline after which the workspace is deleted (trial_expired only). */
+  dataRetentionUntil: string | null;
   paymentProvider: string | null;
   cancelAtPeriodEnd: boolean;
   scheduledChange: ScheduledChangeView | null;
@@ -144,6 +146,7 @@ export function buildSubscription(raw: unknown): SubscriptionView {
     seats: record ? toNumber(record.operator_quantity) : 0,
     trialEnd: record ? toOptionalText(record.trial_end) : null,
     currentPeriodEnd: record ? toOptionalText(record.current_period_end) : null,
+    dataRetentionUntil: record ? toOptionalText(record.data_retention_until) : null,
     paymentProvider: record ? toOptionalText(record.payment_provider) : null,
     cancelAtPeriodEnd: record ? toBool(record.cancel_at_period_end) : false,
     scheduledChange: scheduledRaw

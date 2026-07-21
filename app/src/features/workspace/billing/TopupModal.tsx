@@ -85,6 +85,12 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
     setError('');
     try {
       const result = (await initiateTopup(amount, { botId })) as Record<string, unknown>;
+      // Fail fast on a malformed order payload instead of opening Razorpay with
+      // "undefined"/NaN, which would present the customer a broken checkout.
+      if (!result.key_id || !result.order_id || !result.amount) {
+        setError('Checkout is temporarily unavailable. Please try again in a moment.');
+        return;
+      }
       const response = await openRazorpayCheckout({
         key: String(result.key_id),
         order_id: String(result.order_id),
@@ -155,7 +161,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {packs.map((pack) => {
+          {packs.map((pack, idx) => {
             const amount = Number(pack.amount ?? pack.usd ?? 0);
             const shownAmount = isInr ? amount : Number(pack.display_amount ?? amount);
             const shownCurrency = isInr
@@ -166,7 +172,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
             const perK = pricePerKCredits(shownAmount, pack.credits);
             return (
               <button
-                key={amount}
+                key={`${amount}-${pack.credits}-${idx}`}
                 type="button"
                 onClick={() => handleBuy(pack)}
                 disabled={submitting || submittingPack !== null}
