@@ -9,8 +9,9 @@ import {
   Plus,
   Globe,
   X,
+  ChevronDown,
 } from 'lucide-react';
-import { Progress, Card, StatusBadge, Input, Button } from '../../../design-system';
+import { Progress, Card, StatusBadge, Input, Button, cn } from '../../../design-system';
 import {
   getDocuments,
   getDocumentPages,
@@ -61,6 +62,7 @@ export function KnowledgeStep(props: StepProps) {
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [pagesBySource, setPagesBySource] = useState<Record<string, SourcePage[]>>({});
   const [drawerSource, setDrawerSource] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -285,26 +287,58 @@ export function KnowledgeStep(props: StepProps) {
         {list.map((source) => {
           const url = isUrl(source.name);
           const pages = pagesBySource[source.name] ?? [];
+          // Website cards with pages are collapsible. A lone source starts
+          // expanded; with several sources they start collapsed for compactness.
+          const collapsible = url && pages.length > 0;
+          const isOpen = collapsible && (expanded[source.name] ?? list.length === 1);
+          const toggle = () =>
+            setExpanded((prev) => ({
+              ...prev,
+              [source.name]: !(prev[source.name] ?? list.length === 1),
+            }));
+
+          const header = (
+            <>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                {url ? <LinkIcon size={15} /> : <FileText size={15} />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
+                  {source.name}
+                </p>
+                <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                  {url ? 'Website' : 'Document'} · {pageLabel(source)}
+                </p>
+              </div>
+              <StatusBadge tone="success" dot>
+                Ready
+              </StatusBadge>
+            </>
+          );
+
           return (
             <Card key={source.name} className="overflow-hidden">
-              <div className="flex items-center gap-3 px-4 py-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                  {url ? <LinkIcon size={15} /> : <FileText size={15} />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-                    {source.name}
-                  </p>
-                  <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                    {url ? 'Website' : 'Document'} · {pageLabel(source)}
-                  </p>
-                </div>
-                <StatusBadge tone="success" dot>
-                  Ready
-                </StatusBadge>
-              </div>
+              {collapsible ? (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-expanded={isOpen}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--ds-bg-hover)]"
+                >
+                  {header}
+                  <ChevronDown
+                    size={16}
+                    className={cn(
+                      'shrink-0 text-[var(--ds-text-subtle)] transition-transform',
+                      isOpen && 'rotate-180',
+                    )}
+                  />
+                </button>
+              ) : (
+                <div className="flex items-center gap-3 px-4 py-3">{header}</div>
+              )}
 
-              {url && pages.length > 0 && (
+              {isOpen && (
                 <ul className="divide-y divide-[var(--ds-border)] border-t border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]/40">
                   {pages.slice(0, 6).map((page, idx) => (
                     <li key={`${page.url}-${idx}`} className="px-4 py-2 pl-14">
