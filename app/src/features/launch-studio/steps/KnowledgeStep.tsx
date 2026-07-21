@@ -7,18 +7,29 @@ import {
   AlertTriangle,
   Upload,
   Plus,
+  Globe,
+  X,
 } from 'lucide-react';
-import { Progress, Card, StatusBadge } from '../../../design-system';
-import { getDocuments, getDocumentPages, uploadDocuments } from '../../../services/api';
+import { Progress, Card, StatusBadge, Input, Button } from '../../../design-system';
+import {
+  getDocuments,
+  getDocumentPages,
+  uploadDocuments,
+  discoverCrawlUrls,
+} from '../../../services/api';
 import { useCrawl } from '../../../context/CrawlContext';
+import type { StartCrawlOptions } from '../../../context/CrawlContext';
 import { useBotContext } from '../../../context/BotContext';
 import { StepShell } from '../StepShell';
 import { PagesDrawer } from '../PagesDrawer';
 import type { StepProps } from '../steps.config';
-import type { KnowledgeSource, SourcePage } from '../../../types/domain';
+import type { KnowledgeSource, SourcePage, CrawlDiscovery } from '../../../types/domain';
 
 function isUrl(name: string): boolean {
   return name.startsWith('http://') || name.startsWith('https://');
+}
+function normalizeUrl(value: string): string {
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 function toPath(url: string): string {
   try {
@@ -44,7 +55,7 @@ function pageLabel(source: KnowledgeSource): string {
  * "view all pages" drawer.
  */
 export function KnowledgeStep(props: StepProps) {
-  const { crawl } = useCrawl();
+  const { crawl, startCrawl } = useCrawl();
   const { selectedBot } = useBotContext();
 
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
@@ -52,6 +63,12 @@ export function KnowledgeStep(props: StepProps) {
   const [drawerSource, setDrawerSource] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Add-a-website sub-flow
+  const [showAddSite, setShowAddSite] = useState(false);
+  const [siteUrl, setSiteUrl] = useState('');
+  const [siteEstimate, setSiteEstimate] = useState<CrawlDiscovery | null>(null);
+  const [siteBusy, setSiteBusy] = useState(false);
 
   const crawlRunning = crawl.status === 'running' || crawl.status === 'cancelling';
   const crawlFailed = crawl.status === 'failed' || crawl.status === 'no_content';
@@ -109,6 +126,39 @@ export function KnowledgeStep(props: StepProps) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDiscoverSite = async () => {
+    if (!selectedBot || !siteUrl.trim()) return;
+    setSiteBusy(true);
+    setError(null);
+    try {
+      const res = await discoverCrawlUrls(normalizeUrl(siteUrl.trim()), selectedBot.id);
+      setSiteEstimate(res);
+    } catch {
+      setSiteEstimate({ total_found: 0, capped: false });
+    } finally {
+      setSiteBusy(false);
+    }
+  };
+
+  const handleAddSite = async () => {
+    if (!selectedBot || !siteEstimate) return;
+    setSiteBusy(true);
+    setError(null);
+    try {
+      const site = normalizeUrl(siteUrl.trim());
+      const opts: StartCrawlOptions = { url: site, botId: selectedBot.id, botName: selectedBot.name };
+      if (siteEstimate.total_found > 0) opts.discoveredTotal = siteEstimate.total_found;
+      await startCrawl(opts);
+      setShowAddSite(false);
+      setSiteUrl('');
+      setSiteEstimate(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't start crawl. Please try again.");
+    } finally {
+      setSiteBusy(false);
     }
   };
 
@@ -218,6 +268,20 @@ export function KnowledgeStep(props: StepProps) {
           </span>
         </div>
 
+        {crawlRunning && (
+          <Card className="flex items-center gap-3 p-4">
+            <Loader2 size={16} className="shrink-0 animate-spin text-[var(--ds-accent)]" />
+            <p className="text-[13px] text-[var(--ds-text-muted)]">
+              Adding pages from{' '}
+              <span className="font-medium text-[var(--ds-text)]">
+                {crawl.rootUrl || 'your new site'}
+              </span>
+              … {crawl.pagesCrawled}
+              {crawl.discoveredTotal ? ` of ${crawl.discoveredTotal}` : ''} pages
+            </p>
+          </Card>
+        )}
+
         {list.map((source) => {
           const url = isUrl(source.name);
           const pages = pagesBySource[source.name] ?? [];
@@ -270,33 +334,112 @@ export function KnowledgeStep(props: StepProps) {
         })}
 
         {/* Add more knowledge */}
-        <label className="block cursor-pointer">
-          <div className="flex items-center gap-3 rounded-xl border border-dashed border-[var(--ds-border)] px-4 py-3 transition-colors hover:border-[var(--ds-accent)]">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-              {uploading ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+        <div className="space-y-2">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
+            Add more knowledge
+          </p>
+
+          {/* Add a website */}
+          {showAddSite ? (
+            <Card className="space-y-3 p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium text-[var(--ds-text)]">Add a website</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddSite(false);
+                    setSiteUrl('');
+                    setSiteEstimate(null);
+                  }}
+                  aria-label="Cancel"
+                  className="text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)]"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="relative">
+                <Globe
+                  size={16}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ds-text-subtle)]"
+                />
+                <Input
+                  value={siteUrl}
+                  onChange={(e) => {
+                    setSiteUrl(e.target.value);
+                    setSiteEstimate(null);
+                  }}
+                  placeholder="docs.yoursite.com"
+                  className="pl-9"
+                  autoFocus
+                />
+              </div>
+              {siteEstimate ? (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                    {siteEstimate.total_found > 0
+                      ? `${siteEstimate.total_found.toLocaleString()}${siteEstimate.capped ? '+' : ''} pages · ~${(siteEstimate.total_found * (siteEstimate.cost_per_page ?? 1)).toLocaleString()} credits`
+                      : "We'll follow links from the homepage."}
+                  </p>
+                  <Button size="sm" onClick={handleAddSite} disabled={siteBusy}>
+                    {siteBusy ? 'Starting…' : 'Crawl'}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDiscoverSite}
+                  disabled={siteBusy || !siteUrl.trim()}
+                >
+                  {siteBusy ? 'Checking…' : 'Check pages'}
+                </Button>
+              )}
+            </Card>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddSite(true)}
+              className="flex w-full items-center gap-3 rounded-xl border border-dashed border-[var(--ds-border)] px-4 py-3 text-left transition-colors hover:border-[var(--ds-accent)]"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                <Globe size={15} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-[var(--ds-text)]">Add a website</p>
+                <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                  Crawl another site or subdomain.
+                </p>
+              </div>
+            </button>
+          )}
+
+          {/* Upload documents */}
+          <label className="block cursor-pointer">
+            <div className="flex items-center gap-3 rounded-xl border border-dashed border-[var(--ds-border)] px-4 py-3 transition-colors hover:border-[var(--ds-accent)]">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-[var(--ds-text)]">
+                  {uploading ? 'Adding…' : 'Upload documents'}
+                </p>
+                <p className="text-[12px] text-[var(--ds-text-subtle)]">PDFs, docs or text.</p>
+              </div>
+              <Plus size={15} className="ml-auto shrink-0 text-[var(--ds-text-subtle)]" />
             </div>
-            <div className="min-w-0">
-              <p className="text-[13px] font-medium text-[var(--ds-text)]">
-                {uploading ? 'Adding…' : 'Add more knowledge'}
-              </p>
-              <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                Upload PDFs, docs or text to teach your agent more.
-              </p>
-            </div>
-            <Upload size={15} className="ml-auto shrink-0 text-[var(--ds-text-subtle)]" />
-          </div>
-          <input
-            type="file"
-            multiple
-            accept=".pdf,.doc,.docx,.txt,.md,image/*"
-            className="hidden"
-            disabled={uploading}
-            onChange={(event) => {
-              if (event.target.files) handleFiles(event.target.files);
-              event.target.value = '';
-            }}
-          />
-        </label>
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.md,image/*"
+              className="hidden"
+              disabled={uploading}
+              onChange={(event) => {
+                if (event.target.files) handleFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+          </label>
+        </div>
 
         {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
       </div>

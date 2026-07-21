@@ -39,7 +39,7 @@ function sliceForCrawl(urls: string[], order: CrawlOrder, count: number): string
  */
 export function ConnectStep(props: StepProps) {
   const { selectedBot } = useBotContext();
-  const { startCrawl } = useCrawl();
+  const { crawl, startCrawl } = useCrawl();
   const [url, setUrl] = useState(selectedBot?.website ?? '');
   const [uploadedCount, setUploadedCount] = useState(0);
   const [uploadingDocs, setUploadingDocs] = useState(false);
@@ -70,6 +70,20 @@ export function ConnectStep(props: StepProps) {
     }
   };
 
+  // True when this exact site is already crawled/crawling for this agent, so we
+  // must NOT re-crawl (idempotent back-navigation).
+  const alreadyCrawled = (site: string): boolean => {
+    if (!selectedBot) return false;
+    const sameSite = selectedBot.website === site;
+    const inSession =
+      crawl.botId === selectedBot.id && (crawl.status === 'running' || crawl.status === 'done');
+    const trained =
+      Boolean(selectedBot.crawl_completed_at) ||
+      (selectedBot.indexed_chunk_count ?? 0) > 0 ||
+      selectedBot.last_crawl_status === 'done';
+    return sameSite && (inSession || trained);
+  };
+
   // Phase 1 → discover (or proceed on the docs path).
   const handleDiscover = async () => {
     const trimmed = url.trim();
@@ -78,6 +92,12 @@ export function ConnectStep(props: StepProps) {
       return;
     }
     if (!trimmed || !selectedBot) return;
+
+    // Already trained on this site (e.g. returning from a later step) — just move on.
+    if (alreadyCrawled(normalizeUrl(trimmed))) {
+      props.onContinue();
+      return;
+    }
 
     setDiscovering(true);
     setError(null);
@@ -104,18 +124,21 @@ export function ConnectStep(props: StepProps) {
     setError(null);
     try {
       await updateBot(selectedBot.id, { website: site });
-      const opts: StartCrawlOptions = {
-        url: site,
-        botId: selectedBot.id,
-        botName: selectedBot.name,
-      };
-      if (estimate.total_found > 0) opts.discoveredTotal = estimate.total_found;
-      if (estimate.exceeds_balance && estimate.urls?.length && crawlCount > 0) {
-        opts.orderedUrls = sliceForCrawl(estimate.urls, crawlOrder, crawlCount);
-        opts.maxPages = crawlCount;
+      // Idempotent: don't restart a crawl that's already running/done for this site.
+      if (!alreadyCrawled(site)) {
+        const opts: StartCrawlOptions = {
+          url: site,
+          botId: selectedBot.id,
+          botName: selectedBot.name,
+        };
+        if (estimate.total_found > 0) opts.discoveredTotal = estimate.total_found;
+        if (estimate.exceeds_balance && estimate.urls?.length && crawlCount > 0) {
+          opts.orderedUrls = sliceForCrawl(estimate.urls, crawlOrder, crawlCount);
+          opts.maxPages = crawlCount;
+        }
+        await startCrawl(opts);
+        void recordActivationEvent('crawl_started', { botId: selectedBot.id });
       }
-      await startCrawl(opts);
-      void recordActivationEvent('crawl_started', { botId: selectedBot.id });
       props.onContinue();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start. Please try again.");
