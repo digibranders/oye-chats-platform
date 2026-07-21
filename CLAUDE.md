@@ -2,6 +2,13 @@
 
 OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.
 
+---
+
+> ## 🚀 ACTIVE MANDATE — Admin Platform 2.0 rebuild → see [`app/CLAUDE.md`](app/CLAUDE.md)
+> All work inside `app/` (the admin dashboard) is governed by a **complete product-rebuild mandate**. Before touching anything in `app/`, read **`app/CLAUDE.md`**. In short: the admin dashboard is being rebuilt from first principles as a premium SaaS (Linear/Stripe/Vercel-grade); **reuse** the backend/APIs/DB/auth/logic documented in this file, but the existing UI, navigation, onboarding, layouts, pages, and flows are **technical references only — NOT UX references.** Every `app/src/pages/*` entry in the Key Files table below is a pointer to reusable logic, not a UX/layout reference.
+
+---
+
 ## Code Quality Gate
 > **Codex Agent reviews every edit.** Write clean, production-ready code on every change — no placeholders, no shortcuts, no "fix later" comments. Each edit is evaluated for correctness, type safety, error handling, and adherence to project conventions. Treat every diff as if it's going straight to a code review.
 
@@ -323,6 +330,8 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Admin leads | `app/src/pages/Leads.jsx` |
 | Admin billing | `app/src/pages/Billing.jsx` |
 | Admin qualification config | `app/src/pages/Qualification.jsx` |
+
+> ⚠️ **Under the Admin Platform 2.0 mandate, every `app/src/pages/*` and `app/src/App.jsx` entry above is a TECHNICAL reference only** — use it to find which APIs/hooks/business logic to reuse, NOT as a UX/layout/navigation reference. The pages, flows, IA, and navigation are being rebuilt from first principles (see the mandate at the top of this file).
 
 ## Tech Stack
 
