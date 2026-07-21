@@ -1,7 +1,8 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Sparkles, X, MessageSquare } from 'lucide-react';
+import { Sparkles, X } from 'lucide-react';
 import { ProgressStepper, type StepperItem } from '../../design-system';
+import { WidgetPreview } from './preview/WidgetPreview';
 
 export interface LaunchStudioLayoutProps {
   steps: StepperItem[];
@@ -63,19 +64,13 @@ export function LaunchStudioLayout({
           <div className="mx-auto h-full max-w-xl">{children}</div>
         </main>
 
-        {/* Live preview */}
+        {/* Live widget preview */}
         <aside className="hidden shrink-0 flex-col border-l border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5 lg:flex">
           <p className="mb-4 px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
             Live preview
           </p>
-          <div className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--ds-border)] p-6 text-center">
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--ds-bg-surface)] text-[var(--ds-text-subtle)]">
-              <MessageSquare size={20} />
-            </div>
-            <p className="text-[13px] font-medium text-[var(--ds-text)]">Your agent, live</p>
-            <p className="mt-1 text-[12px] text-[var(--ds-text-subtle)]">
-              The preview appears here once training begins.
-            </p>
+          <div className="flex-1">
+            <WidgetPreview />
           </div>
         </aside>
       </div>

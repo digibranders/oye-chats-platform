@@ -14,6 +14,7 @@ export interface Bot {
   website?: string;
   company_name?: string;
   primary_color?: string;
+  bot_logo?: string | null;
   recommended_colors?: string[];
   widget_installed_at?: string | null;
   crawl_completed_at?: string | null;

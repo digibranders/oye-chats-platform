@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentType } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { completeOnboarding } from '../../services/api';
 import { LaunchStudioLayout } from './LaunchStudioLayout';
+import { PreviewProvider } from './preview/PreviewProvider';
 import {
   LAUNCH_STEPS,
   LAUNCH_PROGRESS_KEY,
@@ -97,18 +98,20 @@ export function LaunchStudio() {
   const StepComponent = STEP_COMPONENTS[LAUNCH_STEPS[currentIndex].path];
 
   return (
-    <LaunchStudioLayout
-      steps={STEPPER_ITEMS}
-      currentIndex={currentIndex}
-      maxReachedIndex={maxReached}
-      onStepClick={goToStep}
-    >
-      <StepComponent
-        onBack={handleBack}
-        onContinue={handleContinue}
-        isFirst={currentIndex === 0}
-        isLast={currentIndex === LAST_INDEX}
-      />
-    </LaunchStudioLayout>
+    <PreviewProvider>
+      <LaunchStudioLayout
+        steps={STEPPER_ITEMS}
+        currentIndex={currentIndex}
+        maxReachedIndex={maxReached}
+        onStepClick={goToStep}
+      >
+        <StepComponent
+          onBack={handleBack}
+          onContinue={handleContinue}
+          isFirst={currentIndex === 0}
+          isLast={currentIndex === LAST_INDEX}
+        />
+      </LaunchStudioLayout>
+    </PreviewProvider>
   );
 }

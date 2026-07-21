@@ -4,7 +4,8 @@ import { getClientSettings, updateClientSettings, uploadLogo } from '../../../se
 import { useBotContext } from '../../../context/BotContext';
 import { StepShell } from '../StepShell';
 import { ColorField } from '../customize/ColorField';
-import { AvatarPicker, AvatarPreview, type AvatarType } from '../customize/AvatarPicker';
+import { AvatarPicker, type AvatarType } from '../customize/AvatarPicker';
+import { usePreview } from '../preview/preview-context';
 import type { StepProps } from '../steps.config';
 
 const DEFAULTS = {
@@ -12,7 +13,6 @@ const DEFAULTS = {
   user_bubble_color: '#DBE9FF',
   avatar_type: 'upload' as AvatarType,
   orb_color: '',
-  bot_logo: null as string | null,
   launcher_name: 'Have Questions?',
 };
 
@@ -27,21 +27,17 @@ function asAvatarType(value: unknown): AvatarType {
 
 /**
  * Step 7 — Customize Widget. The full appearance editor (fresh TS on the new DS):
- * brand + user-bubble colour with a real picker + recommended colours, and
- * avatar selection (photo / orb / mascot). Persists via updateClientSettings.
+ * brand + user-bubble colour (real picker + recommended colours) and avatar
+ * (photo / orb / mascot). Drives the shared live preview shown in the right pane
+ * and persists via updateClientSettings.
  */
 export function CustomizeStep(props: StepProps) {
   const { selectedBot } = useBotContext();
+  const { preview, setPreview } = usePreview();
 
   const [loaded, setLoaded] = useState(false);
-  const [primaryColor, setPrimaryColor] = useState(DEFAULTS.primary_color);
-  const [userBubbleColor, setUserBubbleColor] = useState(DEFAULTS.user_bubble_color);
-  const [avatarType, setAvatarType] = useState<AvatarType>(DEFAULTS.avatar_type);
-  const [orbColor, setOrbColor] = useState(DEFAULTS.orb_color);
-  const [botLogo, setBotLogo] = useState<string | null>(DEFAULTS.bot_logo);
   const [launcherName, setLauncherName] = useState(DEFAULTS.launcher_name);
   const [recommended, setRecommended] = useState<string[]>([]);
-
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,11 +48,13 @@ export function CustomizeStep(props: StepProps) {
     getClientSettings(selectedBot.id)
       .then((s) => {
         if (cancelled) return;
-        setPrimaryColor(asString(s.primary_color, DEFAULTS.primary_color));
-        setUserBubbleColor(asString(s.user_bubble_color, DEFAULTS.user_bubble_color));
-        setAvatarType(asAvatarType(s.avatar_type));
-        setOrbColor(typeof s.orb_color === 'string' ? s.orb_color : DEFAULTS.orb_color);
-        setBotLogo(typeof s.bot_logo === 'string' ? s.bot_logo : null);
+        setPreview({
+          primaryColor: asString(s.primary_color, DEFAULTS.primary_color),
+          userBubbleColor: asString(s.user_bubble_color, DEFAULTS.user_bubble_color),
+          avatarType: asAvatarType(s.avatar_type),
+          orbColor: typeof s.orb_color === 'string' ? s.orb_color : DEFAULTS.orb_color,
+          botLogo: typeof s.bot_logo === 'string' ? s.bot_logo : null,
+        });
         setLauncherName(asString(s.launcher_name, DEFAULTS.launcher_name));
         setRecommended(
           Array.isArray(s.recommended_colors)
@@ -73,7 +71,7 @@ export function CustomizeStep(props: StepProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedBot]);
+  }, [selectedBot, setPreview]);
 
   const loading = Boolean(selectedBot) && !loaded;
   const swatches = [...recommended, ...PRESETS];
@@ -83,7 +81,7 @@ export function CustomizeStep(props: StepProps) {
     setError(null);
     try {
       const { url } = await uploadLogo(file);
-      setBotLogo(url);
+      setPreview({ botLogo: url });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
     } finally {
@@ -101,13 +99,13 @@ export function CustomizeStep(props: StepProps) {
     try {
       await updateClientSettings(
         {
-          primary_color: primaryColor,
-          user_bubble_color: userBubbleColor,
+          primary_color: preview.primaryColor,
+          user_bubble_color: preview.userBubbleColor,
           background_color: '#ffffff',
-          avatar_type: avatarType,
-          orb_color: orbColor || null,
-          bot_logo: botLogo,
-          launcher_logo: botLogo,
+          avatar_type: preview.avatarType,
+          orb_color: preview.orbColor || null,
+          bot_logo: preview.botLogo,
+          launcher_logo: preview.botLogo,
           launcher_name: launcherName,
         },
         selectedBot.id,
@@ -123,7 +121,7 @@ export function CustomizeStep(props: StepProps) {
   return (
     <StepShell
       title="Make it yours"
-      description="Choose your agent's colours and avatar. You can fine-tune the rest later."
+      description="Choose your agent's colours and avatar — watch it update on the right."
       onBack={props.onBack}
       onContinue={handleContinue}
       isFirst={props.isFirst}
@@ -132,78 +130,41 @@ export function CustomizeStep(props: StepProps) {
       continueLabel={saving ? 'Saving…' : undefined}
     >
       {loading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-24 w-full" />
+        <div className="space-y-4">
+          <Skeleton className="h-9 w-56" />
+          <Skeleton className="h-9 w-56" />
+          <Skeleton className="h-24 w-full max-w-sm" />
         </div>
       ) : (
-        <div className="grid gap-8 md:grid-cols-[1fr_auto]">
-          <div className="space-y-6">
-            <ColorField
-              label="Brand colour"
-              value={primaryColor}
-              onChange={setPrimaryColor}
+        <div className="max-w-md space-y-6">
+          <ColorField
+            label="Brand colour"
+            value={preview.primaryColor}
+            onChange={(c) => setPreview({ primaryColor: c })}
+            swatches={swatches}
+          />
+          <ColorField
+            label="User message colour"
+            value={preview.userBubbleColor}
+            onChange={(c) => setPreview({ userBubbleColor: c })}
+            swatches={swatches}
+          />
+          <div>
+            <span className="mb-2 block text-[13px] font-medium text-[var(--ds-text)]">Avatar</span>
+            <AvatarPicker
+              avatarType={preview.avatarType}
+              orbColor={preview.orbColor}
+              botLogo={preview.botLogo}
+              primaryColor={preview.primaryColor}
+              uploading={uploading}
               swatches={swatches}
+              onChangeType={(t) => setPreview({ avatarType: t })}
+              onChangeOrbColor={(c) => setPreview({ orbColor: c })}
+              onUpload={handleUpload}
+              onRemoveLogo={() => setPreview({ botLogo: null })}
             />
-            <ColorField
-              label="User message colour"
-              value={userBubbleColor}
-              onChange={setUserBubbleColor}
-              swatches={swatches}
-            />
-            <div>
-              <span className="mb-2 block text-[13px] font-medium text-[var(--ds-text)]">Avatar</span>
-              <AvatarPicker
-                avatarType={avatarType}
-                orbColor={orbColor}
-                botLogo={botLogo}
-                primaryColor={primaryColor}
-                uploading={uploading}
-                swatches={swatches}
-                onChangeType={setAvatarType}
-                onChangeOrbColor={setOrbColor}
-                onUpload={handleUpload}
-                onRemoveLogo={() => setBotLogo(null)}
-              />
-            </div>
-            {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
           </div>
-
-          {/* Live preview */}
-          <div className="w-full max-w-[240px] justify-self-center md:justify-self-end">
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-              Preview
-            </p>
-            <div className="overflow-hidden rounded-2xl border border-[var(--ds-border)] shadow-[var(--ds-shadow-md)]">
-              <div className="flex items-center gap-2.5 p-3" style={{ backgroundColor: primaryColor }}>
-                <AvatarPreview
-                  avatarType={avatarType}
-                  botLogo={botLogo}
-                  orbColor={orbColor}
-                  primaryColor={primaryColor}
-                  size={36}
-                />
-                <div className="min-w-0 text-white">
-                  <p className="truncate text-[13px] font-semibold leading-tight">
-                    {selectedBot?.name || 'Your agent'}
-                  </p>
-                  <p className="text-[11px] opacity-80">Online</p>
-                </div>
-              </div>
-              <div className="space-y-2 bg-[var(--ds-bg-surface)] p-3">
-                <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[var(--ds-bg-sunken)] px-3 py-2 text-[12px] text-[var(--ds-text)]">
-                  Hi! How can I help?
-                </div>
-                <div
-                  className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm px-3 py-2 text-[12px] text-[#18181b]"
-                  style={{ backgroundColor: userBubbleColor }}
-                >
-                  What are your hours?
-                </div>
-              </div>
-            </div>
-          </div>
+          {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
         </div>
       )}
     </StepShell>
