@@ -44,7 +44,12 @@ from app.db.models import Bot, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
 from app.services.crawl_provider import fetch_urls
-from app.services.crawler_service import acquire_crawl_lock, release_crawl_lock
+from app.services.crawler_service import (
+    acquire_crawl_lock,
+    clear_cancellation,
+    is_cancellation_requested,
+    release_crawl_lock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,8 +203,30 @@ async def recrawl_bot(bot_id: int) -> dict:
         # frees, instead of parking it for a full 7-day interval.
         return {"status": "skipped", "reason": "crawl_in_progress"}
 
+    # Clear any cancel flag left by a PREVIOUSLY-timed-out interactive preemption
+    # (the flag self-expires after ~27min, so a stale one could still be set).
+    # Clearing here means only a cancellation requested AFTER this recrawl began
+    # — i.e. a fresh interactive crawl preempting us — is honoured below.
+    clear_cancellation(client_id)
+
     try:
         fetched_pages, failed_fetch = await _fetch_pages(urls, client_id)
+
+        # Yield to an interactive crawl that preempted us. The user-initiated
+        # crawl set the cancel flag and is now waiting (bounded) for our lock;
+        # honour it before ingesting so we don't double-write chunks. Return
+        # WITHOUT persisting a summary so ``next_recrawl_at`` stays due and the
+        # next hourly sweep retries this bot once the interactive crawl finishes.
+        # ``_fetch_pages`` already aborts early on cancellation via the provider's
+        # cancel checks, so this post-fetch check catches the preemption promptly.
+        # The ``finally`` releases the lock so the waiting crawl can acquire it.
+        if is_cancellation_requested(client_id):
+            logger.info(
+                "recrawl_bot: preempted by an interactive crawl for client %s (bot %s) — yielding",
+                client_id,
+                bot_id,
+            )
+            return {"status": "preempted", "reason": "interactive_crawl"}
 
         # ``batch_web_ingestion`` is synchronous / DB-bound — hop to a thread so
         # we don't block the ARQ event loop while the embedding provider works.

@@ -174,3 +174,89 @@ def test_lock_released_on_ingest_failure(db, monkeypatch):
     assert result is not None
     db.refresh(bot)
     assert released == [(bot.client_id, "recrawl:tok-fail")]
+
+
+def test_preemption_yields_to_interactive_crawl(db, monkeypatch):
+    """A cancel requested AFTER the recrawl started makes it yield.
+
+    An interactive crawl preempts a background recrawl by setting the cancel
+    flag then waiting for the lock. The recrawl must honour that flag right
+    after fetching (before ingest): return ``preempted`` WITHOUT persisting a
+    summary (so ``next_recrawl_at`` stays due and the sweep retries), and its
+    ``finally`` must release the lock so the waiting interactive crawl can take
+    it. ``clear_cancellation`` must run right after acquire so a *stale* flag
+    from a previously-timed-out preemption can't spuriously abort this fresh run.
+    """
+    _, bot, original_next = _mk_recrawlable_bot(db, "rc-preempt")
+
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
+    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id, **kw: "recrawl:tok-preempt")
+
+    released: list[tuple[int, str | None]] = []
+    monkeypatch.setattr(
+        recrawl_service,
+        "release_crawl_lock",
+        lambda client_id, token=None: released.append((client_id, token)),
+    )
+
+    cleared: list[int] = []
+    monkeypatch.setattr(recrawl_service, "clear_cancellation", lambda client_id: cleared.append(client_id))
+
+    async def _fake_fetch(urls, client_id):
+        return [{"url": "https://a.test/page1", "content": "fresh content"}], []
+
+    monkeypatch.setattr(recrawl_service, "_fetch_pages", _fake_fetch)
+
+    # A real preemption: the interactive path set the cancel flag after this
+    # recrawl began (clear_cancellation at start didn't wipe it because it was
+    # set later), so the post-fetch check sees it.
+    monkeypatch.setattr(recrawl_service, "is_cancellation_requested", lambda client_id: True)
+
+    ingest_calls: list[tuple] = []
+    monkeypatch.setattr(
+        recrawl_service,
+        "batch_web_ingestion",
+        lambda *a, **kw: ingest_calls.append((a, kw)) or {"chunks": 0, "pages_charged": 0, "credits_deducted": 0},
+    )
+
+    result = asyncio.run(recrawl_service.recrawl_bot(bot.id))
+
+    assert result == {"status": "preempted", "reason": "interactive_crawl"}
+    assert ingest_calls == []  # yielded before ingest — no duplicate chunks
+    assert cleared == [bot.client_id]  # cleared once, right after acquire
+    # Lock released with the ownership token so the waiting interactive crawl acquires.
+    assert released == [(bot.client_id, "recrawl:tok-preempt")]
+
+    db.refresh(bot)
+    # No summary persisted → schedule left due so the sweep retries after the
+    # interactive crawl finishes.
+    assert bot.next_recrawl_at == original_next
+
+
+def test_no_preemption_flag_runs_normally(db, monkeypatch):
+    """With no cancel pending after fetch, the recrawl ingests as usual."""
+    _, bot, _ = _mk_recrawlable_bot(db, "rc-no-preempt")
+
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
+    monkeypatch.setattr(recrawl_service, "acquire_crawl_lock", lambda client_id, **kw: "recrawl:tok-run")
+    monkeypatch.setattr(recrawl_service, "release_crawl_lock", lambda client_id, token=None: None)
+    monkeypatch.setattr(recrawl_service, "clear_cancellation", lambda client_id: None)
+
+    async def _fake_fetch(urls, client_id):
+        return [{"url": "https://a.test/page1", "content": "fresh content"}], []
+
+    monkeypatch.setattr(recrawl_service, "_fetch_pages", _fake_fetch)
+    monkeypatch.setattr(recrawl_service, "is_cancellation_requested", lambda client_id: False)
+
+    ingest_calls: list[tuple] = []
+    monkeypatch.setattr(
+        recrawl_service,
+        "batch_web_ingestion",
+        lambda *a, **kw: ingest_calls.append((a, kw)) or {"chunks": 3, "pages_charged": 1, "credits_deducted": 0},
+    )
+
+    result = asyncio.run(recrawl_service.recrawl_bot(bot.id))
+
+    assert result["status"] != "preempted"
+    assert result["status"] in {"success", "partial", "failed"}
+    assert len(ingest_calls) == 1  # proceeded to ingest

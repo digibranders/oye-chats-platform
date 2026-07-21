@@ -21,6 +21,7 @@ from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequ
 from app.services.crawler_service import (
     acquire_crawl_lock,
     clear_cancellation,
+    crawl_lock_holder,
     get_crawl_progress,
     is_cancellation_requested,
     release_crawl_lock,
@@ -29,6 +30,41 @@ from app.services.crawler_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Interactive-crawl preemption of a background auto-recrawl. When a user clicks
+# Train/Recrawl while an hourly auto-recrawl is mid-run, we signal that recrawl
+# to cancel and wait (bounded) for it to release the shared per-client lock,
+# rather than rejecting a legitimate user action with a hard 429.
+_PREEMPT_POLL_INTERVAL_S = 0.5
+_PREEMPT_MAX_WAIT_S = 8.0
+
+
+async def _acquire_crawl_lock_or_preempt(client_id: int) -> str | None:
+    """Acquire the interactive crawl lock, preempting a background auto-recrawl.
+
+    A user-initiated crawl should not be blocked by an hourly auto-recrawl.
+    If the lock is held by a ``recrawl:`` holder we signal it to cancel and wait
+    (bounded) for it to release, then take the lock. A lock held by another
+    INTERACTIVE crawl is NOT preempted — that returns ``None`` so the caller
+    429s. Returns the ownership token, or ``None`` if it could not be acquired
+    in time.
+    """
+    token = acquire_crawl_lock(client_id)
+    if token is not None:
+        return token
+    holder = crawl_lock_holder(client_id)
+    if holder is None or not holder.startswith("recrawl:"):
+        # Free-then-reheld race, or an interactive holder → don't preempt.
+        return None
+    request_cancellation(client_id)
+    deadline_iterations = int(_PREEMPT_MAX_WAIT_S / _PREEMPT_POLL_INTERVAL_S)
+    for _ in range(deadline_iterations):
+        await asyncio.sleep(_PREEMPT_POLL_INTERVAL_S)
+        token = acquire_crawl_lock(client_id)
+        if token is not None:
+            return token
+    return None
+
 
 router = APIRouter(tags=["documents"])
 
@@ -1088,7 +1124,10 @@ async def crawl_endpoint(
     # process see the same state. SETNX with TTL means a crashed holder
     # eventually frees the lock automatically. The lock is released by
     # ``run_full_crawl``'s finally block, regardless of which process runs it.
-    lock_token = acquire_crawl_lock(client_id)
+    #
+    # A user-initiated crawl preempts a background auto-recrawl holding the lock
+    # (bounded wait); a lock held by another interactive crawl still 429s.
+    lock_token = await _acquire_crawl_lock_or_preempt(client_id)
     if lock_token is None:
         raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
 
