@@ -69,10 +69,9 @@ def _record_bot_crawl_state(bot_id: int | None, status: str, chunk_count: int | 
             if bot is None:
                 return
             bot.last_crawl_status = status
-            if status in ("done", "cancelled"):
+            if status in ("done", "cancelled") and chunk_count and chunk_count > 0:
                 bot.crawl_completed_at = datetime.now(UTC)
-                if chunk_count is not None:
-                    bot.indexed_chunk_count = int(chunk_count)
+                bot.indexed_chunk_count = int(chunk_count)
             session.commit()
     except Exception:
         logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
@@ -722,34 +721,53 @@ async def run_full_crawl(
             "pages_discovered": discovered_total,
             "pages_dropped": pages_dropped,
         }
+        # A crawl that fetched pages but extracted zero readable text (common on
+        # JS-rendered sites where the HTTP-only fetch never sees the hydrated
+        # DOM) must NOT report success — there is no knowledge for the bot to
+        # answer from. Surface a distinct terminal status so the frontend can
+        # tell "trained" apart from "crawled nothing," and never latch the
+        # durable "trained" marker (see the ``chunk_count`` guard below and in
+        # ``_record_bot_crawl_state``).
+        crawl_status = "done" if total_chunks > 0 else "no_content"
+        if total_chunks == 0:
+            result_payload["message"] = (
+                "We reached your pages but couldn't extract readable text to train on. "
+                "This often happens on sites that render content with JavaScript."
+            )
+            result_payload["no_content"] = True
         set_crawl_progress(
             client_id,
-            status="done",
+            status=crawl_status,
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
         )
-        _record_bot_crawl_state(bot_id, "done", total_chunks)
-        # Warm the seed-question cache now (worker/background), so the Prove step
-        # reads a cached value instead of paying LLM + embedding latency live.
-        _precompute_seed_questions(bot_id)
+        _record_bot_crawl_state(bot_id, crawl_status, total_chunks)
+        if total_chunks > 0:
+            # Warm the seed-question cache now (worker/background), so the Prove
+            # step reads a cached value instead of paying LLM + embedding latency
+            # live. Skipped for a no-content crawl — there's nothing to seed from.
+            _precompute_seed_questions(bot_id)
 
         # Drop an in-app notification so the user sees the result in the bell
         # even if they navigated away. Best-effort — never fail the crawl on it.
-        try:
-            from app.services.notification_service import notify_crawl_completed
+        # Suppressed for zero-content: that isn't a "crawl completed
+        # successfully" event and shouldn't read as one in the notification feed.
+        if total_chunks > 0:
+            try:
+                from app.services.notification_service import notify_crawl_completed
 
-            with get_session() as notif_session:
-                notify_crawl_completed(
-                    notif_session,
-                    client_id=client_id,
-                    source=url,
-                    pages=pages_processed,
-                    chunks=total_chunks,
-                    duration_seconds=round(time.time() - started_at),
-                    bot_id=bot_id,
-                )
-        except Exception:
-            logger.warning("crawl-complete notification failed (non-fatal)", exc_info=True)
+                with get_session() as notif_session:
+                    notify_crawl_completed(
+                        notif_session,
+                        client_id=client_id,
+                        source=url,
+                        pages=pages_processed,
+                        chunks=total_chunks,
+                        duration_seconds=round(time.time() - started_at),
+                        bot_id=bot_id,
+                    )
+            except Exception:
+                logger.warning("crawl-complete notification failed (non-fatal)", exc_info=True)
 
         return result_payload
     except CrawlCancelled as exc:
