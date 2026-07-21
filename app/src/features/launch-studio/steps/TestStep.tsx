@@ -1,32 +1,55 @@
+import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Card } from '../../../design-system';
+import { getSeedQuestions } from '../../../services/api';
+import { useBotContext } from '../../../context/BotContext';
 import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
-// Placeholder seed questions. TODO(phase-2b): getSeedQuestions + previewChatStream
-// so the answer streams in the live-preview panel from the user's own content.
-const SEED_QUESTIONS = [
+const FALLBACK_QUESTIONS = [
   'What do you offer?',
   'How much does it cost?',
   'How do I get started?',
-  'Where are you located?',
 ];
 
 /**
- * Step 6 — Test Agent. The user asks a question and watches their agent answer
- * from its own content in the live preview — the aha moment.
+ * Step 6 — Test Agent. Surfaces real seed questions for the agent. The user asks
+ * one and watches it answer from its own content.
+ * TODO(2b.2): stream the answer via previewChatStream into the live-preview panel
+ * (requires promoting the panel to a real chat view).
  */
 export function TestStep(props: StepProps) {
+  const { selectedBot } = useBotContext();
+  const [questions, setQuestions] = useState<string[]>(FALLBACK_QUESTIONS);
+
+  useEffect(() => {
+    if (!selectedBot) return;
+    let cancelled = false;
+    getSeedQuestions(selectedBot.id)
+      .then((data) => {
+        if (!cancelled && data.length > 0) setQuestions(data);
+      })
+      .catch(() => {
+        /* keep fallbacks */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBot]);
+
   return (
     <StepShell
       title="Try it yourself"
       description="Ask your agent anything. It'll answer from what it just learned — watch the preview."
-      {...props}
+      onBack={props.onBack}
+      onContinue={props.onContinue}
+      isFirst={props.isFirst}
+      isLast={props.isLast}
     >
       <div className="space-y-3">
         <p className="text-[13px] font-medium text-[var(--ds-text)]">Suggested questions</p>
         <div className="flex flex-wrap gap-2">
-          {SEED_QUESTIONS.map((question) => (
+          {questions.map((question) => (
             <button
               key={question}
               type="button"

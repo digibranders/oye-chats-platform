@@ -421,3 +421,26 @@ Master structure lists `PRODUCT_VISION.md`, `UX_PRINCIPLES.md`, `REBUILD_ROADMAP
 Content is integrated into `app/CLAUDE.md` (paraphrased). **Optional:** mirror the verbatim block.
 
 **Standing process change:** every phase now ends with a Code Reviewer subagent pass (G3) before commit.
+
+---
+
+## Phase 2b.2 — Launch Studio wiring (live, tracked)
+
+Wiring each step to the reused backend (dev server on :5175 → local API on :8000). Status:
+
+| Step | Wiring | Status |
+|------|--------|--------|
+| Create Agent | `createBot` → selectBot | ✅ done |
+| Connect Website | `updateBot(website)` + `startCrawl` | ✅ done |
+| AI Training | live `useCrawl` progress | ✅ done |
+| finish | `completeOnboarding` | ✅ done |
+| Knowledge Review | `getDocuments` (real learned sources) | ⬜ todo |
+| Test Agent | `getSeedQuestions` + `previewChatStream` in live-preview panel | ⬜ todo (preview panel needs to become a real chat view) |
+| Deploy | real `bot_key` snippet | ⬜ todo |
+| Verify | poll `getBot.widget_installed_at` | ⬜ todo |
+
+**User-requested UX upgrades (from live QA walkthrough 2026-07-21):**
+1. **Connect** — the "Upload documents" fallback is a non-working placeholder → make it a real document-upload path (`uploadDocuments`) that also lets the user Continue.
+2. **Customize Widget** — replace the 6 preset swatches with the FULL appearance editor like the legacy app: real color picker (`react-colorful`) + recommended/extracted colors + `user_bubble_color`, **and widget avatar selection** (orb / upload / mascot, `orb_color`, logo upload via `uploadLogo`). Persist via `updateClientSettings`.
+3. **Deploy** — **platform selection first** (Next.js / WordPress / Shopify / Webflow / plain HTML / …) so the snippet + install guide are platform-specific (reuse legacy `PlatformSelector` + `IntegrationGuide`).
+4. **Mobile** — narrow-viewport layout drops the step rail + preview (deferred review finding #1) → add a compact "Step N of 9" progress header.
