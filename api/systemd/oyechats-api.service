@@ -37,6 +37,23 @@ Group=oyechats
 SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/oyechats/platform/api
 EnvironmentFile=/opt/oyechats/platform/api/.env
+# Pin the gunicorn worker count explicitly so it's defined in-repo rather
+# than left to gunicorn.conf.py's (2*cores)+1 default, which would silently
+# change with the droplet's size. 3 is a conservative starting point for
+# this box's modest DigitalOcean KVM plan; retune to (2*cores)+1 once the
+# droplet's actual core count is confirmed (`nproc` on the box).
+#
+# KNOWN TRADEOFF at WEB_CONCURRENCY > 1: the live-chat WebSocket
+# ConnectionManager (app/services/live_chat_service.py) keeps visitor/
+# operator sockets in plain in-memory dicts, and nginx's ip_hash
+# (nginx/oyechats-api.conf) pins a client to this single upstream port, not
+# to a specific worker process behind it — so a visitor and their assigned
+# operator can land on different workers and stop seeing each other's
+# messages. This value accepts that risk to fix the more acute problem (one
+# worker stalling every async SSE bot-chat request on any blocking DB call).
+# Revisit once the WebSocket manager moves to Redis pub/sub (see
+# gunicorn.conf.py docstring, "Phase 3") — that removes the tradeoff.
+Environment=WEB_CONCURRENCY=3
 # Exec the venv entrypoint directly instead of `/root/.local/bin/uv run`:
 # uv lives under /root (unreachable with ProtectHome=true) and `uv run` may
 # try to re-sync the venv, which the unprivileged user must not (and cannot)

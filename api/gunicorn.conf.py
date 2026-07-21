@@ -4,20 +4,39 @@ Usage:
     uv run gunicorn app.main:app -c gunicorn.conf.py
 
 Worker count:
-    Phase 1 (scalability plan): workers=1 — process management benefits
-    (auto-restart, memory recycling) without breaking the in-memory
-    WebSocket ConnectionManager.
+    WEB_CONCURRENCY, defaulting to (2 * CPU cores) + 1 — the standard
+    Gunicorn sizing heuristic — instead of a hardcoded 1. A default of 1
+    meant a single worker handled every request, including the async SSE
+    chat endpoints that still do blocking sync DB work: one slow request
+    stalled the event loop for the whole process with no other worker to
+    absorb traffic. The systemd unit pins an explicit value for prod (see
+    oyechats-api.service) so the deployed worker count is defined in-repo
+    rather than left to whatever CPU count this default resolves to.
 
-    After Phase 3 (Redis pub/sub WebSocket refactor), increase via
-    WEB_CONCURRENCY env var.
+    CAVEAT — WebSocket live chat: `ConnectionManager`
+    (app/services/live_chat_service.py) tracks visitor/operator sockets in
+    plain in-memory dicts, and nginx's `ip_hash` (nginx/oyechats-api.conf)
+    only pins a client to the single upstream `127.0.0.1:8000` — it cannot
+    route a visitor and their assigned operator to the *same* gunicorn
+    worker process behind that port. With >1 worker, a live-chat pair
+    split across workers will not see each other's messages. This does not
+    affect the async SSE bot-chat path (the thing this default fixes), but
+    it means multi-worker must not go to production until the WebSocket
+    manager moves to Redis pub/sub (Phase 3), unless WEB_CONCURRENCY is
+    deliberately pinned back to 1 in the meantime.
 """
 
+import multiprocessing
 import os
 
 # ── Worker configuration ────────────────────────────────────────────────────
-# Start with 1 worker until the WebSocket manager is refactored to Redis
-# pub/sub (Phase 3). After that, set WEB_CONCURRENCY=2-4.
-workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+# (2 * cores) + 1 is Gunicorn's own recommended default (see the "Worker
+# Processes" section of the Gunicorn docs) — enough workers to keep the CPU
+# busy while one is blocked on I/O. WEB_CONCURRENCY still overrides it so
+# prod can pin an explicit, reviewed value (see systemd unit + module
+# docstring above for why an unqualified bump is not automatically safe).
+_default_workers = (multiprocessing.cpu_count() * 2) + 1
+workers = int(os.getenv("WEB_CONCURRENCY", str(_default_workers)))
 worker_class = "uvicorn.workers.UvicornWorker"
 # Only trust proxy headers (X-Forwarded-For / -Proto) from nginx on loopback.
 # Without this, uvicorn would honor a spoofed X-Forwarded-For from any source
