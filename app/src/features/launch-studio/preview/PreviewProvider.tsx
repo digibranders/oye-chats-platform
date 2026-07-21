@@ -8,6 +8,8 @@ const DEFAULTS: PreviewState = {
   avatarType: 'upload',
   orbColor: '',
   botLogo: null,
+  messages: [],
+  pending: false,
 };
 
 /**

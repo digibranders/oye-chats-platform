@@ -1,6 +1,12 @@
 import { createContext, useContext } from 'react';
 import type { AvatarType } from '../customize/AvatarPicker';
 
+export interface PreviewMessage {
+  role: 'user' | 'bot';
+  text: string;
+  sources?: string[];
+}
+
 /** The live widget-preview config, shared between steps and the preview pane. */
 export interface PreviewState {
   primaryColor: string;
@@ -8,6 +14,10 @@ export interface PreviewState {
   avatarType: AvatarType;
   orbColor: string;
   botLogo: string | null;
+  /** Live conversation (Test step). Empty → the widget shows its welcome screen. */
+  messages: PreviewMessage[];
+  /** Bot is answering — shows the typing indicator. */
+  pending: boolean;
 }
 
 export interface PreviewContextValue {
