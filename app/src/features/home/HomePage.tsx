@@ -1,0 +1,468 @@
+import { type ReactElement } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Activity as ActivityIcon,
+  AlertTriangle,
+  BarChart3,
+  BookOpen,
+  CheckCircle2,
+  Inbox,
+  MessageSquare,
+  Plus,
+  Radio,
+  RefreshCw,
+  Sparkles,
+  Target,
+  ThumbsDown,
+  ThumbsUp,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
+import { Button, Card, EmptyState, PageContainer, SectionHeader, Skeleton } from '../../design-system';
+import { MetricCard } from '../../design-system/components/MetricCard';
+import { InsightCard, type InsightCardProps } from '../../design-system/components/InsightCard';
+import { ActionCard, type ActionCardProps } from '../../design-system/components/ActionCard';
+import { AgentCard } from '../../design-system/components/AgentCard';
+import { ActivityTimeline, type ActivityItem } from '../../design-system/components/ActivityTimeline';
+import { DataTable, type Column } from '../../design-system/components/DataTable';
+import { QuickAction } from '../../design-system/components/QuickAction';
+import { useWorkspace } from '../../context/WorkspaceContext';
+import type { TopQuestion } from '../../types/domain';
+import {
+  formatRelativeTime,
+  formatToday,
+  greeting,
+  type ActivityEntry,
+  type ActivityKind,
+  type HomeData,
+} from './home-data';
+import { useHomeData } from './useHomeData';
+
+// ── Small presentation helpers ───────────────────────────────────────────────
+
+function formatCount(value: number): string {
+  return Math.round(value).toLocaleString('en-US');
+}
+
+function formatPercent(value: number): string {
+  const clamped = Math.max(0, Math.min(100, value));
+  return `${Math.round(clamped)}%`;
+}
+
+const ACTIVITY_VISUALS: Record<ActivityKind, { icon: LucideIcon; tone: ActivityItem['tone'] }> = {
+  'positive-feedback': { icon: ThumbsUp, tone: 'success' },
+  'negative-feedback': { icon: ThumbsDown, tone: 'danger' },
+  message: { icon: Inbox, tone: 'info' },
+};
+
+function toActivityItems(entries: ActivityEntry[]): ActivityItem[] {
+  return entries.map((entry) => {
+    const visual = ACTIVITY_VISUALS[entry.kind];
+    return {
+      id: entry.id,
+      icon: visual.icon,
+      tone: visual.tone,
+      title: entry.title,
+      meta: entry.meta ?? undefined,
+      time: formatRelativeTime(entry.iso),
+    };
+  });
+}
+
+interface Recommendation extends Pick<ActionCardProps, 'title' | 'description' | 'icon' | 'cta'> {
+  key: string;
+  to: string;
+}
+
+/**
+ * Build up to three "next best action" cards from the current state. Priority:
+ * unblock broken agents → train → deploy → work leads/inbox → grow. There is
+ * always at least one, so the section never renders empty.
+ */
+function buildRecommendations(data: HomeData): Recommendation[] {
+  const recs: Recommendation[] = [];
+
+  for (const agent of data.agents) {
+    if (recs.length >= 2) break;
+    const id = agent.bot.id;
+    if (agent.crawlFailed) {
+      recs.push({
+        key: `fix-${id}`,
+        icon: AlertTriangle,
+        title: `Fix training for ${agent.bot.name}`,
+        description: 'The last attempt to read this agent’s content failed. Retry it so it can answer.',
+        to: `/agents/${id}/knowledge`,
+        cta: 'Review knowledge',
+      });
+    } else if (!agent.trained) {
+      recs.push({
+        key: `train-${id}`,
+        icon: BookOpen,
+        title: `Train ${agent.bot.name}`,
+        description: 'Add a website or documents so this agent can start answering questions.',
+        to: `/agents/${id}/knowledge`,
+        cta: 'Add knowledge',
+      });
+    } else if (!agent.installed) {
+      recs.push({
+        key: `deploy-${id}`,
+        icon: Radio,
+        title: `Put ${agent.bot.name} live`,
+        description: 'Add the widget to your website to start capturing real conversations.',
+        to: `/agents/${id}/channels`,
+        cta: 'Deploy agent',
+      });
+    }
+  }
+
+  if (data.totals.hotLeads > 0 && recs.length < 3) {
+    recs.push({
+      key: 'leads',
+      icon: Target,
+      title: `Follow up on ${formatCount(data.totals.hotLeads)} hot lead${data.totals.hotLeads === 1 ? '' : 's'}`,
+      description: 'High-intent visitors are waiting. Review and reach out while they’re warm.',
+      to: '/leads',
+      cta: 'View leads',
+    });
+  }
+
+  if (data.unreadMessages > 0 && recs.length < 3) {
+    recs.push({
+      key: 'inbox',
+      icon: Inbox,
+      title: `Reply to ${formatCount(data.unreadMessages)} new message${data.unreadMessages === 1 ? '' : 's'}`,
+      description: 'Visitors left messages while you were away. Answer them from your inbox.',
+      to: '/inbox',
+      cta: 'Open inbox',
+    });
+  }
+
+  // Evergreen fallbacks so the section is always actionable.
+  if (recs.length < 3) {
+    recs.push({
+      key: 'analytics',
+      icon: BarChart3,
+      title: 'See what’s working',
+      description: 'Dig into conversations, answer quality and lead trends across your agents.',
+      to: '/analytics',
+      cta: 'Open analytics',
+    });
+  }
+  if (recs.length < 3) {
+    recs.push({
+      key: 'new-agent',
+      icon: Plus,
+      title: 'Create another agent',
+      description: 'Spin up a new AI agent for a different site, product or audience.',
+      to: '/agents',
+      cta: 'New agent',
+    });
+  }
+
+  return recs.slice(0, 3);
+}
+
+/** Headline observation for the aside, derived from workspace health. */
+function buildHealthInsight(data: HomeData): {
+  title: string;
+  body: string;
+  tone: InsightCardProps['tone'];
+  icon: LucideIcon;
+} {
+  const attention = data.agents.filter((agent) => agent.health.needsAttention).length;
+  const readyToDeploy = data.agents.filter((agent) => agent.trained && !agent.installed).length;
+
+  if (attention > 0) {
+    return {
+      icon: AlertTriangle,
+      tone: 'warning',
+      title: `${attention} agent${attention === 1 ? '' : 's'} need${attention === 1 ? 's' : ''} your attention`,
+      body: 'Finish setup so they can start answering visitors and capturing leads.',
+    };
+  }
+  if (readyToDeploy > 0) {
+    return {
+      icon: Radio,
+      tone: 'info',
+      title: `${readyToDeploy} agent${readyToDeploy === 1 ? ' is' : 's are'} ready to go live`,
+      body: 'Add the widget to your website to start capturing real conversations.',
+    };
+  }
+  if (data.totals.conversations === 0) {
+    return {
+      icon: Sparkles,
+      tone: 'accent',
+      title: 'Your agents are ready',
+      body: 'Share a test link or add the widget to your site to see your first conversations.',
+    };
+  }
+  return {
+    icon: CheckCircle2,
+    tone: 'success',
+    title: 'Everything looks healthy',
+    body: 'Your agents are live and answering questions. Keep an eye on the metrics below.',
+  };
+}
+
+// ── Loading / error / empty scaffolds ────────────────────────────────────────
+
+function HomeSkeleton(): ReactElement {
+  return (
+    <div className="space-y-6" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading your dashboard…</span>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i} className="p-5">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="mt-4 h-7 w-20" />
+          </Card>
+        ))}
+      </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <Skeleton className="h-4 w-32" />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {[0, 1].map((i) => (
+              <Card key={i} className="p-5">
+                <Skeleton className="h-9 w-9 rounded-lg" />
+                <Skeleton className="mt-3 h-4 w-28" />
+                <Skeleton className="mt-4 h-10 w-full" />
+              </Card>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-4">
+          <Skeleton className="h-4 w-40" />
+          <Card className="p-5">
+            <Skeleton className="h-24 w-full" />
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface HomeErrorProps {
+  message: string;
+  onRetry: () => void;
+}
+
+function HomeError({ message, onRetry }: HomeErrorProps): ReactElement {
+  return (
+    <EmptyState
+      icon={AlertTriangle}
+      title="We couldn’t load your dashboard"
+      description={message}
+      action={
+        <Button variant="outline" onClick={onRetry}>
+          <RefreshCw size={15} aria-hidden="true" />
+          Try again
+        </Button>
+      }
+    />
+  );
+}
+
+function HomeEmpty(): ReactElement {
+  return (
+    <EmptyState
+      icon={Sparkles}
+      title="Create your first AI agent"
+      description="Set up an agent, train it on your content and add it to your website. We’ll guide you through every step."
+      action={
+        <Link
+          to="/launch"
+          className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]"
+        >
+          <Plus size={15} aria-hidden="true" />
+          Get started
+        </Link>
+      }
+    />
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
+
+const TOP_QUESTION_COLUMNS: Column<TopQuestion>[] = [
+  {
+    key: 'question',
+    header: 'Question',
+    render: (row) => <span className="text-[var(--ds-text)]">{row.question}</span>,
+  },
+  {
+    key: 'count',
+    header: 'Times asked',
+    align: 'right',
+    width: '8rem',
+    render: (row) => (
+      <span className="font-semibold text-[var(--ds-text)]">{formatCount(row.count)}</span>
+    ),
+  },
+];
+
+/**
+ * HomePage — the workspace's daily operational overview. Answers "How is my
+ * business doing today?" across every agent: headline KPIs, agent health, the
+ * questions visitors ask most, recommended next steps, and a live activity feed.
+ */
+export function HomePage(): ReactElement {
+  const { data, loading, error, reload } = useHomeData();
+  const { currentWorkspaceName } = useWorkspace();
+
+  const now = new Date();
+  const workspaceLabel = currentWorkspaceName ? `, ${currentWorkspaceName}` : '';
+  const headerActions = (
+    <div className="hidden items-center gap-2 sm:flex">
+      <QuickAction icon={BarChart3} label="Analytics" to="/analytics" />
+      <QuickAction icon={Plus} label="New agent" to="/agents" />
+    </div>
+  );
+
+  return (
+    <PageContainer
+      title={`${greeting(now)}${workspaceLabel}`}
+      description={`${formatToday(now)} · Here’s how your workspace is doing today.`}
+      actions={headerActions}
+      width="wide"
+    >
+      {loading ? (
+        <HomeSkeleton />
+      ) : error ? (
+        <HomeError message={error} onRetry={reload} />
+      ) : !data || data.agents.length === 0 ? (
+        <HomeEmpty />
+      ) : (
+        <HomeContent data={data} />
+      )}
+    </PageContainer>
+  );
+}
+
+function HomeContent({ data }: { data: HomeData }): ReactElement {
+  const insight = buildHealthInsight(data);
+  const recommendations = buildRecommendations(data);
+  const activityItems = toActivityItems(data.activity);
+
+  return (
+    <div className="space-y-8">
+      {/* KPI row — scalar snapshots. No trend deltas: the API returns point-in-
+          time totals, so a trend arrow here would be fabricated. */}
+      <section aria-label="Key metrics">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="Conversations"
+            value={formatCount(data.totals.conversations)}
+            icon={MessageSquare}
+          />
+          <MetricCard
+            label="Messages answered"
+            value={formatCount(data.totals.messages)}
+            icon={BarChart3}
+          />
+          <MetricCard label="Leads captured" value={formatCount(data.totals.leads)} icon={Users} />
+          <MetricCard
+            label="Answer success rate"
+            value={formatPercent(data.totals.successRate)}
+            icon={CheckCircle2}
+          />
+        </div>
+      </section>
+
+      <div className="grid gap-8 lg:grid-cols-3">
+        {/* Main column — agents + what people ask */}
+        <div className="space-y-8 lg:col-span-2">
+          <section aria-label="Your agents" className="space-y-4">
+            <SectionHeader
+              title="Your agents"
+              description="Health and activity across every AI agent in this workspace."
+              actions={
+                <Link
+                  to="/agents"
+                  className="text-[13px] font-medium text-[var(--ds-accent-text)] hover:underline"
+                >
+                  View all
+                </Link>
+              }
+            />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {data.agents.map((agent) => (
+                <AgentCard
+                  key={agent.bot.id}
+                  name={agent.bot.name}
+                  avatar={agent.bot.bot_logo ?? undefined}
+                  status={{ label: agent.health.label, tone: agent.health.tone }}
+                  to={`/agents/${agent.bot.id}/overview`}
+                  metrics={[
+                    { label: 'Conversations', value: formatCount(agent.conversations) },
+                    { label: 'Leads', value: formatCount(agent.leads) },
+                  ]}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section aria-label="Most asked questions" className="space-y-4">
+            <SectionHeader
+              title="What visitors ask most"
+              description="The questions your agents hear the most, across all conversations."
+            />
+            <DataTable
+              columns={TOP_QUESTION_COLUMNS}
+              rows={data.topQuestions}
+              rowKey={(row) => row.question}
+              caption="Most frequently asked questions and how many times each was asked"
+              empty={
+                <span className="text-[13px] text-[var(--ds-text-muted)]">
+                  No questions yet — they’ll appear here once visitors start chatting.
+                </span>
+              }
+            />
+          </section>
+        </div>
+
+        {/* Aside — health insight, next steps, live activity */}
+        <div className="space-y-8">
+          <section aria-label="Recommended next steps" className="space-y-4">
+            <InsightCard
+              icon={insight.icon}
+              tone={insight.tone}
+              title={insight.title}
+              body={insight.body}
+            />
+            <div className="space-y-3">
+              {recommendations.map((rec) => (
+                <ActionCard
+                  key={rec.key}
+                  icon={rec.icon}
+                  title={rec.title}
+                  description={rec.description}
+                  cta={rec.cta}
+                  to={rec.to}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section aria-label="Recent activity" className="space-y-4">
+            <SectionHeader title="Recent activity" description="Feedback and new messages." />
+            {activityItems.length > 0 ? (
+              <Card className="p-5">
+                <ActivityTimeline items={activityItems} />
+              </Card>
+            ) : (
+              <Card className="flex items-center gap-3 p-5">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                  <ActivityIcon size={15} aria-hidden="true" />
+                </span>
+                <p className="text-[13px] text-[var(--ds-text-muted)]">
+                  No activity yet. Feedback and visitor messages will show up here.
+                </p>
+              </Card>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}

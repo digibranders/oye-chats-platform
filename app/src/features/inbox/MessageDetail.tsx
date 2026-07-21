@@ -1,0 +1,256 @@
+import { useMemo, useState, type ReactElement } from 'react';
+import {
+  Mail,
+  Phone,
+  Check,
+  CheckCheck,
+  Trash2,
+  CornerUpLeft,
+  MessageSquareReply,
+} from 'lucide-react';
+import { Button, StatusBadge, cn } from '../../design-system';
+import { type CannedResponse, type OfflineMessage } from '../../types/domain';
+import {
+  absoluteTime,
+  applyTemplate,
+  buildReplyHref,
+  detectSentiment,
+  initials,
+  sentimentBadge,
+  statusBadge,
+  type OfflineStatus,
+} from './inboxHelpers';
+
+/** Built-in reply templates (used when the workspace has no canned responses). */
+const DEFAULT_TEMPLATES: ReadonlyArray<{ label: string; body: string }> = [
+  {
+    label: 'Will follow up',
+    body: "Hi {name},\n\nThank you for reaching out! We've received your message and will follow up with you shortly.\n\nBest regards",
+  },
+  {
+    label: 'Sent the info',
+    body: "Hi {name},\n\nThank you for your message. We've sent the information you requested — please check your inbox.\n\nBest regards",
+  },
+  {
+    label: 'Marked resolved',
+    body: "Hi {name},\n\nThank you for contacting us. Your request has been resolved. Please reach out again if there's anything else we can help with.\n\nBest regards",
+  },
+];
+
+export interface MessageDetailProps {
+  message: OfflineMessage;
+  /** Workspace quick replies; when empty, built-in templates are shown instead. */
+  cannedResponses: CannedResponse[];
+  /** Persist a status change (mark read / replied). */
+  onSetStatus: (status: OfflineStatus) => void;
+  /** Delete this message. */
+  onDelete: () => void;
+  /** True while a status change is being saved. */
+  savingStatus?: boolean;
+  /** True while the delete request is in flight. */
+  deleting?: boolean;
+}
+
+/**
+ * MessageDetail — the right-hand reading pane for one offline message. Shows who
+ * wrote in, their message, and the operator's next actions: mark read/replied,
+ * reply by email (pre-filled with a template or workspace quick reply), or
+ * delete. Replying by email also advances the message to "replied".
+ */
+export function MessageDetail({
+  message,
+  cannedResponses,
+  onSetStatus,
+  onDelete,
+  savingStatus = false,
+  deleting = false,
+}: MessageDetailProps): ReactElement {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const status = statusBadge(message.status);
+  const sentiment = useMemo(
+    () => sentimentBadge(detectSentiment(message.message_body)),
+    [message.message_body],
+  );
+
+  const name = message.visitor_name?.trim() || 'Anonymous visitor';
+  const email = message.visitor_email ?? null;
+  const phone = message.visitor_phone ?? null;
+  const canReply = Boolean(email);
+
+  const templates =
+    cannedResponses.length > 0
+      ? cannedResponses.map((c) => ({ label: c.title, body: c.content }))
+      : DEFAULT_TEMPLATES;
+
+  const isReplied = message.status === 'replied';
+
+  function handleReply(): void {
+    // Replying by email is the resolution for an offline message, so record it.
+    if (!isReplied) onSetStatus('replied');
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Who wrote in */}
+      <div className="flex items-start gap-3 border-b border-[var(--ds-border)] p-5">
+        <span
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[14px] font-semibold text-[var(--ds-accent-text)]"
+          aria-hidden="true"
+        >
+          {initials(message.visitor_name)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="truncate text-[16px] font-semibold text-[var(--ds-text)]">{name}</h2>
+            <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+            <StatusBadge tone={sentiment.tone}>{sentiment.label}</StatusBadge>
+          </div>
+          <dl className="mt-2 flex flex-col gap-1 text-[13px] text-[var(--ds-text-muted)]">
+            {email && (
+              <div className="flex items-center gap-2">
+                <Mail size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
+                <dt className="sr-only">Email</dt>
+                <dd>
+                  <a
+                    href={`mailto:${email}`}
+                    className="underline-offset-2 hover:text-[var(--ds-text)] hover:underline"
+                  >
+                    {email}
+                  </a>
+                </dd>
+              </div>
+            )}
+            {phone && (
+              <div className="flex items-center gap-2">
+                <Phone size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
+                <dt className="sr-only">Phone</dt>
+                <dd>{phone}</dd>
+              </div>
+            )}
+          </dl>
+          {message.created_at && (
+            <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
+              Received {absoluteTime(message.created_at)}
+              {message.bot_name ? ` · via ${message.bot_name}` : ''}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* The message */}
+      <div className="flex-1 overflow-y-auto p-5">
+        <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4">
+          <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--ds-text)]">
+            {message.message_body?.trim() || 'No message content.'}
+          </p>
+        </div>
+
+        {/* Reply by email */}
+        <section className="mt-6" aria-labelledby="reply-heading">
+          <h3
+            id="reply-heading"
+            className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-text)]"
+          >
+            <MessageSquareReply
+              size={15}
+              aria-hidden="true"
+              className="text-[var(--ds-text-subtle)]"
+            />
+            {cannedResponses.length > 0 ? 'Reply with a quick response' : 'Reply by email'}
+          </h3>
+          {!canReply && (
+            <p className="mt-1.5 text-[12px] text-[var(--ds-text-muted)]">
+              This visitor didn’t leave an email address, so there’s no way to reply directly.
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {templates.map((tpl) => {
+              const href = buildReplyHref(
+                email,
+                'Re: your message',
+                applyTemplate(tpl.body, message.visitor_name),
+              );
+              return (
+                <a
+                  key={tpl.label}
+                  href={href ?? undefined}
+                  aria-disabled={!href}
+                  onClick={href ? handleReply : (e) => e.preventDefault()}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-text)] transition-colors',
+                    href
+                      ? 'hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)]'
+                      : 'cursor-not-allowed opacity-50',
+                  )}
+                >
+                  <CornerUpLeft
+                    size={13}
+                    aria-hidden="true"
+                    className="text-[var(--ds-text-subtle)]"
+                  />
+                  {tpl.label}
+                </a>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-wrap items-center gap-2 border-t border-[var(--ds-border)] p-4">
+        {message.status === 'new' && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onSetStatus('read')}
+            disabled={savingStatus}
+          >
+            <Check size={15} aria-hidden="true" />
+            Mark as read
+          </Button>
+        )}
+        {!isReplied && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onSetStatus('replied')}
+            disabled={savingStatus}
+          >
+            <CheckCheck size={15} aria-hidden="true" />
+            Mark as replied
+          </Button>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          {confirmingDelete ? (
+            <>
+              <span className="text-[12px] text-[var(--ds-text-muted)]">Delete permanently?</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button variant="danger" size="sm" onClick={onDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmingDelete(true)}
+              aria-label="Delete message"
+            >
+              <Trash2 size={15} aria-hidden="true" />
+              Delete
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

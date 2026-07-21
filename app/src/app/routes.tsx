@@ -1,26 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import {
-  Home,
-  Bot,
-  Inbox,
-  Users,
-  BarChart3,
-  BookOpen,
-  Palette,
-  Radio,
-  SlidersHorizontal,
-  LayoutDashboard,
-  CreditCard,
-  Gauge,
-  ShieldCheck,
-  KeyRound,
-  Plug,
-  Settings2,
-  UsersRound,
-} from 'lucide-react';
 import { AppShell } from '../shell/AppShell';
-import { PagePlaceholder } from './PagePlaceholder';
 import { ProtectedLayout } from './ProtectedLayout';
 import Login from '../pages/Login';
 import Register from '../pages/Register';
@@ -28,24 +8,38 @@ import VerifyEmail from '../pages/VerifyEmail';
 import ForgotPassword from '../pages/ForgotPassword';
 import OAuthCallback from '../pages/OAuthCallback';
 
+// Admin 2.0 pages
+import { HomePage } from '../features/home/HomePage';
+import { AgentsPage } from '../features/agents/AgentsPage';
+import { AgentLayout } from '../features/agents/AgentLayout';
+import { OverviewPage } from '../features/agents/overview/OverviewPage';
+import { KnowledgePage } from '../features/agents/knowledge/KnowledgePage';
+import { ExperiencePage } from '../features/agents/experience/ExperiencePage';
+import { ChannelsPage } from '../features/agents/channels/ChannelsPage';
+import { AgentAnalyticsPage } from '../features/agents/analytics/AgentAnalyticsPage';
+import { AdvancedPage } from '../features/agents/advanced/AdvancedPage';
+import { InboxPage } from '../features/inbox/InboxPage';
+import { LeadsPage } from '../features/leads/LeadsPage';
+import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
+import { MembersPage } from '../features/workspace/MembersPage';
+import { BillingPage } from '../features/workspace/BillingPage';
+import { UsagePage } from '../features/workspace/UsagePage';
+import { SecurityPage } from '../features/workspace/SecurityPage';
+import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
+import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
+import { SettingsPage } from '../features/workspace/SettingsPage';
+
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
-// so its layout + 9 steps stay out of the initial bundle.
+// so its layout + steps stay out of the initial bundle.
 const LaunchStudio = lazy(() =>
   import('../features/launch-studio/LaunchStudio').then((m) => ({ default: m.LaunchStudio })),
 );
 
 /**
  * Route Architecture — the Admin Platform 2.0 information architecture.
- *
- * Two things make this the backbone of the rebuild:
- *   1. The AI Agent is a first-class URL object: `/agents/:agentId/<tab>`,
- *      where the six tabs (overview/knowledge/experience/channels/analytics/
- *      advanced) each answer exactly one question. (Agent scoping decision #1.)
- *   2. Launch Studio is a full-screen route OUTSIDE the shell — temporary
- *      onboarding, never navigation.
- *
- * Phase 1 wires the full tree with placeholder pages so the IA, breadcrumbs,
- * and active-state are all verifiable before any page is built.
+ * The AI Agent is a first-class URL object: `/agents/:agentId/<tab>` (the six
+ * tabs each answer one question). Launch Studio is a full-screen route OUTSIDE
+ * the shell — temporary onboarding, never navigation.
  */
 export const router = createBrowserRouter([
   // ── Public — reused legacy auth pages; no guard, no data providers ──
@@ -64,152 +58,69 @@ export const router = createBrowserRouter([
         element: <AppShell />,
         handle: { crumb: 'Home' },
         children: [
-      {
-        index: true,
-        element: (
-          <PagePlaceholder
-            title="Home"
-            description="Your daily operational overview."
-            phase={3}
-            icon={Home}
-          />
-        ),
-      },
+          { index: true, element: <HomePage /> },
 
-      // ── AI Agents ──────────────────────────────────────────────
-      {
-        path: 'agents',
-        handle: { crumb: 'AI Agents' },
-        children: [
+          // ── AI Agents ──────────────────────────────────────────────
           {
-            index: true,
-            element: (
-              <PagePlaceholder
-                title="AI Agents"
-                description="Create, train and manage your AI agents."
-                phase={4}
-                icon={Bot}
-              />
-            ),
-          },
-          {
-            path: ':agentId',
-            handle: { crumb: 'Agent' },
+            path: 'agents',
+            handle: { crumb: 'AI Agents' },
             children: [
-              { index: true, element: <Navigate to="overview" replace /> },
+              { index: true, element: <AgentsPage /> },
               {
-                path: 'overview',
-                handle: { crumb: 'Overview' },
-                element: <PagePlaceholder title="Overview" description="Is my AI healthy?" phase={4} icon={LayoutDashboard} />,
+                path: ':agentId',
+                handle: { crumb: 'Agent' },
+                element: <AgentLayout />,
+                children: [
+                  { index: true, element: <Navigate to="overview" replace /> },
+                  { path: 'overview', handle: { crumb: 'Overview' }, element: <OverviewPage /> },
+                  { path: 'knowledge', handle: { crumb: 'Knowledge' }, element: <KnowledgePage /> },
+                  { path: 'experience', handle: { crumb: 'Experience' }, element: <ExperiencePage /> },
+                  { path: 'channels', handle: { crumb: 'Channels' }, element: <ChannelsPage /> },
+                  { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AgentAnalyticsPage /> },
+                  { path: 'advanced', handle: { crumb: 'Advanced' }, element: <AdvancedPage /> },
+                ],
               },
-              {
-                path: 'knowledge',
-                handle: { crumb: 'Knowledge' },
-                element: <PagePlaceholder title="Knowledge" description="What does my AI know?" phase={4} icon={BookOpen} />,
-              },
-              {
-                path: 'experience',
-                handle: { crumb: 'Experience' },
-                element: <PagePlaceholder title="Experience" description="What will visitors see?" phase={4} icon={Palette} />,
-              },
-              {
-                path: 'channels',
-                handle: { crumb: 'Channels' },
-                element: <PagePlaceholder title="Channels" description="Where is my AI connected?" phase={4} icon={Radio} />,
-              },
-              {
-                path: 'analytics',
-                handle: { crumb: 'Analytics' },
-                element: <PagePlaceholder title="Agent Analytics" description="How is my AI performing?" phase={4} icon={BarChart3} />,
-              },
-              {
-                path: 'advanced',
-                handle: { crumb: 'Advanced' },
-                element: <PagePlaceholder title="Advanced" description="How do I configure technical behaviour?" phase={4} icon={SlidersHorizontal} />,
-              },
+            ],
+          },
+
+          // ── Operations ─────────────────────────────────────────────
+          { path: 'inbox', handle: { crumb: 'Inbox' }, element: <InboxPage /> },
+          { path: 'leads', handle: { crumb: 'Leads' }, element: <LeadsPage /> },
+          { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AnalyticsPage /> },
+
+          // ── Workspace ──────────────────────────────────────────────
+          {
+            path: 'workspace',
+            handle: { crumb: 'Workspace' },
+            children: [
+              { index: true, element: <Navigate to="members" replace /> },
+              { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
+              { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
+              { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
+              { path: 'security', handle: { crumb: 'Security' }, element: <SecurityPage /> },
+              { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
+              { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
+              { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
             ],
           },
         ],
       },
 
-      // ── Operations ─────────────────────────────────────────────
+      // Launch Studio — full-screen 8-step onboarding, OUTSIDE the app shell.
       {
-        path: 'inbox',
-        handle: { crumb: 'Inbox' },
-        element: <PagePlaceholder title="Inbox" description="Live chat and visitor messages." phase={5} icon={Inbox} />,
-      },
-      {
-        path: 'leads',
-        handle: { crumb: 'Leads' },
-        element: <PagePlaceholder title="Leads" description="Captured leads and qualification." phase={5} icon={Users} />,
-      },
-      {
-        path: 'analytics',
-        handle: { crumb: 'Analytics' },
-        element: <PagePlaceholder title="Analytics" description="Performance across all agents." phase={5} icon={BarChart3} />,
-      },
-
-      // ── Workspace ──────────────────────────────────────────────
-      {
-        path: 'workspace',
-        handle: { crumb: 'Workspace' },
+        path: '/launch',
         children: [
-          { index: true, element: <Navigate to="members" replace /> },
+          { index: true, element: <Navigate to="welcome" replace /> },
           {
-            path: 'members',
-            handle: { crumb: 'Members' },
-            element: <PagePlaceholder title="Members" description="Your team and their roles." phase={5} icon={UsersRound} />,
-          },
-          {
-            path: 'billing',
-            handle: { crumb: 'Billing' },
-            element: <PagePlaceholder title="Billing" description="Plan, seats and invoices." phase={5} icon={CreditCard} />,
-          },
-          {
-            path: 'usage',
-            handle: { crumb: 'Usage' },
-            element: <PagePlaceholder title="Usage" description="Credits and consumption." phase={5} icon={Gauge} />,
-          },
-          {
-            path: 'security',
-            handle: { crumb: 'Security' },
-            element: <PagePlaceholder title="Security" description="Password, sessions and access." phase={5} icon={ShieldCheck} />,
-          },
-          {
-            path: 'api-keys',
-            handle: { crumb: 'API Keys' },
-            element: <PagePlaceholder title="API Keys" description="Programmatic access to your workspace." phase={5} icon={KeyRound} />,
-          },
-          {
-            path: 'integrations',
-            handle: { crumb: 'Integrations' },
-            element: <PagePlaceholder title="Integrations" description="Webhooks, meetings and email routing." phase={5} icon={Plug} />,
-          },
-          {
-            path: 'settings',
-            handle: { crumb: 'Settings' },
-            element: <PagePlaceholder title="Workspace Settings" description="Workspace name, defaults and branding." phase={5} icon={Settings2} />,
+            path: ':step',
+            element: (
+              <Suspense fallback={null}>
+                <LaunchStudio />
+              </Suspense>
+            ),
           },
         ],
       },
-    ],
-  },
-
-  // Launch Studio — full-screen 9-step onboarding, OUTSIDE the app shell.
-  {
-    path: '/launch',
-    children: [
-      { index: true, element: <Navigate to="welcome" replace /> },
-      {
-        path: ':step',
-        element: (
-          <Suspense fallback={null}>
-            <LaunchStudio />
-          </Suspense>
-        ),
-      },
-    ],
-  },
     ],
   },
 
