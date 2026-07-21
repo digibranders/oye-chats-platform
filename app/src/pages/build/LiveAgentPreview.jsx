@@ -42,7 +42,7 @@ function botToPreviewSettings(bot, previewColor) {
  * brand colour, so the Studio preview is pixel-identical to Bot Settings and the
  * real widget. The Appearance step's `previewColor` live-recolours it.
  */
-export default function LiveAgentPreview({ previewColor, messages = [], pending = false }) {
+export default function LiveAgentPreview({ previewColor, messages = [], pending = false, onSend }) {
     const { selectedBot } = useBotContext();
 
     return (
@@ -68,6 +68,7 @@ export default function LiveAgentPreview({ previewColor, messages = [], pending 
                         state="chat"
                         messages={messages}
                         pending={pending}
+                        onSend={onSend}
                     />
                 ) : (
                     // No bot yet (Connect step): show the closed launcher as it would

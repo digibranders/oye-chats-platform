@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { X, MoreHorizontal, Bot, Headphones, CalendarDays } from 'lucide-react';
 
@@ -107,9 +107,14 @@ export const WIDGET_FONT_STACK =
  *   agent proves itself inside the real widget. Omit for the static Bot Settings
  *   preview.
  * @param {boolean} [props.pending] Bot is answering — shows a typing indicator.
+ * @param {(question: string) => void} [props.onSend] When provided, the input
+ *   becomes a real controlled text field that submits into this handler (the
+ *   Build Studio Prove step, so the widget preview doubles as the actual
+ *   input surface). Omit for the static Bot Settings preview, which keeps the
+ *   presentational placeholder instead.
  * @param {string} [props.className] Extra classes for the outer widget frame.
  */
-export default function WidgetChatPreview({ settings, state = 'chat', messages = [], pending = false, className = '' }) {
+export default function WidgetChatPreview({ settings, state = 'chat', messages = [], pending = false, onSend, className = '' }) {
     // Live-chat affordance is gated by both the bot toggle and the plan
     // entitlement. When the entitlement isn't supplied (e.g. the Build Studio,
     // which has no per-field lock context) treat it as allowed.
@@ -127,6 +132,15 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }, [messages, pending]);
+
+    // Interactive input (Build Studio only — gated on `onSend` being supplied).
+    const [draft, setDraft] = useState('');
+    const submitDraft = () => {
+        const q = draft.trim();
+        if (!q || pending || !onSend) return;
+        onSend(q);
+        setDraft('');
+    };
 
     return (
         /* Chat Window Preview Wrapper — mirrors the real widget's classic
@@ -332,16 +346,50 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                 show_branding feature flag). */}
             {state === 'chat' && (
                 <div className="px-4 pb-4 pt-2 bg-[#F8F8F8] shrink-0">
-                    {/* Input box */}
+                    {/* Input box — a real controlled field when `onSend` is
+                        supplied (Build Studio Prove step); otherwise the
+                        original presentational placeholder (Bot Settings). */}
                     <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
-                        <div className="flex-1 min-w-0">
-                            <span className="block text-[14px] text-gray-400 leading-[20px] truncate">
-                                {(settings.widget_messages || {}).input_placeholder || 'Write a message...'}
-                            </span>
-                        </div>
-                        <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-0.5 flex-shrink-0 text-[#BBE7FF]">
-                            <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
-                        </svg>
+                        {onSend ? (
+                            <>
+                                <div className="flex-1 min-w-0">
+                                    <input
+                                        type="text"
+                                        value={draft}
+                                        onChange={(e) => setDraft(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') submitDraft();
+                                        }}
+                                        placeholder={(settings.widget_messages || {}).input_placeholder || 'Write a message...'}
+                                        aria-label="Message"
+                                        disabled={pending}
+                                        className="flex-1 min-w-0 w-full text-[14px] leading-[20px] bg-transparent outline-none border-0 text-[#16202C] placeholder:text-gray-400 disabled:opacity-60"
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={submitDraft}
+                                    disabled={pending || !draft.trim()}
+                                    aria-label="Send"
+                                    className="mb-0.5 flex-shrink-0 text-[#BBE7FF] disabled:opacity-60"
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                    </svg>
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <div className="flex-1 min-w-0">
+                                    <span className="block text-[14px] text-gray-400 leading-[20px] truncate">
+                                        {(settings.widget_messages || {}).input_placeholder || 'Write a message...'}
+                                    </span>
+                                </div>
+                                <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-0.5 flex-shrink-0 text-[#BBE7FF]">
+                                    <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                </svg>
+                            </>
+                        )}
                     </div>
 
                     {/* Privacy notice */}
