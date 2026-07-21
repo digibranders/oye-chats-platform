@@ -18,11 +18,18 @@ function newSessionId(): string {
   return `preview-${Math.random().toString(36).slice(2)}`;
 }
 
-/** Append text to the trailing bot message (streaming). */
-function appendToLastBot(messages: PreviewMessage[], text: string): PreviewMessage[] {
+/**
+ * Stream a chunk into the conversation: append to the trailing bot message, or
+ * start a new bot message if the last one is the user's. Critically, we do NOT
+ * pre-create an empty bot message on send — otherwise the widget renders both an
+ * empty bot avatar AND the typing indicator (double avatar). The bot message is
+ * born on the first chunk.
+ */
+function appendChunk(messages: PreviewMessage[], text: string): PreviewMessage[] {
   const next = messages.slice();
   const last = next[next.length - 1];
   if (last && last.role === 'bot') next[next.length - 1] = { ...last, text: last.text + text };
+  else next.push({ role: 'bot', text });
   return next;
 }
 
@@ -58,7 +65,7 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
       }));
 
       void previewChatStream(selectedBot.id, q, sessionRef.current, {
-        onChunk: (text) => setState((prev) => ({ ...prev, messages: appendToLastBot(prev.messages, text) })),
+        onChunk: (text) => setState((prev) => ({ ...prev, messages: appendChunk(prev.messages, text) })),
         onFinal: () => setState((prev) => ({ ...prev, pending: false })),
         onError: () =>
           setState((prev) => {

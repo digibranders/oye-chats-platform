@@ -2,7 +2,6 @@ import {
   PartyPopper,
   Bot,
   Globe,
-  GraduationCap,
   BookOpenCheck,
   MessagesSquare,
   Palette,
@@ -31,19 +30,17 @@ export interface LaunchStep {
 }
 
 /**
- * Launch Studio — the 9-step onboarding (per the master execution plan).
- * Rebuilt from first principles; the legacy 4-milestone Build Studio is a
- * logic reference only. Website analysis is folded into "AI Training"; the flow
- * opens with a Welcome intro and an explicit "Create Agent" step, and closes
- * with standalone "Knowledge Review" and "Verification" steps the legacy flow
- * lacked. Users complete this once, then it's gone — never navigation.
+ * Launch Studio — the 8-step onboarding. Rebuilt from first principles; the
+ * legacy 4-milestone Build Studio is a logic reference only. Opens with a
+ * Welcome intro + explicit "Create Agent"; "Knowledge" is one state-driven step
+ * that shows live training progress then becomes the source/page review. Users
+ * complete this once, then it's gone — never navigation.
  */
 export const LAUNCH_STEPS: LaunchStep[] = [
   { key: 'welcome', path: 'welcome', label: 'Welcome', hint: "Let's get you set up", icon: PartyPopper },
   { key: 'create', path: 'create', label: 'Create Agent', hint: 'Name your assistant', icon: Bot },
   { key: 'connect', path: 'connect', label: 'Connect Website', hint: 'Point us at your site', icon: Globe },
-  { key: 'train', path: 'train', label: 'AI Training', hint: 'Analyze & learn your content', icon: GraduationCap },
-  { key: 'review', path: 'review', label: 'Knowledge Review', hint: 'Check what it learned', icon: BookOpenCheck },
+  { key: 'knowledge', path: 'knowledge', label: 'Knowledge', hint: 'Train & review', icon: BookOpenCheck },
   { key: 'test', path: 'test', label: 'Test Agent', hint: 'Try it yourself', icon: MessagesSquare },
   { key: 'customize', path: 'customize', label: 'Customize Widget', hint: 'Make it yours', icon: Palette },
   { key: 'deploy', path: 'deploy', label: 'Deploy', hint: 'Add it to your site', icon: Rocket },

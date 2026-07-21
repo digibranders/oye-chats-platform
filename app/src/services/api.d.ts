@@ -5,6 +5,7 @@
  */
 import type {
   Bot,
+  CrawlDiscovery,
   CurrentUser,
   KnowledgeSource,
   SourcePagesResult,
@@ -16,10 +17,7 @@ export function updateBot(botId: number, data: Record<string, unknown>): Promise
 export function getBot(botId: number): Promise<Bot>;
 export function getBots(): Promise<Bot[]>;
 
-export function discoverCrawlUrls(
-  url: string,
-  botId?: number,
-): Promise<{ url: string; total_found: number; capped: boolean; plan_max: number }>;
+export function discoverCrawlUrls(url: string, botId?: number): Promise<CrawlDiscovery>;
 export function getDocuments(botId?: number): Promise<KnowledgeSource[]>;
 export function getDocumentPages(source: string, botId?: number): Promise<SourcePagesResult>;
 

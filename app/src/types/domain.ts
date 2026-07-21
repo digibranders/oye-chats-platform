@@ -65,6 +65,20 @@ export interface SourcePagesResult {
   pages: SourcePage[];
 }
 
+/** Result of discoverCrawlUrls — page count + server-computed credit estimate. */
+export interface CrawlDiscovery {
+  url?: string;
+  total_found: number;
+  capped: boolean;
+  plan_max?: number;
+  urls?: string[];
+  exceeds_balance?: boolean;
+  credits_required_full?: number;
+  balance?: number;
+  max_affordable_pages?: number;
+  cost_per_page?: number;
+}
+
 export type CrawlStatus =
   | 'idle'
   | 'running'

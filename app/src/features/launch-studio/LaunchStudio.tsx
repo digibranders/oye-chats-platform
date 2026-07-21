@@ -12,8 +12,7 @@ import {
 import { WelcomeStep } from './steps/WelcomeStep';
 import { CreateAgentStep } from './steps/CreateAgentStep';
 import { ConnectStep } from './steps/ConnectStep';
-import { TrainStep } from './steps/TrainStep';
-import { ReviewStep } from './steps/ReviewStep';
+import { KnowledgeStep } from './steps/KnowledgeStep';
 import { TestStep } from './steps/TestStep';
 import { CustomizeStep } from './steps/CustomizeStep';
 import { DeployStep } from './steps/DeployStep';
@@ -23,8 +22,7 @@ const STEP_COMPONENTS: Record<string, ComponentType<StepProps>> = {
   welcome: WelcomeStep,
   create: CreateAgentStep,
   connect: ConnectStep,
-  train: TrainStep,
-  review: ReviewStep,
+  knowledge: KnowledgeStep,
   test: TestStep,
   customize: CustomizeStep,
   deploy: DeployStep,
