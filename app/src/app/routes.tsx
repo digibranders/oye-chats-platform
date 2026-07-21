@@ -21,6 +21,12 @@ import {
 } from 'lucide-react';
 import { AppShell } from '../shell/AppShell';
 import { PagePlaceholder } from './PagePlaceholder';
+import { ProtectedLayout } from './ProtectedLayout';
+import Login from '../pages/Login';
+import Register from '../pages/Register';
+import VerifyEmail from '../pages/VerifyEmail';
+import ForgotPassword from '../pages/ForgotPassword';
+import OAuthCallback from '../pages/OAuthCallback';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
 // so its layout + 9 steps stay out of the initial bundle.
@@ -42,11 +48,22 @@ const LaunchStudio = lazy(() =>
  * and active-state are all verifiable before any page is built.
  */
 export const router = createBrowserRouter([
+  // ── Public — reused legacy auth pages; no guard, no data providers ──
+  { path: '/login', element: <Login /> },
+  { path: '/register', element: <Register /> },
+  { path: '/verify-email', element: <VerifyEmail /> },
+  { path: '/forgot-password', element: <ForgotPassword /> },
+  { path: '/auth/callback', element: <OAuthCallback /> },
+
+  // ── Authenticated area — token guard + reused Workspace/Bot/Crawl providers ──
   {
-    path: '/',
-    element: <AppShell />,
-    handle: { crumb: 'Home' },
+    element: <ProtectedLayout />,
     children: [
+      {
+        path: '/',
+        element: <AppShell />,
+        handle: { crumb: 'Home' },
+        children: [
       {
         index: true,
         element: (
@@ -191,6 +208,8 @@ export const router = createBrowserRouter([
           </Suspense>
         ),
       },
+    ],
+  },
     ],
   },
 
