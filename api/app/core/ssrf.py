@@ -154,6 +154,76 @@ class _PinnedResolver:
         return None
 
 
+async def probe_url_alive(session, url: str) -> bool:
+    """Liveness probe (HEAD, GET fallback) for ``url``, connecting only to a
+    single pinned, pre-validated IP so the host that gets validated is the
+    host that actually gets connected to.
+
+    AR-42: this is the pinned-DNS counterpart of :func:`fetch_text_safely`
+    for the ``check_urls_alive`` liveness-check path — previously the lone
+    holdout in this codebase that opened a *raw* ``aiohttp.ClientSession``
+    and issued ``session.head()``/``session.get()`` directly. That let
+    ``validate_public_url`` resolve DNS once, then aiohttp perform its own,
+    separate resolution when actually connecting — a DNS-rebinding TOCTOU
+    window (attacker DNS answers public at validation time, then
+    private-range/169.254.169.254 at connect time). Fixed the same way
+    :func:`fetch_text_safely` was: resolve once via
+    :func:`_resolve_pinned_public_ip` and connect to exactly that IP through
+    a custom aiohttp resolver (:class:`_PinnedResolver`).
+
+    ``session`` is used only to inherit the caller's headers/timeout
+    configuration; the actual HEAD/GET connections go through a short-lived
+    session bound to the pinned resolver — mirrors ``fetch_text_safely``.
+
+    Liveness policy (unchanged from the pre-fix behavior of
+    ``check_urls_alive``, preserved here so callers see no behavior change):
+        - The URL fails :func:`validate_public_url`, or its host does not
+          resolve to a single pinned public IP -> ``False``.
+        - HEAD (or the GET fallback) responds 404/410 (confirmed gone) ->
+          ``False``.
+        - HEAD responds < 400 -> ``True``.
+        - HEAD responds >= 400 (other than 404/410), or raises -> retried as
+          GET; the GET result (status not in 404/410) is the final answer.
+          A GET transport error is conservative -> ``True`` ("not confirmed
+          dead", so a transient blip or bot-blocking firewall never deletes
+          a customer's knowledge base entry).
+
+    Never raises.
+    """
+    import aiohttp
+
+    try:
+        validate_public_url(url)
+    except SSRFError:
+        return False
+
+    hostname = urlparse(url).hostname
+    if hostname is None:
+        return False
+    try:
+        pinned_ip = str(ipaddress.ip_address(hostname))
+    except ValueError:
+        pinned_ip = _resolve_pinned_public_ip(hostname)
+    if pinned_ip is None:
+        return False
+
+    connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=False)
+    async with aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned:
+        try:
+            async with pinned.head(url, allow_redirects=False, ssl=False) as resp:
+                if resp.status in (404, 410):
+                    return False
+                if resp.status < 400:
+                    return True
+        except Exception:
+            pass
+        try:
+            async with pinned.get(url, allow_redirects=False, ssl=False) as resp:
+                return resp.status not in (404, 410)
+        except Exception:
+            return True
+
+
 async def fetch_text_safely(
     session,
     url: str,

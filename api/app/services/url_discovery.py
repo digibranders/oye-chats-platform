@@ -28,7 +28,7 @@ import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
-from app.core.ssrf import SSRFError, fetch_text_safely, validate_public_url
+from app.core.ssrf import fetch_text_safely, probe_url_alive
 
 logger = logging.getLogger(__name__)
 
@@ -488,35 +488,16 @@ async def check_urls_alive(
 
         async def _check(url: str) -> None:
             async with sem:
-                # SSRF guard (code-review RV4): refuse non-public targets and do
-                # NOT follow redirects (a public→internal 3xx must not bounce the
-                # server-side request). A 3xx still counts as alive below without
-                # being followed.
-                try:
-                    validate_public_url(url)
-                except SSRFError:
-                    results[url] = False
-                    return
-                # HEAD first — cheap and most servers support it. Fall back
-                # to a tiny GET if HEAD is rejected with 405 / 403 so we
-                # don't incorrectly flag the page as alive when it might
-                # actually be 404 via GET.
-                try:
-                    async with session.head(url, allow_redirects=False, ssl=False) as r:
-                        if r.status in (404, 410):
-                            results[url] = False
-                            return
-                        if r.status < 400:
-                            results[url] = True
-                            return
-                except Exception:
-                    pass
-                try:
-                    async with session.get(url, allow_redirects=False, ssl=False) as r:
-                        results[url] = r.status not in (404, 410)
-                except Exception:
-                    # Network error — keep the URL (conservative).
-                    results[url] = True
+                # AR-42: liveness probe goes through the SSRF-pinned
+                # connector (code-review RV4 + DNS-rebinding fix) instead of
+                # issuing raw session.head()/session.get() requests directly
+                # — validate_public_url and the actual connection now agree
+                # on exactly one resolved IP, closing the TOCTOU window
+                # where aiohttp's own connect-time DNS resolution could
+                # return a different (private/metadata) address than the
+                # one just validated. `session` is passed through only to
+                # supply headers/timeout config; see probe_url_alive.
+                results[url] = await probe_url_alive(session, url)
 
         await asyncio.gather(*[_check(u) for u in urls])
 
