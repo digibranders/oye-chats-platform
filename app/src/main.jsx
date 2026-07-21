@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
 import { ThemeProvider } from './context/ThemeContext.jsx'
 import { isSessionExpired, clearAuthStorage } from './utils/authStorage'
+import ErrorFallback from './components/ErrorFallback.jsx'
 import './index.css'
 import App from './App.jsx'
 
@@ -33,7 +34,7 @@ if (SENTRY_DSN) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <Sentry.ErrorBoundary fallback={<p>Something went wrong. Please refresh the page.</p>}>
+    <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
       <ThemeProvider>
         <App />
       </ThemeProvider>

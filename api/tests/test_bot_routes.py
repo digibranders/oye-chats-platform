@@ -78,6 +78,35 @@ class _ExecuteResult:
         return _ScalarResult(self._value)
 
 
+def _apply_flush_defaults(obj, bot_id=42):
+    """Assign a primary key + materialize a Bot's scalar column defaults.
+
+    ``create_bot`` now returns the full serialized bot, which requires the id
+    and the model's column defaults to be present. A ``MagicMock`` session never
+    runs a real flush, so this mirrors what SQLAlchemy would do on INSERT.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.db.models import Bot
+
+    if not isinstance(obj, Bot):
+        return obj
+    if getattr(obj, "id", None) is None:
+        obj.id = bot_id
+    for col in sa_inspect(Bot).columns:
+        if getattr(obj, col.key, None) is not None:
+            continue
+        default = col.default
+        if default is not None and not default.is_callable:
+            setattr(obj, col.key, default.arg)
+    return obj
+
+
+def _populate_on_refresh(session, bot_id=42):
+    """Wire a mocked ``session.refresh`` to behave like a real flush."""
+    session.refresh.side_effect = lambda obj: _apply_flush_defaults(obj, bot_id)
+
+
 # ── Bot CRUD ─────────────────────────────────────────────────────────────────
 
 
@@ -89,6 +118,7 @@ class TestCreateBot:
         session = MagicMock()
         added = []
         session.add.side_effect = added.append
+        _populate_on_refresh(session)
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
         app = _build_app(auth_override=_client_auth())
@@ -107,8 +137,15 @@ class TestCreateBot:
 
         assert response.status_code == 201
         data = response.json()
-        assert "bot_id" in data
+        # create now returns the full bot object (same shape as GET /bots/{id}),
+        # not the old {message, bot_id, bot_key, name} envelope.
+        assert data["id"] == 42
+        assert data["bot_key"].startswith("bot-")
         assert data["name"] == "My Bot"
+        # Durable crawl-state fields default to "never trained" on a new bot.
+        assert data["last_crawl_status"] is None
+        assert data["crawl_completed_at"] is None
+        assert data["indexed_chunk_count"] == 0
         # Two rows are persisted on a successful create: the Bot itself and
         # an in-app ``bot_created`` Notification dropped into the
         # workspace's notification feed.
@@ -130,6 +167,7 @@ class TestCreateBot:
         session = MagicMock()
         added = []
         session.add.side_effect = added.append
+        _populate_on_refresh(session)
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
         app = _build_app(auth_override=_client_auth())
@@ -147,6 +185,67 @@ class TestCreateBot:
         created = next(r for r in added if isinstance(r, Bot))
         assert created.domain_check_enabled is True
         assert list(created.allowed_domains or []) == []
+
+    def test_idempotent_create_reuses_existing_bot_for_same_site(self, monkeypatch):
+        # Onboarding double-submit: submit #1 created the bot; submit #2 arrives
+        # over the free 1-bot cap. Instead of a confusing 402, the same-site bot
+        # is returned so the retry is a no-op.
+        from app.api import bot_routes
+        from app.db.models import Bot
+        from app.services.plan_entitlements_service import AddBotDecision
+
+        existing = _apply_flush_defaults(
+            Bot(client_id=1, bot_key="bot-existing123", name="Acme", website="https://mysite.com", bant_enabled=True),
+            bot_id=7,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult([existing])
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+        app = _build_app(auth_override=_client_auth())
+        tc = TestClient(app)
+
+        denied = AddBotDecision(allowed=False, reason="bot_limit_reached", must_subscribe=True, active_bot_count=1)
+        with patch(
+            "app.services.plan_entitlements_service.can_client_add_new_bot",
+            return_value=denied,
+        ):
+            response = tc.post("/bots", json={"name": "Acme retry", "website": "https://mysite.com"})
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == 7
+        assert data["bot_key"] == "bot-existing123"
+        # Reused, not created — no new Bot row was added.
+        session.add.assert_not_called()
+
+    def test_create_402s_when_capped_and_no_matching_site(self, monkeypatch):
+        # The idempotent reuse must NOT mask the upsell for a genuinely new bot:
+        # a capped account creating a bot for a *different* site still 402s.
+        from app.api import bot_routes
+        from app.db.models import Bot
+        from app.services.plan_entitlements_service import AddBotDecision
+
+        existing = _apply_flush_defaults(
+            Bot(client_id=1, bot_key="bot-existing123", name="Acme", website="https://mysite.com", bant_enabled=True),
+            bot_id=7,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult([existing])
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+        app = _build_app(auth_override=_client_auth())
+        tc = TestClient(app)
+
+        denied = AddBotDecision(allowed=False, reason="bot_limit_reached", must_subscribe=True, active_bot_count=1)
+        with patch(
+            "app.services.plan_entitlements_service.can_client_add_new_bot",
+            return_value=denied,
+        ):
+            response = tc.post("/bots", json={"name": "Other", "website": "https://different.com"})
+
+        assert response.status_code == 402
+        assert response.json()["detail"]["must_subscribe"] is True
 
     def test_operator_without_permission_rejected(self, monkeypatch):
         from app.api import bot_routes
@@ -449,6 +548,7 @@ class TestBotAccessControl:
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
+        _populate_on_refresh(session)
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
         # Same gate as TestCreateBot.test_creates_bot — the route now
@@ -470,6 +570,7 @@ class TestBotAccessControl:
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
+        _populate_on_refresh(session)
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
         allowed = AddBotDecision(allowed=True, reason="ok", must_subscribe=False, active_bot_count=0)

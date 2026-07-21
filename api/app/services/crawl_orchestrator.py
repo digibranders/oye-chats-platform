@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from datetime import UTC, datetime
 
 from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
@@ -50,6 +51,61 @@ from app.services.footer_harvester import harvest_footer_media
 from app.services.llm_service import classify_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
+
+
+def _record_bot_crawl_state(bot_id: int | None, status: str, chunk_count: int | None = None) -> None:
+    """Persist the bot's durable ingestion ("trained") state after a terminal crawl.
+
+    Best-effort — a failure here must never fail or mask the crawl result. On a
+    successful or partial (cancelled) ingest we stamp ``crawl_completed_at`` and
+    the chunk count; on a hard failure we record only the status so the frontend
+    can tell "tried and failed" from "never trained".
+    """
+    if not bot_id:
+        return
+    try:
+        with get_session() as session:
+            bot = session.get(Bot, bot_id)
+            if bot is None:
+                return
+            bot.last_crawl_status = status
+            if status in ("done", "cancelled"):
+                bot.crawl_completed_at = datetime.now(UTC)
+                if chunk_count is not None:
+                    bot.indexed_chunk_count = int(chunk_count)
+            session.commit()
+    except Exception:
+        logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
+
+
+def _precompute_seed_questions(bot_id: int | None) -> None:
+    """Warm the bot's seed-question cache right after ingestion completes.
+
+    Seed generation is an LLM call + several embedding round-trips. Running it
+    here (in the worker / background crawl task, off the request path) means the
+    Build Studio Prove step reads a cached value instead of paying that latency
+    while the user waits. Best-effort; the on-demand endpoint stays as a fallback
+    if this hasn't finished (or failed) by the time the user asks. Only caches an
+    authoritative result — mirrors the endpoint's guard so an empty list is never
+    persisted before content exists (documents do exist here, but stay defensive).
+    """
+    if not bot_id:
+        return
+    try:
+        from app.db.repository import count_documents_for_bot
+        from app.services.seed_questions_service import build_seed_questions
+
+        with get_session() as session:
+            bot = session.get(Bot, bot_id)
+            if bot is None or bot.seed_questions is not None:
+                return  # already computed (or bot gone) — never recompute here
+            questions = build_seed_questions(session, bot)
+            if questions or count_documents_for_bot(session, bot_id=bot.id, client_id=bot.client_id) > 0:
+                bot.seed_questions = questions
+                session.commit()
+    except Exception:
+        logger.warning("seed-question precompute failed for bot %s (non-fatal)", bot_id, exc_info=True)
+
 
 # Path keywords used to auto-detect a "services" page from a freshly crawled site,
 # in priority order. Matched against the URL path only (not querystring), so a
@@ -672,6 +728,10 @@ async def run_full_crawl(
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
         )
+        _record_bot_crawl_state(bot_id, "done", total_chunks)
+        # Warm the seed-question cache now (worker/background), so the Prove step
+        # reads a cached value instead of paying LLM + embedding latency live.
+        _precompute_seed_questions(bot_id)
 
         # Drop an in-app notification so the user sees the result in the bell
         # even if they navigated away. Best-effort — never fail the crawl on it.
@@ -725,6 +785,7 @@ async def run_full_crawl(
             urls=partial_urls,
             result=result_payload,
         )
+        _record_bot_crawl_state(bot_id, "cancelled", ingest_totals["chunks"])
         logger.info(
             "Cancelled crawl for client %s: %d pages discovered, %d chunks already ingested",
             client_id,
@@ -739,6 +800,7 @@ async def run_full_crawl(
             status="failed",
             error="Crawling failed. The target site may be unreachable.",
         )
+        _record_bot_crawl_state(bot_id, "failed")
         raise
     except Exception as exc:
         logger.exception("Crawling failed unexpectedly for client %s: %s", client_id, exc)
@@ -747,6 +809,7 @@ async def run_full_crawl(
             status="failed",
             error="Crawling failed. Please try again.",
         )
+        _record_bot_crawl_state(bot_id, "failed")
         raise
     finally:
         # Never leak the consumer task: on any failure path, drop pending pages

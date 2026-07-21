@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
@@ -8,8 +8,8 @@ import { Button } from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
 import { useBotContext } from '../../context/BotContext';
-import { previewChat } from '../../services/api';
-import { MILESTONES, milestoneIndex } from './studioMilestones';
+import { previewChatStream } from '../../services/api';
+import { MILESTONES, milestoneIndex, STUDIO_RESUME_KEY } from './studioMilestones';
 import ConnectStep from './steps/ConnectStep';
 import ProveStep from './steps/ProveStep';
 import PersonalizeStep from './steps/PersonalizeStep';
@@ -26,7 +26,7 @@ const OTTO = {
     golive: "Last step — put it on your site. I'll tell you the moment it's live.",
 };
 
-function Stepper({ current, onStep }) {
+function Stepper({ current, maxReached, onStep }) {
     return (
         <div className="relative">
             <div className="absolute top-[13px] left-0 right-0 h-[2px] rounded-full bg-[var(--border)]" />
@@ -39,14 +39,19 @@ function Stepper({ current, onStep }) {
                 {MILESTONES.map((m, i) => {
                     const done = i < current;
                     const active = i === current;
+                    // Steps beyond the furthest legitimately reached are locked —
+                    // a forward jump must not skip the aha (e.g. Go live before
+                    // the agent is trained). Back-navigation stays free.
+                    const locked = i > maxReached;
                     return (
                         <li key={m.key}>
                             <button
                                 type="button"
-                                onClick={() => onStep(i)}
+                                onClick={() => !locked && onStep(i)}
+                                disabled={locked}
                                 aria-current={active ? 'step' : undefined}
                                 aria-label={`Step ${i + 1}: ${m.label}`}
-                                className="group flex flex-col items-center gap-2"
+                                className={cn('group flex flex-col items-center gap-2', locked && 'cursor-not-allowed')}
                             >
                                 <span
                                     className={cn(
@@ -88,6 +93,21 @@ export default function BuildStudio() {
     const [params, setParams] = useSearchParams();
     const current = milestoneIndex(params.get('m'));
     const milestone = MILESTONES[current];
+
+    // Persist the furthest-reached milestone so the Dashboard "Resume setup"
+    // nudge can deep-link the user back here (?m=<key>) instead of restarting
+    // them at a blank step 1. Only advance the marker — never rewind it when the
+    // user steps Back — so resume always points at the deepest progress.
+    useEffect(() => {
+        try {
+            const savedIndex = milestoneIndex(localStorage.getItem(STUDIO_RESUME_KEY));
+            if (current >= savedIndex) {
+                localStorage.setItem(STUDIO_RESUME_KEY, milestone.key);
+            }
+        } catch {
+            /* localStorage unavailable — resume just falls back to step 1 */
+        }
+    }, [current, milestone.key]);
     // Live override so the Personalize step can recolour the preview in real time.
     const [previewColor, setPreviewColor] = useState(null);
     // Shared Prove-step conversation — the controls live in ProveStep (left) but
@@ -96,33 +116,59 @@ export default function BuildStudio() {
     const [previewPending, setPreviewPending] = useState(false);
     const previewSessionRef = useRef(`studio-preview-${Math.floor(performance.now())}`);
 
+    // Furthest milestone legitimately reached — gates forward stepper jumps.
+    // Updated during render (lint-safe) whenever the URL step moves past it,
+    // which covers both goNext and a deep-linked resume.
+    const [maxReached, setMaxReached] = useState(current);
+    if (current > maxReached) setMaxReached(current);
+
     const goTo = (i) => {
         const clamped = Math.max(0, Math.min(MILESTONES.length - 1, i));
         setPreviewColor(null);
-        setPreviewMessages([]);
         setPreviewPending(false);
+        // Note: previewMessages is intentionally NOT cleared — the proof the
+        // user generated in the Prove step should survive navigation (e.g.
+        // stepping back to re-test) instead of evaporating.
         setParams({ m: MILESTONES[clamped].key });
     };
     const goNext = () => goTo(current + 1);
 
-    // Send a question into the widget preview and stream back a real cited answer.
+    // Send a question into the widget preview and STREAM back a real cited answer
+    // (same SSE path as the live widget) so the aha feels instant and faithful.
     const sendPreview = async (question) => {
         const q = (question || '').trim();
         const botId = selectedBot?.id;
         if (!q || previewPending || !botId) return;
         setPreviewMessages((m) => [...m, { role: 'user', text: q }]);
         setPreviewPending(true);
+        let streamed = '';
+        // Upsert the trailing bot bubble: append it on the first token (so no
+        // empty bubble flashes), then patch it as more text/sources arrive.
+        const upsertBot = (patch) =>
+            setPreviewMessages((m) => {
+                const copy = m.slice();
+                const last = copy[copy.length - 1];
+                if (last && last.role === 'bot') copy[copy.length - 1] = { ...last, ...patch };
+                else copy.push({ role: 'bot', text: '', sources: [], ...patch });
+                return copy;
+            });
         try {
-            const res = await previewChat(botId, q, previewSessionRef.current);
-            setPreviewMessages((m) => [
-                ...m,
-                { role: 'bot', text: res?.answer || '', sources: Array.isArray(res?.sources) ? res.sources : [] },
-            ]);
-        } catch (err) {
-            setPreviewMessages((m) => [
-                ...m,
-                { role: 'bot', text: err?.message || 'The agent could not answer that just now.', sources: [] },
-            ]);
+            await previewChatStream(botId, q, previewSessionRef.current, {
+                onChunk: (t) => {
+                    streamed += t;
+                    upsertBot({ text: streamed });
+                },
+                onFinal: (meta) => {
+                    const sources = Array.isArray(meta?.sources) ? meta.sources : [];
+                    if (!streamed) upsertBot({ text: 'The agent could not answer that just now.', sources: [] });
+                    else upsertBot({ text: streamed, sources });
+                },
+                onError: () => {
+                    // Keep any partial text that already streamed; only show the
+                    // fallback when nothing arrived at all.
+                    if (!streamed) upsertBot({ text: 'The agent could not answer that just now.', sources: [] });
+                },
+            });
         } finally {
             setPreviewPending(false);
         }
@@ -177,7 +223,7 @@ export default function BuildStudio() {
             <MotionConfig reducedMotion="user">
                 {/* Stepper */}
                 <div className="max-w-2xl mx-auto pt-1 pb-8">
-                    <Stepper current={current} onStep={goTo} />
+                    <Stepper current={current} maxReached={maxReached} onStep={goTo} />
                 </div>
 
                 {/* Body */}

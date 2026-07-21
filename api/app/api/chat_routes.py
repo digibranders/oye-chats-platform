@@ -480,11 +480,13 @@ def _offline_stream(bot: Bot, reason: str):
 
 @router.post("/chat/stream")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
-async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
+async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bot_for_chat)):
     """
     Streaming RAG Endpoint: Streams the response token-by-token via SSE.
     Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
-    Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
+    Authenticated via X-Bot-Key (widget) or X-API-Key. Owner-preview requests
+    (Build Studio: ``?preview=true&bot_id=``) resolve any owned bot and are free
+    — no credit deduction — exactly like the non-streaming ``POST /chat``.
     """
     # ── Subscription gate (widget side) ──
     # Mirror ``/chat`` — when the bot owner's subscription is inactive,
@@ -505,37 +507,42 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
         )
 
     # ── Credit enforcement: deduct 1 credit per AI reply (configurable) ──
+    # Owner-preview (Build Studio) replies are free — skip deduction entirely,
+    # mirroring POST /chat. ``cost`` stays 0 so the refund path below is a no-op.
     from app.services import credit_service
 
-    with get_session() as db:
-        cost = credit_service.get_credit_cost(db, "ai_chat")
-        try:
-            credit_service.check_and_deduct(
-                db,
-                bot.client_id,
-                cost,
-                reason="ai_chat",
-                reference_id=bot.id,
-                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
-            )
-            db.commit()
-        except credit_service.InsufficientCredits as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=402,
-                detail={
-                    "error": "insufficient_credits",
-                    "required": exc.required,
-                    "available": exc.available,
-                    "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
-                },
-            ) from exc
-        except credit_service.KillSwitchActive as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=503,
-                detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
-            ) from exc
+    is_preview = getattr(bot, "_is_preview", False)
+    cost = 0
+    if not is_preview:
+        with get_session() as db:
+            cost = credit_service.get_credit_cost(db, "ai_chat")
+            try:
+                credit_service.check_and_deduct(
+                    db,
+                    bot.client_id,
+                    cost,
+                    reason="ai_chat",
+                    reference_id=bot.id,
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                )
+                db.commit()
+            except credit_service.InsufficientCredits as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "insufficient_credits",
+                        "required": exc.required,
+                        "available": exc.available,
+                        "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
+                    },
+                ) from exc
+            except credit_service.KillSwitchActive as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
+                ) from exc
 
     ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
@@ -569,7 +576,9 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
                     # last, so it overrides any earlier (even forged) frame.
                     generation_failed = flag
             yield chunk
-        if generation_failed:
+        # Never refund a preview (nothing was charged); otherwise refund a
+        # confirmed failed generation.
+        if generation_failed and not is_preview:
             _refund_ai_chat_credit(bot, cost)
 
     return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")

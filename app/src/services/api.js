@@ -1164,6 +1164,106 @@ export const previewChat = async (botId, question, sessionId) => {
     return data;
 };
 
+/** Auth headers for the raw-fetch streaming preview (mirrors the axios interceptor). */
+function previewStreamHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = getAuthItem('admin_token');
+    const authType = getAuthItem('auth_type');
+    if (token) {
+        if (authType === 'operator') headers['X-Operator-Key'] = token;
+        else headers['X-API-Key'] = token;
+    }
+    if (authType === 'client') {
+        const workspaceId = getAuthItem('current_workspace_id');
+        if (workspaceId) headers['X-Workspace-Id'] = workspaceId;
+        const workspaceRole = getAuthItem('current_workspace_role');
+        if (workspaceRole) headers['X-Acting-Role'] = workspaceRole;
+    }
+    return headers;
+}
+
+/**
+ * Streaming owner-preview chat for the Build Studio Prove step — the same SSE
+ * path the real widget uses (`/chat/stream`, owner-preview mode: free, no credit
+ * deduction). Streaming makes the aha feel instant and faithful, and — unlike
+ * the old blocking POST — a slow-but-OK model streams tokens instead of tripping
+ * a timeout that read as a false "couldn't answer".
+ *
+ * Protocol: `METADATA:{json}` → text chunks → `FINAL_METADATA:{json}`.
+ * `onChunk(text)` fires per visible token; `onFinal(meta)` once at the end with
+ * `{ sources, ... }`; `onError(err)` on a hard failure. Resolves when done.
+ */
+export const previewChatStream = async (botId, question, sessionId, { onChunk, onFinal, onError } = {}) => {
+    const controller = new AbortController();
+    // Overall guard so a hung stream can't spin forever (tokens normally arrive
+    // well within this; a healthy stream clears the timer on completion).
+    const timer = setTimeout(() => controller.abort(), 90000);
+    let finalMeta = null;
+    // Strip widget-only inline-card sentinels (e.g. [LEAVE_MESSAGE_CARD]) so they
+    // never leak into the preview text.
+    const clean = (t) => t.replace(/\[[A-Z0-9_]+_CARD\]/g, '');
+    const emit = (t) => {
+        const c = clean(t);
+        if (c) onChunk?.(c);
+    };
+    try {
+        const res = await fetch(`${API_BASE_URL}/chat/stream?preview=true&bot_id=${botId}`, {
+            method: 'POST',
+            headers: previewStreamHeaders(),
+            body: JSON.stringify({ question, session_id: sessionId }),
+            signal: controller.signal,
+        });
+        if (!res.ok || !res.body) throw new Error('The agent could not answer that just now.');
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let metadataReceived = false;
+        const takeFinal = (line, sliceAt) => {
+            try {
+                finalMeta = JSON.parse(line.slice(sliceAt));
+            } catch {
+                /* ignore malformed terminal frame */
+            }
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                if (line.startsWith('METADATA:')) {
+                    metadataReceived = true;
+                } else if (line.startsWith('FINAL_METADATA:')) {
+                    if (buffer && !buffer.startsWith('METADATA:') && !buffer.startsWith('FINAL_METADATA:')) {
+                        emit(buffer);
+                        buffer = '';
+                    }
+                    takeFinal(line, 15);
+                } else {
+                    emit(line + '\n');
+                }
+            }
+            if (metadataReceived && buffer && !buffer.startsWith('METADATA:') && !buffer.startsWith('FINAL_METADATA:')) {
+                emit(buffer);
+                buffer = '';
+            }
+        }
+        if (buffer.trim()) {
+            if (buffer.startsWith('FINAL_METADATA:')) takeFinal(buffer, 15);
+            else if (!buffer.startsWith('METADATA:')) emit(buffer);
+        }
+        onFinal?.(finalMeta || {});
+    } catch (error) {
+        onError?.(error);
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
 /**
  * Marks the account's guided onboarding (Build Studio) as complete. Best-effort —
  * never throws, so finishing the flow can't be blocked by a transient failure.

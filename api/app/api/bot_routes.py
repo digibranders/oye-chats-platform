@@ -330,6 +330,11 @@ class BotResponse(BaseModel):
     # Set once the embedded widget has been seen live on a real external site;
     # None until then. Drives the "widget installed" setup-checklist step.
     widget_installed_at: datetime | None = None
+    # Durable per-bot ingestion ("trained") state — a persistent fact the UI can
+    # read instead of racing the ephemeral /crawl/progress toast.
+    last_crawl_status: str | None = None
+    crawl_completed_at: datetime | None = None
+    indexed_chunk_count: int = 0
     operator_timeout_seconds: int = 120
     live_chat_queue_timeout_seconds: int = 20
     live_chat_max_queue_size: int = 10
@@ -360,6 +365,113 @@ class BotResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
+    """Serialize a ``Bot`` row into the public ``BotResponse``.
+
+    Single source of truth for the shape returned by ``GET /bots``,
+    ``GET /bots/{id}`` and ``POST /bots`` so those endpoints can never drift.
+    Stored logo paths are absolutized against the current request host.
+    """
+    base = str(request.base_url).rstrip("/")
+    bl = bot.bot_logo
+    if bl and not bl.startswith("http"):
+        bl = f"{base}/files/{bl}"
+    ll = bot.launcher_logo
+    if ll and not ll.startswith("http"):
+        ll = f"{base}/files/{ll}"
+
+    return BotResponse(
+        id=bot.id,
+        bot_key=bot.bot_key,
+        name=bot.name,
+        website=bot.website,
+        system_prompt=bot.system_prompt,
+        brand_tone=bot.brand_tone,
+        brand_tone_preset=bot.brand_tone_preset,
+        company_name=bot.company_name,
+        company_description=bot.company_description,
+        manual_field_overrides=bot.manual_field_overrides or [],
+        bot_logo=bl,
+        launcher_name=bot.launcher_name or "Have Questions?",
+        launcher_logo=ll,
+        primary_color=bot.primary_color or "#ba68c8",
+        background_color=bot.background_color or "#ffffff",
+        header_color=bot.header_color or "#3A0CA3",
+        recommended_colors=bot.recommended_colors or [],
+        user_bubble_color=bot.user_bubble_color or "#DBE9FF",
+        bant_enabled=bot.bant_enabled,
+        bant_config=bot.bant_config,
+        relevance_threshold=bot.relevance_threshold,
+        avatar_type=bot.avatar_type or "upload",
+        orb_color=bot.orb_color,
+        lead_form_enabled=bot.lead_form_enabled,
+        lead_form_fields=bot.lead_form_fields,
+        notification_email=bot.notification_email,
+        notification_emails=bot.notification_emails,
+        reply_to_email=bot.reply_to_email,
+        email_on_qualified=bot.email_on_qualified,
+        email_on_handoff=bot.email_on_handoff,
+        email_on_offline=bot.email_on_offline,
+        email_visitor_confirmation=bot.email_visitor_confirmation,
+        live_chat_enabled=bot.live_chat_enabled,
+        widget_installed_at=bot.widget_installed_at,
+        last_crawl_status=bot.last_crawl_status,
+        crawl_completed_at=bot.crawl_completed_at,
+        indexed_chunk_count=bot.indexed_chunk_count or 0,
+        operator_timeout_seconds=bot.operator_timeout_seconds,
+        live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
+        live_chat_max_queue_size=bot.live_chat_max_queue_size,
+        business_hours=bot.business_hours,
+        feature_flags=bot.feature_flags or {},
+        widget_messages=bot.widget_messages or {},
+        widget_config=bot.widget_config or {},
+        branding_text=bot.branding_text or "Powered by OyeChats",
+        branding_url=bot.branding_url or "https://oyechats.com",
+        welcome_title=bot.welcome_title or "Hi there 👋",
+        welcome_subtitle=bot.welcome_subtitle or "How can we help you today?",
+        waiting_message=bot.waiting_message or "Connecting you to support...",
+        offline_message=bot.offline_message or "We'll be right back! Leave a message and we'll follow up shortly.",
+        handoff_delay_seconds=bot.handoff_delay_seconds or 0,
+        calendly_url=bot.calendly_url,
+        meeting_booking_enabled=bot.meeting_booking_enabled,
+        meeting_provider=bot.meeting_provider,
+        zcal_url=bot.zcal_url,
+        calcom_url=bot.calcom_url,
+        services=_normalize_services(bot.services),
+        services_url=bot.services_url,
+        allowed_domains=list(bot.allowed_domains or []),
+        domain_check_enabled=bool(bot.domain_check_enabled),
+        is_active=bot.is_active,
+        created_at=bot.created_at.isoformat() if bot.created_at else "",
+    )
+
+
+def _find_bot_by_website(session, client_id: int, website: str | None) -> Bot | None:
+    """Return an existing workspace bot whose website resolves to the same apex
+    host as ``website`` — or ``None`` if there is no match.
+
+    Used to make onboarding bot-creation idempotent: a retried/duplicate create
+    for the same site (the Build Studio double-submit) returns the bot that was
+    already created instead of tripping the free 1-bot cap with a confusing 402.
+    """
+    if not website:
+        return None
+    try:
+        target = normalize_domain_input(website)
+    except ValueError:
+        return None
+    rows = session.execute(select(Bot).where(Bot.client_id == client_id)).scalars().all()
+    for b in rows:
+        if not b.website:
+            continue
+        try:
+            if normalize_domain_input(b.website) == target:
+                return b
+        except ValueError:
+            continue
+    return None
 
 
 # ── Endpoints ──
@@ -1164,6 +1276,9 @@ def list_bots(
                     email_visitor_confirmation=b.email_visitor_confirmation,
                     live_chat_enabled=b.live_chat_enabled,
                     widget_installed_at=b.widget_installed_at,
+                    last_crawl_status=b.last_crawl_status,
+                    crawl_completed_at=b.crawl_completed_at,
+                    indexed_chunk_count=b.indexed_chunk_count or 0,
                     operator_timeout_seconds=b.operator_timeout_seconds,
                     live_chat_queue_timeout_seconds=b.live_chat_queue_timeout_seconds,
                     live_chat_max_queue_size=b.live_chat_max_queue_size,
@@ -1196,6 +1311,7 @@ def list_bots(
 @router.post("", status_code=201)
 def create_bot(
     request: CreateBotRequest,
+    http_request: Request,
     auth=Depends(get_current_client_or_operator),
     _sub=Depends(require_active_subscription_for_workspace),
     _verified=Depends(require_verified_email_for_workspace),
@@ -1221,6 +1337,14 @@ def create_bot(
 
         decision = can_client_add_new_bot(auth["client_id"], session)
         if not decision.allowed:
+            # Idempotent onboarding create: a Build Studio double-submit (submit
+            # #1 creates the bot, submit #2 arrives after and is now over the
+            # free 1-bot cap) would otherwise surface a confusing "needs a paid
+            # subscription" 402 during first run. If the workspace already has a
+            # bot for the same site, treat this as a retry and return that bot.
+            existing = _find_bot_by_website(session, auth["client_id"], request.website)
+            if existing is not None:
+                return _bot_to_response(existing, http_request)
             raise HTTPException(
                 status_code=402,
                 detail={
@@ -1280,12 +1404,11 @@ def create_bot(
         except Exception:
             logger.exception("Failed to record bot_created notification for bot %s", new_bot.id)
 
-        return {
-            "message": "Bot created successfully",
-            "bot_id": new_bot.id,
-            "bot_key": new_bot.bot_key,
-            "name": new_bot.name,
-        }
+        # Return the full bot object (same shape as GET /bots/{id}) so callers
+        # don't need a second round-trip to resolve the created bot — the thin
+        # {bot_id, bot_key} envelope is what forced the frontend to re-fetch and
+        # select by id, the mistake behind the duplicate-bot onboarding bounce.
+        return _bot_to_response(new_bot, http_request)
 
 
 # ── Per-bot checkout ──────────────────────────────────────────────────────
@@ -1525,7 +1648,10 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         if not sample.strip():
             raise HTTPException(status_code=400, detail="Crawl your website first to detect its tone.")
 
-        key = classify_brand_tone(sample)
+        # Bound the interactive wait: the user is watching a spinner, so cap the
+        # LLM budget (~20s × 1 retry) instead of the default ~180s worst case
+        # that could pin a Gunicorn worker thread under concurrent onboarders.
+        key = classify_brand_tone(sample, timeout=20, num_retries=1)
         if key is None:
             raise HTTPException(status_code=422, detail="Couldn't detect a tone; pick one manually.")
 
@@ -1558,6 +1684,7 @@ def get_seed_questions(
     empty list is a normal outcome ("show only the open input"), never an error.
     Verified-email gated like the other resource endpoints.
     """
+    from app.db.repository import count_documents_for_bot
     from app.services.seed_questions_service import build_seed_questions
 
     _require_bot_management_access(auth)
@@ -1566,8 +1693,15 @@ def get_seed_questions(
         if bot.seed_questions is not None and not force:
             return {"questions": bot.seed_questions}
         questions = build_seed_questions(session, bot)
-        bot.seed_questions = questions
-        session.commit()
+        # Only cache an authoritative result. An empty list computed *before* any
+        # content is indexed (crawl still running) must not be persisted as `[]`
+        # — because the cache check is `is not None`, that empty list becomes a
+        # permanent hit and the bot shows no sample questions forever. Leave
+        # `seed_questions` null in that case so the next call recomputes once
+        # ingestion has produced chunks.
+        if questions or count_documents_for_bot(session, bot_id=bot.id, client_id=bot.client_id) > 0:
+            bot.seed_questions = questions
+            session.commit()
         return {"questions": questions}
 
 
@@ -1598,74 +1732,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
     """Get details of a specific bot owned by the authenticated workspace."""
     with get_session() as session:
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
-        bl = bot.bot_logo
-        if bl and not bl.startswith("http"):
-            bl = f"{str(request.base_url).rstrip('/')}/files/{bl}"
-        ll = bot.launcher_logo
-        if ll and not ll.startswith("http"):
-            ll = f"{str(request.base_url).rstrip('/')}/files/{ll}"
-
-        return BotResponse(
-            id=bot.id,
-            bot_key=bot.bot_key,
-            name=bot.name,
-            website=bot.website,
-            system_prompt=bot.system_prompt,
-            brand_tone=bot.brand_tone,
-            brand_tone_preset=bot.brand_tone_preset,
-            company_name=bot.company_name,
-            company_description=bot.company_description,
-            manual_field_overrides=bot.manual_field_overrides or [],
-            bot_logo=bl,
-            launcher_name=bot.launcher_name or "Have Questions?",
-            launcher_logo=ll,
-            primary_color=bot.primary_color or "#ba68c8",
-            background_color=bot.background_color or "#ffffff",
-            header_color=bot.header_color or "#3A0CA3",
-            recommended_colors=bot.recommended_colors or [],
-            user_bubble_color=bot.user_bubble_color or "#DBE9FF",
-            bant_enabled=bot.bant_enabled,
-            bant_config=bot.bant_config,
-            relevance_threshold=bot.relevance_threshold,
-            avatar_type=bot.avatar_type or "upload",
-            orb_color=bot.orb_color,
-            lead_form_enabled=bot.lead_form_enabled,
-            lead_form_fields=bot.lead_form_fields,
-            notification_email=bot.notification_email,
-            notification_emails=bot.notification_emails,
-            reply_to_email=bot.reply_to_email,
-            email_on_qualified=bot.email_on_qualified,
-            email_on_handoff=bot.email_on_handoff,
-            email_on_offline=bot.email_on_offline,
-            email_visitor_confirmation=bot.email_visitor_confirmation,
-            live_chat_enabled=bot.live_chat_enabled,
-            widget_installed_at=bot.widget_installed_at,
-            operator_timeout_seconds=bot.operator_timeout_seconds,
-            live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
-            live_chat_max_queue_size=bot.live_chat_max_queue_size,
-            business_hours=bot.business_hours,
-            feature_flags=bot.feature_flags or {},
-            widget_messages=bot.widget_messages or {},
-            widget_config=bot.widget_config or {},
-            branding_text=bot.branding_text or "Powered by OyeChats",
-            branding_url=bot.branding_url or "https://oyechats.com",
-            welcome_title=bot.welcome_title or "Hi there 👋",
-            welcome_subtitle=bot.welcome_subtitle or "How can we help you today?",
-            waiting_message=bot.waiting_message or "Connecting you to support...",
-            offline_message=bot.offline_message or "We'll be right back! Leave a message and we'll follow up shortly.",
-            handoff_delay_seconds=bot.handoff_delay_seconds or 0,
-            calendly_url=bot.calendly_url,
-            meeting_booking_enabled=bot.meeting_booking_enabled,
-            meeting_provider=bot.meeting_provider,
-            zcal_url=bot.zcal_url,
-            calcom_url=bot.calcom_url,
-            services=_normalize_services(bot.services),
-            services_url=bot.services_url,
-            allowed_domains=list(bot.allowed_domains or []),
-            domain_check_enabled=bool(bot.domain_check_enabled),
-            is_active=bot.is_active,
-            created_at=bot.created_at.isoformat() if bot.created_at else "",
-        )
+        return _bot_to_response(bot, request)
 
 
 # Auto-fillable fields the website crawl may populate. Edits to these are

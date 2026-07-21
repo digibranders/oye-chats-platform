@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Check, Loader2, ArrowRight } from 'lucide-react';
+import { Check, Loader2, ArrowRight, HelpCircle, RefreshCw } from 'lucide-react';
 import { getBot, recordActivationEvent, completeOnboarding } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
@@ -37,6 +37,11 @@ export default function GoLiveStep() {
     const [embedTab, setEmbedTab] = useState('production');
     const [copiedField, setCopiedField] = useState(null);
     const [liveAt, setLiveAt] = useState(selectedBot?.widget_installed_at || null);
+    // After a grace period with no auto-detection, reveal a manual-verify +
+    // troubleshooting panel so a correctly-installed-but-undetected widget (auth
+    // wall, referrer-stripping, CSP) never leaves the user stuck on a spinner.
+    const [showTrouble, setShowTrouble] = useState(false);
+    const [checking, setChecking] = useState(false);
     const copyTimer = useRef(null);
 
     const handleCopy = async (text, field) => {
@@ -73,7 +78,36 @@ export default function GoLiveStep() {
         };
     }, [botId, liveAt]);
 
+    // Surface the troubleshooting panel after a grace period without detection.
+    useEffect(() => {
+        if (!botId || liveAt) {
+            setShowTrouble(false);
+            return undefined;
+        }
+        const t = setTimeout(() => setShowTrouble(true), 35000);
+        return () => clearTimeout(t);
+    }, [botId, liveAt]);
+
     useEffect(() => () => clearTimeout(copyTimer.current), []);
+
+    // Manual, on-demand re-check for users whose install we can't auto-detect.
+    const checkNow = async () => {
+        if (!botId || checking) return;
+        setChecking(true);
+        try {
+            const b = await getBot(botId);
+            if (b?.widget_installed_at) {
+                setLiveAt(b.widget_installed_at);
+                recordActivationEvent('widget_detected_live', { botId });
+            } else {
+                showToast('info', "We still can't see the widget yet. Give it a few seconds after publishing, then check again.");
+            }
+        } catch {
+            showToast('error', 'Could not check right now. Please try again.');
+        } finally {
+            setChecking(false);
+        }
+    };
 
     const finish = async () => {
         recordActivationEvent('studio_completed', { botId });
@@ -111,6 +145,37 @@ export default function GoLiveStep() {
                     </>
                 )}
             </div>
+
+            {/* Manual verify + troubleshooting — appears only after a grace period
+                with no auto-detection, so it never nags a smooth install. */}
+            {!liveAt && showTrouble && (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3.5">
+                    <div className="flex items-start gap-2.5">
+                        <HelpCircle size={16} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
+                        <div className="flex-1">
+                            <p className="text-sm font-medium text-[var(--text)]">Not seeing it go live yet?</p>
+                            <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-[var(--text-muted)]">
+                                <li>
+                                    Paste the snippet just before the closing <code className="font-mono">&lt;/body&gt;</code> tag,
+                                    on a page that&rsquo;s publicly live (not behind a login).
+                                </li>
+                                <li>
+                                    Just added it? Hard-refresh the page (<span className="font-mono">Ctrl/Cmd + Shift + R</span>) so
+                                    the new code loads — a CDN can take a minute to update.
+                                </li>
+                                <li>
+                                    Strict privacy settings or a Content-Security-Policy that blocks the widget can stop
+                                    auto-detection. Your agent still works — you can finish and we&rsquo;ll keep checking.
+                                </li>
+                            </ul>
+                            <Button size="sm" variant="secondary" className="mt-3" onClick={checkNow} loading={checking}>
+                                {!checking && <RefreshCw size={14} />}
+                                {checking ? 'Checking…' : 'Check again'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Install UI — the app's real PlatformSelector + IntegrationGuide */}
             <div>

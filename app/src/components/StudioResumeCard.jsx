@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Sparkles, ArrowRight, X } from 'lucide-react';
 import { getCurrentUser } from '../services/api';
 import { Button } from './ui/Button';
+import { STUDIO_RESUME_KEY, isMilestoneKey } from '../pages/build/studioMilestones';
 
 const HIDDEN_KEY = 'oc_studio_resume_hidden';
 
@@ -45,6 +46,19 @@ export default function StudioResumeCard() {
       cancelled = true;
     };
   }, []);
+
+  // Resume at the furthest-reached milestone (persisted by Build Studio), so the
+  // user picks up where they left off rather than restarting at step 1. Falls
+  // back to bare /build when nothing valid is stored.
+  const resume = () => {
+    let key = '';
+    try {
+      key = localStorage.getItem(STUDIO_RESUME_KEY) || '';
+    } catch {
+      /* localStorage unavailable — fall back to the default first step */
+    }
+    navigate(isMilestoneKey(key) ? `/build?m=${key}` : '/build');
+  };
 
   const dismiss = () => {
     setHidden(true);
@@ -88,7 +102,7 @@ export default function StudioResumeCard() {
         </div>
       </div>
 
-      <Button size="sm" className="self-start sm:self-auto" onClick={() => navigate('/build')}>
+      <Button size="sm" className="self-start sm:self-auto" onClick={resume}>
         Resume setup
         <ArrowRight size={15} />
       </Button>

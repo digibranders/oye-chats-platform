@@ -749,6 +749,11 @@ def expire_old_topups(session: Session) -> int:
 # ── High-level helpers used by webhook handlers ───────────────────────────────
 
 
+def cycle_months(billing_cycle: str | None) -> int:
+    """Number of months of credits a subscription grants per billing period."""
+    return 12 if (billing_cycle or "").strip().lower() == "annual" else 1
+
+
 def grant_for_subscription(
     session: Session, subscription: Subscription, reference_id: int | None = None
 ) -> CreditLedger | None:
@@ -761,15 +766,22 @@ def grant_for_subscription(
     Per-bot subscriptions (``subscription.bot_id IS NOT NULL``) land in the
     bot's isolated ledger; legacy / account-level subscriptions land in the
     client pool exactly as before.
+
+    Annual subscriptions advance their billing period by 12 months and are
+    only granted once per period (see ``grant_subscription_period_once`` /
+    the renewal cron), so the grant itself must scale by ``billing_cycle`` —
+    otherwise an annual subscriber receives only 1/12th of the credits they
+    paid for.
     """
     plan = subscription.plan
     if plan is None or int(plan.credits_per_month or 0) <= 0:
         return None
+    months = cycle_months(getattr(subscription, "billing_cycle", None))
     return grant_plan_credits(
         session,
         subscription.client_id,
-        int(plan.credits_per_month),
-        note=f"{plan.name} monthly grant",
+        int(plan.credits_per_month) * months,
+        note=f"{plan.name} {'annual' if months == 12 else 'monthly'} grant",
         bot_id=subscription.bot_id,
         reference_id=reference_id,
     )

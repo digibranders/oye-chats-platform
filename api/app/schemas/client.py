@@ -104,11 +104,13 @@ class CrawlDiffRequest(CrawlDiscoverRequest):
 
 class CrawlRequest(BaseModel):
     url: str
-    # Upper bound is enforced by the route layer against the caller's plan
-    # tier (free 75 / starter 300 / standard 750 / enterprise 5000) — the
-    # schema only keeps the absolute floor so a malicious zero or negative
-    # value is rejected at parse time. ``le`` is intentionally absent so an
-    # Enterprise customer can request 5000 without a 422.
+    # Upper bound is enforced by the route layer against the caller's plan tier
+    # — the authoritative per-tier ceilings live in the plan config (DB) and are
+    # resolved via ``plan_service.get_crawl_limits`` in the crawl route, not
+    # hard-coded here (paid tiers use a credit-derived budget rather than a fixed
+    # page cap). This schema keeps only the absolute floor so a malicious zero or
+    # negative value is rejected at parse time. ``le`` is intentionally absent so
+    # a high-tier caller can request a large page count without a 422.
     max_pages: int | None = Field(default=None, ge=1)
     use_js: bool = Field(
         default=False,
