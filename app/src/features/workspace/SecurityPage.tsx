@@ -1,8 +1,8 @@
-import { type FormEvent, type ReactElement, useEffect, useState } from 'react';
+import { type FormEvent, type ReactElement, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  Check,
+  Clock,
   Eye,
   EyeOff,
   KeyRound,
@@ -82,6 +82,7 @@ export function SecurityPage(): ReactElement {
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
 
   // Change-password form.
   const [form, setForm] = useState<PasswordForm>(EMPTY_FORM);
@@ -118,7 +119,17 @@ export function SecurityPage(): ReactElement {
     };
   }, [refreshToken]);
 
+  // On a successful change the form clears and the submit button disables, which
+  // drops keyboard focus to <body>. Move focus to the confirmation banner so
+  // keyboard/screen-reader users retain a sensible focus context.
+  useEffect(() => {
+    if (feedback?.tone === 'success') {
+      feedbackRef.current?.focus();
+    }
+  }, [feedback]);
+
   const retry = (): void => {
+    setFeedback(null);
     setPhase({ status: 'loading' });
     setRefreshToken((token) => token + 1);
   };
@@ -129,9 +140,10 @@ export function SecurityPage(): ReactElement {
   const canSubmit =
     !saving && form.current.length > 0 && form.next.length > 0 && form.confirm.length > 0;
 
-  const handleChangePassword = async (event: FormEvent): Promise<void> => {
+  const handleChangePassword = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     setFormError('');
+    setFeedback(null);
 
     if (form.next !== form.confirm) {
       setFormError('New passwords do not match.');
@@ -173,8 +185,10 @@ export function SecurityPage(): ReactElement {
       <div aria-live="polite" className="empty:hidden">
         {feedback && (
           <div
+            ref={feedbackRef}
+            tabIndex={-1}
             className={cn(
-              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px]',
+              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
               feedback.tone === 'success'
                 ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
                 : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
@@ -214,16 +228,20 @@ export function SecurityPage(): ReactElement {
             body="Your account is protected by your password today. Soon you’ll be able to add a second step at sign-in for stronger protection against stolen passwords."
           />
 
-          {/* ── Change password ─────────────────────────────────────────── */}
+          {/* ── Change password ─────────────────────────────────────────────
+              Owner/client-only. The reused endpoint is `changeClientPassword`
+              (POST /client/change-password), authed with the client X-API-Key.
+              An operator session carries X-Operator-Key and no client key, so
+              the call would fail — and the backend exposes no operator
+              password-change on this surface. Operators manage their password in
+              their own console, so this card is simply not rendered for them
+              rather than promising a capability that isn't wired. */}
+          {!identity.isOperator && (
           <Card>
             <form onSubmit={handleChangePassword} className="p-5 sm:p-6">
               <SectionHeader
                 title="Password"
-                description={
-                  identity.isOperator
-                    ? 'Update the password you use to sign in to the operator console.'
-                    : 'Update your sign-in password. Use at least 8 characters with a letter and a number.'
-                }
+                description="Update your sign-in password. Use at least 8 characters with a letter and a number."
               />
 
               {formError && (
@@ -306,6 +324,7 @@ export function SecurityPage(): ReactElement {
                     autoComplete="new-password"
                     placeholder="Repeat your new password"
                     aria-invalid={confirmMismatch}
+                    aria-describedby={confirmMismatch ? 'security-confirm-error' : undefined}
                     className={cn(
                       confirmMismatch &&
                         'border-[var(--ds-danger)] focus-visible:border-[var(--ds-danger)] focus-visible:ring-[var(--ds-danger-soft)]',
@@ -316,7 +335,10 @@ export function SecurityPage(): ReactElement {
                     }
                   />
                   {confirmMismatch && (
-                    <p className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
+                    <p
+                      id="security-confirm-error"
+                      className="mt-1.5 text-[12px] text-[var(--ds-danger)]"
+                    >
                       Passwords do not match.
                     </p>
                   )}
@@ -337,6 +359,7 @@ export function SecurityPage(): ReactElement {
               </div>
             </form>
           </Card>
+          )}
 
           {/* ── Sessions ────────────────────────────────────────────────── */}
           <Card>
@@ -408,7 +431,7 @@ export function SecurityPage(): ReactElement {
                   </p>
                 </div>
                 <Button variant="outline" disabled aria-disabled="true">
-                  <Check size={16} aria-hidden="true" />
+                  <Clock size={16} aria-hidden="true" />
                   Coming soon
                 </Button>
               </div>

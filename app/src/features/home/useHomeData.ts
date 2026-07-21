@@ -26,7 +26,6 @@ import {
   buildActivity,
   mergeTopQuestions,
   summarizeAgent,
-  toNumber,
   toText,
   type FeedbackBucket,
   type HomeData,
@@ -50,7 +49,6 @@ const EMPTY: HomeData = {
   totals: {
     conversations: 0,
     messages: 0,
-    activeUsers: 0,
     leads: 0,
     hotLeads: 0,
     successRate: 0,
@@ -79,15 +77,19 @@ async function loadHomeData(): Promise<HomeData> {
     }),
   );
 
-  const offlineResult = await getOfflineMessages({ limit: 10 }).catch(() => ({
-    messages: [],
-    total: 0,
-    page: 1,
-  }));
+  // Two separate reads: the activity feed only needs the most recent page,
+  // while the "unread" count must reflect EVERY new message — counting unread
+  // rows within the capped activity page would silently cap the badge at that
+  // page size. `status=new` is the backend's unread state (read/replied both
+  // stamp read_at), and the envelope's `total` is the filtered server-side
+  // count, so it stays accurate no matter how many are unread.
+  const [offlineResult, unreadResult] = await Promise.all([
+    getOfflineMessages({ limit: 10 }).catch(() => ({ messages: [], total: 0, page: 1 })),
+    getOfflineMessages({ status: 'new', limit: 1 }).catch(() => ({ messages: [], total: 0, page: 1 })),
+  ]);
 
   const agents = perAgent.map(({ bot, stats, leads }) => summarizeAgent({ bot, stats, leads }));
-  const activeUsersByAgent = perAgent.map(({ stats }) => toNumber(stats?.active_users));
-  const totals = aggregateTotals(agents, activeUsersByAgent);
+  const totals = aggregateTotals(agents);
 
   const topQuestions = mergeTopQuestions(perAgent.map(({ questions }) => questions));
 
@@ -100,10 +102,9 @@ async function loadHomeData(): Promise<HomeData> {
     message: toText(msg.message_body),
     botName: toText(msg.bot_name),
     createdAt: toText(msg.created_at),
-    unread: msg.read_at == null,
   }));
   const activity = buildActivity(feedbackBuckets, offline);
-  const unreadMessages = offline.filter((msg) => msg.unread).length;
+  const unreadMessages = unreadResult.total;
 
   return { agents, totals, topQuestions, activity, unreadMessages };
 }

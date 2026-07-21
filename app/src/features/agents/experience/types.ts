@@ -78,7 +78,7 @@ function asLayout(value: unknown): SuggestionsLayout {
   return value === 'vertical' ? 'vertical' : 'horizontal';
 }
 
-function asStringArray(value: unknown): string[] {
+export function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 

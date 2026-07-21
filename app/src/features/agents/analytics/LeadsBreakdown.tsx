@@ -91,8 +91,7 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
                   </div>
                   <div
                     className="h-2.5 overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]"
-                    role="img"
-                    aria-label={`${stage.label}: ${stage.value} of ${total} conversations (${pct}%)`}
+                    aria-hidden="true"
                   >
                     <div
                       className="h-full rounded-full"

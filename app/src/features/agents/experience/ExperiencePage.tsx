@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { Eye } from 'lucide-react';
 import {
   Button,
@@ -12,6 +12,7 @@ import { useAgent } from '../../../context/AgentContext';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../../../services/api';
 import {
   type ExperienceDraft,
+  asStringArray,
   draftFromSettings,
   draftsEqual,
   settingsFromDraft,
@@ -29,12 +30,13 @@ const SECTION_TABS: TabItem[] = [
   { key: 'personality', label: 'Personality' },
 ];
 
+/** Narrows the Tabs' string key to a SectionKey without an unchecked assertion. */
+function isSectionKey(key: string): key is SectionKey {
+  return SECTION_TABS.some((tab) => tab.key === key);
+}
+
 /** Brand-neutral fallback swatches, appended after any website-extracted colours. */
 const PRESET_SWATCHES = ['#a21caf', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-}
 
 /**
  * ExperiencePage — the agent's "Experience" tab. One job: let the user control
@@ -46,6 +48,11 @@ function asStringArray(value: unknown): string[] {
 export function ExperiencePage(): ReactElement {
   const { agent, loading: agentLoading, error: agentError } = useAgent();
   const botId = agent?.id ?? null;
+
+  // Tracks the currently-loaded agent so in-flight save/upload handlers can
+  // detect an agent switch and skip writing their result against a new agent.
+  const botIdRef = useRef(botId);
+  botIdRef.current = botId;
 
   const [baseline, setBaseline] = useState<ExperienceDraft | null>(null);
   const [draft, setDraft] = useState<ExperienceDraft | null>(null);
@@ -60,14 +67,23 @@ export function ExperiencePage(): ReactElement {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Load the agent's settings once per agent (and on retry). All setState here
-  // runs inside async callbacks — never synchronously during the effect body.
+  // Load the agent's settings once per agent (and on retry). Local state is
+  // reset synchronously first, then the fetch resolves; every post-fetch
+  // setState is guarded by the `cancelled` flag so a stale response can't
+  // clobber a newer agent. Transient save/upload feedback is cleared here too
+  // so a banner or error from the previous agent never bleeds onto this one.
   useEffect(() => {
     if (botId === null) return;
     let cancelled = false;
     setDraft(null);
     setBaseline(null);
     setLoadError(null);
+    setRecommended([]);
+    setSaveError(null);
+    setJustSaved(false);
+    setUploadError(null);
+    setUploading(false);
+    setSaving(false);
     getClientSettings(botId)
       .then((raw) => {
         if (cancelled) return;
@@ -93,32 +109,38 @@ export function ExperiencePage(): ReactElement {
 
   const handleUpload = useCallback(
     async (file: File): Promise<void> => {
+      const uploadBotId = botId;
       setUploading(true);
       setUploadError(null);
       try {
         const { url } = await uploadLogo(file);
+        if (botIdRef.current !== uploadBotId) return;
         updateDraft({ botLogo: url, avatarType: 'upload' });
       } catch (err) {
+        if (botIdRef.current !== uploadBotId) return;
         setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       } finally {
-        setUploading(false);
+        if (botIdRef.current === uploadBotId) setUploading(false);
       }
     },
-    [updateDraft],
+    [botId, updateDraft],
   );
 
   const handleSave = useCallback(async (): Promise<void> => {
     if (botId === null || !draft) return;
+    const saveBotId = botId;
     setSaving(true);
     setSaveError(null);
     try {
-      await updateClientSettings(settingsFromDraft(draft), botId);
+      await updateClientSettings(settingsFromDraft(draft), saveBotId);
+      if (botIdRef.current !== saveBotId) return;
       setBaseline(draft);
       setJustSaved(true);
     } catch (err) {
+      if (botIdRef.current !== saveBotId) return;
       setSaveError(err instanceof Error ? err.message : 'Could not save. Please try again.');
     } finally {
-      setSaving(false);
+      if (botIdRef.current === saveBotId) setSaving(false);
     }
   }, [botId, draft]);
 
@@ -168,7 +190,9 @@ export function ExperiencePage(): ReactElement {
             <Tabs
               tabs={SECTION_TABS}
               value={activeSection}
-              onChange={(key) => setActiveSection(key as SectionKey)}
+              onChange={(key) => {
+                if (isSectionKey(key)) setActiveSection(key);
+              }}
               ariaLabel="Experience sections"
             />
 

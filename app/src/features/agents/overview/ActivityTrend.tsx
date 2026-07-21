@@ -3,9 +3,19 @@ import { Activity } from 'lucide-react';
 import { Card, EmptyState, cn } from '../../../design-system';
 import { type ActivityPoint } from '../../../types/domain';
 
-/** Formats an ISO/date string as a short "Mon 5" label; falls back to raw. */
+/**
+ * Formats a backend day string as a short "Mon 5" label; falls back to raw.
+ *
+ * The backend groups by calendar day and sends date-only strings ("2026-07-20").
+ * `new Date("2026-07-20")` parses as UTC midnight, so formatting in a viewer's
+ * local zone west of UTC would shift the label back a day. Parse the Y-M-D parts
+ * as a LOCAL date to keep the label on the day the backend actually grouped by.
+ */
 function formatDayLabel(date: string): string {
-  const parsed = new Date(date);
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+  const parsed = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(date);
   if (Number.isNaN(parsed.getTime())) return date;
   return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
@@ -73,6 +83,26 @@ export function ActivityTrend({ points, className }: ActivityTrendProps): ReactE
           <span>{formatDayLabel(points[0].date)}</span>
           <span>{formatDayLabel(points[points.length - 1].date)}</span>
         </figcaption>
+        {/* Accessible equivalent of the visual bars: the per-day values the
+            native bar tooltips carry, surfaced to keyboard and screen-reader
+            users who can't hover. */}
+        <table className="sr-only">
+          <caption>Daily message volume</caption>
+          <thead>
+            <tr>
+              <th scope="col">Day</th>
+              <th scope="col">Messages</th>
+            </tr>
+          </thead>
+          <tbody>
+            {points.map((point) => (
+              <tr key={point.date}>
+                <td>{formatDayLabel(point.date)}</td>
+                <td>{(point.messages ?? 0).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </figure>
     </Card>
   );

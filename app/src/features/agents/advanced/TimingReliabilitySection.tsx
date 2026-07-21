@@ -15,6 +15,13 @@ const UNIT_SUFFIX: Record<ConfigFieldDef['unit'], string | undefined> = {
   count: undefined,
 };
 
+/** Spoken unit form appended to the accessible name for assistive tech. */
+const UNIT_LABEL: Record<ConfigFieldDef['unit'], string | undefined> = {
+  seconds: 'seconds',
+  ms: 'milliseconds',
+  count: undefined,
+};
+
 /** Convert a stored value (ms/int) into its display value for the field's unit. */
 function toDisplay(field: ConfigFieldDef, stored: number): number {
   if (field.unit === 'seconds') {
@@ -113,6 +120,7 @@ export function TimingReliabilitySection({
                       help={field.help}
                       value={toDisplay(field, config[field.key] ?? field.defaultValue)}
                       unit={UNIT_SUFFIX[field.unit]}
+                      unitLabel={UNIT_LABEL[field.unit]}
                       step={field.step}
                       min={field.min}
                       onChange={(raw) => onChange(field.key, toStored(field, raw))}

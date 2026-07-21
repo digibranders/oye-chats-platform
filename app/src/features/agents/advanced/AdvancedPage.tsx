@@ -1,4 +1,5 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react';
+import { useBlocker } from 'react-router-dom';
 import { SlidersHorizontal, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import {
   PageContainer,
@@ -24,9 +25,26 @@ import { QualificationSection } from './QualificationSection';
 import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
 
+/**
+ * Order-independent serialization. `bantConfig` is an opaque server object whose
+ * key order isn't guaranteed, so a plain `JSON.stringify` could report a false
+ * "dirty" if the payload ever re-serializes with a different key order. Sorting
+ * keys recursively makes the comparison depend on values, not insertion order.
+ */
+function stableStringify(value: unknown): string {
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  const entries = Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`);
+  return `{${entries.join(',')}}`;
+}
+
 /** Stable structural equality for the plain-data draft. */
 function draftsEqual(a: AdvancedDraft, b: AdvancedDraft): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableStringify(a) === stableStringify(b);
 }
 
 /**
@@ -49,6 +67,21 @@ export function AdvancedPage(): ReactElement {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedTick, setSavedTick] = useState(0);
+
+  // Reset the surface when the URL switches to a different agent (the component
+  // stays mounted across `:agentId` changes). Done as a render-phase adjustment
+  // — React's recommended pattern for resetting state on a prop change — so the
+  // skeleton shows immediately and no stale draft, saved banner, or error card
+  // from the previous agent leaks in before the new fetch resolves.
+  const [loadedAgentId, setLoadedAgentId] = useState<number | null>(agentId);
+  if (agentId !== loadedAgentId) {
+    setLoadedAgentId(agentId);
+    setDraft(null);
+    setInitial(null);
+    setSavedTick(0);
+    setSaveError(null);
+    setLoadError(null);
+  }
 
   // Load the agent's technical settings + framework catalog. All state writes
   // happen inside the async task (never synchronously in the effect body) so a
@@ -120,6 +153,26 @@ export function AdvancedPage(): ReactElement {
     () => draft !== null && initial !== null && !draftsEqual(draft, initial),
     [draft, initial],
   );
+
+  // Guard unsaved edits: block in-app navigation to another route while dirty…
+  const blocker = useBlocker(
+    useCallback(
+      ({ currentLocation, nextLocation }) =>
+        dirty && currentLocation.pathname !== nextLocation.pathname,
+      [dirty],
+    ),
+  );
+
+  // …and warn before a full-page unload (tab close / refresh).
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [dirty]);
 
   const handleDiscard = useCallback(() => {
     setSaveError(null);
@@ -284,6 +337,38 @@ export function AdvancedPage(): ReactElement {
           </>
         )}
       </PageContainer>
+
+      {blocker.state === 'blocked' && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="advanced-leave-title"
+        >
+          <Card className="w-full max-w-sm space-y-4 p-5 shadow-[var(--ds-shadow-md)]">
+            <div>
+              <h2
+                id="advanced-leave-title"
+                className="text-[15px] font-semibold text-[var(--ds-text)]"
+              >
+                Discard unsaved changes?
+              </h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
+                You have unsaved changes to this agent’s advanced settings. If you leave now, they’ll
+                be discarded.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => blocker.reset?.()}>
+                Keep editing
+              </Button>
+              <Button size="sm" onClick={() => blocker.proceed?.()}>
+                Discard &amp; leave
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

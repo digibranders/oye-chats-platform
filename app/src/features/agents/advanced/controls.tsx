@@ -1,4 +1,4 @@
-import { type ReactElement } from 'react';
+import { type ReactElement, useState } from 'react';
 import { Input, cn } from '../../../design-system';
 
 interface ToggleProps {
@@ -48,6 +48,8 @@ interface NumberFieldProps {
   value: number;
   /** Short unit suffix shown inside the field, e.g. "sec" or "ms". */
   unit?: string;
+  /** Spoken form of the unit for assistive tech, e.g. "seconds". */
+  unitLabel?: string;
   step: number;
   min: number;
   /** Raw input string; the caller parses + clamps. */
@@ -61,26 +63,39 @@ export function NumberField({
   help,
   value,
   unit,
+  unitLabel,
   step,
   min,
   onChange,
 }: NumberFieldProps): ReactElement {
   const describedBy = help ? `${id}-help` : undefined;
+  // While the field is focused we display the user's raw keystrokes verbatim so
+  // transient values ("0.", "1.5") survive re-render instead of being reparsed
+  // and collapsed; on blur we revert to the canonical parsed+formatted value.
+  // onChange still fires per keystroke so the parent draft stays in sync.
+  const [buffer, setBuffer] = useState<string | null>(null);
+  const displayValue = buffer !== null ? buffer : value;
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className="block text-[13px] font-medium text-[var(--ds-text)]">
         {label}
+        {unitLabel && <span className="sr-only"> (in {unitLabel})</span>}
       </label>
       <div className="relative">
         <Input
           id={id}
           type="number"
           inputMode="decimal"
-          value={value}
+          value={displayValue}
           step={step}
           min={min}
           aria-describedby={describedBy}
-          onChange={(event) => onChange(event.target.value)}
+          onFocus={(event) => setBuffer(event.target.value)}
+          onChange={(event) => {
+            setBuffer(event.target.value);
+            onChange(event.target.value);
+          }}
+          onBlur={() => setBuffer(null)}
           className={unit ? 'pr-14' : undefined}
         />
         {unit && (

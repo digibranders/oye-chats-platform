@@ -32,9 +32,6 @@ import {
   scoreTone,
 } from './leadModel';
 
-/** Highest score any single qualification dimension can contribute (BANT default). */
-const DIMENSION_MAX = 25;
-
 export interface LeadDetailDrawerProps {
   data: LeadDetailData;
   onClose: () => void;
@@ -128,17 +125,53 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
   const headingId = 'lead-detail-heading';
 
   // Move focus into the panel on open; restore it to the trigger on close so a
-  // keyboard user isn't dumped back at the top of the document.
+  // keyboard user isn't dumped back at the top of the document. Lock body
+  // scroll while open so the page behind the scrim can't scroll under the
+  // full-height slide-over.
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     panelRef.current?.focus();
-    return () => previouslyFocused?.focus?.();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus?.();
+    };
   }, []);
 
-  // Escape closes the drawer.
+  // Escape closes the drawer; Tab / Shift+Tab is trapped inside the panel so a
+  // keyboard user can't walk into the inert page behind an aria-modal dialog
+  // (WAI-ARIA dialog pattern / WCAG 2.4.3).
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) {
+        // Nothing focusable inside — keep focus pinned to the panel itself.
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const active = document.activeElement;
+      if (event.shiftKey) {
+        if (active === first || active === panel) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
@@ -242,33 +275,53 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
                   What we learned
                 </h3>
                 <div className="space-y-2.5">
-                  {Object.entries(detail.bant).map(([key, dim]) => {
-                    const pct = Math.min((dim.score / DIMENSION_MAX) * 100, 100);
-                    return (
-                      <div key={key} className="rounded-xl border border-[var(--ds-border)] p-3.5">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <span className="text-[13px] font-semibold text-[var(--ds-text)]">
-                            {humanizeDimension(key)}
-                          </span>
-                          <span className="text-[11px] font-semibold text-[var(--ds-text-subtle)]">
-                            {dim.score}/{DIMENSION_MAX}
-                          </span>
-                        </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]">
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${pct}%`,
-                              backgroundColor: SCORE_TONE_VAR[scoreTone(dim.score * 4)],
-                            }}
-                          />
-                        </div>
-                        {dim.value && (
-                          <p className="mt-2 text-[13px] text-[var(--ds-text-muted)]">{dim.value}</p>
-                        )}
-                      </div>
+                  {(() => {
+                    // Derive the per-dimension max from the framework instead of a
+                    // hardcoded 25 (a BANT-only assumption): the total score is 100
+                    // shared across the framework's dimensions, so equal-weight max
+                    // = 100 / dimensionCount (25 for BANT, 20 for a 5-dimension
+                    // framework like MEDDIC). Floor it at the highest observed score
+                    // so an unevenly-weighted dimension never overflows its bar.
+                    const bant = detail.bant;
+                    if (!bant) return null;
+                    const dimensions = Object.entries(bant);
+                    const scores = dimensions.map(([, dim]) => dim.score);
+                    const dimensionMax = Math.max(
+                      Math.round(100 / Math.max(dimensions.length, 1)),
+                      ...scores,
+                      1,
                     );
-                  })}
+                    return dimensions.map(([key, dim]) => {
+                      const ratio = dim.score / dimensionMax;
+                      const pct = Math.min(ratio * 100, 100);
+                      return (
+                        <div key={key} className="rounded-xl border border-[var(--ds-border)] p-3.5">
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="text-[13px] font-semibold text-[var(--ds-text)]">
+                              {humanizeDimension(key)}
+                            </span>
+                            <span className="text-[11px] font-semibold text-[var(--ds-text-subtle)]">
+                              {dim.score}/{dimensionMax}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${pct}%`,
+                                backgroundColor: SCORE_TONE_VAR[scoreTone(pct)],
+                              }}
+                            />
+                          </div>
+                          {dim.value && (
+                            <p className="mt-2 text-[13px] text-[var(--ds-text-muted)]">
+                              {dim.value}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               </section>
             )}

@@ -355,12 +355,12 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
             value={formatCount(data.totals.conversations)}
             icon={MessageSquare}
           />
+          <MetricCard label="Messages" value={formatCount(data.totals.messages)} icon={BarChart3} />
           <MetricCard
-            label="Messages answered"
-            value={formatCount(data.totals.messages)}
-            icon={BarChart3}
+            label="Qualified leads"
+            value={formatCount(data.totals.leads)}
+            icon={Users}
           />
-          <MetricCard label="Leads captured" value={formatCount(data.totals.leads)} icon={Users} />
           <MetricCard
             label="Answer success rate"
             value={formatPercent(data.totals.successRate)}

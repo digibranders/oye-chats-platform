@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -60,14 +61,26 @@ export function KnowledgePage(): ReactElement {
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
+  // Tracks the currently-active agent so in-flight fetches issued for a previous
+  // agent can detect they're stale and skip writing to state.
+  const activeAgentIdRef = useRef<number | null>(agentId);
+  // Row name whose delete-trigger should regain focus after a cancelled confirm.
+  const restoreFocusRef = useRef<string | null>(null);
+  // Live map of each row's delete-trigger button, for focus restoration.
+  const deleteTriggerRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
   // Re-fetch WITHOUT clearing the current list, so mutations update in place
   // instead of flashing the whole table back to a skeleton.
   const refresh = useCallback(async (): Promise<void> => {
     if (agentId == null) return;
+    const requestedFor = agentId;
     try {
       const data = await getDocuments(agentId);
+      // Drop the result if the user switched agents while this was in flight.
+      if (activeAgentIdRef.current !== requestedFor) return;
       setSources(data ?? []);
     } catch (err) {
+      if (activeAgentIdRef.current !== requestedFor) return;
       setActionError(
         err instanceof Error ? err.message : "We couldn't refresh your knowledge sources.",
       );
@@ -77,6 +90,7 @@ export function KnowledgePage(): ReactElement {
   // Initial / agent-switch load. The reset lives inside the async task (not the
   // effect body) so no state is set synchronously during the effect.
   useEffect(() => {
+    activeAgentIdRef.current = agentId;
     if (agentId == null) return;
     let cancelled = false;
     const load = async (): Promise<void> => {
@@ -113,13 +127,18 @@ export function KnowledgePage(): ReactElement {
   const openPages = useCallback(
     async (source: string): Promise<void> => {
       setDrawerSource(source);
+      // A cached entry (even an empty array) means we loaded successfully — skip
+      // the refetch. A failed load leaves the key unset so reopening retries.
       if (agentId == null || pagesBySource[source]) return;
       try {
         const res = await getDocumentPages(source, agentId);
         setPagesBySource((prev) => ({ ...prev, [source]: res.pages ?? [] }));
-      } catch {
-        // Non-fatal: the drawer just shows an empty list.
-        setPagesBySource((prev) => ({ ...prev, [source]: [] }));
+      } catch (err) {
+        // Leave the key unset so reopening the drawer retries the fetch, and
+        // surface the failure instead of silently showing an empty list.
+        setActionError(
+          err instanceof Error ? err.message : "We couldn't load this source's pages.",
+        );
       }
     },
     [agentId, pagesBySource],
@@ -144,6 +163,21 @@ export function KnowledgePage(): ReactElement {
     },
     [agentId],
   );
+
+  // When a delete confirmation is cancelled, its Remove/Cancel buttons unmount;
+  // return focus to that row's trigger so it doesn't fall to <body>.
+  useEffect(() => {
+    if (confirmingDelete !== null) return;
+    const pending = restoreFocusRef.current;
+    if (pending === null) return;
+    restoreFocusRef.current = null;
+    deleteTriggerRefs.current.get(pending)?.focus();
+  }, [confirmingDelete]);
+
+  const cancelConfirm = useCallback((name: string): void => {
+    restoreFocusRef.current = name;
+    setConfirmingDelete(null);
+  }, []);
 
   const stats = useMemo(() => {
     const list = sources ?? [];
@@ -200,16 +234,21 @@ export function KnowledgePage(): ReactElement {
         width: '13rem',
         render: (row) =>
           confirmingDelete === row.name ? (
-            <div className="flex items-center justify-end gap-2">
+            <div
+              role="group"
+              aria-label={`Confirm removing ${row.name}`}
+              className="flex items-center justify-end gap-2"
+            >
               <Button
                 variant="danger"
                 size="sm"
+                autoFocus
                 onClick={() => void handleDelete(row.name)}
                 disabled={deleting === row.name}
               >
                 {deleting === row.name ? 'Removing…' : 'Remove'}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmingDelete(null)}>
+              <Button variant="ghost" size="sm" onClick={() => cancelConfirm(row.name)}>
                 Cancel
               </Button>
             </div>
@@ -221,6 +260,10 @@ export function KnowledgePage(): ReactElement {
                 </Button>
               )}
               <Button
+                ref={(el) => {
+                  if (el) deleteTriggerRefs.current.set(row.name, el);
+                  else deleteTriggerRefs.current.delete(row.name);
+                }}
                 variant="ghost"
                 size="icon"
                 aria-label={`Remove ${row.name}`}
@@ -232,7 +275,7 @@ export function KnowledgePage(): ReactElement {
           ),
       },
     ],
-    [confirmingDelete, deleting, handleDelete, openPages],
+    [confirmingDelete, deleting, handleDelete, openPages, cancelConfirm],
   );
 
   // ── Render ────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import {
   Plus,
   Radio,
   Sparkles,
-  AlertTriangle,
+  CircleDashed,
   AlertCircle,
   RefreshCw,
 } from 'lucide-react';
@@ -57,7 +57,7 @@ function AgentsSummary({ bots }: { bots: Bot[] }): ReactElement {
       <MetricCard label="Total agents" value={summary.total} icon={BotIcon} />
       <MetricCard label="Live" value={summary.live} icon={Radio} />
       <MetricCard label="Training" value={summary.training} icon={Sparkles} />
-      <MetricCard label="Needs setup" value={summary.needsSetup} icon={AlertTriangle} />
+      <MetricCard label="Not live" value={summary.notLive} icon={CircleDashed} />
     </div>
   );
 }
@@ -65,16 +65,21 @@ function AgentsSummary({ bots }: { bots: Bot[] }): ReactElement {
 /** Placeholder grid shown while the agent list is loading. */
 function AgentsLoading(): ReactElement {
   return (
-    <div className="space-y-6" aria-hidden="true">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-[92px] rounded-xl" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <Skeleton key={index} className="h-[132px] rounded-xl" />
-        ))}
+    <div className="space-y-6">
+      <span className="sr-only" role="status">
+        Loading your agents&hellip;
+      </span>
+      <div className="space-y-6" aria-hidden="true">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-[92px] rounded-xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-[132px] rounded-xl" />
+          ))}
+        </div>
       </div>
     </div>
   );

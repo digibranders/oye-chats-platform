@@ -1,14 +1,16 @@
-import { type ReactElement, useMemo } from 'react';
+import { type ReactElement } from 'react';
 import {
   AlertTriangle,
   Clock,
   FileText,
   Globe,
   ListOrdered,
+  Mail,
   MessageSquare,
   RefreshCw,
   Wallet,
   Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   Button,
@@ -119,6 +121,50 @@ function BalanceSummary({ balance }: BalanceSummaryProps): ReactElement {
   );
 }
 
+// ── Metered activity tile ─────────────────────────────────────────────────────
+
+interface ActivityCardProps {
+  readonly label: string;
+  readonly icon: LucideIcon;
+  /** How many times the activity happened this period. */
+  readonly eventCount: number;
+  /** Credits it consumed this period. */
+  readonly creditsUsed: number;
+}
+
+/**
+ * A single metered-activity tile: the event count as the headline with the
+ * credits it burned as a neutral caption. Mirrors MetricCard's shell but shows
+ * the credits via a plain sub-label instead of the trend/delta slot — a static
+ * secondary figure must not render behind a ▲/▼/– glyph, which reads as a
+ * period-over-period change rather than a neutral value.
+ */
+function ActivityCard({
+  label,
+  icon: Icon,
+  eventCount,
+  creditsUsed,
+}: ActivityCardProps): ReactElement {
+  return (
+    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+          <Icon size={16} aria-hidden="true" />
+        </span>
+      </div>
+      <div className="mt-3">
+        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
+          {formatCredits(eventCount)}
+        </span>
+        <p className="mt-1 text-[13px] font-medium tabular-nums text-[var(--ds-text-subtle)]">
+          {formatCredits(creditsUsed)} credits
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Consumption ledger ───────────────────────────────────────────────────────
 
 const LEDGER_COLUMNS: Column<LedgerRow>[] = [
@@ -164,19 +210,16 @@ const LEDGER_COLUMNS: Column<LedgerRow>[] = [
  * UsagePage — the Workspace ▸ Usage surface. One job: answer
  * "What am I consuming?". Shows the credit balance and how much of the plan
  * allowance is spent, a metered breakdown of this period's activity (AI chats,
- * documents, crawled pages, total credits), and the itemized consumption
- * ledger. Read-only — buying credits and managing the plan live on Billing.
+ * documents, crawled pages, customer emails, total credits), and the itemized
+ * consumption ledger. Read-only — buying credits and the plan live on Billing.
  */
 export function UsagePage(): ReactElement {
   const { phase, retry } = useUsageData();
 
-  const ledger = phase.status === 'ready' ? phase.ledger : null;
-  const hasLedger = useMemo(() => (ledger ? ledger.length > 0 : false), [ledger]);
-
   return (
     <PageContainer
       title="Usage"
-      description="Everything your workspace is consuming this period — credits, AI chats, documents, and crawled pages."
+      description="Everything your workspace is consuming this period — credits, AI chats, documents, crawled pages, and customer emails."
     >
       {phase.status === 'loading' && <LoadingState />}
 
@@ -216,27 +259,30 @@ export function UsagePage(): ReactElement {
               title="This period"
               description="What your workspace has spent credits on since the plan last renewed."
             />
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <MetricCard
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+              <ActivityCard
                 label="AI chat replies"
-                value={formatCredits(phase.balance.aiChat.eventCount)}
-                delta={`${formatCredits(phase.balance.aiChat.creditsUsed)} credits`}
-                trend="flat"
                 icon={MessageSquare}
+                eventCount={phase.balance.aiChat.eventCount}
+                creditsUsed={phase.balance.aiChat.creditsUsed}
               />
-              <MetricCard
+              <ActivityCard
                 label="Documents uploaded"
-                value={formatCredits(phase.balance.documentUpload.eventCount)}
-                delta={`${formatCredits(phase.balance.documentUpload.creditsUsed)} credits`}
-                trend="flat"
                 icon={FileText}
+                eventCount={phase.balance.documentUpload.eventCount}
+                creditsUsed={phase.balance.documentUpload.creditsUsed}
               />
-              <MetricCard
+              <ActivityCard
                 label="Pages crawled"
-                value={formatCredits(phase.balance.urlScan.eventCount)}
-                delta={`${formatCredits(phase.balance.urlScan.creditsUsed)} credits`}
-                trend="flat"
                 icon={Globe}
+                eventCount={phase.balance.urlScan.eventCount}
+                creditsUsed={phase.balance.urlScan.creditsUsed}
+              />
+              <ActivityCard
+                label="Customer emails"
+                icon={Mail}
+                eventCount={phase.balance.emailSend.eventCount}
+                creditsUsed={phase.balance.emailSend.creditsUsed}
               />
               <MetricCard
                 label="Credits used"
@@ -250,13 +296,20 @@ export function UsagePage(): ReactElement {
           <section aria-label="Consumption history" className="space-y-4">
             <SectionHeader
               title="Consumption history"
-              description="Every credit granted, spent, or expired — most recent first."
+              description="Your most recent credit movements — newest first."
             />
-            {hasLedger ? (
+            {phase.ledger.status === 'error' ? (
+              <EmptyState
+                icon={AlertTriangle}
+                title="Couldn’t load your history"
+                description={phase.ledger.message}
+                action={<Button onClick={retry}>Try again</Button>}
+              />
+            ) : phase.ledger.rows.length > 0 ? (
               <DataTable
                 caption="Credit consumption ledger"
                 columns={LEDGER_COLUMNS}
-                rows={phase.ledger}
+                rows={phase.ledger.rows}
                 rowKey={(row) => row.id}
               />
             ) : (
@@ -280,8 +333,8 @@ function LoadingState(): ReactElement {
     <div className="space-y-6">
       <Skeleton className="h-40 w-full rounded-xl" />
       <Skeleton className="h-7 w-40 rounded-lg" />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => (
           <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>

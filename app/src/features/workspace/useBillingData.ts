@@ -55,21 +55,24 @@ interface Fetched {
 }
 
 async function loadBillingData(): Promise<BillingData> {
-  // Load-bearing: a failure here surfaces the page error state.
-  const subscriptionRaw = await getCurrentSubscription();
-  const envelope =
-    subscriptionRaw && typeof subscriptionRaw === 'object'
-      ? (subscriptionRaw as Record<string, unknown>)
-      : {};
-
-  // Non-fatal sources fan out in parallel and each degrade on their own.
-  const [plansRaw, invoicesResult, detailsRaw] = await Promise.all([
+  // Fire all four requests together so the three independent fetches overlap
+  // the load-bearing subscription round-trip instead of queuing behind it.
+  // getCurrentSubscription has no `.catch`, so a rejection propagates through
+  // Promise.all and surfaces the page error state; the other three each carry
+  // their own catch and degrade independently.
+  const [subscriptionRaw, plansRaw, invoicesResult, detailsRaw] = await Promise.all([
+    getCurrentSubscription(),
     getSubscriptionPlans().catch((): Array<Record<string, unknown>> => []),
     getInvoices()
       .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: false }))
       .catch(() => ({ rows: [] as Array<Record<string, unknown>>, error: true })),
     getBillingDetails().catch((): Record<string, unknown> => ({})),
   ]);
+
+  const envelope =
+    subscriptionRaw && typeof subscriptionRaw === 'object'
+      ? (subscriptionRaw as Record<string, unknown>)
+      : {};
 
   return {
     subscription: buildSubscription(envelope.subscription),

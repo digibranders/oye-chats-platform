@@ -10,6 +10,8 @@ export interface OperatorStatusState {
   saving: boolean;
   /** Set when the caller is not an operator in this workspace / status is unavailable. */
   unavailable: boolean;
+  /** Human-readable message when the last toggle failed; null otherwise. */
+  error: string | null;
   /** Flip availability; no-op while a toggle is already in flight. */
   toggle: () => Promise<void>;
 }
@@ -24,6 +26,7 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const tokenRef = useRef(0);
 
   useEffect(() => {
@@ -59,13 +62,22 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
     if (saving || unavailable) return;
     const next = !isOnline;
     setSaving(true);
+    setError(null);
     try {
       await toggleOperatorStatus({ isOnline: next, ...(botId != null ? { botId } : {}) });
       setIsOnline(next);
+    } catch (err) {
+      // Surface the failure instead of silently swallowing it: the operator must
+      // know their availability change didn't save.
+      setError(
+        err instanceof Error
+          ? `Couldn’t update your availability: ${err.message}`
+          : 'Couldn’t update your availability. Please try again.',
+      );
     } finally {
       setSaving(false);
     }
   }, [saving, unavailable, isOnline, botId]);
 
-  return { isOnline, loading, saving, unavailable, toggle };
+  return { isOnline, loading, saving, unavailable, error, toggle };
 }

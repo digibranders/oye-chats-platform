@@ -30,6 +30,11 @@ const PANELS: readonly TabItem[] = [
   { key: 'satisfaction', label: 'Satisfaction' },
 ];
 
+/** Narrow the Tabs `(key: string)` callback back to the panel union safely. */
+function isPanelKey(key: string): key is PanelKey {
+  return PANELS.some((panel) => panel.key === key);
+}
+
 interface Insight {
   title: string;
   body: string;
@@ -149,7 +154,7 @@ export function AgentAnalyticsPage(): ReactElement {
           title="Couldn’t load analytics"
           description={error}
           action={
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button variant="outline" onClick={state.reload}>
               Try again
             </Button>
           }
@@ -168,6 +173,14 @@ export function AgentAnalyticsPage(): ReactElement {
 
   const insight = computeInsight(analytics, totalMessages);
 
+  // "Leads" means captured/qualified leads, not raw conversations. The server's
+  // `leads.total` is len(sessions) (every visitor who chatted, incl. tier
+  // 'unqualified'), so sum the mutually-exclusive qualified tiers instead — this
+  // matches the funnel's "Marketing-qualified" stage in LeadsBreakdown.
+  const qualifiedLeads = analytics.leads
+    ? analytics.leads.mql + analytics.leads.sal + analytics.leads.sql
+    : 0;
+
   return (
     <PageContainer
       title="Analytics"
@@ -184,7 +197,7 @@ export function AgentAnalyticsPage(): ReactElement {
         <MetricCard
           icon={Users}
           label="Leads"
-          value={loading ? '—' : (analytics.leads?.total ?? 0).toLocaleString()}
+          value={loading ? '—' : qualifiedLeads.toLocaleString()}
         />
         <MetricCard
           icon={CheckCircle2}
@@ -208,7 +221,9 @@ export function AgentAnalyticsPage(): ReactElement {
         <Tabs
           tabs={PANELS}
           value={panel}
-          onChange={(key) => setPanel(key as PanelKey)}
+          onChange={(key) => {
+            if (isPanelKey(key)) setPanel(key);
+          }}
           ariaLabel="Analytics sections"
         />
         <div

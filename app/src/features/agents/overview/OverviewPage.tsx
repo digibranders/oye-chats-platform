@@ -66,14 +66,8 @@ const METRICS: readonly MetricDef[] = [
   },
 ];
 
-/** Four-up metric grid; renders skeletons while stats load. */
-function MetricGrid({
-  stats,
-  loading,
-}: {
-  readonly stats: AgentStats | null;
-  readonly loading: boolean;
-}): ReactElement {
+/** Four-up grid of headline metrics. */
+function MetricGrid({ stats }: { readonly stats: AgentStats }): ReactElement {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {METRICS.map((metric) => (
@@ -81,14 +75,27 @@ function MetricGrid({
           key={metric.key}
           label={metric.label}
           icon={metric.icon}
-          value={
-            loading || !stats ? (
-              <Skeleton className="h-7 w-16" />
-            ) : (
-              metric.format(stats)
-            )
-          }
+          value={metric.format(stats)}
         />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Placeholder tiles shown during the first metrics load. Kept separate from
+ * {@link MetricGrid} so a block-level Skeleton is never injected into
+ * MetricCard's value <span> — which would produce invalid `<span><div></span>`
+ * DOM nesting and a React validateDOMNesting warning on every load.
+ */
+function MetricGridSkeleton(): ReactElement {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {METRICS.map((metric) => (
+        <Card key={metric.key} className="p-5">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="mt-3 h-7 w-16" />
+        </Card>
       ))}
     </div>
   );
@@ -120,23 +127,45 @@ function MetricsError({
 }
 
 /**
+ * Neutral placeholder for a section whose data failed to load. Shown instead of
+ * the component's own empty state so a fetch failure isn't misread as "no data
+ * yet" (zero traffic).
+ */
+function SectionUnavailable(): ReactElement {
+  return (
+    <Card className="p-6">
+      <EmptyState
+        icon={AlertCircle}
+        title="Couldn’t load this section"
+        description="Refresh to try loading this data again."
+      />
+    </Card>
+  );
+}
+
+/**
  * OverviewContent — the data-bound body, mounted only once we have a resolved
  * agent. Remounted per agent via `key={agent.id}` in the parent, so the data
  * hook sees a stable id and never resets state synchronously in an effect.
  */
 function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
   const health = deriveAgentHealth(agent);
-  const { status, stats, activity, questions, error, refetch } = useOverviewData(agent.id);
+  const { status, isRefetching, stats, activity, questions, error, refetch } = useOverviewData(
+    agent.id,
+  );
   const agentBasePath = `/agents/${agent.id}`;
-  const isLoading = status === 'loading';
+  // Only the first load blanks the page to skeletons; a manual refetch keeps the
+  // prior content in place and signals progress through the Refresh spinner.
+  const isInitialLoading = status === 'loading';
+  const isBusy = isInitialLoading || isRefetching;
 
   return (
     <PageContainer
       title="Overview"
       description="A quick read on your AI’s health and how visitors are engaging with it."
       actions={
-        <Button variant="outline" size="sm" onClick={refetch} disabled={isLoading}>
-          <RefreshCw size={15} aria-hidden="true" className={isLoading ? 'animate-spin' : undefined} />
+        <Button variant="outline" size="sm" onClick={refetch} disabled={isBusy}>
+          <RefreshCw size={15} aria-hidden="true" className={isBusy ? 'animate-spin' : undefined} />
           Refresh
         </Button>
       }
@@ -145,8 +174,10 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
 
       {status === 'error' && error ? (
         <MetricsError message={error} onRetry={refetch} />
+      ) : stats ? (
+        <MetricGrid stats={stats} />
       ) : (
-        <MetricGrid stats={stats} loading={isLoading} />
+        <MetricGridSkeleton />
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -155,10 +186,12 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
             title={<span id="overview-activity-heading">Message activity</span>}
             description="Daily conversation volume."
           />
-          {isLoading ? (
+          {isInitialLoading ? (
             <Card className="p-6">
               <Skeleton className="h-40 w-full" />
             </Card>
+          ) : status === 'error' ? (
+            <SectionUnavailable />
           ) : (
             <ActivityTrend points={activity} />
           )}
@@ -169,12 +202,14 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
             title={<span id="overview-questions-heading">Top questions</span>}
             description="What visitors ask your AI most."
           />
-          {isLoading ? (
+          {isInitialLoading ? (
             <Card className="space-y-4 p-6">
               {[0, 1, 2, 3].map((row) => (
                 <Skeleton key={row} className="h-9 w-full" />
               ))}
             </Card>
+          ) : status === 'error' ? (
+            <SectionUnavailable />
           ) : (
             <TopQuestions questions={questions} />
           )}
@@ -198,14 +233,7 @@ function OverviewSkeleton(): ReactElement {
           </div>
         </div>
       </Card>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((cell) => (
-          <Card key={cell} className="p-5">
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="mt-3 h-7 w-16" />
-          </Card>
-        ))}
-      </div>
+      <MetricGridSkeleton />
     </PageContainer>
   );
 }

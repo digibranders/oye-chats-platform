@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   EmptyState,
+  InsightCard,
   Input,
   PageContainer,
   SectionHeader,
@@ -24,7 +25,6 @@ import {
   StatusBadge,
   cn,
 } from '../../design-system';
-import { InsightCard } from '../../design-system/components/InsightCard';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { type CurrentUser } from '../../types/domain';
@@ -84,7 +84,7 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
  * lives and are marked for workspace-level wiring later (see the manifest TODOs).
  */
 export function SettingsPage(): ReactElement {
-  const { currentWorkspaceName, currentRole, workspaces, isInvitedOnly } = useWorkspace();
+  const { currentWorkspaceId, currentWorkspaceName, currentRole, workspaces } = useWorkspace();
 
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -124,14 +124,23 @@ export function SettingsPage(): ReactElement {
   };
 
   const user = phase.status === 'ready' ? phase.user : null;
-  // A member who only belongs via an invite can't edit the account identity.
-  const canEditProfile = !isInvitedOnly;
-  const agentCount = workspaces.reduce((total, workspace) => total + (workspace.bot_count ?? 0), 0);
+  // Agent count is scoped to the workspace the card actually names — not a
+  // cross-workspace total. Fall back to the account's own bot_count (then 0)
+  // only when the active workspace can't be resolved.
+  const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId);
+  const agentCount = currentWorkspace?.bot_count ?? user?.bot_count ?? 0;
 
   const startNameEditing = (): void => {
     setName(user?.name ?? '');
     setNameError('');
+    // Clear any banner from a previous save so it can't linger next to a fresh edit.
+    setFeedback(null);
     setNameEditing(true);
+  };
+
+  const cancelNameEditing = (): void => {
+    setNameEditing(false);
+    setFeedback(null);
   };
 
   const handleSaveName = async (event: FormEvent): Promise<void> => {
@@ -170,8 +179,9 @@ export function SettingsPage(): ReactElement {
       title="Workspace settings"
       description="How this workspace is set up — your account details and the defaults new agents inherit."
     >
-      {/* Live feedback for the name mutation. */}
-      <div aria-live="polite" className="empty:hidden">
+      {/* Live feedback for the name mutation. The region stays mounted (even
+          when empty) so screen readers announce content as it appears. */}
+      <div aria-live="polite">
         {feedback && (
           <div
             className={cn(
@@ -248,7 +258,7 @@ export function SettingsPage(): ReactElement {
               title={<span id="profile-heading">Your profile</span>}
               description="How you appear to teammates in this workspace."
               actions={
-                canEditProfile && !nameEditing ? (
+                !nameEditing ? (
                   <Button variant="outline" size="sm" onClick={startNameEditing}>
                     <Pencil size={14} aria-hidden="true" />
                     Edit name
@@ -294,7 +304,7 @@ export function SettingsPage(): ReactElement {
                       type="button"
                       variant="ghost"
                       disabled={savingName}
-                      onClick={() => setNameEditing(false)}
+                      onClick={cancelNameEditing}
                     >
                       Cancel
                     </Button>
@@ -307,7 +317,7 @@ export function SettingsPage(): ReactElement {
                 </div>
               )}
               {!nameEditing && (
-                <p className="mt-4 flex items-center gap-1.5 text-[12px] text-[var(--ds-text-subtle)]">
+                <p className="mt-4 flex items-center gap-1.5 text-[12px] text-[var(--ds-text-muted)]">
                   <Shield size={13} aria-hidden="true" />
                   Changing your email is a separate, verified step in Security.
                 </p>

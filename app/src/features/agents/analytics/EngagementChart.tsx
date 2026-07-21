@@ -33,7 +33,9 @@ interface EngagementChartProps {
  * instant and never refetches.
  */
 export function EngagementChart({ data, loading }: EngagementChartProps): ReactElement {
-  const [range, setRange] = useState<Range>('30d');
+  // Default to the full (already-capped) window so the headline "Messages" KPI
+  // — which sums the whole series — reconciles with the chart's own total.
+  const [range, setRange] = useState<Range>('all');
 
   const windowed = useMemo(() => {
     const days = RANGES.find((r) => r.id === range)?.days ?? null;
@@ -41,6 +43,20 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
   }, [data, range]);
 
   const total = useMemo(() => windowed.reduce((sum, p) => sum + p.messages, 0), [windowed]);
+
+  // Screen-reader equivalent for the SVG trend: the timeline is otherwise
+  // conveyed only visually (WCAG 1.1.1). Summarise the window's total and peak.
+  const chartLabel = useMemo(() => {
+    const rangeLabel = (RANGES.find((r) => r.id === range)?.label ?? '').toLowerCase();
+    const peak = windowed.reduce<EngagementPoint | null>(
+      (best, point) => (best === null || point.messages > best.messages ? point : best),
+      null,
+    );
+    const base = `Daily message volume over ${rangeLabel}: ${total.toLocaleString()} messages total`;
+    return peak && peak.messages > 0
+      ? `${base}, peaking at ${peak.messages.toLocaleString()} on ${peak.label}.`
+      : `${base}.`;
+  }, [windowed, range, total]);
 
   return (
     <Card className="p-5">
@@ -84,7 +100,8 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
             </p>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          <div role="img" aria-label={chartLabel} className="h-full w-full">
+            <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={windowed} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
               <defs>
                 <linearGradient id="agent-engagement-fill" x1="0" y1="0" x2="0" y2="1">
@@ -120,7 +137,8 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
                 fill="url(#agent-engagement-fill)"
               />
             </AreaChart>
-          </ResponsiveContainer>
+            </ResponsiveContainer>
+          </div>
         )}
       </div>
     </Card>

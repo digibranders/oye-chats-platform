@@ -12,11 +12,22 @@
  * inside the effect (it always follows an `await`). Rotation is destructive, so
  * it lives behind an inline confirmation rather than a one-click button.
  *
+ * Colour usage follows the DS pattern (see InsightCard / BillingPage): the
+ * saturated semantic hue stays on borders, tint backgrounds, and icons only —
+ * body copy renders in --ds-text / --ds-text-muted so it clears WCAG AA (4.5:1),
+ * which the mid-tone hues on their own soft tints do not.
+ *
  * Backend reused (typed in services/api.d.ts): getClientApiKey,
  * regenerateClientApiKey. Business logic mirrored from the legacy
  * pages/settings/WorkspaceTab.jsx (loadKey / handleRegenerate / reveal-once).
  */
-import { type ReactElement, useEffect, useState } from 'react';
+import {
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   AlertTriangle,
   Check,
@@ -31,12 +42,11 @@ import {
 import {
   Button,
   Card,
+  InsightCard,
   PageContainer,
   Skeleton,
   StatusBadge,
-  cn,
 } from '../../design-system';
-import { InsightCard } from '../../design-system/components/InsightCard';
 import { getClientApiKey, regenerateClientApiKey } from '../../services/api';
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -52,6 +62,10 @@ const API_BASE_URL: string =
 const CURL_EXAMPLE = `curl ${API_BASE_URL}/<endpoint> \\
   -H "X-API-Key: <your-api-key>"`;
 
+/** Announced (screen-reader only) the instant a fresh key is revealed. */
+const REVEAL_ANNOUNCEMENT =
+  'Your API key was regenerated. Copy the new key now — it won’t be shown again.';
+
 // ── State machine ────────────────────────────────────────────────────────────
 
 type LoadPhase =
@@ -59,11 +73,57 @@ type LoadPhase =
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'ready'; readonly masked: string };
 
-type Feedback = { readonly tone: 'success' | 'error'; readonly message: string };
+/** Transient failure surfaced in the persistent live region (errors only). */
+type Feedback = { readonly message: string };
 
 function toMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   return fallback;
+}
+
+// ── Hooks ────────────────────────────────────────────────────────────────────
+
+interface CopyFlag {
+  /** True for `resetMs` after `mark()`; drives the button's "Copied" state. */
+  readonly copied: boolean;
+  /** Flag as copied and schedule an auto-reset (replacing any pending one). */
+  readonly mark: () => void;
+  /** Clear the pending timer and drop back to the idle state immediately. */
+  readonly reset: () => void;
+}
+
+/**
+ * Owns a short-lived "copied" flag and its auto-reset timer, clearing the timer
+ * on unmount so a pending reset never fires on an unmounted component.
+ */
+function useCopyFlag(resetMs = 2000): CopyFlag {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const clearTimer = useCallback((): void => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearTimer, [clearTimer]);
+
+  const mark = useCallback((): void => {
+    setCopied(true);
+    clearTimer();
+    timerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      timerRef.current = null;
+    }, resetMs);
+  }, [clearTimer, resetMs]);
+
+  const reset = useCallback((): void => {
+    clearTimer();
+    setCopied(false);
+  }, [clearTimer]);
+
+  return { copied, mark, reset };
 }
 
 // ── Small pieces ─────────────────────────────────────────────────────────────
@@ -71,7 +131,7 @@ function toMessage(error: unknown, fallback: string): string {
 interface CopyButtonProps {
   /** The text placed on the clipboard when pressed. */
   value: string;
-  /** Accessible label describing what gets copied. */
+  /** Accessible label describing what gets copied (idle state). */
   label: string;
   onCopied: () => void;
   onError: () => void;
@@ -104,7 +164,9 @@ function CopyButton({
       onClick={() => {
         void handleCopy();
       }}
-      aria-label={label}
+      // Swap the accessible name so AT users hear the state change, which the
+      // static label would otherwise mask.
+      aria-label={copied ? 'Copied' : label}
     >
       {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
       {copied ? 'Copied' : 'Copy'}
@@ -125,8 +187,8 @@ export function ApiKeysPage(): ReactElement {
   // The full key exists only in the moment after a rotation; once dismissed we
   // drop it from state and fall back to the mask — it is never shown again.
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState(false);
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  const keyCopy = useCopyFlag();
+  const curlCopy = useCopyFlag();
 
   // setState always follows an await here, so `loading` is a genuine derived
   // phase rather than a synchronous effect write.
@@ -162,14 +224,12 @@ export function ApiKeysPage(): ReactElement {
       const data = await regenerateClientApiKey();
       setPhase({ status: 'ready', masked: data.api_key_masked });
       setRevealedKey(data.api_key);
-      setCopiedKey(false);
+      keyCopy.reset();
       setConfirming(false);
-      setFeedback({
-        tone: 'success',
-        message: 'Your API key was regenerated. Copy it now — it won’t be shown again.',
-      });
+      // Success is communicated by the one-time reveal box (visually) and the
+      // persistent status region (for AT); no redundant banner is shown.
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to regenerate the API key.') });
+      setFeedback({ message: toMessage(error, 'Failed to regenerate the API key.') });
     } finally {
       setRegenerating(false);
     }
@@ -177,27 +237,36 @@ export function ApiKeysPage(): ReactElement {
 
   const dismissReveal = (): void => {
     setRevealedKey(null);
-    setCopiedKey(false);
+    keyCopy.reset();
   };
 
   return (
     <PageContainer
       title="API Keys"
       description="Your secret key for programmatic, server-to-server access to OyeChats."
+      className="max-w-3xl"
     >
-      <div className="max-w-3xl space-y-6">
-      {/* Live feedback for rotation. */}
-      <div aria-live="polite" className="empty:hidden">
+      {/* Screen-reader announcement for a fresh key. Permanently mounted (never
+          conditionally rendered) so the live region is in the a11y tree before
+          its text is swapped in — several screen readers skip regions that were
+          absent/display:none at mutation time. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {revealedKey ? REVEAL_ANNOUNCEMENT : ''}
+      </p>
+
+      {/* Persistent live region for rotation/copy errors. Kept mounted (no
+          `empty:hidden`) so screen readers announce injected content. */}
+      <div aria-live="polite">
         {feedback && (
-          <div
-            className={cn(
-              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px]',
-              feedback.tone === 'success'
-                ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-                : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
-            )}
-          >
-            <span>{feedback.message}</span>
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]">
+            <span className="flex items-start gap-2">
+              <AlertTriangle
+                size={16}
+                aria-hidden="true"
+                className="mt-0.5 shrink-0 text-[var(--ds-danger)]"
+              />
+              {feedback.message}
+            </span>
             <button
               type="button"
               onClick={() => setFeedback(null)}
@@ -234,7 +303,7 @@ export function ApiKeysPage(): ReactElement {
 
         {phase.status === 'error' && (
           <div className="rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3">
-            <p className="text-[13px] text-[var(--ds-danger)]">{phase.message}</p>
+            <p className="text-[13px] text-[var(--ds-text)]">{phase.message}</p>
             <Button
               type="button"
               variant="outline"
@@ -252,12 +321,9 @@ export function ApiKeysPage(): ReactElement {
           <div className="space-y-4">
             {/* One-time reveal of a freshly-rotated key. */}
             {revealedKey ? (
-              <div
-                className="rounded-lg border border-[var(--ds-success)] bg-[var(--ds-success-soft)] p-4"
-                aria-live="assertive"
-              >
-                <p className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ds-success)]">
-                  <Check size={13} aria-hidden="true" />
+              <div className="rounded-lg border border-[var(--ds-success)] bg-[var(--ds-success-soft)] p-4">
+                <p className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ds-text)]">
+                  <Check size={13} aria-hidden="true" className="text-[var(--ds-success)]" />
                   Your new API key (shown once)
                 </p>
                 <div className="flex items-center gap-2">
@@ -267,24 +333,19 @@ export function ApiKeysPage(): ReactElement {
                   <CopyButton
                     value={revealedKey}
                     label="Copy new API key"
-                    copied={copiedKey}
+                    copied={keyCopy.copied}
                     variant="primary"
-                    onCopied={() => {
-                      setCopiedKey(true);
-                      window.setTimeout(() => setCopiedKey(false), 2000);
-                    }}
-                    onError={() =>
-                      setFeedback({ tone: 'error', message: 'Could not copy to clipboard.' })
-                    }
+                    onCopied={keyCopy.mark}
+                    onError={() => setFeedback({ message: 'Could not copy to clipboard.' })}
                   />
                 </div>
-                <p className="mt-2 text-[12px] leading-relaxed text-[var(--ds-success)]">
+                <p className="mt-2 text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
                   Store it somewhere safe. For security, we can’t show the full key again.
                 </p>
                 <button
                   type="button"
                   onClick={dismissReveal}
-                  className="mt-3 text-[12px] font-semibold text-[var(--ds-success)] underline-offset-2 hover:underline"
+                  className="mt-3 text-[12px] font-semibold text-[var(--ds-text)] underline-offset-2 hover:underline"
                 >
                   I’ve saved it
                 </button>
@@ -301,8 +362,12 @@ export function ApiKeysPage(): ReactElement {
             {/* Rotation, behind a deliberate confirm. */}
             {confirming ? (
               <div className="rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] p-4">
-                <p className="flex items-start gap-2 text-[13px] text-[var(--ds-warning)]">
-                  <AlertTriangle size={15} aria-hidden="true" className="mt-0.5 shrink-0" />
+                <p className="flex items-start gap-2 text-[13px] text-[var(--ds-text)]">
+                  <AlertTriangle
+                    size={15}
+                    aria-hidden="true"
+                    className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
+                  />
                   <span>
                     <strong className="font-semibold">Regenerate this key?</strong> The current key
                     stops working immediately, and every integration using it must be updated with
@@ -379,14 +444,9 @@ export function ApiKeysPage(): ReactElement {
             <CopyButton
               value={CURL_EXAMPLE}
               label="Copy example request"
-              copied={copiedCurl}
-              onCopied={() => {
-                setCopiedCurl(true);
-                window.setTimeout(() => setCopiedCurl(false), 2000);
-              }}
-              onError={() =>
-                setFeedback({ tone: 'error', message: 'Could not copy to clipboard.' })
-              }
+              copied={curlCopy.copied}
+              onCopied={curlCopy.mark}
+              onError={() => setFeedback({ message: 'Could not copy to clipboard.' })}
             />
           </div>
           <pre className="px-4 py-3">
@@ -410,7 +470,6 @@ export function ApiKeysPage(): ReactElement {
         title="Treat your key like a password"
         body="If it’s ever exposed in a commit, a log, or a screenshot, regenerate it right away. Rotating instantly disables the old key so a leaked one can’t be used."
       />
-      </div>
     </PageContainer>
   );
 }

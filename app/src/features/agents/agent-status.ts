@@ -73,18 +73,23 @@ export interface AgentPortfolioSummary {
   live: number;
   /** Agents with a crawl in progress. */
   training: number;
-  /** Agents that need setup or intervention (draft or failed). */
-  needsSetup: number;
+  /**
+   * Agents not yet serving visitors — i.e. every non-live, non-training agent:
+   * draft (never trained), ready (trained but not deployed), or attention
+   * (crawl failed / no content). Deliberately inclusive so the tile total plus
+   * live plus training reconciles with the agent count.
+   */
+  notLive: number;
 }
 
 /** Roll the agent list up into the portfolio counts shown in the summary row. */
 export function summarizeAgents(bots: Bot[]): AgentPortfolioSummary {
-  const summary: AgentPortfolioSummary = { total: bots.length, live: 0, training: 0, needsSetup: 0 };
+  const summary: AgentPortfolioSummary = { total: bots.length, live: 0, training: 0, notLive: 0 };
   for (const bot of bots) {
     const health = getAgentHealth(bot);
     if (health === 'live') summary.live += 1;
     else if (health === 'training') summary.training += 1;
-    else summary.needsSetup += 1;
+    else summary.notLive += 1;
   }
   return summary;
 }

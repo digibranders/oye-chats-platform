@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactElement,
+} from 'react';
 import { Link } from 'react-router-dom';
 import {
   MoreHorizontal,
@@ -45,34 +52,54 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  // Which menu item to focus on the next open ('last' only when the user opened
+  // via ArrowUp on the trigger, per the WAI-ARIA menu-button pattern).
+  const pendingFocusRef = useRef<'first' | 'last'>('first');
 
-  // Close on outside-click + Esc while open; reset transient sub-states on close.
+  // Close the menu and reset its transient sub-state. Done in the close handler
+  // (not an open→false effect) so we never run a setState-in-effect reset.
+  const closeMenu = useCallback((): void => {
+    setOpen(false);
+    setRenaming(false);
+    setConfirmDelete(false);
+    setError('');
+  }, []);
+
+  const focusMenuItem = useCallback((position: 'first' | 'last'): void => {
+    const items = containerRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
+    if (!items || items.length === 0) return;
+    (position === 'last' ? items[items.length - 1] : items[0]).focus();
+  }, []);
+
+  // While open: close on outside-click / Esc, and move focus into the menu so
+  // the roving arrow-key navigation is reachable immediately (WAI-ARIA menu
+  // button: activating the trigger focuses a menu item).
   useEffect(() => {
-    if (!open) {
-      setRenaming(false);
-      setConfirmDelete(false);
-      setError('');
-      return undefined;
-    }
+    if (!open) return undefined;
+    const focusTimer = window.setTimeout(() => {
+      focusMenuItem(pendingFocusRef.current);
+      pendingFocusRef.current = 'first';
+    }, 20);
     const onPointerDown = (event: MouseEvent): void => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
+        closeMenu();
       }
     };
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        setOpen(false);
+        closeMenu();
         triggerRef.current?.focus();
       }
     };
     document.addEventListener('mousedown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
     return () => {
+      window.clearTimeout(focusTimer);
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open]);
+  }, [open, closeMenu, focusMenuItem]);
 
   const startRename = (): void => {
     setRenameValue(bot.name);
@@ -91,8 +118,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     setError('');
     try {
       await updateBot(bot.id, { name: trimmed });
-      setRenaming(false);
-      setOpen(false);
+      closeMenu();
       onChanged();
     } catch (err) {
       setError(messageFromError(err));
@@ -106,12 +132,14 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     setError('');
     try {
       await deleteBot(bot.id);
-      setOpen(false);
+      closeMenu();
       onChanged();
+      // onChanged() re-fetches and unmounts this tile; leave `busy` set so we
+      // don't fire a needless post-unmount state update.
+      return;
     } catch (err) {
       setError(messageFromError(err));
       setConfirmDelete(false);
-    } finally {
       setBusy(false);
     }
   };
@@ -145,7 +173,18 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Actions for ${bot.name}`}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => (open ? closeMenu() : setOpen(true))}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          event.preventDefault();
+          const position = event.key === 'ArrowUp' ? 'last' : 'first';
+          if (open) {
+            focusMenuItem(position);
+          } else {
+            pendingFocusRef.current = position;
+            setOpen(true);
+          }
+        }}
         className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-[var(--ds-text-subtle)] transition-colors hover:border-[var(--ds-border)] hover:bg-[var(--ds-bg-surface)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]"
       >
         <MoreHorizontal size={16} aria-hidden="true" />
@@ -162,7 +201,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             role="menuitem"
             to={`/agents/${bot.id}/overview`}
             className={menuItemClass}
-            onClick={() => setOpen(false)}
+            onClick={closeMenu}
           >
             <ArrowRight size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
             Open agent
@@ -175,7 +214,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
               target="_blank"
               rel="noopener noreferrer"
               className={menuItemClass}
-              onClick={() => setOpen(false)}
+              onClick={closeMenu}
             >
               <ExternalLink size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
               View demo

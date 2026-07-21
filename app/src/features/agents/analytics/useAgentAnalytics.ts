@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   getActivityStats,
   getTopQuestions,
@@ -43,6 +43,14 @@ const EMPTY: AgentAnalytics = {
   leads: null,
 };
 
+/**
+ * Upper bound on the gap-filled series. A long-lived agent (years of history)
+ * would otherwise materialize thousands of daily points and render them all in
+ * the "All time" range — a scalability sharp edge for high-volume accounts. The
+ * chart therefore shows at most the most recent year of daily volume.
+ */
+const MAX_TIMELINE_DAYS = 365;
+
 /** Local `YYYY-MM-DD` key (avoids UTC drift from `toISOString`). */
 function localKey(date: Date): string {
   const y = date.getFullYear();
@@ -80,6 +88,11 @@ function fillTimeline(points: readonly { date: string; messages: number }[]): En
     start.setDate(today.getDate() - 6);
   }
 
+  // Bound the window so an old, high-volume agent doesn't build a giant series.
+  const floor = new Date(today);
+  floor.setDate(today.getDate() - (MAX_TIMELINE_DAYS - 1));
+  if (start < floor) start = floor;
+
   const filled: EngagementPoint[] = [];
   const cursor = new Date(start);
   while (cursor <= today) {
@@ -99,24 +112,37 @@ function fillTimeline(points: readonly { date: string; messages: number }[]): En
  * internal status flag (no standalone boolean toggled in the effect), and the
  * request is cancellation-guarded so an agent switch can't apply stale data.
  */
-export function useAgentAnalytics(agentId: number | null): State & { loading: boolean } {
+export function useAgentAnalytics(
+  agentId: number | null,
+): State & { loading: boolean; reload: () => void } {
   const [state, setState] = useState<State>(() =>
     agentId === null
       ? { status: 'success', data: EMPTY, error: null }
       : { status: 'loading', data: null, error: null },
   );
   const [trackedId, setTrackedId] = useState<number | null>(agentId);
+  // Bumped by `reload()` to force a manual refetch of the current agent.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [trackedReload, setTrackedReload] = useState(0);
 
-  // Reset when the agent changes — adjust state during render (React-approved),
-  // which keeps the effect free of synchronous setState.
+  // Reset when the agent changes (or on manual reload) — adjust state during
+  // render (React-approved), which keeps the effect free of synchronous setState.
   if (agentId !== trackedId) {
     setTrackedId(agentId);
+    setTrackedReload(reloadKey);
     setState(
       agentId === null
         ? { status: 'success', data: EMPTY, error: null }
         : { status: 'loading', data: null, error: null },
     );
+  } else if (reloadKey !== trackedReload) {
+    setTrackedReload(reloadKey);
+    if (agentId !== null) {
+      setState({ status: 'loading', data: null, error: null });
+    }
   }
+
+  const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
   useEffect(() => {
     if (agentId === null) return;
@@ -154,10 +180,10 @@ export function useAgentAnalytics(agentId: number | null): State & { loading: bo
     return () => {
       cancelled = true;
     };
-  }, [agentId]);
+  }, [agentId, reloadKey]);
 
   return useMemo(
-    () => ({ ...state, loading: state.status === 'loading' }),
-    [state],
+    () => ({ ...state, loading: state.status === 'loading', reload }),
+    [state, reload],
   );
 }

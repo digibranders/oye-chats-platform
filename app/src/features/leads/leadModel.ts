@@ -199,8 +199,12 @@ export function readFunnel(raw: Record<string, unknown> | null | undefined): Fun
 
   return FUNNEL_STAGE_DEFS.map((def) => {
     const count = counts.get(def.key) ?? 0;
-    const conversionFromPrev = prev !== null && prev > 0 ? (count / prev) * 100 : null;
-    const widthPct = top > 0 ? Math.max((count / top) * 100, count > 0 ? 3 : 0) : 0;
+    // Clamp to 100: a downstream stage can exceed an upstream one when the two
+    // counts come from different measurement windows, which would otherwise
+    // overflow the bar / show a >100% conversion pill.
+    const conversionFromPrev =
+      prev !== null && prev > 0 ? Math.min((count / prev) * 100, 100) : null;
+    const widthPct = top > 0 ? Math.min(Math.max((count / top) * 100, count > 0 ? 3 : 0), 100) : 0;
     prev = count;
     return { ...def, count, widthPct, conversionFromPrev };
   });

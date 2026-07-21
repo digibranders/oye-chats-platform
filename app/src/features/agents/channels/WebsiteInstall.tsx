@@ -41,6 +41,9 @@ function CopyableCode({ code, label }: { code: string; label: string }) {
       >
         {copied ? <Check size={14} className="text-[var(--ds-success)]" /> : <Copy size={14} />}
       </button>
+      <span role="status" aria-live="polite" className="sr-only">
+        {copied ? `${label} copied` : ''}
+      </span>
     </div>
   );
 }
@@ -105,6 +108,9 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
                 {keyCopied ? <Check size={12} /> : <Copy size={12} />}
                 {keyCopied ? 'Copied' : 'Copy'}
               </button>
+              <span role="status" aria-live="polite" className="sr-only">
+                {keyCopied ? 'Embed key copied' : ''}
+              </span>
             </div>
           </div>
           <div className="flex items-center rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2">
@@ -122,6 +128,7 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
             href={demoUrl}
             target="_blank"
             rel="noopener noreferrer"
+            aria-label="See your agent live (opens in a new tab)"
             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
           >
             <ExternalLink size={14} aria-hidden="true" />

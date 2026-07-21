@@ -95,16 +95,13 @@ function FunnelSummary({ stages }: { stages: FunnelStageView[] }): ReactElement 
   );
 }
 
-/** The quality pill + score bar cell, shared by the table. */
+/** The quality pill cell, shared by the table. */
 function QualityCell({ lead }: { lead: Lead }): ReactElement {
   const tier = TIER_META[normalizeTier(lead.status)];
-  return (
-    <div className="flex items-center gap-3">
-      <StatusBadge tone={tier.tone} title={tier.code}>
-        {tier.label}
-      </StatusBadge>
-    </div>
-  );
+  // The plain-language label carries the meaning on its own; we deliberately
+  // avoid a hover-only native `title` (not keyboard-focusable, announced
+  // inconsistently by screen readers).
+  return <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>;
 }
 
 function ScoreCell({ score }: { score: number }): ReactElement {
@@ -170,7 +167,7 @@ export function LeadsPage(): ReactElement {
     useLeads(botId);
 
   const [tierFilter, setTierFilter] = useState<TierKey | null>(null);
-  const [contactFilter, setContactFilter] = useState<ContactFilter>('named');
+  const [contactFilter, setContactFilter] = useState<ContactFilter>('all');
   const [query, setQuery] = useState('');
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -179,8 +176,17 @@ export function LeadsPage(): ReactElement {
   const [isExporting, setIsExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Sort by readiness so the list matches the page's promise ("sorted by how
+  // ready they are to buy"): hottest tier first, then higher score. The reused
+  // backend orders by recency, so we rank client-side. filterLeads returns a
+  // fresh array, so sorting in place never mutates the source `leads` state.
   const filtered = useMemo(
-    () => filterLeads(leads, { tier: tierFilter, contact: contactFilter, query }),
+    () =>
+      filterLeads(leads, { tier: tierFilter, contact: contactFilter, query }).sort(
+        (a, b) =>
+          TIER_ORDER.indexOf(normalizeTier(b.status)) -
+            TIER_ORDER.indexOf(normalizeTier(a.status)) || b.score - a.score,
+      ),
     [leads, tierFilter, contactFilter, query],
   );
 
@@ -336,7 +342,9 @@ export function LeadsPage(): ReactElement {
       disabled={isExporting || leads.length === 0}
     >
       <Download size={16} aria-hidden="true" />
-      {isExporting ? 'Exporting…' : 'Export CSV'}
+      {/* Export ignores the active table filters — it always emits the full
+          server-side lead set for the agent, so the label says so explicitly. */}
+      {isExporting ? 'Exporting…' : 'Export all leads'}
     </Button>
   );
 
@@ -459,6 +467,14 @@ export function LeadsPage(): ReactElement {
               </select>
             </div>
           </div>
+
+          {/* Result count — makes any active filter visible so a narrowed
+              table never reads as data loss against the headline totals. */}
+          <p className="text-[12px] text-[var(--ds-text-subtle)]" aria-live="polite">
+            {filtered.length === leads.length
+              ? `${leads.length.toLocaleString()} ${leads.length === 1 ? 'lead' : 'leads'}`
+              : `Showing ${filtered.length.toLocaleString()} of ${leads.length.toLocaleString()} leads`}
+          </p>
 
           {/* Table */}
           <DataTable

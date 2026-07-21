@@ -27,8 +27,12 @@ export interface WorkspaceTotals {
   totalConversations: number;
   totalMessages: number;
   activeVisitors: number;
-  /** Percentage 0–100. Share of conversations the AI handled successfully. */
-  answerRate: number;
+  /**
+   * Percentage 0–100. Share of rated AI answers that got a thumbs-up — the
+   * backend `success_rate` is `positive_feedback / total_feedback`, i.e. a
+   * message-level positivity ratio, NOT a share of conversations resolved.
+   */
+  positiveFeedbackRate: number;
 }
 
 export function parseWorkspaceTotals(record: Record<string, unknown>): WorkspaceTotals {
@@ -36,7 +40,7 @@ export function parseWorkspaceTotals(record: Record<string, unknown>): Workspace
     totalConversations: readNumber(record, 'total_conversations'),
     totalMessages: readNumber(record, 'total_messages'),
     activeVisitors: readNumber(record, 'active_users'),
-    answerRate: readNumber(record, 'success_rate'),
+    positiveFeedbackRate: readNumber(record, 'success_rate'),
   };
 }
 
@@ -171,19 +175,17 @@ export function sliceTrend(series: TrendPoint[], range: TrendRange): TrendPoint[
   return series.slice(-days);
 }
 
-/** Derived summary of a trend window: totals plus a period-over-period delta. */
+/** Derived summary of a trend window: volume totals for the selected range. */
 export interface TrendSummary {
   total: number;
   dailyAverage: number;
   peak: number;
   peakLabel: string;
-  /** Percent change of the recent half vs the prior half, or null if not derivable. */
-  changePercent: number | null;
 }
 
 export function summarizeTrend(points: TrendPoint[]): TrendSummary {
   if (points.length === 0) {
-    return { total: 0, dailyAverage: 0, peak: 0, peakLabel: '—', changePercent: null };
+    return { total: 0, dailyAverage: 0, peak: 0, peakLabel: '—' };
   }
 
   let total = 0;
@@ -197,22 +199,36 @@ export function summarizeTrend(points: TrendPoint[]): TrendSummary {
     }
   }
 
-  // Period-over-period: compare the recent half against the prior half. Only
-  // meaningful with at least two days of history and non-zero prior volume, so
-  // we never fabricate a trend from thin data.
-  let changePercent: number | null = null;
-  if (points.length >= 2) {
-    const mid = Math.floor(points.length / 2);
-    const prior = points.slice(0, mid).reduce((sum, p) => sum + p.messages, 0);
-    const recent = points.slice(mid).reduce((sum, p) => sum + p.messages, 0);
-    if (prior > 0) changePercent = Math.round(((recent - prior) / prior) * 100);
-  }
-
   return {
     total,
     dailyAverage: Math.round(total / points.length),
     peak,
     peakLabel,
-    changePercent,
   };
+}
+
+/** Number of days each side of the week-over-week momentum comparison. */
+export const MOMENTUM_WINDOW_DAYS = 7;
+
+/**
+ * Well-defined momentum figure: the trailing 7 days vs the 7 days before them,
+ * computed from the full daily series regardless of the range the user is
+ * viewing. Returns `null` unless there are two full, non-empty prior weeks, so
+ * the headline delta is always a comparable period-over-period number (never an
+ * arbitrary split of the whole history).
+ */
+export function weekOverWeekChange(series: TrendPoint[]): number | null {
+  const span = MOMENTUM_WINDOW_DAYS * 2;
+  if (series.length < span) return null;
+
+  const window = series.slice(-span);
+  const prior = window
+    .slice(0, MOMENTUM_WINDOW_DAYS)
+    .reduce((sum, p) => sum + p.messages, 0);
+  const recent = window
+    .slice(MOMENTUM_WINDOW_DAYS)
+    .reduce((sum, p) => sum + p.messages, 0);
+
+  if (prior === 0) return null;
+  return Math.round(((recent - prior) / prior) * 100);
 }

@@ -45,7 +45,10 @@ export function TopQuestions({ questions, className }: TopQuestionsProps): React
                 {index + 1}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
+                <p
+                  className="truncate text-[13px] font-medium text-[var(--ds-text)]"
+                  title={item.question}
+                >
                   {item.question}
                 </p>
                 <div

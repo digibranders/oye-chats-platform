@@ -102,10 +102,21 @@ export function BillingPage(): ReactElement {
       : 0;
   const priceLabel = plan?.isPaid ? `${formatMoneyMinor(priceMinor)}/${cycleLabel}` : 'Free';
 
+  // A subscription set to cancel at period end will NOT renew — surfacing it as
+  // "Renews" would be dishonest. scheduledChange (a downgrade) takes precedence
+  // since it has its own banner; a bare pending cancellation is otherwise
+  // invisible on the page.
+  const pendingCancel = Boolean(
+    subscription?.cancelAtPeriodEnd && !subscription.scheduledChange,
+  );
   const renewalLabel = subscription?.trialEnd
     ? formatDate(subscription.trialEnd)
     : formatDate(subscription?.currentPeriodEnd ?? null);
-  const renewalCaption = subscription?.trialEnd ? 'Trial ends' : 'Renews';
+  const renewalCaption = subscription?.trialEnd
+    ? 'Trial ends'
+    : pendingCancel
+      ? 'Plan ends'
+      : 'Renews';
 
   return (
     <PageContainer
@@ -118,12 +129,15 @@ export function BillingPage(): ReactElement {
         </Button>
       }
     >
-      {/* Scaffold notice for Razorpay-gated actions. */}
-      <div aria-live="polite" className="empty:hidden">
+      {/* Scaffold notice for Razorpay-gated actions. Kept permanently mounted
+          (no `empty:hidden`) so the aria-live region is in the a11y tree before
+          content is injected — several screen readers skip announcing regions
+          that were display:none at mutation time. */}
+      <div aria-live="polite">
         {notice && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--ds-info)] bg-[var(--ds-info-soft)] px-4 py-3 text-[13px] text-[var(--ds-info)]">
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--ds-info)] bg-[var(--ds-info-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]">
             <span className="flex items-start gap-2">
-              <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-info)]" />
               {notice}
             </span>
             <button
@@ -154,7 +168,11 @@ export function BillingPage(): ReactElement {
           {/* At-a-glance money summary — always visible above the tabs. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <MetricCard label="Current plan" value={plan?.name ?? 'Free'} icon={Sparkles} />
-            <MetricCard label={`Cost per ${cycleLabel}`} value={priceLabel} icon={Wallet} />
+            <MetricCard
+              label={plan?.isPaid ? `Cost per ${cycleLabel}` : 'Cost'}
+              value={priceLabel}
+              icon={Wallet}
+            />
             <MetricCard label="Operator seats" value={totalSeats} icon={Users} />
             <MetricCard label={renewalCaption} value={renewalLabel} icon={CalendarClock} />
           </div>
@@ -168,6 +186,14 @@ export function BillingPage(): ReactElement {
             />
           )}
 
+          {/* Pending full cancellation — the plan ends and won't renew. */}
+          {pendingCancel && (
+            <CancellationBanner
+              endsAt={subscription.currentPeriodEnd}
+              planName={plan?.name ?? 'your current plan'}
+            />
+          )}
+
           <Tabs
             ariaLabel="Billing sections"
             value={tab}
@@ -175,30 +201,27 @@ export function BillingPage(): ReactElement {
             tabs={TABS.map((item) => ({ key: item.key, label: item.label }))}
           />
 
-          {tab === 'plan' && (
-            <TabPanel tabKey="plan">
-              <PlanAndSeatsTab
-                plan={plan}
-                subscription={subscription}
-                totalSeats={totalSeats}
-                includedSeats={includedSeats}
-                availablePlans={data.availablePlans}
-                onCheckoutTodo={flagCheckoutTodo}
-              />
-            </TabPanel>
-          )}
+          {/* All three panels stay mounted (inactive ones `hidden`) so every
+              tab's aria-controls target resolves in the DOM, per the WAI-ARIA
+              tabs contract. */}
+          <TabPanel tabKey="plan" active={tab === 'plan'}>
+            <PlanAndSeatsTab
+              plan={plan}
+              subscription={subscription}
+              totalSeats={totalSeats}
+              includedSeats={includedSeats}
+              availablePlans={data.availablePlans}
+              onCheckoutTodo={flagCheckoutTodo}
+            />
+          </TabPanel>
 
-          {tab === 'invoices' && (
-            <TabPanel tabKey="invoices">
-              <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
-            </TabPanel>
-          )}
+          <TabPanel tabKey="invoices" active={tab === 'invoices'}>
+            <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
+          </TabPanel>
 
-          {tab === 'details' && (
-            <TabPanel tabKey="details">
-              <BillingDetailsTab details={data.details} onEditTodo={flagCheckoutTodo} />
-            </TabPanel>
-          )}
+          <TabPanel tabKey="details" active={tab === 'details'}>
+            <BillingDetailsTab details={data.details} onEditTodo={flagCheckoutTodo} />
+          </TabPanel>
         </>
       )}
     </PageContainer>
@@ -207,13 +230,22 @@ export function BillingPage(): ReactElement {
 
 // ── Tab panel wrapper (a11y association with the Tabs pattern) ────────────────
 
-function TabPanel({ tabKey, children }: { tabKey: TabKey; children: ReactNode }): ReactElement {
+function TabPanel({
+  tabKey,
+  active,
+  children,
+}: {
+  tabKey: TabKey;
+  active: boolean;
+  children: ReactNode;
+}): ReactElement {
   return (
     <div
       role="tabpanel"
       id={`tabpanel-${tabKey}`}
       aria-labelledby={`tab-${tabKey}`}
-      tabIndex={0}
+      hidden={!active}
+      tabIndex={active ? 0 : -1}
       className="space-y-6 focus-visible:outline-none"
     >
       {children}
@@ -367,7 +399,11 @@ function PlanAndSeatsTab({
               {paymentDescription}
             </p>
             <div className="mt-auto pt-5">
-              <Button variant="outline" onClick={onCheckoutTodo} disabled={!subscription.hasActive}>
+              <Button
+                variant="outline"
+                onClick={onCheckoutTodo}
+                disabled={!subscription.paymentProvider}
+              >
                 <CreditCard size={16} aria-hidden="true" />
                 Manage payment method
               </Button>
@@ -389,6 +425,7 @@ function PlanAndSeatsTab({
                 key={candidate.slug}
                 plan={candidate}
                 current={candidate.slug === plan?.slug}
+                cycle={subscription.billingCycle}
                 onSelect={onCheckoutTodo}
               />
             ))}
@@ -402,19 +439,28 @@ function PlanAndSeatsTab({
 function PlanOption({
   plan,
   current,
+  cycle,
   onSelect,
 }: {
   plan: PlanView;
   current: boolean;
+  cycle: string;
   onSelect: () => void;
 }): ReactElement {
+  // Match the pricing shown in the summary card above: when the customer bills
+  // annually, compare on the annual figure (falling back to monthly for plans
+  // that carry no annual price) so the current tier's number is consistent.
+  const useAnnual = cycle === 'annual' && plan.annualPriceMinor > 0;
+  const priceMinor = useAnnual ? plan.annualPriceMinor : plan.monthlyPriceMinor;
+  const cycleSuffix = useAnnual ? '/yr' : '/mo';
   return (
-    <div
+    <Card
       className={cn(
-        'flex flex-col rounded-xl border bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]',
-        current ? 'border-[var(--ds-accent)] ring-1 ring-[var(--ds-accent)]' : 'border-[var(--ds-border)]',
+        'flex flex-col',
+        current ? 'border-[var(--ds-accent)] ring-1 ring-[var(--ds-accent)]' : '',
       )}
     >
+      <CardContent className="flex flex-1 flex-col pt-5">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[15px] font-semibold text-[var(--ds-text)]">{plan.name}</span>
         {current && (
@@ -425,9 +471,9 @@ function PlanOption({
       </div>
       <div className="mt-3 flex items-baseline gap-1">
         <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-          {plan.isPaid ? formatMoneyMinor(plan.monthlyPriceMinor) : 'Free'}
+          {plan.isPaid ? formatMoneyMinor(priceMinor) : 'Free'}
         </span>
-        {plan.isPaid && <span className="text-[13px] text-[var(--ds-text-muted)]">/mo</span>}
+        {plan.isPaid && <span className="text-[13px] text-[var(--ds-text-muted)]">{cycleSuffix}</span>}
       </div>
       <ul className="mt-4 flex-1 space-y-2 text-[13px] text-[var(--ds-text-muted)]">
         <li className="flex items-center gap-2">
@@ -451,7 +497,8 @@ function PlanOption({
           {current ? 'Your plan' : 'Select plan'}
         </Button>
       </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -509,7 +556,14 @@ function InvoicesTab({
       header: 'Amount',
       align: 'right',
       render: (invoice) => (
-        <span className="tabular-nums font-medium text-[var(--ds-text)]">
+        <span
+          className={cn(
+            'tabular-nums font-medium',
+            invoice.kind === 'credit_note'
+              ? 'text-[var(--ds-text-muted)]'
+              : 'text-[var(--ds-text)]',
+          )}
+        >
           {formatMoneyMinor(invoice.amountMinor, invoice.currency)}
         </span>
       ),
@@ -713,16 +767,50 @@ function ScheduledChangeBanner({
   return (
     <div
       role="status"
-      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-warning)]"
+      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
     >
-      <CalendarClock size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+      <CalendarClock
+        size={16}
+        aria-hidden="true"
+        className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
+      />
       <div>
-        <p className="font-semibold">
+        <p className="font-semibold text-[var(--ds-text)]">
           Scheduled downgrade to {planName ?? 'a different plan'}
           {effectiveAt ? ` on ${formatDate(effectiveAt)}` : ''}.
         </p>
-        <p className="mt-0.5 opacity-90">
+        <p className="mt-0.5 text-[var(--ds-text-muted)]">
           You’ll keep {currentPlanName} until then.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CancellationBanner({
+  endsAt,
+  planName,
+}: {
+  endsAt: string | null;
+  planName: string;
+}): ReactElement {
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
+    >
+      <AlertTriangle
+        size={16}
+        aria-hidden="true"
+        className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
+      />
+      <div>
+        <p className="font-semibold text-[var(--ds-text)]">
+          {planName} ends{endsAt ? ` on ${formatDate(endsAt)}` : ' at the end of the current period'} and
+          won’t renew.
+        </p>
+        <p className="mt-0.5 text-[var(--ds-text-muted)]">
+          You’ll keep access until then. Reactivate any time before it ends to stay on the plan.
         </p>
       </div>
     </div>

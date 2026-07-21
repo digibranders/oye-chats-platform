@@ -52,6 +52,15 @@ export function pickNumber(
   return 0;
 }
 
+/** Sum the finite numbers found at each of `keys` on `source` (missing → 0). */
+export function sumNumbers(
+  source: Record<string, unknown> | null | undefined,
+  keys: readonly string[],
+): number {
+  if (!source) return 0;
+  return keys.reduce((acc, key) => acc + toNumber(source[key]), 0);
+}
+
 // ── Agent health ─────────────────────────────────────────────────────────────
 
 export type HealthTone = 'success' | 'warning' | 'danger' | 'info';
@@ -99,6 +108,7 @@ export interface AgentSummary {
   crawlFailed: boolean;
   conversations: number;
   messages: number;
+  /** Qualified leads (MQL + SAL + SQL) captured by this agent. */
   leads: number;
   hotLeads: number;
   /** Answer success rate for this agent, as a percentage (0–100). */
@@ -108,7 +118,7 @@ export interface AgentSummary {
 export interface HomeTotals {
   conversations: number;
   messages: number;
-  activeUsers: number;
+  /** Qualified leads (MQL + SAL + SQL) across all agents. */
   leads: number;
   hotLeads: number;
   /** Conversation-weighted answer success rate across all agents (0–100). */
@@ -139,7 +149,11 @@ export interface HomeData {
 
 // ── Per-agent stat parsing ───────────────────────────────────────────────────
 
-const LEAD_TOTAL_KEYS = ['total'] as const;
+// Qualified leads = every tier above "unqualified" (MQL + SAL + SQL). The
+// lead-stats endpoint's `total` counts ALL chat sessions, which is identical to
+// getDashboardStats' conversation count — so we surface qualified leads instead
+// to keep this KPI honest and non-redundant with "Conversations".
+const LEAD_QUALIFIED_KEYS = ['mql', 'sal', 'sql'] as const;
 const LEAD_HOT_KEYS = ['hot', 'sal'] as const;
 
 export interface AgentStatsInput {
@@ -162,21 +176,17 @@ export function summarizeAgent(input: AgentStatsInput): AgentSummary {
     crawlFailed: bot.last_crawl_status === 'failed',
     conversations: toNumber(stats?.total_conversations),
     messages: toNumber(stats?.total_messages),
-    leads: pickNumber(leads, LEAD_TOTAL_KEYS),
+    leads: sumNumbers(leads, LEAD_QUALIFIED_KEYS),
     hotLeads: pickNumber(leads, LEAD_HOT_KEYS),
     successRate: toNumber(stats?.success_rate),
   };
 }
 
-/** Roll up per-agent summaries + active-user counts into workspace totals. */
-export function aggregateTotals(
-  agents: AgentSummary[],
-  activeUsersByAgent: readonly number[],
-): HomeTotals {
+/** Roll up per-agent summaries into workspace totals. */
+export function aggregateTotals(agents: AgentSummary[]): HomeTotals {
   const totals: HomeTotals = {
     conversations: 0,
     messages: 0,
-    activeUsers: 0,
     leads: 0,
     hotLeads: 0,
     successRate: 0,
@@ -201,10 +211,6 @@ export function aggregateTotals(
       rateSampleSum += agent.successRate;
       rateSampleCount += 1;
     }
-  });
-
-  activeUsersByAgent.forEach((count) => {
-    totals.activeUsers += count;
   });
 
   // Prefer a conversation-weighted rate; fall back to a simple mean so a
@@ -258,7 +264,6 @@ export interface OfflineActivityInput {
   message: string | null;
   botName: string | null;
   createdAt: string | null;
-  unread: boolean;
 }
 
 /** Parse a raw millis value from an ISO/date-like string, or null. */

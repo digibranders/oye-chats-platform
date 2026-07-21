@@ -25,7 +25,11 @@ export function ScopeStrictnessSection({
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const selectedIndex = STRICTNESS_LEVELS.findIndex((level) => matchesLevel(value, level.value));
-  const activeIndex = selectedIndex >= 0 ? selectedIndex : 1; // default → Balanced
+  // A saved value that matches no preset (a legacy hand-set threshold) leaves no
+  // radio checked; keyboard focus still lands on Balanced so the group stays
+  // reachable via the roving tabindex.
+  const focusIndex = selectedIndex >= 0 ? selectedIndex : 1;
+  const isOffPreset = selectedIndex < 0 && value !== null;
   const isDefault = value === null;
 
   function selectAt(index: number): void {
@@ -39,10 +43,10 @@ export function ScopeStrictnessSection({
     const count = STRICTNESS_LEVELS.length;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
       event.preventDefault();
-      selectAt((activeIndex + 1) % count);
+      selectAt((focusIndex + 1) % count);
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
       event.preventDefault();
-      selectAt((activeIndex - 1 + count) % count);
+      selectAt((focusIndex - 1 + count) % count);
     }
   }
 
@@ -64,7 +68,8 @@ export function ScopeStrictnessSection({
         className="grid grid-cols-1 gap-3 md:grid-cols-3"
       >
         {STRICTNESS_LEVELS.map((level, index) => {
-          const selected = index === activeIndex;
+          const checked = index === selectedIndex;
+          const focusable = index === focusIndex;
           return (
             <button
               key={level.value}
@@ -73,14 +78,14 @@ export function ScopeStrictnessSection({
               }}
               type="button"
               role="radio"
-              aria-checked={selected}
-              tabIndex={selected ? 0 : -1}
+              aria-checked={checked}
+              tabIndex={focusable ? 0 : -1}
               onClick={() => onChange(level.value)}
               onKeyDown={handleKeyDown}
               className={cn(
                 'rounded-xl border p-4 text-left transition-colors',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
-                selected
+                checked
                   ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
                   : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:border-[var(--ds-text-subtle)]',
               )}
@@ -102,6 +107,14 @@ export function ScopeStrictnessSection({
           );
         })}
       </div>
+
+      {isOffPreset && value !== null && (
+        <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]" role="status">
+          This agent uses a custom strictness of{' '}
+          <span className="font-semibold text-[var(--ds-text)]">{value.toFixed(2)}</span>, which
+          doesn’t match a preset. Pick a level above to change it, or reset to the platform default.
+        </p>
+      )}
 
       {!isDefault && (
         <button

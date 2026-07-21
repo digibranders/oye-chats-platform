@@ -19,6 +19,12 @@ type LoadStatus = 'loading' | 'success' | 'error';
 
 export interface OverviewData {
   readonly status: LoadStatus;
+  /**
+   * True while a manual {@link OverviewData.refetch} runs over already-loaded
+   * data. Distinct from the initial `status === 'loading'` so the UI can keep
+   * stale content visible during a refresh instead of blanking to skeletons.
+   */
+  readonly isRefetching: boolean;
   readonly stats: AgentStats | null;
   readonly activity: readonly ActivityPoint[];
   readonly questions: readonly TopQuestion[];
@@ -57,6 +63,7 @@ function toMessage(error: unknown): string {
 export function useOverviewData(botId: number): OverviewData {
   const [state, setState] = useState<Omit<OverviewData, 'refetch'>>({
     status: 'loading',
+    isRefetching: false,
     stats: null,
     activity: [],
     questions: [],
@@ -66,9 +73,10 @@ export function useOverviewData(botId: number): OverviewData {
   const [reloadToken, setReloadToken] = useState(0);
 
   const refetch = useCallback(() => {
-    // Called from a user event (never an effect), so setting loading here is
-    // safe and gives the Refresh action immediate visual feedback.
-    setState((current) => ({ ...current, status: 'loading', error: null }));
+    // Called from a user event (never an effect). Keep the resolved status and
+    // existing data so a refresh doesn't blank the page back to skeletons; the
+    // isRefetching flag drives the Refresh button's spinner instead.
+    setState((current) => ({ ...current, isRefetching: true, error: null }));
     setReloadToken((token) => token + 1);
   }, []);
 
@@ -84,6 +92,7 @@ export function useOverviewData(botId: number): OverviewData {
         if (cancelled) return;
         setState({
           status: 'success',
+          isRefetching: false,
           stats: parseStats(rawStats),
           activity,
           questions,
@@ -94,6 +103,7 @@ export function useOverviewData(botId: number): OverviewData {
         if (cancelled) return;
         setState({
           status: 'error',
+          isRefetching: false,
           stats: null,
           activity: [],
           questions: [],

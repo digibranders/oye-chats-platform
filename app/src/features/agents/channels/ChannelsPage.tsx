@@ -63,7 +63,7 @@ function ChannelsSkeleton(): ReactElement {
  * with `updateBot`.
  */
 export function ChannelsPage(): ReactElement {
-  const { agent, agentId, loading: agentLoading } = useAgent();
+  const { agent, loading: agentLoading } = useAgent();
   const numericId = agent?.id ?? null;
 
   // Load token = which agent + which retry. Storing it alongside the result lets
@@ -275,13 +275,11 @@ export function ChannelsPage(): ReactElement {
                   <p className="text-[12px] text-[var(--ds-text-subtle)]">
                     Add a scheduling link to turn this on.
                   </p>
-                  {agentId ? (
-                    <QuickAction
-                      icon={Calendar}
-                      label="Set up in Experience"
-                      to={`/agents/${agentId}/experience`}
-                    />
-                  ) : null}
+                  <QuickAction
+                    icon={Calendar}
+                    label="Set up in Integrations"
+                    to="/workspace/integrations"
+                  />
                 </div>
               )
             }
@@ -294,9 +292,15 @@ export function ChannelsPage(): ReactElement {
             name="Email"
             description="When no one’s available, visitors leave a message and it lands in your inbox."
             status={
-              <StatusBadge tone="success" dot>
-                Active
-              </StatusBadge>
+              notifyCount > 0 ? (
+                <StatusBadge tone="success" dot>
+                  Active
+                </StatusBadge>
+              ) : (
+                <StatusBadge tone="warning" dot>
+                  Needs setup
+                </StatusBadge>
+              )
             }
             action={
               <div className="flex flex-col gap-2">
@@ -335,13 +339,12 @@ export function ChannelsPage(): ReactElement {
   };
 
   return (
-    <div className="px-4 py-8 md:px-8">
-      <PageContainer
-        title="Channels"
-        description="Where your AI agent is connected and talking to people."
-      >
-        {body()}
-      </PageContainer>
-    </div>
+    <PageContainer
+      title="Channels"
+      description="Where your AI agent is connected and talking to people."
+      className="px-4 py-6 md:px-8"
+    >
+      {body()}
+    </PageContainer>
   );
 }

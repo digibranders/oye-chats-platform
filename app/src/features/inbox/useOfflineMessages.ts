@@ -51,6 +51,17 @@ export function useOfflineMessages(botId: number | undefined): OfflineMessagesSt
 
   // Incremented per request; only the latest token may commit results.
   const tokenRef = useRef(0);
+  // Latest values mirrored into refs so stable callbacks can read them without
+  // re-subscribing on every render.
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const countRef = useRef(0);
+  countRef.current = messages.length;
+  const statusFilterRef = useRef(statusFilter);
+  statusFilterRef.current = statusFilter;
+  // Tracks the bot the current data belongs to, so the fetch effect can reset
+  // paging in-band instead of via a second effect (which caused a wasted fetch).
+  const botIdRef = useRef(botId);
 
   const setPage = useCallback((next: number) => {
     setPageState(Math.max(1, next));
@@ -66,13 +77,18 @@ export function useOfflineMessages(botId: number | undefined): OfflineMessagesSt
     setReloadNonce((n) => n + 1);
   }, []);
 
-  // Reset paging whenever the active bot changes so we never land on a page that
-  // doesn't exist for the newly-selected bot.
   useEffect(() => {
-    setPageState(1);
-  }, [botId]);
+    // Reset paging in-band when the active bot changes so we never land on a page
+    // that doesn't exist for the newly-selected bot. Doing it here (rather than in
+    // a separate effect) avoids a throwaway fetch of the old page before page 1.
+    if (botId !== botIdRef.current) {
+      botIdRef.current = botId;
+      if (page !== 1) {
+        setPageState(1);
+        return; // the page reset re-runs this effect with page === 1
+      }
+    }
 
-  useEffect(() => {
     const token = (tokenRef.current += 1);
     let active = true;
 
@@ -105,14 +121,35 @@ export function useOfflineMessages(botId: number | undefined): OfflineMessagesSt
 
   const updateStatus = useCallback(async (id: number, status: OfflineStatus): Promise<void> => {
     await updateOfflineMessage(id, { status });
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status } : m)));
+    const filter = statusFilterRef.current;
+    if (filter !== 'all' && filter !== status) {
+      // The new status no longer matches the active filter — drop the row (and its
+      // count) so the filtered list stays honest instead of showing a stale item.
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+      setTotal((prev) => Math.max(0, prev - 1));
+    } else {
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status } : m)));
+    }
   }, []);
 
-  const remove = useCallback(async (id: number): Promise<void> => {
-    await deleteOfflineMessage(id);
-    setMessages((prev) => prev.filter((m) => m.id !== id));
-    setTotal((prev) => Math.max(0, prev - 1));
-  }, []);
+  const remove = useCallback(
+    async (id: number): Promise<void> => {
+      await deleteOfflineMessage(id);
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+      setTotal((prev) => Math.max(0, prev - 1));
+      if (countRef.current <= 1 && pageRef.current > 1) {
+        // We just removed the last row on a later page — step back a page so the
+        // operator isn't stranded on an empty list while earlier pages hold items.
+        // The page change re-keys the fetch effect, which reloads for us.
+        setPageState((p) => Math.max(1, p - 1));
+      } else {
+        // Backfill the current page from the server (pull the next page's first
+        // row up) so pagination stays consistent with the decremented total.
+        reload();
+      }
+    },
+    [reload],
+  );
 
   return {
     messages,

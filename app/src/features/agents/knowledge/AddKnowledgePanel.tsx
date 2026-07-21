@@ -20,7 +20,7 @@ import { Button, Card, Input, Progress, cn } from '../../../design-system';
 import { discoverCrawlUrls, uploadDocuments } from '../../../services/api';
 import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
-import type { CrawlDiscovery, KnowledgeSource } from '../../../types/domain';
+import type { CrawlDiscovery, CrawlStatus, KnowledgeSource } from '../../../types/domain';
 import {
   SUPPORTED_EXTENSIONS,
   filterUploadFiles,
@@ -71,21 +71,26 @@ export function AddKnowledgePanel({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadNote, setUploadNote] = useState<string | null>(null);
 
-  // A crawl belongs to this agent when it's unscoped or explicitly ours.
+  // A crawl belongs to this agent when it's unscoped or explicitly ours. Kept
+  // permissive so an in-progress crawl still surfaces here before it's scoped.
   const crawlOwned = crawl.botId === null || crawl.botId === agentId;
   const crawlRunning =
     crawlOwned && (crawl.status === 'running' || crawl.status === 'cancelling');
+  // Strict ownership: only a crawl explicitly scoped to THIS agent. Terminal UI
+  // that attributes learned pages to this agent gates on this, so a completed
+  // unscoped crawl started elsewhere can't claim work (or clear inputs) here.
+  const crawlIsOurs = crawl.botId === agentId;
 
   // Clear the website inputs once our crawl finishes cleanly, so the field is
   // ready for the next site. Reacts to a status transition — not a render-time
   // derivation — and is guarded so it can't loop.
   useEffect(() => {
-    if (crawlOwned && crawl.status === 'done') {
+    if (crawlIsOurs && crawl.status === 'done') {
       setSiteUrl('');
       setEstimate(null);
       setWebsiteError(null);
     }
-  }, [crawl.status, crawlOwned]);
+  }, [crawl.status, crawlIsOurs]);
 
   const alreadyAddedHost = useMemo(() => {
     const trimmed = siteUrl.trim();
@@ -169,7 +174,7 @@ export function AddKnowledgePanel({
 
         {/* Source-type switch */}
         <div
-          role="tablist"
+          role="group"
           aria-label="Choose how to add knowledge"
           className="mt-4 inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
         >
@@ -184,8 +189,7 @@ export function AddKnowledgePanel({
               <button
                 key={tab.key}
                 type="button"
-                role="tab"
-                aria-selected={selected}
+                aria-pressed={selected}
                 onClick={() => setMode(tab.key)}
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
@@ -275,12 +279,12 @@ export function AddKnowledgePanel({
                 total={crawl.discoveredTotal}
                 status={crawl.status}
               />
-            ) : crawlOwned && crawl.status === 'done' ? (
+            ) : crawlIsOurs && crawl.status === 'done' ? (
               <StatusNote tone="success" icon={CheckCircle2}>
                 Finished — your AI learned {crawl.pagesCrawled} page
                 {crawl.pagesCrawled === 1 ? '' : 's'}.
               </StatusNote>
-            ) : crawlOwned && (crawl.status === 'failed' || crawl.status === 'no_content') ? (
+            ) : crawlIsOurs && (crawl.status === 'failed' || crawl.status === 'no_content') ? (
               <StatusNote tone="danger" icon={AlertCircle}>
                 {crawl.error ||
                   (crawl.status === 'no_content'
@@ -414,7 +418,7 @@ function CrawlProgress({
   pages: string[];
   done: number;
   total: number | null;
-  status: string;
+  status: CrawlStatus;
 }): ReactElement {
   const percent =
     status === 'done'

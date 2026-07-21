@@ -30,11 +30,22 @@ export interface ChannelCardProps {
   className?: string;
 }
 
+/** Stable, DOM-id-safe slug derived from the channel name (used to name the landmark). */
+function slugify(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'channel'
+  );
+}
+
 /**
  * ChannelCard — one connection surface on the Channels tab. Presentational
  * only: a glyph, the channel name + description, an optional status pill, an
  * optional action row, and optional detail content. Rendered as a `<section>`
- * so each channel is an addressable landmark for assistive tech.
+ * named by its heading via `aria-labelledby`, so each channel is a genuine
+ * addressable landmark region for assistive tech.
  */
 export function ChannelCard({
   icon: Icon,
@@ -46,8 +57,10 @@ export function ChannelCard({
   children,
   className,
 }: ChannelCardProps) {
+  const headingId = `channel-${slugify(name)}-title`;
   return (
     <section
+      aria-labelledby={headingId}
       className={cn(
         'rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-sm)]',
         className,
@@ -66,7 +79,9 @@ export function ChannelCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">{name}</h3>
+              <h3 id={headingId} className="text-[15px] font-semibold text-[var(--ds-text)]">
+                {name}
+              </h3>
               <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
                 {description}
               </p>

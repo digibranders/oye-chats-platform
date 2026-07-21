@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactElement, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactElement, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -16,17 +16,18 @@ import {
 } from 'lucide-react';
 import {
   Button,
+  DataTable,
   EmptyState,
   Input,
+  MetricCard,
   PageContainer,
   SectionHeader,
   Skeleton,
   StatusBadge,
+  Tabs,
   cn,
+  type Column,
 } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
-import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { Tabs } from '../../design-system/components/Tabs';
 import {
   addSelfAsOperator,
   createDepartment,
@@ -154,6 +155,32 @@ export function MembersPage(): ReactElement {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [tab, setTab] = useState<TabKey>('people');
 
+  // Mirror the latest committed phase so the async loader can tell an initial
+  // load (nothing on screen yet) from a background refresh (roster already
+  // rendered) without depending on a stale closure.
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  // Feedback is scoped to the selected agent's roster — drop it the moment the
+  // agent changes so a stale message never bleeds across contexts. Render-time
+  // state adjustment (the React-sanctioned reset pattern), guarded to run once
+  // per change so it can't loop.
+  const [feedbackBotId, setFeedbackBotId] = useState(selectedBotId);
+  if (feedbackBotId !== selectedBotId) {
+    setFeedbackBotId(selectedBotId);
+    setFeedback(null);
+  }
+
+  // Success toasts are transient confirmations; auto-dismiss them so they don't
+  // linger while the user moves on. Errors persist until dismissed or replaced.
+  useEffect(() => {
+    if (feedback?.tone !== 'success') return;
+    const timer = window.setTimeout(() => setFeedback(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
+
   // Invite form
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -167,6 +194,13 @@ export function MembersPage(): ReactElement {
   const [editDept, setEditDept] = useState('');
   const [editMaxChats, setEditMaxChats] = useState('3');
   const [editBusy, setEditBusy] = useState(false);
+
+  // `editMaxChats` is the raw string from a number input: clearing it yields ''
+  // (Number('') === 0, an operator that can never be routed a live chat) and it
+  // does not enforce the documented [1, 20] cap. Parse + validate before we let
+  // the operator be saved.
+  const maxChats = Number.parseInt(editMaxChats, 10);
+  const maxChatsValid = Number.isInteger(maxChats) && maxChats >= 1 && maxChats <= 20;
 
   // Row-level busy / confirm
   const [removingId, setRemovingId] = useState<number | null>(null);
@@ -206,10 +240,25 @@ export function MembersPage(): ReactElement {
         });
       } catch (error) {
         if (!active) return;
-        setPhase({
-          status: 'error',
-          message: toMessage(error, 'We couldn’t load your team. Please try again.'),
-        });
+        // A background refresh (fired after a successful mutation) must not blow
+        // away the roster the user is already looking at. Only hard-fail to the
+        // full-page error state on the initial load / explicit retry; on a
+        // background flake keep the last-good data and surface the failure as a
+        // non-destructive banner.
+        if (phaseRef.current.status === 'ready') {
+          setFeedback({
+            tone: 'error',
+            message: toMessage(
+              error,
+              'We couldn’t refresh your team — showing the last loaded data.',
+            ),
+          });
+        } else {
+          setPhase({
+            status: 'error',
+            message: toMessage(error, 'We couldn’t load your team. Please try again.'),
+          });
+        }
       }
     })();
     return () => {
@@ -260,6 +309,7 @@ export function MembersPage(): ReactElement {
   const handleInvite = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (!selectedBotId) return;
+    setFeedback(null);
     setInviteBusy(true);
     try {
       await createOperatorInvite({
@@ -282,6 +332,7 @@ export function MembersPage(): ReactElement {
   };
 
   const handleResend = async (invite: OperatorInvite): Promise<void> => {
+    setFeedback(null);
     setRowBusyId(invite.id);
     try {
       await resendOperatorInvite(invite.id);
@@ -295,6 +346,7 @@ export function MembersPage(): ReactElement {
   };
 
   const handleRevoke = async (invite: OperatorInvite): Promise<void> => {
+    setFeedback(null);
     setRowBusyId(invite.id);
     try {
       await revokeOperatorInvite(invite.id);
@@ -317,13 +369,14 @@ export function MembersPage(): ReactElement {
 
   const handleSaveEdit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (!editing) return;
+    if (!editing || !maxChatsValid) return;
+    setFeedback(null);
     setEditBusy(true);
     try {
       await updateOperator(editing.id, {
         role: editRole,
         department_id: editDept ? Number(editDept) : null,
-        max_concurrent_chats: Number(editMaxChats),
+        max_concurrent_chats: maxChats,
       });
       setFeedback({ tone: 'success', message: `${editing.name} updated.` });
       setEditing(null);
@@ -336,6 +389,7 @@ export function MembersPage(): ReactElement {
   };
 
   const handleRemove = async (operator: Operator): Promise<void> => {
+    setFeedback(null);
     setRowBusyId(operator.id);
     try {
       await deleteOperator(operator.id);
@@ -352,6 +406,7 @@ export function MembersPage(): ReactElement {
 
   const handleSelfJoin = async (): Promise<void> => {
     if (!selectedBotId) return;
+    setFeedback(null);
     setSelfBusy(true);
     try {
       await addSelfAsOperator(selectedBotId);
@@ -366,6 +421,7 @@ export function MembersPage(): ReactElement {
 
   const handleCreateDept = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
+    setFeedback(null);
     setDeptBusy(true);
     try {
       await createDepartment({ name: deptName.trim(), description: deptDesc.trim() || null });
@@ -382,6 +438,7 @@ export function MembersPage(): ReactElement {
   };
 
   const handleDeleteDept = async (department: Department): Promise<void> => {
+    setFeedback(null);
     setDeptRowBusyId(department.id);
     try {
       await deleteDepartment(department.id);
@@ -542,7 +599,10 @@ export function MembersPage(): ReactElement {
           <Tabs
             ariaLabel="Members sections"
             value={tab}
-            onChange={(key) => setTab(key as TabKey)}
+            onChange={(key) => {
+              setFeedback(null);
+              setTab(key as TabKey);
+            }}
             tabs={[
               { key: 'people', label: 'People' },
               { key: 'departments', label: 'Departments' },
@@ -753,16 +813,24 @@ export function MembersPage(): ReactElement {
                         type="number"
                         min={1}
                         max={20}
+                        aria-invalid={!maxChatsValid}
+                        aria-describedby="edit-max-hint"
                         value={editMaxChats}
                         onChange={(event) => setEditMaxChats(event.target.value)}
                       />
+                      <p
+                        id="edit-max-hint"
+                        className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]"
+                      >
+                        Between 1 and 20 chats at once.
+                      </p>
                     </div>
                   </div>
                   <div className="mt-4 flex items-center justify-end gap-2">
                     <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
                       Cancel
                     </Button>
-                    <Button type="submit" disabled={editBusy}>
+                    <Button type="submit" disabled={editBusy || !maxChatsValid}>
                       {editBusy ? 'Saving…' : (
                         <>
                           <Check size={16} aria-hidden="true" />

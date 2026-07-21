@@ -167,11 +167,18 @@ export function buildInvoice(raw: unknown, index: number): InvoiceView {
     typeof idValue === 'string' || typeof idValue === 'number'
       ? String(idValue)
       : `invoice-${index}`;
+  // The backend stores credit notes (refunds/adjustments) as a POSITIVE
+  // magnitude with `invoice_type='credit_note'` carrying the semantic negation
+  // (api/app/services/invoice_service.py). Apply that negation here at the
+  // boundary so the amount reads honestly as money returned (e.g. "-₹949")
+  // instead of being indistinguishable from a charge. Other kinds keep the
+  // magnitude (defensive against inconsistently-signed sources).
+  const amountMagnitude = Math.abs(toNumber(record.amount_cents));
   return {
     id,
     number: toOptionalText(record.invoice_number),
     kind,
-    amountMinor: Math.abs(toNumber(record.amount_cents)),
+    amountMinor: kind === 'credit_note' ? -amountMagnitude : amountMagnitude,
     currency: (toText(record.currency) || 'INR').toUpperCase(),
     status: toText(record.status) || 'issued',
     date: toOptionalText(record.issued_at) ?? toOptionalText(record.created_at),

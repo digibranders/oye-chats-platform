@@ -33,7 +33,12 @@ export interface UseWorkspaceAnalyticsResult {
   status: AnalyticsStatus;
   data: WorkspaceAnalytics | null;
   error: string | null;
-  /** Re-run every request. Safe to wire to a "Try again" button. */
+  /**
+   * True while a background refetch runs on top of already-loaded data. Lets
+   * the UI show a subtle inline spinner instead of unmounting to a skeleton.
+   */
+  refreshing: boolean;
+  /** Re-run every request. Safe to wire to a "Try again" / "Refresh" button. */
   reload: () => void;
 }
 
@@ -52,6 +57,7 @@ function errorMessage(cause: unknown): string {
  */
 export function useWorkspaceAnalytics(): UseWorkspaceAnalyticsResult {
   const [reloadToken, setReloadToken] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [state, setState] = useState<{
     status: AnalyticsStatus;
     data: WorkspaceAnalytics | null;
@@ -86,7 +92,16 @@ export function useWorkspaceAnalytics(): UseWorkspaceAnalyticsResult {
         });
       } catch (cause) {
         if (!active) return;
-        setState({ status: 'error', data: null, error: errorMessage(cause) });
+        // A failed background refresh keeps the already-loaded data on screen
+        // rather than blowing the whole page away; only a cold load surfaces
+        // the full error state.
+        setState((prev) =>
+          prev.data
+            ? { status: 'ready', data: prev.data, error: null }
+            : { status: 'error', data: null, error: errorMessage(cause) },
+        );
+      } finally {
+        if (active) setRefreshing(false);
       }
     })();
 
@@ -96,9 +111,12 @@ export function useWorkspaceAnalytics(): UseWorkspaceAnalyticsResult {
   }, [reloadToken]);
 
   const reload = useCallback(() => {
-    setState((prev) => ({ ...prev, status: 'loading', error: null }));
+    setRefreshing(true);
+    // Keep populated data mounted during a refresh; only fall back to the
+    // skeleton when there is nothing to show yet (initial load or error retry).
+    setState((prev) => (prev.data ? prev : { ...prev, status: 'loading', error: null }));
     setReloadToken((token) => token + 1);
   }, []);
 
-  return { status: state.status, data: state.data, error: state.error, reload };
+  return { status: state.status, data: state.data, error: state.error, refreshing, reload };
 }

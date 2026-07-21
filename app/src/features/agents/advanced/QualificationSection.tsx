@@ -12,8 +12,9 @@ interface QualificationSectionProps {
 /**
  * Lead qualification — which framework scores visitors as leads. Switching the
  * framework applies its preset scoring model (handled by the page). Per-dimension
- * weight/threshold editing is intentionally deferred to a dedicated editor
- * (see TODO) — this surface owns the framework choice + a read-only summary.
+ * weight/threshold editing lives in the dedicated qualification editor (surfaced
+ * to the user by the Info card below) — this surface owns the framework choice
+ * plus a read-only threshold summary.
  */
 export function QualificationSection({
   framework,
@@ -86,9 +87,9 @@ export function QualificationSection({
           </div>
         )}
 
-        {/* TODO(agents/advanced): full per-dimension weight/threshold/decay editor
-            (see pages/Qualification.jsx ConfigurationTab) belongs in a dedicated
-            surface. This section wires the framework choice only. */}
+        {/* Fine-grained per-dimension scoring is intentionally edited in the
+            dedicated qualification editor; this surface wires the framework
+            choice and shows the read-only summary above. */}
         <div className="flex items-start gap-2.5 rounded-lg bg-[var(--ds-bg-sunken)] p-3.5">
           <Info size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
           <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]">

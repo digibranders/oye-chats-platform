@@ -55,7 +55,9 @@ export interface MessageDetailProps {
  * MessageDetail — the right-hand reading pane for one offline message. Shows who
  * wrote in, their message, and the operator's next actions: mark read/replied,
  * reply by email (pre-filled with a template or workspace quick reply), or
- * delete. Replying by email also advances the message to "replied".
+ * delete. Opening a reply only marks the message "read" — opening a mail client
+ * isn't proof an email was sent, so "replied" stays an explicit operator
+ * confirmation via the "Mark as replied" button.
  */
 export function MessageDetail({
   message,
@@ -86,8 +88,9 @@ export function MessageDetail({
   const isReplied = message.status === 'replied';
 
   function handleReply(): void {
-    // Replying by email is the resolution for an offline message, so record it.
-    if (!isReplied) onSetStatus('replied');
+    // Opening a mail client isn't proof an email was sent, so only advance the
+    // message to "read" here. "Replied" stays an explicit operator confirmation.
+    if (message.status === 'new') onSetStatus('read');
   }
 
   return (
@@ -164,36 +167,38 @@ export function MessageDetail({
               This visitor didn’t leave an email address, so there’s no way to reply directly.
             </p>
           )}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {templates.map((tpl) => {
-              const href = buildReplyHref(
-                email,
-                'Re: your message',
-                applyTemplate(tpl.body, message.visitor_name),
-              );
-              return (
-                <a
-                  key={tpl.label}
-                  href={href ?? undefined}
-                  aria-disabled={!href}
-                  onClick={href ? handleReply : (e) => e.preventDefault()}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-text)] transition-colors',
-                    href
-                      ? 'hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)]'
-                      : 'cursor-not-allowed opacity-50',
-                  )}
-                >
-                  <CornerUpLeft
-                    size={13}
-                    aria-hidden="true"
-                    className="text-[var(--ds-text-subtle)]"
-                  />
-                  {tpl.label}
-                </a>
-              );
-            })}
-          </div>
+          {canReply && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {templates.map((tpl) => {
+                const href = buildReplyHref(
+                  email,
+                  'Re: your message',
+                  applyTemplate(tpl.body, message.visitor_name),
+                );
+                // canReply guarantees an address, so href is always present here;
+                // guard defensively rather than render a dead anchor.
+                if (!href) return null;
+                return (
+                  <a
+                    key={tpl.label}
+                    href={href}
+                    onClick={handleReply}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-text)] transition-colors',
+                      'hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)]',
+                    )}
+                  >
+                    <CornerUpLeft
+                      size={13}
+                      aria-hidden="true"
+                      className="text-[var(--ds-text-subtle)]"
+                    />
+                    {tpl.label}
+                  </a>
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
 

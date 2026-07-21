@@ -33,13 +33,22 @@ function Field({
   placeholder: string;
 }): ReactElement {
   const id = useId();
+  const hintId = useId();
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className="block text-[13px] font-medium text-[var(--ds-text)]">
         {label}
       </label>
-      <Input id={id} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-      <p className="text-[11px] text-[var(--ds-text-subtle)]">{hint}</p>
+      <Input
+        id={id}
+        value={value}
+        placeholder={placeholder}
+        aria-describedby={hintId}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <p id={hintId} className="text-[11px] text-[var(--ds-text-subtle)]">
+        {hint}
+      </p>
     </div>
   );
 }

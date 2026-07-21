@@ -24,17 +24,18 @@ import {
 } from 'lucide-react';
 import {
   Button,
+  DataTable,
   EmptyState,
+  InsightCard,
   Input,
   PageContainer,
   SectionHeader,
   Skeleton,
   StatusBadge,
+  Tabs,
   cn,
+  type Column,
 } from '../../design-system';
-import { InsightCard } from '../../design-system/components/InsightCard';
-import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { Tabs } from '../../design-system/components/Tabs';
 import {
   createWebhook,
   deleteWebhook,
@@ -781,6 +782,7 @@ function WebhooksPanel({
                     type="button"
                     onClick={() => setExpandedId(expanded ? null : webhook.id)}
                     aria-expanded={expanded}
+                    aria-controls={`delivery-log-${webhook.id}`}
                     className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)]"
                   >
                     {expanded ? (
@@ -791,7 +793,7 @@ function WebhooksPanel({
                     Delivery log
                   </button>
                   {expanded && (
-                    <div className="mt-3">
+                    <div id={`delivery-log-${webhook.id}`} className="mt-3">
                       <DeliveryLog webhookId={webhook.id} />
                     </div>
                   )}
@@ -826,11 +828,9 @@ function MeetingsPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElemen
   const initial = readIntegrations(bot);
   const [enabled, setEnabled] = useState(!!initial.meeting_booking_enabled);
   const [provider, setProvider] = useState(initial.meeting_provider || 'calendly');
-  const [urls, setUrls] = useState<Record<string, string>>({
-    calendly: initial.calendly_url ?? '',
-    zcal: initial.zcal_url ?? '',
-    calcom: initial.calcom_url ?? '',
-  });
+  const [urls, setUrls] = useState<Record<string, string>>(() =>
+    Object.fromEntries(MEETING_PROVIDERS.map((item) => [item.id, initial[item.urlField] ?? ''])),
+  );
   const [saving, setSaving] = useState(false);
 
   const active = MEETING_PROVIDERS.find((item) => item.id === provider) ?? MEETING_PROVIDERS[0];
@@ -843,9 +843,9 @@ function MeetingsPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElemen
       await updateBot(bot.id, {
         meeting_booking_enabled: enabled,
         meeting_provider: enabled ? provider : null,
-        calendly_url: urls.calendly || null,
-        zcal_url: urls.zcal || null,
-        calcom_url: urls.calcom || null,
+        ...Object.fromEntries(
+          MEETING_PROVIDERS.map((item) => [item.urlField, urls[item.id] || null]),
+        ),
       });
       await onSaved();
       onFeedback({ tone: 'success', message: 'Meeting booking saved.' });
@@ -1271,31 +1271,35 @@ export function IntegrationsPage(): ReactElement {
         ]}
       />
 
-      {tab === 'webhooks' && (
-        <div
-          role="tabpanel"
-          id="tabpanel-webhooks"
-          aria-labelledby="tab-webhooks"
-          tabIndex={0}
-          className="focus-visible:outline-none"
-        >
-          <WebhooksPanel
-            webhooks={webhooks}
-            loading={webhooksLoading}
-            error={webhooksError}
-            onReload={reloadWebhooks}
-            onFeedback={setFeedback}
-            botId={selectedBotId}
-          />
-        </div>
-      )}
+      {/* All panels stay mounted; only the active one is visible. Hiding
+          inactive panels (rather than unmounting them) preserves unsaved edits
+          when the user switches tabs, and `hidden` removes them from the
+          accessibility tree and tab order. */}
+      <div
+        role="tabpanel"
+        id="tabpanel-webhooks"
+        aria-labelledby="tab-webhooks"
+        tabIndex={0}
+        hidden={tab !== 'webhooks'}
+        className="focus-visible:outline-none"
+      >
+        <WebhooksPanel
+          webhooks={webhooks}
+          loading={webhooksLoading}
+          error={webhooksError}
+          onReload={reloadWebhooks}
+          onFeedback={setFeedback}
+          botId={selectedBotId}
+        />
+      </div>
 
-      {tab === 'meetings' && selectedBot && (
+      {selectedBot && (
         <div
           role="tabpanel"
           id="tabpanel-meetings"
           aria-labelledby="tab-meetings"
           tabIndex={0}
+          hidden={tab !== 'meetings'}
           className="focus-visible:outline-none"
         >
           <MeetingsPanel
@@ -1307,12 +1311,13 @@ export function IntegrationsPage(): ReactElement {
         </div>
       )}
 
-      {tab === 'email' && selectedBot && (
+      {selectedBot && (
         <div
           role="tabpanel"
           id="tabpanel-email"
           aria-labelledby="tab-email"
           tabIndex={0}
+          hidden={tab !== 'email'}
           className="focus-visible:outline-none"
         >
           <EmailPanel

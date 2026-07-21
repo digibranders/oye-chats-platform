@@ -9,17 +9,16 @@ import {
   AlertCircle,
   MousePointerClick,
 } from 'lucide-react';
-import { Button, EmptyState, Skeleton } from '../../design-system';
+import { Button, EmptyState, Skeleton, cn } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { ConversationCard } from '../../design-system/components/ConversationCard';
-import { Tabs, type TabItem } from '../../design-system/components/Tabs';
 import { getCannedResponses } from '../../services/api';
 import { type CannedResponse } from '../../types/domain';
 import { useOfflineMessages, type StatusFilter } from './useOfflineMessages';
 import { MessageDetail } from './MessageDetail';
 import { relativeTime, statusBadge, type OfflineStatus } from './inboxHelpers';
 
-const FILTER_TABS: TabItem[] = [
+const FILTER_OPTIONS: ReadonlyArray<{ key: StatusFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'new', label: 'New' },
   { key: 'read', label: 'Read' },
@@ -88,8 +87,10 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
   function handleSelect(id: number, status: string | undefined): void {
     setSelectedId(id);
     setActionError(null);
-    // Opening an unread message reads it (matches every inbox convention).
-    if (status === 'new') {
+    // Opening an unread message reads it (matches every inbox convention) — but
+    // only under the "All" filter. Under a "New"-only filter, auto-reading would
+    // immediately drop the row the operator just opened, clearing the pane.
+    if (status === 'new' && statusFilter === 'all') {
       void runStatus(id, 'read');
     }
   }
@@ -129,14 +130,12 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
       </div>
 
       {/* Filter */}
-      <Tabs
-        tabs={FILTER_TABS}
+      <StatusFilterBar
         value={statusFilter}
         onChange={(key) => {
-          setStatusFilter(key as StatusFilter);
+          setStatusFilter(key);
           setSelectedId(null);
         }}
-        ariaLabel="Filter messages by status"
       />
 
       {actionError && (
@@ -185,8 +184,11 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
               <ul className="flex flex-col">
                 {messages.map((m) => {
                   const badge = statusBadge(m.status);
+                  const selected = selectedId === m.id;
                   return (
-                    <li key={m.id}>
+                    // Convey the open row programmatically, not by tint alone, so
+                    // assistive tech announces which conversation is being read.
+                    <li key={m.id} aria-current={selected ? 'true' : undefined}>
                       <ConversationCard
                         name={m.visitor_name?.trim() || m.visitor_email || 'Anonymous visitor'}
                         snippet={m.message_body || 'No message content.'}
@@ -194,9 +196,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
                         unread={m.status === 'new'}
                         status={{ label: badge.label, tone: badge.tone }}
                         onClick={() => handleSelect(m.id, m.status)}
-                        className={
-                          selectedId === m.id ? 'bg-[var(--ds-bg-hover)]' : undefined
-                        }
+                        className={selected ? 'bg-[var(--ds-bg-hover)]' : undefined}
                       />
                     </li>
                   );
@@ -258,6 +258,48 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface StatusFilterBarProps {
+  value: StatusFilter;
+  onChange: (value: StatusFilter) => void;
+}
+
+/**
+ * StatusFilterBar — a single-select segmented control for the message lifecycle
+ * filter. Uses `aria-pressed` toggle buttons inside a labelled group rather than
+ * a tablist: this is a filter over one results list, not a set of tabpanels, so
+ * the WAI-ARIA tabs pattern (with its aria-controls → tabpanel wiring) doesn't
+ * apply here.
+ */
+function StatusFilterBar({ value, onChange }: StatusFilterBarProps): ReactElement {
+  return (
+    <div
+      role="group"
+      aria-label="Filter messages by status"
+      className="inline-flex items-center gap-1 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-1"
+    >
+      {FILTER_OPTIONS.map((opt) => {
+        const active = opt.key === value;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(opt.key)}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-sunken)]',
+              active
+                ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

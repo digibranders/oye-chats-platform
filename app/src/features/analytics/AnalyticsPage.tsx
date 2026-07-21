@@ -1,4 +1,4 @@
-import { type ReactElement, useMemo, useState } from 'react';
+import { type KeyboardEvent, type ReactElement, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -17,21 +17,23 @@ import {
   CardContent,
   CardHeader,
   EmptyState,
+  InsightCard,
+  type InsightTone,
+  MetricCard,
+  type MetricTrend,
   PageContainer,
   SectionHeader,
   Skeleton,
+  Tabs,
 } from '../../design-system';
-// Foundation-phase components are consumed directly from their files: the
-// design-system barrel is orchestrator-owned and doesn't re-export them yet.
-import { MetricCard, type MetricTrend } from '../../design-system/components/MetricCard';
-import { InsightCard, type InsightTone } from '../../design-system/components/InsightCard';
-import { Tabs } from '../../design-system/components/Tabs';
 import { useBotContext } from '../../context/BotContext';
 import {
+  MOMENTUM_WINDOW_DAYS,
   sliceTrend,
   summarizeTrend,
   TREND_RANGES,
   type TrendRange,
+  weekOverWeekChange,
 } from './analytics-types';
 import { useWorkspaceAnalytics, type WorkspaceAnalytics } from './useWorkspaceAnalytics';
 import { MessageTrendChart } from './MessageTrendChart';
@@ -47,12 +49,25 @@ const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'satisfaction', label: 'Satisfaction' },
 ];
 
-/** Map a signed percentage change onto a MetricCard trend direction. */
+/** Narrow the Tabs string key back to the AnalyticsTab union without casting. */
+function isAnalyticsTab(key: string): key is AnalyticsTab {
+  return TAB_ITEMS.some((item) => item.key === key);
+}
+
+/**
+ * Map a signed week-over-week percentage change onto a MetricCard trend
+ * direction. The delta is labelled with its reference window (`· 7d`) so the
+ * headline figure reads as a well-defined period-over-period comparison rather
+ * than an unqualified percentage.
+ */
 function trendFromChange(change: number | null): { delta?: string; trend?: MetricTrend } {
   if (change === null) return {};
-  if (change === 0) return { delta: 'No change', trend: 'flat' };
+  if (change === 0) return { delta: `No change · ${MOMENTUM_WINDOW_DAYS}d`, trend: 'flat' };
   const sign = change > 0 ? '+' : '';
-  return { delta: `${sign}${change}%`, trend: change > 0 ? 'up' : 'down' };
+  return {
+    delta: `${sign}${change}% · ${MOMENTUM_WINDOW_DAYS}d`,
+    trend: change > 0 ? 'up' : 'down',
+  };
 }
 
 /** A single derived headline insight, or null when there isn't enough signal. */
@@ -63,19 +78,19 @@ function deriveInsight(
 
   if (totals.totalConversations === 0) return null;
 
-  if (totals.answerRate > 0 && totals.answerRate < 60) {
+  if (totals.positiveFeedbackRate > 0 && totals.positiveFeedbackRate < 60) {
     return {
       tone: 'warning',
-      title: `Your AI is resolving ${Math.round(totals.answerRate)}% of conversations on its own`,
-      body: 'A lower self-serve rate often means gaps in your knowledge base. Adding more content usually lifts it.',
+      title: `${Math.round(totals.positiveFeedbackRate)}% of rated answers got a thumbs-up`,
+      body: 'A lower positive-feedback rate often points to gaps in your knowledge base. Adding more content usually lifts it.',
     };
   }
 
-  if (totals.answerRate >= 80) {
+  if (totals.positiveFeedbackRate >= 80) {
     return {
       tone: 'success',
-      title: `Your AI handled ${Math.round(totals.answerRate)}% of conversations without help`,
-      body: 'Visitors are getting answered instantly. Keep your knowledge fresh to hold this level.',
+      title: `${Math.round(totals.positiveFeedbackRate)}% of rated answers got a thumbs-up`,
+      body: 'Visitors are happy with the answers your AI is giving. Keep your knowledge fresh to hold this level.',
     };
   }
 
@@ -98,7 +113,13 @@ function deriveInsight(
   return null;
 }
 
-/** Segmented control for picking the trend window. */
+/**
+ * Segmented control for picking the trend window. A one-of-N choice, so it is
+ * modelled as a WAI-ARIA radio group (`role="radiogroup"` + `role="radio"` /
+ * `aria-checked`) with roving `tabIndex` and arrow / Home / End navigation —
+ * this reads as a mutually-exclusive selection to assistive tech rather than a
+ * row of independent toggles.
+ */
 function RangeControl({
   value,
   onChange,
@@ -106,23 +127,64 @@ function RangeControl({
   value: TrendRange;
   onChange: (range: TrendRange) => void;
 }): ReactElement {
+  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  function selectAt(index: number): void {
+    const range = TREND_RANGES[index];
+    if (!range) return;
+    buttonRefs.current[index]?.focus();
+    onChange(range.id);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
+    const count = TREND_RANGES.length;
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        selectAt((index + 1) % count);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        selectAt((index - 1 + count) % count);
+        break;
+      case 'Home':
+        event.preventDefault();
+        selectAt(0);
+        break;
+      case 'End':
+        event.preventDefault();
+        selectAt(count - 1);
+        break;
+      default:
+        break;
+    }
+  }
+
   return (
     <div
       className="inline-flex items-center gap-1 rounded-lg bg-[var(--ds-bg-sunken)] p-1"
-      role="group"
+      role="radiogroup"
       aria-label="Message trend time range"
     >
-      {TREND_RANGES.map((range) => {
+      {TREND_RANGES.map((range, index) => {
         const selected = range.id === value;
         return (
           <button
             key={range.id}
+            ref={(node) => {
+              buttonRefs.current[index] = node;
+            }}
             type="button"
-            aria-pressed={selected}
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             onClick={() => onChange(range.id)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
             className={
               selected
-                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]'
                 : 'rounded-md px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]'
             }
           >
@@ -172,7 +234,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
  */
 export function AnalyticsPage(): ReactElement {
   const { bots, loading: botsLoading } = useBotContext();
-  const { status, data, error, reload } = useWorkspaceAnalytics();
+  const { status, data, error, refreshing, reload } = useWorkspaceAnalytics();
   const [tab, setTab] = useState<AnalyticsTab>('conversations');
   const [range, setRange] = useState<TrendRange>('all');
 
@@ -186,9 +248,13 @@ export function AnalyticsPage(): ReactElement {
 
   const actions =
     status === 'ready' ? (
-      <Button variant="outline" size="sm" onClick={reload}>
-        <RefreshCw size={15} aria-hidden="true" />
-        Refresh
+      <Button variant="outline" size="sm" onClick={reload} disabled={refreshing}>
+        <RefreshCw
+          size={15}
+          aria-hidden="true"
+          className={refreshing ? 'animate-spin' : undefined}
+        />
+        {refreshing ? 'Refreshing…' : 'Refresh'}
       </Button>
     ) : undefined;
 
@@ -218,7 +284,9 @@ export function AnalyticsPage(): ReactElement {
   }
 
   const insight = data ? deriveInsight(data) : null;
-  const messagesTrend = trendFromChange(trendSummary.changePercent);
+  // Momentum is a fixed 7d-vs-prior-7d figure over the full series, so it stays
+  // comparable no matter which range the user has selected below.
+  const messagesTrend = trendFromChange(data ? weekOverWeekChange(data.trend) : null);
 
   return (
     <PageContainer
@@ -250,8 +318,8 @@ export function AnalyticsPage(): ReactElement {
               icon={Users}
             />
             <MetricCard
-              label="Answer rate"
-              value={`${Math.round(data.totals.answerRate)}%`}
+              label="Positive feedback"
+              value={`${Math.round(data.totals.positiveFeedbackRate)}%`}
               icon={Zap}
             />
           </div>
@@ -263,7 +331,9 @@ export function AnalyticsPage(): ReactElement {
           <Tabs
             tabs={TAB_ITEMS.map((item) => ({ key: item.key, label: item.label }))}
             value={tab}
-            onChange={(key) => setTab(key as AnalyticsTab)}
+            onChange={(key) => {
+              if (isAnalyticsTab(key)) setTab(key);
+            }}
             ariaLabel="Analytics views"
           />
 
@@ -273,7 +343,8 @@ export function AnalyticsPage(): ReactElement {
               role="tabpanel"
               id="tabpanel-conversations"
               aria-labelledby="tab-conversations"
-              className="space-y-6"
+              tabIndex={0}
+              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
             >
               <Card>
                 <CardHeader>
@@ -299,9 +370,11 @@ export function AnalyticsPage(): ReactElement {
                     />
                     <MetricCard
                       label="Busiest day"
-                      value={trendSummary.peak.toLocaleString()}
-                      delta={trendSummary.peak > 0 ? trendSummary.peakLabel : undefined}
-                      trend={trendSummary.peak > 0 ? 'flat' : undefined}
+                      value={
+                        trendSummary.peak > 0
+                          ? `${trendSummary.peak.toLocaleString()} · ${trendSummary.peakLabel}`
+                          : trendSummary.peak.toLocaleString()
+                      }
                       icon={Zap}
                     />
                   </div>
@@ -337,7 +410,8 @@ export function AnalyticsPage(): ReactElement {
               role="tabpanel"
               id="tabpanel-leads"
               aria-labelledby="tab-leads"
-              className="space-y-6"
+              tabIndex={0}
+              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
             >
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                 <MetricCard label="Total leads" value={data.leads.total.toLocaleString()} icon={Users} />
@@ -365,7 +439,8 @@ export function AnalyticsPage(): ReactElement {
               role="tabpanel"
               id="tabpanel-satisfaction"
               aria-labelledby="tab-satisfaction"
-              className="space-y-6"
+              tabIndex={0}
+              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
             >
               <Card>
                 <CardHeader>

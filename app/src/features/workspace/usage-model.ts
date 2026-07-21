@@ -50,11 +50,75 @@ function parseBreakdown(value: unknown): UsageBreakdownEntry {
   };
 }
 
+/** The four metered activity buckets the backend returns for each pool. */
+interface UsageBuckets {
+  readonly aiChat: UsageBreakdownEntry;
+  readonly documentUpload: UsageBreakdownEntry;
+  readonly urlScan: UsageBreakdownEntry;
+  readonly emailSend: UsageBreakdownEntry;
+}
+
+function parseUsageBuckets(value: unknown): UsageBuckets {
+  const usage = asRecord(value);
+  return {
+    aiChat: parseBreakdown(usage.ai_chat),
+    documentUpload: parseBreakdown(usage.document_upload),
+    urlScan: parseBreakdown(usage.url_scan),
+    // email_send is a metered, credit-costing activity
+    // (subscription_routes.py:1693) — omitting it under-reports spend.
+    emailSend: parseBreakdown(usage.email_send),
+  };
+}
+
+function addBreakdown(a: UsageBreakdownEntry, b: UsageBreakdownEntry): UsageBreakdownEntry {
+  return { creditsUsed: a.creditsUsed + b.creditsUsed, eventCount: a.eventCount + b.eventCount };
+}
+
+/** Earlier of two ISO dates, skipping nulls and unparseable values. */
+function earliestDate(a: string | null, b: string | null): string | null {
+  const at = a ? new Date(a).getTime() : NaN;
+  const bt = b ? new Date(b).getTime() : NaN;
+  if (Number.isNaN(at)) return Number.isNaN(bt) ? null : b;
+  if (Number.isNaN(bt)) return a;
+  return at <= bt ? a : b;
+}
+
 // ── Credit balance ───────────────────────────────────────────────────────────
 
-/** The account-level credit position + this period's metered consumption. */
+/**
+ * One credit pool the workspace draws from: either the account pool (legacy +
+ * Free bots) or a single bot that carries its own paid subscription. Both the
+ * account object and each `bots[]` entry expose the same field names
+ * (subscription_routes.py:1740-1758, 1795-1808), so they parse identically.
+ */
+interface CreditPool {
+  readonly monthlyGrant: number;
+  readonly planRemaining: number;
+  readonly topupRemaining: number;
+  readonly totalRemaining: number;
+  readonly resetsAt: string | null;
+  readonly soonestExpiry: string | null;
+  readonly usage: UsageBuckets;
+}
+
+function parsePool(record: Record<string, unknown>): CreditPool {
+  return {
+    monthlyGrant: toNumber(record.monthly_grant),
+    planRemaining: toNumber(record.plan),
+    topupRemaining: toNumber(record.topup),
+    totalRemaining: toNumber(record.total),
+    resetsAt: toStringOrNull(record.resets_at),
+    soonestExpiry: toStringOrNull(record.soonest_expiry),
+    usage: parseUsageBuckets(record.usage),
+  };
+}
+
+/**
+ * The workspace-wide credit position + this period's metered consumption,
+ * aggregated across the account pool and every per-bot subscription ledger.
+ */
 export interface CreditBalance {
-  /** Credits granted by the plan at the start of the period. */
+  /** Credits granted by the plan(s) at the start of the period. */
   readonly monthlyGrant: number;
   /** Plan-bucket credits still available. */
   readonly planRemaining: number;
@@ -66,48 +130,92 @@ export interface CreditBalance {
   readonly planUsedPct: number;
   /** True when total remaining has fallen to ≤20% of the monthly grant. */
   readonly lowBalance: boolean;
-  /** When the plan bucket refills, ISO 8601. */
+  /** When the plan bucket refills, ISO 8601 (soonest across pools). */
   readonly resetsAt: string | null;
-  /** When the nearest top-up grant expires, ISO 8601. */
+  /** When the nearest top-up grant expires, ISO 8601 (soonest across pools). */
   readonly soonestExpiry: string | null;
   readonly aiChat: UsageBreakdownEntry;
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
+  readonly emailSend: UsageBreakdownEntry;
   /** Credits consumed this period across every metered activity. */
   readonly periodCreditsUsed: number;
 }
 
+/**
+ * Parse the credit-balance payload into a workspace-wide position.
+ *
+ * The backend scopes the account-level fields to the account pool only
+ * (bot_id = NULL); a bot that carries its own paid subscription keeps its
+ * credits and usage in a `bots[]` ledger, so the account fields read 0 for it
+ * (subscription_routes.py:1716, 1795). Presenting the account pool alone would
+ * under-report — and outright contradict the consumption ledger — for any such
+ * account, so we aggregate across the account pool and every per-bot ledger to
+ * answer the page's single question: "what is my WORKSPACE consuming?".
+ */
 export function parseCreditBalance(raw: unknown): CreditBalance {
   const record = asRecord(raw);
-  const usage = asRecord(record.usage);
 
-  const monthlyGrant = toNumber(record.monthly_grant);
-  const planRemaining = toNumber(record.plan);
-  const topupRemaining = toNumber(record.topup);
-  const totalRemaining = toNumber(record.total);
+  const pools: CreditPool[] = [parsePool(record)];
+  const bots = Array.isArray(record.bots) ? record.bots : [];
+  for (const botRaw of bots) {
+    pools.push(parsePool(asRecord(botRaw)));
+  }
 
-  const aiChat = parseBreakdown(usage.ai_chat);
-  const documentUpload = parseBreakdown(usage.document_upload);
-  const urlScan = parseBreakdown(usage.url_scan);
+  const empty: UsageBreakdownEntry = { creditsUsed: 0, eventCount: 0 };
+  const aggregate = pools.reduce(
+    (acc, pool) => ({
+      monthlyGrant: acc.monthlyGrant + pool.monthlyGrant,
+      planRemaining: acc.planRemaining + pool.planRemaining,
+      topupRemaining: acc.topupRemaining + pool.topupRemaining,
+      totalRemaining: acc.totalRemaining + pool.totalRemaining,
+      resetsAt: earliestDate(acc.resetsAt, pool.resetsAt),
+      soonestExpiry: earliestDate(acc.soonestExpiry, pool.soonestExpiry),
+      aiChat: addBreakdown(acc.aiChat, pool.usage.aiChat),
+      documentUpload: addBreakdown(acc.documentUpload, pool.usage.documentUpload),
+      urlScan: addBreakdown(acc.urlScan, pool.usage.urlScan),
+      emailSend: addBreakdown(acc.emailSend, pool.usage.emailSend),
+    }),
+    {
+      monthlyGrant: 0,
+      planRemaining: 0,
+      topupRemaining: 0,
+      totalRemaining: 0,
+      resetsAt: null as string | null,
+      soonestExpiry: null as string | null,
+      aiChat: empty,
+      documentUpload: empty,
+      urlScan: empty,
+      emailSend: empty,
+    },
+  );
 
-  const planUsed = Math.max(monthlyGrant - planRemaining, 0);
-  const planUsedPct = monthlyGrant > 0 ? Math.min(Math.round((planUsed / monthlyGrant) * 100), 100) : 0;
+  const planUsed = Math.max(aggregate.monthlyGrant - aggregate.planRemaining, 0);
+  const planUsedPct =
+    aggregate.monthlyGrant > 0
+      ? Math.min(Math.round((planUsed / aggregate.monthlyGrant) * 100), 100)
+      : 0;
 
   return {
-    monthlyGrant,
-    planRemaining,
-    topupRemaining,
-    totalRemaining,
+    monthlyGrant: aggregate.monthlyGrant,
+    planRemaining: aggregate.planRemaining,
+    topupRemaining: aggregate.topupRemaining,
+    totalRemaining: aggregate.totalRemaining,
     planUsedPct,
     // Watches the combined bucket so a customer who has burned their plan but
     // still holds top-ups isn't warned needlessly (Billing.jsx:381-386).
-    lowBalance: monthlyGrant > 0 && totalRemaining <= monthlyGrant * 0.2,
-    resetsAt: toStringOrNull(record.resets_at),
-    soonestExpiry: toStringOrNull(record.soonest_expiry),
-    aiChat,
-    documentUpload,
-    urlScan,
-    periodCreditsUsed: aiChat.creditsUsed + documentUpload.creditsUsed + urlScan.creditsUsed,
+    lowBalance: aggregate.monthlyGrant > 0 && aggregate.totalRemaining <= aggregate.monthlyGrant * 0.2,
+    resetsAt: aggregate.resetsAt,
+    soonestExpiry: aggregate.soonestExpiry,
+    aiChat: aggregate.aiChat,
+    documentUpload: aggregate.documentUpload,
+    urlScan: aggregate.urlScan,
+    emailSend: aggregate.emailSend,
+    periodCreditsUsed:
+      aggregate.aiChat.creditsUsed +
+      aggregate.documentUpload.creditsUsed +
+      aggregate.urlScan.creditsUsed +
+      aggregate.emailSend.creditsUsed,
   };
 }
 

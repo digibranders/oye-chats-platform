@@ -26,6 +26,8 @@ function TextAreaField({
   onChange: (value: string) => void;
 }): ReactElement {
   const id = useId();
+  const hintId = useId();
+  const counterId = useId();
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className="block text-[13px] font-medium text-[var(--ds-text)]">
@@ -37,12 +39,18 @@ function TextAreaField({
         rows={rows}
         maxLength={maxLength}
         placeholder={placeholder}
+        aria-describedby={`${hintId} ${counterId}`}
         onChange={(e) => onChange(e.target.value)}
         className="w-full resize-y rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2.5 text-sm text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]"
       />
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] text-[var(--ds-text-subtle)]">{hint}</p>
-        <span className="shrink-0 text-[11px] tabular-nums text-[var(--ds-text-subtle)]">
+        <p id={hintId} className="text-[11px] text-[var(--ds-text-subtle)]">
+          {hint}
+        </p>
+        <span
+          id={counterId}
+          className="shrink-0 text-[11px] tabular-nums text-[var(--ds-text-subtle)]"
+        >
           {value.length}/{maxLength}
         </span>
       </div>
@@ -58,6 +66,7 @@ function TextAreaField({
  */
 export function PersonalitySection({ draft, onChange }: PersonalitySectionProps): ReactElement {
   const companyId = useId();
+  const companyHintId = useId();
 
   return (
     <div className="space-y-8">
@@ -107,9 +116,12 @@ export function PersonalitySection({ draft, onChange }: PersonalitySectionProps)
             value={draft.companyName}
             maxLength={FIELD_LIMITS.companyName}
             placeholder="e.g. Acme Inc."
+            aria-describedby={companyHintId}
             onChange={(e) => onChange({ companyName: e.target.value })}
           />
-          <p className="text-[11px] text-[var(--ds-text-subtle)]">The name of your business or brand.</p>
+          <p id={companyHintId} className="text-[11px] text-[var(--ds-text-subtle)]">
+            The name of your business or brand.
+          </p>
         </div>
         <TextAreaField
           label="Company description"

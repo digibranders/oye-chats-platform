@@ -55,6 +55,27 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const panelRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  // Keep the latest onClose reachable from the focus effect WITHOUT depending on
+  // it: AgentsPage passes a fresh inline arrow every render, so depending on it
+  // would tear the trap down and yank focus back to the trigger mid-typing on
+  // any parent re-render (e.g. BotContext refreshing).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Clear transient form state whenever the dialog (re)opens, so no dismiss path
+  // (Esc, backdrop, Cancel) can leak a previously-typed name or a stale
+  // error/plan banner on reopen. Render-time adjustment — not a setState-in-effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setName('');
+      setWebsite('');
+      setError('');
+      setNeedsPlan(false);
+      setSubmitting(false);
+    }
+  }
 
   // Focus management + Esc-to-close + Tab focus-trap + body scroll-lock while
   // open. Focus the name field on open; restore focus to the trigger on close.
@@ -65,7 +86,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -97,7 +118,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
       window.clearTimeout(focusTimer);
       returnFocusRef.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
