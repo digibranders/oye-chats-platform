@@ -3,6 +3,7 @@ import { getAuthItem } from '../utils/authStorage';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { BotProvider } from '../context/BotContext';
 import { CrawlProvider } from '../context/CrawlContext';
+import { CurrencyProvider } from '../context/CurrencyContext';
 
 /**
  * Build a `/login?next=…` URL that round-trips the current deep link through
@@ -37,7 +38,11 @@ export function ProtectedLayout() {
     <WorkspaceProvider>
       <BotProvider>
         <CrawlProvider>
-          <Outlet />
+          {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces
+              render prices in the account's charge currency (INR/USD). */}
+          <CurrencyProvider>
+            <Outlet />
+          </CurrencyProvider>
         </CrawlProvider>
       </BotProvider>
     </WorkspaceProvider>

@@ -34,6 +34,11 @@ import { MetricCard } from '../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { Tabs } from '../../design-system/components/Tabs';
 import { useBillingData } from './useBillingData';
+import { PlanModal } from './billing/PlanModal';
+import { TopupModal } from './billing/TopupModal';
+import { SeatChangeDialog } from './billing/SeatChangeDialog';
+import { BillingDetailsModal } from './billing/BillingDetailsModal';
+import type { BillingCycle } from './billing/planMath';
 import {
   formatCredits,
   formatDate,
@@ -55,10 +60,6 @@ const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
   { key: 'details', label: 'Billing details' },
 ];
 
-/** Copy shown when a scaffolded (Razorpay-gated) action is triggered. */
-const CHECKOUT_TODO_NOTICE =
-  'Secure checkout for plan and seat changes is being connected. You’ll be able to complete this here shortly.';
-
 /**
  * BillingPage — the Workspace ▸ Billing surface. One job: answer
  * "What am I paying?". Shows the current plan and its cost, operator seats,
@@ -68,18 +69,36 @@ const CHECKOUT_TODO_NOTICE =
  * Credit balance and usage live on the separate Workspace ▸ Usage page — this
  * page is deliberately about money owed and paid, not consumption.
  *
- * SCAFFOLD: plan-change, seat, and payment-method mutations route through
- * Razorpay checkout, which is wired in a later pass. Those actions surface an
- * explanatory notice today (see CHECKOUT_TODO_NOTICE) rather than dead-clicking.
+ * Plan-change, seat, top-up, and billing-detail mutations open the redesigned
+ * checkout modals (`billing/`), which reuse the legacy money-path logic against
+ * the real Razorpay + subscription endpoints. Every success reloads the page
+ * and surfaces a status message in the aria-live notice region.
  */
 export function BillingPage(): ReactElement {
   const { loading, error, data, reload } = useBillingData();
   const [tab, setTab] = useState<TabKey>('plan');
   const [notice, setNotice] = useState<string | null>(null);
 
-  // TODO(razorpay): replace with the real checkout flow (openRazorpayCheckout →
-  // changeOperatorSeats / plan change), mirroring legacy pages/Billing.jsx.
-  const flagCheckoutTodo = (): void => setNotice(CHECKOUT_TODO_NOTICE);
+  // Checkout modal state.
+  const [planModal, setPlanModal] = useState<{ open: boolean; initialSlug: string | null }>({
+    open: false,
+    initialSlug: null,
+  });
+  const [topupOpen, setTopupOpen] = useState(false);
+  const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
+    open: false,
+    delta: 1,
+  });
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  // Every successful mutation lands here: surface the message, refetch billing.
+  const handleSuccess = (message: string): void => {
+    setNotice(message);
+    reload();
+  };
+
+  const openPlanModal = (initialSlug: string | null = null): void =>
+    setPlanModal({ open: true, initialSlug });
 
   const subscription = data?.subscription ?? null;
   const plan = data?.plan ?? null;
@@ -123,10 +142,16 @@ export function BillingPage(): ReactElement {
       title="Billing"
       description="Your plan, seats, invoices, and payment method — everything you're paying for."
       actions={
-        <Button variant="outline" onClick={reload} disabled={loading}>
-          <RefreshCw size={16} aria-hidden="true" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setTopupOpen(true)}>
+            <Wallet size={16} aria-hidden="true" />
+            Buy credits
+          </Button>
+          <Button variant="outline" onClick={reload} disabled={loading}>
+            <RefreshCw size={16} aria-hidden="true" />
+            Refresh
+          </Button>
+        </div>
       }
     >
       {/* Scaffold notice for Razorpay-gated actions. Kept permanently mounted
@@ -211,7 +236,10 @@ export function BillingPage(): ReactElement {
               totalSeats={totalSeats}
               includedSeats={includedSeats}
               availablePlans={data.availablePlans}
-              onCheckoutTodo={flagCheckoutTodo}
+              onChangePlan={() => openPlanModal(null)}
+              onSelectPlan={(slug) => openPlanModal(slug)}
+              onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
+              onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
             />
           </TabPanel>
 
@@ -220,10 +248,44 @@ export function BillingPage(): ReactElement {
           </TabPanel>
 
           <TabPanel tabKey="details" active={tab === 'details'}>
-            <BillingDetailsTab details={data.details} onEditTodo={flagCheckoutTodo} />
+            <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
           </TabPanel>
         </>
       )}
+
+      {/* Checkout modals — reuse the legacy money-path against real endpoints. */}
+      {planModal.open && (
+        <PlanModal
+          open={planModal.open}
+          onClose={() => setPlanModal({ open: false, initialSlug: null })}
+          currentPlanSlug={plan?.slug ?? 'free'}
+          currentSubscriptionStatus={subscription?.status ?? null}
+          currentBillingCycle={(subscription?.billingCycle as BillingCycle) ?? 'monthly'}
+          hasActiveSubscription={Boolean(subscription?.hasActive)}
+          trialEndIso={subscription?.trialEnd ?? null}
+          initialSlug={planModal.initialSlug}
+          onSuccess={handleSuccess}
+        />
+      )}
+
+      <TopupModal open={topupOpen} onClose={() => setTopupOpen(false)} onSuccess={handleSuccess} />
+
+      {seatDialog.open && (
+        <SeatChangeDialog
+          open={seatDialog.open}
+          onClose={() => setSeatDialog({ open: false, delta: seatDialog.delta })}
+          delta={seatDialog.delta}
+          currentSeats={totalSeats}
+          seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
+          onSuccess={handleSuccess}
+        />
+      )}
+
+      <BillingDetailsModal
+        open={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        onSuccess={handleSuccess}
+      />
     </PageContainer>
   );
 }
@@ -261,7 +323,10 @@ interface PlanAndSeatsTabProps {
   totalSeats: number;
   includedSeats: number;
   availablePlans: PlanView[];
-  onCheckoutTodo: () => void;
+  onChangePlan: () => void;
+  onSelectPlan: (slug: string) => void;
+  onAddSeat: () => void;
+  onRemoveSeat: () => void;
 }
 
 function PlanAndSeatsTab({
@@ -270,7 +335,10 @@ function PlanAndSeatsTab({
   totalSeats,
   includedSeats,
   availablePlans,
-  onCheckoutTodo,
+  onChangePlan,
+  onSelectPlan,
+  onAddSeat,
+  onRemoveSeat,
 }: PlanAndSeatsTabProps): ReactElement {
   const isPaid = Boolean(plan?.isPaid);
   const cycleLabel = subscription.billingCycle === 'annual' ? 'year' : 'month';
@@ -320,7 +388,7 @@ function PlanAndSeatsTab({
               <DetailRow label="Billing cycle" value={capitalize(subscription.billingCycle)} />
             </dl>
             <div className="mt-auto pt-5">
-              <Button onClick={onCheckoutTodo}>
+              <Button onClick={onChangePlan}>
                 <ArrowUpRight size={16} aria-hidden="true" />
                 {isPaid ? 'Change plan' : 'Choose a plan'}
               </Button>
@@ -354,19 +422,19 @@ function PlanAndSeatsTab({
             </dl>
             <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
               {includedSeats === 0 ? (
-                <Button onClick={onCheckoutTodo}>
+                <Button onClick={onChangePlan}>
                   <ArrowUpRight size={16} aria-hidden="true" />
                   Upgrade to add seats
                 </Button>
               ) : (
                 <>
-                  <Button variant="outline" onClick={onCheckoutTodo}>
+                  <Button variant="outline" onClick={onAddSeat}>
                     <Plus size={16} aria-hidden="true" />
                     Add seat
                   </Button>
                   <Button
                     variant="ghost"
-                    onClick={onCheckoutTodo}
+                    onClick={onRemoveSeat}
                     disabled={totalSeats <= includedSeats}
                     title={
                       totalSeats <= includedSeats
@@ -401,7 +469,7 @@ function PlanAndSeatsTab({
             <div className="mt-auto pt-5">
               <Button
                 variant="outline"
-                onClick={onCheckoutTodo}
+                onClick={onChangePlan}
                 disabled={!subscription.paymentProvider}
               >
                 <CreditCard size={16} aria-hidden="true" />
@@ -426,7 +494,7 @@ function PlanAndSeatsTab({
                 plan={candidate}
                 current={candidate.slug === plan?.slug}
                 cycle={subscription.billingCycle}
-                onSelect={onCheckoutTodo}
+                onSelect={() => onSelectPlan(candidate.slug)}
               />
             ))}
           </div>
@@ -650,10 +718,10 @@ function InvoiceDownload({ invoice }: { invoice: InvoiceView }): ReactElement {
 
 function BillingDetailsTab({
   details,
-  onEditTodo,
+  onEdit,
 }: {
   details: BillingDetailsView;
-  onEditTodo: () => void;
+  onEdit: () => void;
 }): ReactElement {
   if (details.isEmpty) {
     return (
@@ -662,7 +730,7 @@ function BillingDetailsTab({
         title="No billing details yet"
         description="Add your legal name and tax identity so your invoices carry the right business information."
         action={
-          <Button onClick={onEditTodo}>
+          <Button onClick={onEdit}>
             <Plus size={16} aria-hidden="true" />
             Add billing details
           </Button>
@@ -687,7 +755,7 @@ function BillingDetailsTab({
         title="Billing details"
         description="The legal identity printed on your invoices and used for tax."
         actions={
-          <Button variant="outline" onClick={onEditTodo}>
+          <Button variant="outline" onClick={onEdit}>
             <FileText size={16} aria-hidden="true" />
             Edit details
           </Button>

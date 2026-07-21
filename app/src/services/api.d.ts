@@ -175,10 +175,51 @@ export function getInvoices(): Promise<Array<Record<string, unknown>>>;
 export function getBillingDetails(): Promise<Record<string, unknown>>;
 export function updateBillingDetails(patch: Record<string, unknown>): Promise<Record<string, unknown>>;
 
+/** Subscription geo/currency profile: `{ country, display_currency, display_rate, checkout_available }`. */
+export function getBillingGeo(overrideCountry?: string): Promise<Record<string, unknown>>;
+/** First-time checkout for a plan → provider payload (Razorpay `subscription_id`, `key_id`, …). */
+export function createCheckoutSession(
+  planId: number,
+  billingCycle?: 'monthly' | 'annual',
+  billingCountry?: string | null,
+): Promise<Record<string, unknown>>;
+/** Change plan on an existing subscription → `{ status | provider, … }` (switched / downgrade_scheduled / checkout). */
+export function changePlan(planId: number, billingCycle?: string | null): Promise<Record<string, unknown>>;
+/** Start the plan's configured free trial (no card). */
+export function startTrial(planSlug: string): Promise<Record<string, unknown>>;
+export function cancelScheduledChange(): Promise<Record<string, unknown>>;
+export function cancelSubscription(reason?: string | null): Promise<Record<string, unknown>>;
+export function resumeSubscription(): Promise<Record<string, unknown>>;
+/** Server-verify the Razorpay subscription Checkout callback signature. */
+export function verifyRazorpaySubscription(payload: {
+  razorpay_payment_id: string;
+  razorpay_subscription_id: string;
+  razorpay_signature: string;
+}): Promise<Record<string, unknown>>;
+/** Add (delta > 0) or remove (delta < 0) operator seats; may return `{ requires_authorization, checkout }`. */
+export function changeOperatorSeats(delta: number): Promise<Record<string, unknown>>;
+/** Standing referral attribution on the account: `{ attributed, code, discount_pct }`. */
+export function getReferralStatus(): Promise<{ attributed?: boolean; code?: string | null; discount_pct?: number } | null>;
+/** Apply/validate a referral code. Non-null `code` ⇒ accepted. */
+export function applyReferralCode(
+  code: string,
+): Promise<{ code: string | null; message: string; discount_pct?: number }>;
+
 // ── Credits / top-ups ────────────────────────────────────────────────────────
 export function getCreditBalance(): Promise<Record<string, unknown>>;
 export function getCreditHistory(params?: { page?: number; limit?: number }): Promise<Record<string, unknown>>;
 export function getTopupPacks(): Promise<Array<Record<string, unknown>>>;
+/** Start a top-up purchase → Razorpay order payload (`order_id`, `amount`, `key_id`, …). */
+export function initiateTopup(
+  amount: number,
+  opts?: { botId?: number | null },
+): Promise<Record<string, unknown>>;
+/** Server-verify the top-up Razorpay callback signature. */
+export function verifyTopupPayment(payload: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}): Promise<Record<string, unknown>>;
 
 // ── Security / account ───────────────────────────────────────────────────────
 export function changeClientPassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }>;

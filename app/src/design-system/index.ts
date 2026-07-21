@@ -57,3 +57,5 @@ export { DataTable } from './components/DataTable';
 export type { DataTableProps, Column, ColumnAlign } from './components/DataTable';
 export { Tabs } from './components/Tabs';
 export type { TabsProps, TabItem } from './components/Tabs';
+export { Modal } from './components/Modal';
+export type { ModalProps, ModalSize } from './components/Modal';

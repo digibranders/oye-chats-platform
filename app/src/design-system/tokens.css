@@ -56,6 +56,9 @@
   --ds-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.05);
   --ds-shadow-md: 0 4px 12px rgba(24, 24, 27, 0.08);
   --ds-shadow-lg: 0 12px 32px rgba(24, 24, 27, 0.12);
+
+  /* Overlay scrim behind modals / dialogs */
+  --ds-overlay: rgba(24, 24, 27, 0.45);
 }
 
 .dark {
@@ -97,4 +100,6 @@
   --ds-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --ds-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --ds-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  --ds-overlay: rgba(0, 0, 0, 0.6);
 }
