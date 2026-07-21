@@ -1015,6 +1015,18 @@ async def crawl_endpoint(
             )
 
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        # Resolve the SAME ledger bucket the actual crawl will drain — a
+        # per-bot subscription drains its own bucket, everything else drains
+        # the client pool. Both the unlimited-plan sizing fallback below and
+        # the hard credit pre-flight gate must check this bucket, not the
+        # client pool, or a per-bot subscriber with an empty pool but a
+        # funded bot ledger gets hard-blocked even though the pipeline's
+        # ``batch_web_ingestion`` (pipeline.py) would happily deduct from
+        # their ledger. Mirrors the resolution in /crawl/discover and
+        # /crawl/diff.
+        ledger_bot_id = None
+        if bot_id is not None:
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
         if unlimited_pages:
             # No plan cap — let the caller request what they want, but
             # always cap at the safety ceiling so a typo can't ignite a
@@ -1026,7 +1038,7 @@ async def crawl_endpoint(
             if requested_pages is not None:
                 effective_max_pages = max(int(requested_pages), 1)
             else:
-                available_now = credit_service.get_balance(db, client_id)
+                available_now = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
                 effective_max_pages = max(int(available_now) // per_page, 1)
             effective_max_pages = min(effective_max_pages, _UNLIMITED_PLAN_SAFETY_CEILING)
         else:
@@ -1073,7 +1085,7 @@ async def crawl_endpoint(
             )
             precheck_is_recrawl = True
         required = cost_per_page * max(precheck_pages, 1)
-        available = credit_service.get_balance(db, client_id)
+        available = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
         if available < required:
             if precheck_is_recrawl:
                 message = (
