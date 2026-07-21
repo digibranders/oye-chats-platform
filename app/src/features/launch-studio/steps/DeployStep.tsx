@@ -10,7 +10,7 @@ const SNIPPET =
   '<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxxxxxxx"></script>';
 
 /**
- * Step 7 — Deploy. Copy the embed snippet and add it to the site. Split from
+ * Step 8 — Deploy. Copy the embed snippet and add it to the site. Split from
  * Verify (a distinct step) so installation confirmation is explicit.
  */
 export function DeployStep(props: StepProps) {

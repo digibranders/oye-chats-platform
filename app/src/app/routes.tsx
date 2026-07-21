@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import {
   Home,
@@ -20,7 +21,12 @@ import {
 } from 'lucide-react';
 import { AppShell } from '../shell/AppShell';
 import { PagePlaceholder } from './PagePlaceholder';
-import { LaunchStudio } from '../features/launch-studio/LaunchStudio';
+
+// Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
+// so its layout + 9 steps stay out of the initial bundle.
+const LaunchStudio = lazy(() =>
+  import('../features/launch-studio/LaunchStudio').then((m) => ({ default: m.LaunchStudio })),
+);
 
 /**
  * Route Architecture — the Admin Platform 2.0 information architecture.
@@ -172,12 +178,19 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Launch Studio — full-screen 8-step onboarding, OUTSIDE the app shell.
+  // Launch Studio — full-screen 9-step onboarding, OUTSIDE the app shell.
   {
     path: '/launch',
     children: [
-      { index: true, element: <Navigate to="connect" replace /> },
-      { path: ':step', element: <LaunchStudio /> },
+      { index: true, element: <Navigate to="welcome" replace /> },
+      {
+        path: ':step',
+        element: (
+          <Suspense fallback={null}>
+            <LaunchStudio />
+          </Suspense>
+        ),
+      },
     ],
   },
 

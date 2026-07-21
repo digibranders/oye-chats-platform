@@ -22,12 +22,18 @@ export interface SidebarProps {
 export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: SidebarProps) {
   const showLabels = isMobile || !collapsed;
 
+  // When the mobile drawer is closed it's translated off-canvas but its links
+  // would still be focusable / in the AX tree — `inert` removes it entirely.
+  const drawerClosed = isMobile && !mobileOpen;
+
   return (
     <aside
+      aria-label="Primary navigation"
+      inert={drawerClosed || undefined}
       className={cn(
         'fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-[var(--ds-border)] bg-[var(--ds-sidebar-bg)] transition-[width,transform] duration-300',
         isMobile ? 'w-60' : collapsed ? 'w-[68px]' : 'w-60',
-        isMobile && !mobileOpen && '-translate-x-full',
+        drawerClosed && '-translate-x-full',
       )}
     >
       {/* Brand */}
@@ -77,7 +83,11 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
                         : 'text-[var(--ds-text-subtle)] group-hover:text-[var(--ds-text-muted)]',
                     )}
                   />
-                  {showLabels && <span className="truncate">{item.label}</span>}
+                  {showLabels ? (
+                    <span className="truncate">{item.label}</span>
+                  ) : (
+                    <span className="sr-only">{item.label}</span>
+                  )}
                 </>
               )}
             </NavLink>

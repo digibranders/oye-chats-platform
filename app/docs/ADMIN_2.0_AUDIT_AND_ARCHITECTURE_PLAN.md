@@ -398,3 +398,26 @@ Full-screen 8-step onboarding replacing legacy `/build`. UX scaffolded and fully
 - **Checks:** tsc ✓ · eslint ✓ (0 errors) · build ✓. **Browser-verified:** stepper done/current/locked states, forward-gating, step advance (Connect→Analyze), zero console errors.
 
 **Phase 2b (next):** wire the engine — createBot/updateBot, `CrawlContext` discovery+training, `getDocuments` for Review, `getSeedQuestions`+`previewChatStream` for Test (live preview panel), real embed snippet, `widget_installed_at` polling for Verify, `completeOnboarding` on finish. Requires standing up the auth + data-context layer.
+
+---
+
+## Reconciliation with Master Execution Plan (2026-07-21)
+
+Cross-checked the shipped work against the user's master execution plan. Gaps found and how they're addressed:
+
+### G1 — ⚪ WAIVED by user (2026-07-21)
+Master plan Session 2 said *"the old application should continue functioning while the new shell is introduced."* User decided to **keep the new shell as the boot default** and explicitly waived this requirement. `main.jsx` stays pointed at the new root; legacy `App.jsx` + pages remain on disk (for per-surface migration) but are not runtime-mounted in this working copy. No coexistence flag needed.
+
+### G2 — ✅ RESOLVED (2026-07-21) — Launch Studio now 9 steps
+Adopted the master plan's flow: **Welcome · Create Agent · Connect Website · AI Training · Knowledge Review · Test Agent · Customize Widget · Deploy · Verification**. Added `WelcomeStep` + `CreateAgentStep`; folded website analysis into `TrainStep`; removed the standalone `AnalyzeStep`; updated `steps.config`, the container map, and the `/launch` index redirect (`→ welcome`). Checks green (tsc/eslint/build).
+
+### G3 — ✅ ADOPTED (2026-07-21) — Code Reviewer gate
+Standing process change: **every phase ends with a Code Reviewer subagent pass** (correctness · type-safety · accessibility · consistency · performance · CLAUDE.md compliance) before commit. Retro-active review of Phase 1 + 2a run via two parallel reviewer subagents; findings triaged and fixed.
+
+### G4 — 🟡 Separate governance docs
+Master structure lists `PRODUCT_VISION.md`, `UX_PRINCIPLES.md`, `REBUILD_ROADMAP.md`. Currently consolidated into `app/CLAUDE.md` + this doc. **Optional:** split into the named files if the user prefers that layout.
+
+### G5 — 🟡 "Working Rules" verbatim
+Content is integrated into `app/CLAUDE.md` (paraphrased). **Optional:** mirror the verbatim block.
+
+**Standing process change:** every phase now ends with a Code Reviewer subagent pass (G3) before commit.

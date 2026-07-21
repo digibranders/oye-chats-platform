@@ -13,7 +13,7 @@ const SAMPLE_SOURCES = [
 ];
 
 /**
- * Step 4 — Review Knowledge. NEW step (the legacy flow had none — the user
+ * Step 5 — Knowledge Review. NEW step (the legacy flow had none — the user
  * never saw what the AI learned, only a page count). Builds confidence that
  * coverage is right before testing.
  */

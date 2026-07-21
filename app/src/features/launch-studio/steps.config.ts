@@ -1,6 +1,7 @@
 import {
+  PartyPopper,
+  Bot,
   Globe,
-  ScanSearch,
   GraduationCap,
   BookOpenCheck,
   MessagesSquare,
@@ -30,21 +31,23 @@ export interface LaunchStep {
 }
 
 /**
- * Launch Studio — the mandated 8-step onboarding. Rebuilt from first
- * principles (the legacy 4-milestone Build Studio is a logic reference only).
- * Notable additions vs. legacy: an explicit "Review Knowledge" step (legacy had
- * none) and a standalone "Verify Installation" step (legacy merged it into
- * deploy). Users complete this once, then it's gone — never navigation.
+ * Launch Studio — the 9-step onboarding (per the master execution plan).
+ * Rebuilt from first principles; the legacy 4-milestone Build Studio is a
+ * logic reference only. Website analysis is folded into "AI Training"; the flow
+ * opens with a Welcome intro and an explicit "Create Agent" step, and closes
+ * with standalone "Knowledge Review" and "Verification" steps the legacy flow
+ * lacked. Users complete this once, then it's gone — never navigation.
  */
 export const LAUNCH_STEPS: LaunchStep[] = [
+  { key: 'welcome', path: 'welcome', label: 'Welcome', hint: "Let's get you set up", icon: PartyPopper },
+  { key: 'create', path: 'create', label: 'Create Agent', hint: 'Name your assistant', icon: Bot },
   { key: 'connect', path: 'connect', label: 'Connect Website', hint: 'Point us at your site', icon: Globe },
-  { key: 'analyze', path: 'analyze', label: 'Analyze Website', hint: 'Discover your pages', icon: ScanSearch },
-  { key: 'train', path: 'train', label: 'Train AI', hint: 'Learn your content', icon: GraduationCap },
-  { key: 'review', path: 'review', label: 'Review Knowledge', hint: 'Check what it learned', icon: BookOpenCheck },
-  { key: 'test', path: 'test', label: 'Test AI', hint: 'Try it yourself', icon: MessagesSquare },
+  { key: 'train', path: 'train', label: 'AI Training', hint: 'Analyze & learn your content', icon: GraduationCap },
+  { key: 'review', path: 'review', label: 'Knowledge Review', hint: 'Check what it learned', icon: BookOpenCheck },
+  { key: 'test', path: 'test', label: 'Test Agent', hint: 'Try it yourself', icon: MessagesSquare },
   { key: 'customize', path: 'customize', label: 'Customize Widget', hint: 'Make it yours', icon: Palette },
   { key: 'deploy', path: 'deploy', label: 'Deploy', hint: 'Add it to your site', icon: Rocket },
-  { key: 'verify', path: 'verify', label: 'Verify Installation', hint: "Confirm it's live", icon: BadgeCheck },
+  { key: 'verify', path: 'verify', label: 'Verification', hint: "Confirm it's live", icon: BadgeCheck },
 ];
 
 export const LAUNCH_PROGRESS_KEY = 'oc_launch_max_step';

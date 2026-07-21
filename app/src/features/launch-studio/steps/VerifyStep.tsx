@@ -7,7 +7,7 @@ import type { StepProps } from '../steps.config';
 type VerifyState = 'idle' | 'checking' | 'detected';
 
 /**
- * Step 8 — Verify Installation. A distinct, explicit step (legacy merged this
+ * Step 9 — Verification. A distinct, explicit step (legacy merged this
  * into deploy and let users finish unverified). Confirms the widget is live
  * before completing onboarding.
  * TODO(phase-2b): poll getBot for widget_installed_at instead of the mock timer.

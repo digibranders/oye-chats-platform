@@ -14,8 +14,9 @@ import App from './app/App'
 
 // Enforce the absolute session expiry once, before the app reads auth state.
 // Auth lives in localStorage (shared across tabs); "Remember me" controls how
-// long it lasts. An expired session is wiped here so ProtectedRoute treats the
-// user as logged out and routes to /login on this load.
+// long it lasts. An expired session is wiped here so the app treats the user as
+// logged out. (Auth-gating + the /login route land in Phase 2b; until then the
+// new shell renders unguarded.)
 if (isSessionExpired()) {
   clearAuthStorage();
 }

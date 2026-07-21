@@ -13,7 +13,7 @@ const SEED_QUESTIONS = [
 ];
 
 /**
- * Step 5 — Test AI. The user asks a question and watches their agent answer
+ * Step 6 — Test Agent. The user asks a question and watches their agent answer
  * from its own content in the live preview — the aha moment.
  */
 export function TestStep(props: StepProps) {

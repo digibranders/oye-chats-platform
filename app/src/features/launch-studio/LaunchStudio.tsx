@@ -7,8 +7,9 @@ import {
   stepIndexByPath,
   type StepProps,
 } from './steps.config';
+import { WelcomeStep } from './steps/WelcomeStep';
+import { CreateAgentStep } from './steps/CreateAgentStep';
 import { ConnectStep } from './steps/ConnectStep';
-import { AnalyzeStep } from './steps/AnalyzeStep';
 import { TrainStep } from './steps/TrainStep';
 import { ReviewStep } from './steps/ReviewStep';
 import { TestStep } from './steps/TestStep';
@@ -17,8 +18,9 @@ import { DeployStep } from './steps/DeployStep';
 import { VerifyStep } from './steps/VerifyStep';
 
 const STEP_COMPONENTS: Record<string, ComponentType<StepProps>> = {
+  welcome: WelcomeStep,
+  create: CreateAgentStep,
   connect: ConnectStep,
-  analyze: AnalyzeStep,
   train: TrainStep,
   review: ReviewStep,
   test: TestStep,
@@ -29,9 +31,12 @@ const STEP_COMPONENTS: Record<string, ComponentType<StepProps>> = {
 
 const LAST_INDEX = LAUNCH_STEPS.length - 1;
 
+// Static — the step list never changes, so build the stepper items once.
+const STEPPER_ITEMS = LAUNCH_STEPS.map((s) => ({ key: s.key, label: s.label, description: s.hint }));
+
 function readProgress(): number {
   if (typeof localStorage === 'undefined') return 0;
-  const stored = Number(localStorage.getItem(LAUNCH_PROGRESS_KEY) ?? 0);
+  const stored = Math.floor(Number(localStorage.getItem(LAUNCH_PROGRESS_KEY) ?? 0));
   return Number.isFinite(stored) ? Math.max(0, Math.min(stored, LAST_INDEX)) : 0;
 }
 
@@ -83,7 +88,7 @@ export function LaunchStudio() {
 
   return (
     <LaunchStudioLayout
-      steps={LAUNCH_STEPS.map((s) => ({ key: s.key, label: s.label, description: s.hint }))}
+      steps={STEPPER_ITEMS}
       currentIndex={currentIndex}
       maxReachedIndex={maxReached}
       onStepClick={goToStep}

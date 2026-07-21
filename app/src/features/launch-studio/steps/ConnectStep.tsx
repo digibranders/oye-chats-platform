@@ -5,7 +5,7 @@ import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
 /**
- * Step 1 — Connect Website. The single ask: where should the agent learn from?
+ * Step 3 — Connect Website. The single ask: where should the agent learn from?
  * Includes an upload fallback (audit gap: legacy onboarding was crawl-only and
  * dead-ended on JS-rendered / site-less accounts).
  * TODO(phase-2b): create the bot + persist the website via createBot/updateBot.

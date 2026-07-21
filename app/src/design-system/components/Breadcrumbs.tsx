@@ -1,4 +1,3 @@
-import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '../lib/cn';
@@ -22,29 +21,35 @@ export function Breadcrumbs({ items, className }: BreadcrumbsProps) {
   if (items.length === 0) return null;
 
   return (
-    <nav aria-label="Breadcrumb" className={cn('flex items-center gap-1.5 text-[13px]', className)}>
-      {items.map((item, index) => {
-        const isLast = index === items.length - 1;
-        return (
-          <Fragment key={item.to}>
-            {isLast ? (
-              <span className="font-medium text-[var(--ds-text)]" aria-current="page">
-                {item.label}
-              </span>
-            ) : (
-              <Link
-                to={item.to}
-                className="text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)]"
-              >
-                {item.label}
-              </Link>
-            )}
-            {!isLast && (
-              <ChevronRight size={14} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-            )}
-          </Fragment>
-        );
-      })}
+    <nav aria-label="Breadcrumb">
+      <ol className={cn('flex items-center gap-1.5 text-[13px]', className)}>
+        {items.map((item, index) => {
+          const isLast = index === items.length - 1;
+          return (
+            <li key={item.to} className="flex items-center gap-1.5">
+              {isLast ? (
+                <span className="font-medium text-[var(--ds-text)]" aria-current="page">
+                  {item.label}
+                </span>
+              ) : (
+                <Link
+                  to={item.to}
+                  className="text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)]"
+                >
+                  {item.label}
+                </Link>
+              )}
+              {!isLast && (
+                <ChevronRight
+                  size={14}
+                  className="text-[var(--ds-text-subtle)]"
+                  aria-hidden="true"
+                />
+              )}
+            </li>
+          );
+        })}
+      </ol>
     </nav>
   );
 }

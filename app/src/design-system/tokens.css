@@ -38,6 +38,17 @@
   --ds-accent-soft: rgba(162, 28, 175, 0.08);
   --ds-accent-text: #86198f;
 
+  /* Semantic status — single source for success/warning/danger/info chrome */
+  --ds-success: #059669;
+  --ds-success-soft: #ecfdf5;
+  --ds-warning: #d97706;
+  --ds-warning-soft: #fffbeb;
+  --ds-danger: #e11d48;
+  --ds-danger-soft: #fff1f2;
+  --ds-info: #0284c7;
+  --ds-info-soft: #f0f9ff;
+  --ds-status-fg: #ffffff;
+
   /* Focus ring */
   --ds-ring: #a21caf;
 
@@ -62,11 +73,24 @@
   --ds-text-subtle: #71717a;
   --ds-text-invert: #18181b;
 
-  --ds-accent: #d946ef;
-  --ds-accent-hover: #e879f9;
+  /* Filled-button accent stays dark enough for white text to clear WCAG AA
+     (white on #a21caf ≈ 6.5:1). The brighter volt hue lives in --ds-accent-text
+     / --ds-ring / --ds-accent-soft, which sit on dark surfaces, not under text. */
+  --ds-accent: #a21caf;
+  --ds-accent-hover: #b81fc6;
   --ds-accent-fg: #ffffff;
-  --ds-accent-soft: rgba(217, 70, 239, 0.12);
+  --ds-accent-soft: rgba(217, 70, 239, 0.14);
   --ds-accent-text: #e879f9;
+
+  --ds-success: #10b981;
+  --ds-success-soft: rgba(16, 185, 129, 0.14);
+  --ds-warning: #f59e0b;
+  --ds-warning-soft: rgba(245, 158, 11, 0.14);
+  --ds-danger: #f43f5e;
+  --ds-danger-soft: rgba(244, 63, 94, 0.14);
+  --ds-info: #38bdf8;
+  --ds-info-soft: rgba(56, 189, 248, 0.14);
+  --ds-status-fg: #ffffff;
 
   --ds-ring: #d946ef;
 

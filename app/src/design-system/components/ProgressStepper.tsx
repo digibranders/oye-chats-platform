@@ -15,6 +15,8 @@ export interface ProgressStepperProps {
   maxReachedIndex: number;
   /** Navigate to a step (only invoked for reachable steps). */
   onStepClick?: (index: number) => void;
+  /** Accessible name for the progress navigation. */
+  ariaLabel?: string;
   className?: string;
 }
 
@@ -37,25 +39,28 @@ export function ProgressStepper({
   currentIndex,
   maxReachedIndex,
   onStepClick,
+  ariaLabel = 'Progress',
   className,
 }: ProgressStepperProps) {
   return (
-    <ol className={cn('flex flex-col gap-1', className)}>
-      {steps.map((step, index) => {
-        const state = stepState(index, currentIndex, maxReachedIndex);
-        const isDone = state === 'done';
-        const isCurrent = state === 'current';
-        const isLocked = state === 'locked';
-        const clickable = !isLocked && !isCurrent && Boolean(onStepClick);
-        const isLast = index === steps.length - 1;
+    <nav aria-label={ariaLabel}>
+      <ol className={cn('flex flex-col gap-1', className)}>
+        {steps.map((step, index) => {
+          const state = stepState(index, currentIndex, maxReachedIndex);
+          const isDone = state === 'done';
+          const isCurrent = state === 'current';
+          const isLocked = state === 'locked';
+          const clickable = !isLocked && !isCurrent && Boolean(onStepClick);
+          const isLast = index === steps.length - 1;
 
-        return (
-          <li key={step.key} className="relative">
-            <button
-              type="button"
-              disabled={!clickable}
-              onClick={clickable ? () => onStepClick?.(index) : undefined}
-              className={cn(
+          return (
+            <li key={step.key} className="relative">
+              <button
+                type="button"
+                aria-current={isCurrent ? 'step' : undefined}
+                aria-disabled={isLocked || undefined}
+                onClick={clickable ? () => onStepClick?.(index) : undefined}
+                className={cn(
                 'group flex w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors',
                 clickable && 'hover:bg-[var(--ds-bg-hover)]',
                 isCurrent && 'bg-[var(--ds-accent-soft)]',
@@ -100,10 +105,11 @@ export function ProgressStepper({
                   </span>
                 )}
               </span>
-            </button>
-          </li>
-        );
-      })}
-    </ol>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }

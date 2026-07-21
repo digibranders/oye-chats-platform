@@ -14,7 +14,7 @@ const button = cva(
         outline:
           'border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]',
         ghost: 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]',
-        danger: 'bg-rose-500 text-white hover:bg-rose-600',
+        danger: 'bg-rose-600 text-white hover:bg-rose-700',
       },
       size: {
         sm: 'h-8 px-3 text-[13px]',
