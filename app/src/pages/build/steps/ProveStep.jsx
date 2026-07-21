@@ -84,6 +84,12 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     const [precheck, setPrecheck] = useState('pending');
     const [trained, setTrained] = useState(false);
     const [trainedPages, setTrainedPages] = useState(null);
+    // Latched locally (never derived from `crawl.status`) for the same reason
+    // `trained` is: CrawlContext resets a finished crawl back to `idle` after a
+    // few seconds, and a bare re-render off transient status would fall back to
+    // the crawling spinner or (for startError) never show at all.
+    const [startError, setStartError] = useState(null);
+    const [noContent, setNoContent] = useState(false);
 
     const [discovering, setDiscovering] = useState(true);
     const [discoverError, setDiscoverError] = useState(null);
@@ -107,6 +113,8 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
             return;
         }
         setStarted(true);
+        setStartError(null);
+        setNoContent(false);
         setCustomizing(false);
         doneFiredRef.current = false;
         recordActivationEvent('crawl_started', { botId, eventData: { pages: orderedUrls.length } });
@@ -122,6 +130,7 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
             });
         } catch (err) {
             showToast('error', err?.message || 'Could not start training.');
+            setStartError(err?.message || "We couldn't start training. Please try again.");
             setStarted(false);
         }
     };
@@ -138,7 +147,10 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
             // progress or an extra document round-trip. Fall back to a document
             // check for bots trained before this field existed (or when the
             // in-context bot copy predates the just-finished crawl).
-            if (selectedBot?.crawl_completed_at || selectedBot?.last_crawl_status === 'done') {
+            if (
+                (selectedBot?.crawl_completed_at || selectedBot?.last_crawl_status === 'done') &&
+                (selectedBot?.indexed_chunk_count ?? 0) > 0
+            ) {
                 if (!cancelled) {
                     setTrained(true);
                     setPrecheck('trained');
@@ -163,7 +175,7 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
         return () => {
             cancelled = true;
         };
-    }, [botId, selectedBot?.crawl_completed_at, selectedBot?.last_crawl_status]);
+    }, [botId, selectedBot?.crawl_completed_at, selectedBot?.last_crawl_status, selectedBot?.indexed_chunk_count]);
 
     // Discover pages on arrival (fresh bots only), then DEFAULT-ALL: auto-start
     // the crawl on every discovered page for momentum. "Customize" (during the
@@ -215,6 +227,13 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
             recordActivationEvent('crawl_completed', { botId, eventData: { pages } });
         }
     }, [started, crawl.status, crawl.result, crawl.pagesCrawled, total, botId]);
+
+    // A crawl that fetched pages but found no readable text finishes as
+    // `no_content` (backend f4f2ea3). Latch it locally so the view can't
+    // regress to the spinner if the global crawl state later resets to idle.
+    useEffect(() => {
+        if (started && crawl.status === 'no_content') setNoContent(true);
+    }, [started, crawl.status]);
 
     // Fast path: latch "trained" as soon as the FIRST pages are embedded, rather
     // than waiting for the entire site to finish. Streaming ingest embeds pages
@@ -286,6 +305,8 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     const retry = () => {
         setDiscovering(true);
         setDiscoverError(null);
+        setStartError(null);
+        setNoContent(false);
         autoStartRef.current = false;
         doneFiredRef.current = false;
         setStarted(false);
@@ -461,6 +482,37 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
                 </div>
                 <Button size="lg" className="self-start" onClick={() => beginCrawl(urls.filter((u) => selected.has(u)))} disabled={selectedCount === 0}>
                     Train on {selectedCount} page{selectedCount === 1 ? '' : 's'} <ArrowRight size={16} />
+                </Button>
+            </div>
+        );
+    }
+
+    // ---- Crawl failed to even start (insufficient credits, page cap, rate
+    // limit, timeout, etc.) — surfaced from beginCrawl's catch so the view
+    // never falls through to a spinner for work that never started. ----
+    if (startError) {
+        return (
+            <div className="flex flex-col gap-4">
+                <p className="text-sm text-rose-500">{startError}</p>
+                <Button variant="outline" size="md" className="self-start" onClick={retry}>
+                    <RefreshCw size={15} /> Try again
+                </Button>
+            </div>
+        );
+    }
+
+    // ---- Crawl finished but found no readable text (backend f4f2ea3:
+    // `crawl.status === 'no_content'`) — most commonly a JS-rendered site the
+    // HTTP-only crawler can't execute. ----
+    if (noContent) {
+        return (
+            <div className="flex flex-col gap-4">
+                <p className="text-sm text-rose-500">
+                    We reached your pages but couldn&rsquo;t find readable text to train on. If your
+                    site loads its content with JavaScript, that can prevent training.
+                </p>
+                <Button variant="outline" size="md" className="self-start" onClick={retry}>
+                    <RefreshCw size={15} /> Try again
                 </Button>
             </div>
         );
