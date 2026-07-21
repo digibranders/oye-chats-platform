@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, Link as LinkIcon, CheckCircle2, Upload, Loader2, Plus } from 'lucide-react';
+import {
+  FileText,
+  Link as LinkIcon,
+  CheckCircle2,
+  Upload,
+  Loader2,
+  Plus,
+  ExternalLink,
+} from 'lucide-react';
 import { Card, StatusBadge, Skeleton, EmptyState } from '../../../design-system';
 import { getDocuments, getDocumentPages, uploadDocuments } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
@@ -12,8 +20,7 @@ function isUrl(name: string): boolean {
 }
 function toPath(url: string): string {
   try {
-    const u = new URL(url);
-    return (u.pathname === '/' ? u.hostname : u.pathname) || url;
+    return new URL(url).pathname || url;
   } catch {
     return url;
   }
@@ -139,17 +146,35 @@ export function ReviewStep(props: StepProps) {
 
                     {url && pages.length > 0 && (
                       <ul className="divide-y divide-[var(--ds-border)] border-t border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]/40">
-                        {pages.slice(0, 8).map((page) => (
-                          <li key={page.url} className="flex items-center gap-2.5 px-4 py-2 pl-14">
-                            <FileText size={13} className="shrink-0 text-[var(--ds-text-subtle)]" />
-                            <span className="truncate text-[12.5px] text-[var(--ds-text-muted)]">
-                              {page.title || toPath(page.url)}
-                            </span>
+                        {pages.slice(0, 10).map((page, idx) => (
+                          <li
+                            key={`${page.url}-${idx}`}
+                            className="group grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-2.5 pl-14"
+                          >
+                            <div className="min-w-0">
+                              <span className="block truncate font-mono text-[12px] leading-snug text-[var(--ds-accent-text)]">
+                                {toPath(page.url)}
+                              </span>
+                              {page.title && (
+                                <span className="mt-0.5 block truncate text-[11px] leading-snug text-[var(--ds-text-subtle)]">
+                                  {page.title}
+                                </span>
+                              )}
+                            </div>
+                            <a
+                              href={page.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Open ${page.url}`}
+                              className="rounded p-1 text-[var(--ds-text-subtle)] opacity-0 transition-opacity hover:text-[var(--ds-accent-text)] group-hover:opacity-100"
+                            >
+                              <ExternalLink size={12} />
+                            </a>
                           </li>
                         ))}
-                        {pages.length > 8 && (
-                          <li className="px-4 py-2 pl-14 text-[12px] text-[var(--ds-text-subtle)]">
-                            + {pages.length - 8} more page{pages.length - 8 === 1 ? '' : 's'}
+                        {pages.length > 10 && (
+                          <li className="px-4 py-2.5 pl-14 text-[12px] text-[var(--ds-text-subtle)]">
+                            + {pages.length - 10} more page{pages.length - 10 === 1 ? '' : 's'}
                           </li>
                         )}
                       </ul>
