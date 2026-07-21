@@ -19,7 +19,7 @@ async def _noop_heartbeat(client_id, **kwargs):
 async def test_ordered_crawl_emits_live_progress(monkeypatch):
     progress_calls: list[dict] = []
     monkeypatch.setattr(orch, "crawl_heartbeat", _noop_heartbeat)
-    monkeypatch.setattr(orch, "release_crawl_lock", lambda cid: None)
+    monkeypatch.setattr(orch, "release_crawl_lock", lambda *a, **k: None)
     monkeypatch.setattr(orch, "set_crawl_progress", lambda cid, **kw: progress_calls.append(kw))
     monkeypatch.setattr(
         orch,
@@ -68,7 +68,7 @@ async def test_ordered_crawl_emits_live_progress(monkeypatch):
 async def test_crawl_failure_still_writes_terminal_failed(monkeypatch):
     progress_calls: list[dict] = []
     monkeypatch.setattr(orch, "crawl_heartbeat", _noop_heartbeat)
-    monkeypatch.setattr(orch, "release_crawl_lock", lambda cid: None)
+    monkeypatch.setattr(orch, "release_crawl_lock", lambda *a, **k: None)
     monkeypatch.setattr(orch, "set_crawl_progress", lambda cid, **kw: progress_calls.append(kw))
 
     async def boom_fetch(urls, *, use_js, client_id, on_page=None, on_result=None):

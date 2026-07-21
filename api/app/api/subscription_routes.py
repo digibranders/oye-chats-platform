@@ -868,6 +868,54 @@ def _is_suspicious_geo_claim(confirmed_country: str, detected_country: str | Non
     return confirmed_country == "IN" and detected_country not in (None, "IN")
 
 
+def _resolve_confirmed_billing_country_or_409(
+    *,
+    request_country: str | None,
+    client: Client,
+    http_request: Request,
+) -> str:
+    """Resolve + gate the confirmed billing country shared by EVERY money-moving
+    Razorpay path (checkout, top-up, ...).
+
+    Phase 1 charges INR (IN) only: a confirmed non-IN buyer 409s with the same
+    ``intl_usd_pending`` contract the frontend already renders as a Contact-sales
+    CTA, so a top-up can never land on the domestic INR rail for a buyer whose
+    supply ``invoice_service`` will later classify as an export (GST
+    mis-classification/short-payment).
+
+    Resolution order mirrors ``checkout_quote``: explicit per-request confirmation
+    wins, then the account's stored country, then the domestic default (IN) for
+    backward-compat callers that omit it. The server-side IP geo signal is
+    cross-checked (not hard-enforced — see ``_is_suspicious_geo_claim``) and a
+    domestic claim that contradicts a specific foreign detection is logged as a
+    GST/FEMA audit signal.
+
+    Extracted from ``create_checkout`` so ``initiate_topup`` cannot drift from
+    the same gate (the bug this closes: top-ups had no gate at all).
+    """
+    confirmed_country = (request_country or client.billing_country or "IN").strip().upper()
+
+    detected_country = resolve_country(http_request)
+    if _is_suspicious_geo_claim(confirmed_country, detected_country):
+        logger.warning(
+            "Billing geo mismatch: client=%s claims billing_country=IN but IP geo detected %s (GST/FEMA review)",
+            client.id,
+            detected_country,
+        )
+
+    if confirmed_country != "IN":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "intl_usd_pending",
+                "message": "USD billing for international customers is coming soon. Please contact sales.",
+                "contact_sales": "developer@oyechats.com",
+            },
+        )
+
+    return confirmed_country
+
+
 @router.post("/checkout")
 def create_checkout(
     request: CheckoutRequest,
@@ -887,31 +935,13 @@ def create_checkout(
     # INR (IN) only; a confirmed non-IN buyer is directed to sales until the
     # Phase-2 USD rail is live. Unknown (no confirm + no stored country) defaults
     # to domestic; a country already on the client is honoured as the fallback.
-    confirmed_country = (request.billing_country or client.billing_country or "IN").strip().upper()
-
-    # Server-side geo cross-check (audit F35): the confirmed country drives
-    # currency + GST classification but is client-supplied. We do NOT hard-block
-    # a mismatch (a confirmed country intentionally overrides IP geo so an Indian
-    # resident mis-detected abroad still reaches INR checkout — FEMA-safe), but a
-    # domestic claim that contradicts a specific foreign detection is logged as a
-    # GST/FEMA audit signal for review.
-    detected_country = resolve_country(http_request)
-    if _is_suspicious_geo_claim(confirmed_country, detected_country):
-        logger.warning(
-            "Checkout geo mismatch: client=%s claims billing_country=IN but IP geo detected %s (GST/FEMA review)",
-            client.id,
-            detected_country,
-        )
-
-    if confirmed_country != "IN":
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "reason": "intl_usd_pending",
-                "message": "USD billing for international customers is coming soon. Please contact sales.",
-                "contact_sales": "developer@oyechats.com",
-            },
-        )
+    # Shared with /credits/topup so both money-moving paths gate identically —
+    # see _resolve_confirmed_billing_country_or_409.
+    confirmed_country = _resolve_confirmed_billing_country_or_409(
+        request_country=request.billing_country,
+        client=client,
+        http_request=http_request,
+    )
 
     _assert_no_stacking(client, request.coupon_code)
 
@@ -1819,6 +1849,10 @@ class TopupRequest(BaseModel):
     amount: int | None = None
     pack_usd: int | None = None  # legacy alias
     bot_id: int | None = None
+    # Confirmed at the top-up modal (same country-confirmation contract as
+    # /checkout's CheckoutRequest.billing_country). None → fall back to the
+    # client's stored country, else domestic (IN) for backward-compat callers.
+    billing_country: str | None = None
 
 
 def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
@@ -1852,6 +1886,7 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
 @credits_router.post("/topup")
 def initiate_topup(
     request: TopupRequest,
+    http_request: Request,
     client: Client = Depends(get_current_client),
     _verified: Client = Depends(require_verified_email),
 ):
@@ -1870,8 +1905,32 @@ def initiate_topup(
     if not requested_amount:
         raise HTTPException(status_code=400, detail="amount is required.")
 
+    # Same billing-country gate as /checkout (audit F-topup-gst): a top-up is
+    # also a Razorpay charge, and razorpay_service.create_topup_order hard-codes
+    # the INR rail. Without this gate a confirmed/stored non-IN buyer's top-up
+    # would be silently charged in INR and later invoiced as an export by
+    # invoice_service (which classifies supply from buyer.billing_country) —
+    # GST mis-classified / short-paid. Gate BEFORE opening a session so a
+    # rejected buyer never reaches Razorpay at all.
+    confirmed_country = _resolve_confirmed_billing_country_or_409(
+        request_country=request.billing_country,
+        client=client,
+        http_request=http_request,
+    )
+
     with get_session() as session:
         provider = _resolve_provider()
+
+        # Persist the confirmed country for invoice place-of-supply, mirroring
+        # create_checkout. A GSTIN pins the country to IN, so never let a
+        # top-up flip it. Only write when the caller explicitly confirmed a
+        # country (don't overwrite a stored value with the IN default of an
+        # omitted field).
+        if request.billing_country:
+            row = session.get(Client, client.id)
+            if row is not None and not row.gstin:
+                row.billing_country = confirmed_country
+                client.billing_country = confirmed_country
 
         pricing = credit_service.get_pricing(session)
         packs = pricing.get("topup_packs") or []

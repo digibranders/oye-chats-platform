@@ -358,6 +358,18 @@ TRIAL_DATA_RETENTION_DAYS = int(_env("TRIAL_DATA_RETENTION_DAYS", "15"))
 # given the gateway time to recover the card, now stop bleeding LLM credits".
 PAYMENT_FAILED_GRACE_DAYS = int(_env("PAYMENT_FAILED_GRACE_DAYS", "7"))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Owner-preview chat quota (Build Studio ``?preview=true``)
+# ─────────────────────────────────────────────────────────────────────────────
+# Preview replies skip ``ai_chat`` credit deduction entirely (see
+# chat_routes.py) so a bot owner can freely test their own bot from the
+# dashboard. Left completely unbounded, an owner-authenticated caller could
+# proxy real visitor traffic through the preview path and run unlimited free
+# LLM completions — that's the bug PREVIEW_DAILY_LIMIT closes. It caps preview
+# chats per bot per UTC day (enforced by app/services/preview_quota.py); once
+# hit, the endpoint returns 429 instead of generating a reply.
+PREVIEW_DAILY_LIMIT = int(_env("PREVIEW_DAILY_LIMIT", "50"))
+
 
 def _env_flag(name: str, *, default: bool) -> bool:
     """Parse a boolean feature flag from the environment.

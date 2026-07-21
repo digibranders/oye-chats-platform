@@ -21,6 +21,7 @@ from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequ
 from app.services.crawler_service import (
     acquire_crawl_lock,
     clear_cancellation,
+    crawl_lock_holder,
     get_crawl_progress,
     is_cancellation_requested,
     release_crawl_lock,
@@ -29,6 +30,41 @@ from app.services.crawler_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Interactive-crawl preemption of a background auto-recrawl. When a user clicks
+# Train/Recrawl while an hourly auto-recrawl is mid-run, we signal that recrawl
+# to cancel and wait (bounded) for it to release the shared per-client lock,
+# rather than rejecting a legitimate user action with a hard 429.
+_PREEMPT_POLL_INTERVAL_S = 0.5
+_PREEMPT_MAX_WAIT_S = 8.0
+
+
+async def _acquire_crawl_lock_or_preempt(client_id: int) -> str | None:
+    """Acquire the interactive crawl lock, preempting a background auto-recrawl.
+
+    A user-initiated crawl should not be blocked by an hourly auto-recrawl.
+    If the lock is held by a ``recrawl:`` holder we signal it to cancel and wait
+    (bounded) for it to release, then take the lock. A lock held by another
+    INTERACTIVE crawl is NOT preempted — that returns ``None`` so the caller
+    429s. Returns the ownership token, or ``None`` if it could not be acquired
+    in time.
+    """
+    token = acquire_crawl_lock(client_id)
+    if token is not None:
+        return token
+    holder = crawl_lock_holder(client_id)
+    if holder is None or not holder.startswith("recrawl:"):
+        # Free-then-reheld race, or an interactive holder → don't preempt.
+        return None
+    request_cancellation(client_id)
+    deadline_iterations = int(_PREEMPT_MAX_WAIT_S / _PREEMPT_POLL_INTERVAL_S)
+    for _ in range(deadline_iterations):
+        await asyncio.sleep(_PREEMPT_POLL_INTERVAL_S)
+        token = acquire_crawl_lock(client_id)
+        if token is not None:
+            return token
+    return None
+
 
 router = APIRouter(tags=["documents"])
 
@@ -979,6 +1015,18 @@ async def crawl_endpoint(
             )
 
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        # Resolve the SAME ledger bucket the actual crawl will drain — a
+        # per-bot subscription drains its own bucket, everything else drains
+        # the client pool. Both the unlimited-plan sizing fallback below and
+        # the hard credit pre-flight gate must check this bucket, not the
+        # client pool, or a per-bot subscriber with an empty pool but a
+        # funded bot ledger gets hard-blocked even though the pipeline's
+        # ``batch_web_ingestion`` (pipeline.py) would happily deduct from
+        # their ledger. Mirrors the resolution in /crawl/discover and
+        # /crawl/diff.
+        ledger_bot_id = None
+        if bot_id is not None:
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
         if unlimited_pages:
             # No plan cap — let the caller request what they want, but
             # always cap at the safety ceiling so a typo can't ignite a
@@ -990,7 +1038,7 @@ async def crawl_endpoint(
             if requested_pages is not None:
                 effective_max_pages = max(int(requested_pages), 1)
             else:
-                available_now = credit_service.get_balance(db, client_id)
+                available_now = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
                 effective_max_pages = max(int(available_now) // per_page, 1)
             effective_max_pages = min(effective_max_pages, _UNLIMITED_PLAN_SAFETY_CEILING)
         else:
@@ -1037,7 +1085,7 @@ async def crawl_endpoint(
             )
             precheck_is_recrawl = True
         required = cost_per_page * max(precheck_pages, 1)
-        available = credit_service.get_balance(db, client_id)
+        available = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
         if available < required:
             if precheck_is_recrawl:
                 message = (
@@ -1088,7 +1136,11 @@ async def crawl_endpoint(
     # process see the same state. SETNX with TTL means a crashed holder
     # eventually frees the lock automatically. The lock is released by
     # ``run_full_crawl``'s finally block, regardless of which process runs it.
-    if not acquire_crawl_lock(client_id):
+    #
+    # A user-initiated crawl preempts a background auto-recrawl holding the lock
+    # (bounded wait); a lock held by another interactive crawl still 429s.
+    lock_token = await _acquire_crawl_lock_or_preempt(client_id)
+    if lock_token is None:
         raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
 
     # Clear any leftover cancel flag from a PREVIOUS crawl before this one runs.
@@ -1132,6 +1184,7 @@ async def crawl_endpoint(
                 plan_concurrency,
                 ordered_urls=ordered_urls,
                 force_reingest=force_reingest,
+                lock_token=lock_token,
             )
             job_id = job.job_id if job is not None else None
             logger.info(
@@ -1162,6 +1215,7 @@ async def crawl_endpoint(
                 concurrency=plan_concurrency,
                 ordered_urls=ordered_urls,
                 force_reingest=force_reingest,
+                lock_token=lock_token,
             )
             logger.info(
                 "Crawl scheduled inline (WORKER_ENABLED=false) for client %s (plan=%s, pages=%d, depth=%d)",
@@ -1172,8 +1226,9 @@ async def crawl_endpoint(
             )
     except Exception as exc:
         # Enqueue failed before the orchestrator could take ownership of the
-        # lock — release it here so the user isn't locked out indefinitely.
-        release_crawl_lock(client_id)
+        # lock — release it here (ownership-checked with our token) so the user
+        # isn't locked out indefinitely.
+        release_crawl_lock(client_id, lock_token)
         set_crawl_progress(client_id, status="failed", error="Failed to start crawl.")
         logger.exception("Failed to enqueue crawl for client %s: %s", client_id, exc)
         raise HTTPException(status_code=503, detail="Could not start crawl. Please try again.") from exc

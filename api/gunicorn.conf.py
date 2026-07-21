@@ -4,20 +4,34 @@ Usage:
     uv run gunicorn app.main:app -c gunicorn.conf.py
 
 Worker count:
-    Phase 1 (scalability plan): workers=1 — process management benefits
-    (auto-restart, memory recycling) without breaking the in-memory
-    WebSocket ConnectionManager.
+    Defaults to 1 (via WEB_CONCURRENCY). This is a DELIBERATE constraint, not
+    an oversight: the live-chat WebSocket `ConnectionManager`
+    (app/services/live_chat_service.py) tracks visitor/operator sockets in
+    plain in-memory dicts, and nginx's `ip_hash` (nginx/oyechats-api.conf)
+    only pins a client to the single upstream `127.0.0.1:8000` — it cannot
+    route a visitor and their assigned operator to the *same* gunicorn worker
+    process. With >1 worker, a live-chat pair split across workers stops
+    seeing each other's messages. So multi-worker must NOT ship until the
+    WebSocket manager moves to a shared backplane (Redis pub/sub, "Phase 3").
 
-    After Phase 3 (Redis pub/sub WebSocket refactor), increase via
-    WEB_CONCURRENCY env var.
+    Known limitation of staying at 1: the async SSE chat endpoints still do
+    some blocking sync DB work, so one slow request can stall the event loop
+    for the whole process. The correct fix is to make that DB work async (or
+    land the Redis-pub/sub backplane and then raise WEB_CONCURRENCY) — NOT to
+    bump workers while the WebSocket manager is still in-process. The systemd
+    unit pins WEB_CONCURRENCY=1 explicitly so this constraint is visible
+    in-repo rather than being an accidental default.
 """
 
 import os
 
 # ── Worker configuration ────────────────────────────────────────────────────
-# Start with 1 worker until the WebSocket manager is refactored to Redis
-# pub/sub (Phase 3). After that, set WEB_CONCURRENCY=2-4.
-workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+# Default 1 — see the module docstring: multi-worker breaks in-process
+# WebSocket live chat until the ConnectionManager moves to Redis pub/sub.
+# WEB_CONCURRENCY (pinned to 1 in the systemd unit) may raise this ONLY after
+# that backplane work lands.
+_default_workers = 1
+workers = int(os.getenv("WEB_CONCURRENCY", str(_default_workers)))
 worker_class = "uvicorn.workers.UvicornWorker"
 # Only trust proxy headers (X-Forwarded-For / -Proto) from nginx on loopback.
 # Without this, uvicorn would honor a spoofed X-Forwarded-For from any source

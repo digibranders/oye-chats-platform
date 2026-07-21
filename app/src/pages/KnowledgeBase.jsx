@@ -221,6 +221,16 @@ export default function KnowledgeBase() {
     if (crawl.status === 'failed') {
       return { type: 'error', message: crawl.error || 'Failed to crawl website.' };
     }
+    if (crawl.status === 'no_content') {
+      // Terminal but NOT a success: pages were fetched, but no readable text
+      // could be extracted from them (most often a JS-rendered site the
+      // HTTP-only crawler never sees hydrated). Never render this via the
+      // 'success' branch above — there's nothing for the bot to answer from.
+      return {
+        type: 'error',
+        message: crawl.result?.message || 'No readable text found on that page to train on.',
+      };
+    }
     return null;
   })();
   const [cancelConfirm, setCancelConfirm] = useState(false);
@@ -308,10 +318,18 @@ export default function KnowledgeBase() {
       } else {
         setActiveTab('list');
       }
-    } else if ((crawl.status === 'cancelled' || crawl.status === 'failed') && isOwnCrawl) {
+    } else if (
+      (crawl.status === 'cancelled' || crawl.status === 'failed' || crawl.status === 'no_content') &&
+      isOwnCrawl
+    ) {
+      // 'no_content' must land here, not in the 'done' branch above: pages
+      // were fetched but nothing readable was extracted, so this is NOT a
+      // successful recrawl. It still needs to clear the transient UI (most
+      // importantly `recrawlingDoc`) or the per-document Recrawl button
+      // spins forever and the page stays stuck on the Website-Scan tab.
       setRecrawlingDoc(null);
       resetDiscovery();
-      // Still refresh in case partial pages were ingested before cancel/fail.
+      // Still refresh in case partial pages were ingested before cancel/fail/no-content.
       if (activeTab === 'list') fetchDocuments();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

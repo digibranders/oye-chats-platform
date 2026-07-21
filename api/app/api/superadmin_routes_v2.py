@@ -65,6 +65,21 @@ def _require_write(actor: Client) -> None:
         )
 
 
+def _require_owner(actor: Client) -> None:
+    """Only owner-tier super-admins may grant or change super-admin privileges.
+
+    ``superadmin_role`` is one of ``owner|admin|readonly``; ``_require_write``
+    alone only blocks ``readonly``, which would let an ``admin``-tier actor
+    promote themselves or any other account to super-admin. Privilege writes
+    (``is_superadmin`` / ``superadmin_role``) must additionally pass this gate.
+    """
+    if getattr(actor, "superadmin_role", None) != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an owner-tier super-admin may change super-admin privileges.",
+        )
+
+
 def _client_summary(c: Client) -> dict[str, Any]:
     return {
         "id": c.id,
@@ -172,6 +187,20 @@ def patch_client(
         client = session.get(Client, client_id)
         if not client:
             raise HTTPException(status_code=404, detail="Client not found")
+
+        # Privilege writes (is_superadmin / superadmin_role) are a separate,
+        # stricter gate than ordinary field edits: only an owner-tier actor
+        # may grant or change another account's super-admin status, and no
+        # actor — not even an owner — may change their OWN privilege fields
+        # through this endpoint (blocks self-escalation and accidental
+        # self-lockout). Checked before any mutation is applied.
+        if body.is_superadmin is not None or body.superadmin_role is not None:
+            if client.id == admin.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You cannot change your own super-admin privileges via this endpoint.",
+                )
+            _require_owner(admin)
 
         before = _client_summary(client)
         if body.name is not None:

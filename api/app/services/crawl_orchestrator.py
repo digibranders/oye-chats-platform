@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
@@ -69,13 +70,26 @@ def _record_bot_crawl_state(bot_id: int | None, status: str, chunk_count: int | 
             if bot is None:
                 return
             bot.last_crawl_status = status
-            if status in ("done", "cancelled"):
+            if status in ("done", "cancelled") and chunk_count and chunk_count > 0:
                 bot.crawl_completed_at = datetime.now(UTC)
-                if chunk_count is not None:
-                    bot.indexed_chunk_count = int(chunk_count)
+                bot.indexed_chunk_count = int(chunk_count)
             session.commit()
     except Exception:
         logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
+
+
+def _terminal_status(total_chunks: int, existing_count: int) -> str:
+    """Decide a crawl's terminal status from new-chunk and existing-content counts.
+
+    ``no_content`` means the bot has NO usable knowledge after this crawl —
+    not merely that this particular crawl added nothing. A delta recrawl of an
+    unchanged site legitimately produces ``total_chunks == 0`` (SHA-256 dedup
+    skipped every page) while the bot still holds all its prior content; that
+    is a success, not a JS-render failure. Only report ``no_content`` when
+    both this crawl's new chunks and the bot's pre-existing indexed content
+    are zero.
+    """
+    return "done" if (total_chunks > 0 or existing_count > 0) else "no_content"
 
 
 def _precompute_seed_questions(bot_id: int | None) -> None:
@@ -204,6 +218,88 @@ def _apply_crawl_metadata_to_bot(
     return written
 
 
+async def _consume_ingest_stream(
+    queue: "asyncio.Queue[dict | None]",
+    *,
+    wave_pages: int,
+    ingest_wave: Callable[[list[dict], int], dict],
+    cancel_requested: Callable[[], bool],
+    totals: dict[str, int],
+    state: dict,
+    client_id: int | None = None,
+) -> None:
+    """Drain ``queue`` into wave-sized ingest calls until the ``None`` sentinel.
+
+    Extracted from ``run_full_crawl`` so it can be unit-tested for the streaming
+    deadlock in isolation. Waves run sequentially (one executor call at a time)
+    so DB sessions and chunk buffers stay bounded; parallelism lives inside the
+    ``ingest_wave`` call. A ``None`` sentinel marks end-of-stream: the tail wave
+    is flushed and the coroutine returns.
+
+    Shared mutable state (so the producer, the finish-signal helper, and the
+    main flow all observe the same flags):
+
+    * ``totals`` — accumulates ``chunks`` / ``pages_charged`` /
+      ``credits_deducted`` across waves.
+    * ``state['billing_aborted']`` — set by a wave that couldn't bill, by the
+      cancel path, or by the finish helper; later pages are drained and dropped
+      because embedding pages the user can't pay for wastes the quota.
+    * ``state['consumer_error']`` — set to the first ingest exception. This is
+      the deadlock-breaker: the moment an ingest wave raises we record the
+      error, log it, and switch to *drain mode* — keep ``get``-ing and
+      discarding pages until the sentinel — so the producer's bounded ``put``
+      is always released instead of blocking forever on a full queue. The main
+      flow then turns a non-null ``consumer_error`` into a fast crawl failure.
+    """
+    loop = asyncio.get_event_loop()
+    buffer: list[dict] = []
+    while True:
+        page = await queue.get()
+        done = page is None
+
+        # Drain mode: an earlier wave already failed. Keep releasing the
+        # producer's bounded put() by discarding pages until the sentinel.
+        if state.get("consumer_error") is not None:
+            if done:
+                return
+            continue
+
+        if not done:
+            buffer.append(page)
+        # Stop embedding further waves the moment a cancel lands — the main
+        # flow raises CrawlCancelled at its next checkpoint; here we just avoid
+        # spending the embed budget on a crawl that's being cancelled.
+        if not state["billing_aborted"] and not done and cancel_requested():
+            logger.info("Ingest consumer halting embeds (cancel requested) client=%s", client_id)
+            state["billing_aborted"] = True
+        if state["billing_aborted"]:
+            # Set either by a wave that couldn't bill or by the cancel path —
+            # drop everything buffered, including pages queued before the flag
+            # flipped.
+            buffer.clear()
+        if buffer and (done or len(buffer) >= wave_pages):
+            wave, buffer = buffer, []
+            offset = totals["chunks"]
+            try:
+                result = await loop.run_in_executor(None, lambda w=wave, o=offset: ingest_wave(w, o))
+            except Exception as exc:
+                # An embed/ingest failure must NOT kill the consumer and strand
+                # the producer on a full bounded queue (that was the ~27-minute
+                # "running" hang). Record the error, then fall into drain mode.
+                state["consumer_error"] = exc
+                logger.exception("Ingest wave failed during crawl (client=%s) — draining stream", client_id)
+                if done:
+                    return
+                continue
+            totals["chunks"] += result["chunks"]
+            totals["pages_charged"] += result["pages_charged"]
+            totals["credits_deducted"] += result["credits_deducted"]
+            if result.get("aborted"):
+                state["billing_aborted"] = True
+        if done:
+            return
+
+
 async def run_full_crawl(
     *,
     client_id: int,
@@ -218,6 +314,7 @@ async def run_full_crawl(
     ordered_urls: list[str] | None = None,
     force_reingest: bool = False,
     crawl_job_id: str | None = None,
+    lock_token: str | None = None,
 ) -> dict:
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
@@ -285,7 +382,12 @@ async def run_full_crawl(
     # never blocked.
     stream_queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=CRAWL_INGEST_WAVE_PAGES * 2)
     ingest_totals = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
-    billing_aborted = False  # insufficient credits / kill switch → stop embedding
+    # Shared mutable state between the producer (``_on_result``), the consumer
+    # (``_consume_ingest_stream``), the finish helper, and the main flow.
+    #   billing_aborted: insufficient credits / kill switch / cancel → stop embedding.
+    #   consumer_error:  first ingest exception → drain + fail the crawl fast
+    #                    (instead of deadlocking the producer on a full queue).
+    ingest_state: dict = {"billing_aborted": False, "consumer_error": None}
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
     async def _on_result(page: dict) -> None:
@@ -293,6 +395,14 @@ async def run_full_crawl(
         fetch coroutine (see spider_service.py/jina_service.py). Suspends
         (does not block the event loop) once the bounded queue is full,
         providing real producer-side backpressure."""
+        # Fast-fail: if ingestion has already failed, stop scraping the rest of
+        # the site rather than pointlessly filling a queue whose consumer is
+        # only draining-and-discarding. The consumer's drain mode is the actual
+        # deadlock guarantee; this just aborts the scrape early. (If the
+        # provider swallows callback exceptions, the drain still prevents any
+        # hang and the main flow still fails the crawl.)
+        if ingest_state["consumer_error"] is not None:
+            raise CrawlerError("Embedding failed during crawl")
         await stream_queue.put(page)
 
     def _report_embed_stream(done_cum: int) -> None:
@@ -325,42 +435,21 @@ async def run_full_crawl(
     async def _ingest_consumer() -> None:
         """Drain ``stream_queue`` into wave-sized ``batch_web_ingestion`` calls.
 
-        Waves run sequentially (one executor call at a time) so DB sessions and
-        chunk buffers stay bounded; parallelism lives inside the embed call.
-        A ``None`` sentinel marks end-of-stream: the tail wave is flushed and
-        the task returns. On a billing abort, later pages are drained and
-        dropped — embedding pages the user can't pay for wastes the quota.
+        Thin closure over the module-level :func:`_consume_ingest_stream`,
+        binding this crawl's queue, wave size, ingest callable, cancel check,
+        and the shared ``ingest_totals`` / ``ingest_state`` so the producer and
+        the finish helper observe the same flags. The extracted function owns
+        the drain-on-error logic that breaks the streaming deadlock.
         """
-        nonlocal billing_aborted
-        loop = asyncio.get_event_loop()
-        buffer: list[dict] = []
-        while True:
-            page = await stream_queue.get()
-            done = page is None
-            if not done:
-                buffer.append(page)
-            # Stop embedding further waves the moment a cancel lands — the main
-            # flow raises CrawlCancelled at its next checkpoint; here we just
-            # avoid spending the embed budget on a crawl that's being cancelled.
-            if not billing_aborted and not done and is_cancellation_requested(client_id):
-                logger.info("Ingest consumer halting embeds (cancel requested) client=%s", client_id)
-                billing_aborted = True
-            if billing_aborted:
-                # Set either by a wave that couldn't bill or by the cancel
-                # path — drop everything buffered, including pages that were
-                # queued before the flag flipped.
-                buffer.clear()
-            if buffer and (done or len(buffer) >= CRAWL_INGEST_WAVE_PAGES):
-                wave, buffer = buffer, []
-                offset = ingest_totals["chunks"]
-                result = await loop.run_in_executor(None, lambda w=wave, o=offset: _ingest_wave(w, o))
-                ingest_totals["chunks"] += result["chunks"]
-                ingest_totals["pages_charged"] += result["pages_charged"]
-                ingest_totals["credits_deducted"] += result["credits_deducted"]
-                if result.get("aborted"):
-                    billing_aborted = True
-            if done:
-                return
+        await _consume_ingest_stream(
+            stream_queue,
+            wave_pages=CRAWL_INGEST_WAVE_PAGES,
+            ingest_wave=_ingest_wave,
+            cancel_requested=lambda: is_cancellation_requested(client_id),
+            totals=ingest_totals,
+            state=ingest_state,
+            client_id=client_id,
+        )
 
     async def _finish_consumer(consumer: asyncio.Task | None, *, discard_pending: bool = False) -> None:
         """Signal end-of-stream and wait for in-flight waves to finish.
@@ -369,11 +458,10 @@ async def run_full_crawl(
         pages instead of embedding them. An executor-bound wave that already
         started cannot be interrupted; we wait it out (bounded: one wave).
         """
-        nonlocal billing_aborted
         if consumer is None:
             return
         if discard_pending:
-            billing_aborted = True
+            ingest_state["billing_aborted"] = True
         # await, not put_nowait — the queue is now bounded (AR-23) and could
         # legitimately be full at this exact moment.
         await stream_queue.put(None)
@@ -514,6 +602,13 @@ async def run_full_crawl(
             async with crawl_heartbeat(client_id):
                 await _finish_consumer(consumer_task)
             consumer_task = None
+            # An ingest wave raised during streaming: the consumer drained the
+            # rest of the queue (no deadlock) but embedding genuinely failed.
+            # Route it into the ``except CrawlerError`` path below so the crawl
+            # terminates FAST as ``failed`` instead of hanging until the ARQ
+            # job timeout, and the frontend shows its error branch.
+            if ingest_state["consumer_error"] is not None:
+                raise CrawlerError("Embedding failed during crawl") from ingest_state["consumer_error"]
 
         # A cancel that landed during the streamed embed above stops here rather
         # than running the (potentially multi-minute) final sweep.
@@ -543,7 +638,7 @@ async def run_full_crawl(
         # non-streaming / recursive-crawl cases). Skipped entirely after a
         # billing abort — those pages can't be paid for.
         loop = asyncio.get_event_loop()
-        if not billing_aborted:
+        if not ingest_state["billing_aborted"]:
             logger.info("Batch ingesting %d pages (%d chunks already streamed)", pages_processed, sweep_offset)
             # Heartbeat spans the embed loop — CPU/network-bound and the phase
             # most likely to exceed the reaper's staleness window on a large crawl.
@@ -722,34 +817,71 @@ async def run_full_crawl(
             "pages_discovered": discovered_total,
             "pages_dropped": pages_dropped,
         }
+        # A crawl that fetched pages but extracted zero readable text (common on
+        # JS-rendered sites where the HTTP-only fetch never sees the hydrated
+        # DOM) must NOT report success — there is no knowledge for the bot to
+        # answer from. But ``total_chunks == 0`` alone conflates two different
+        # things: a fresh crawl that genuinely found no readable content vs. a
+        # delta recrawl of an unchanged site where SHA-256 dedup skipped every
+        # page while the bot still holds all its prior content. Use the bot's
+        # real indexed document count as the ground truth — ``no_content`` only
+        # when the bot has NO usable knowledge at all, never latching the
+        # durable "trained" marker in that case (see the ``chunk_count`` guard
+        # in ``_record_bot_crawl_state``).
+        bot_content_count = 0
+        if total_chunks == 0 and bot_id is not None:
+            try:
+                from app.db.repository import count_documents_for_bot
+
+                with get_session() as _count_session:
+                    bot_content_count = count_documents_for_bot(_count_session, bot_id=bot_id)
+            except Exception:
+                logger.warning(
+                    "no_content check: failed to count documents for bot %s (treating as done)",
+                    bot_id,
+                    exc_info=True,
+                )
+                bot_content_count = 1  # fail safe toward "done" — never show a false no-content error
+        crawl_status = _terminal_status(total_chunks, bot_content_count)
+        if crawl_status == "no_content":
+            result_payload["message"] = (
+                "We reached your pages but couldn't extract readable text to train on. "
+                "This often happens on sites that render content with JavaScript."
+            )
+            result_payload["no_content"] = True
         set_crawl_progress(
             client_id,
-            status="done",
+            status=crawl_status,
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
         )
-        _record_bot_crawl_state(bot_id, "done", total_chunks)
-        # Warm the seed-question cache now (worker/background), so the Prove step
-        # reads a cached value instead of paying LLM + embedding latency live.
-        _precompute_seed_questions(bot_id)
+        _record_bot_crawl_state(bot_id, crawl_status, total_chunks)
+        if crawl_status == "done":
+            # Warm the seed-question cache now (worker/background), so the Prove
+            # step reads a cached value instead of paying LLM + embedding latency
+            # live. Skipped for a no-content crawl — there's nothing to seed from.
+            _precompute_seed_questions(bot_id)
 
         # Drop an in-app notification so the user sees the result in the bell
         # even if they navigated away. Best-effort — never fail the crawl on it.
-        try:
-            from app.services.notification_service import notify_crawl_completed
+        # Suppressed for zero-content: that isn't a "crawl completed
+        # successfully" event and shouldn't read as one in the notification feed.
+        if crawl_status == "done":
+            try:
+                from app.services.notification_service import notify_crawl_completed
 
-            with get_session() as notif_session:
-                notify_crawl_completed(
-                    notif_session,
-                    client_id=client_id,
-                    source=url,
-                    pages=pages_processed,
-                    chunks=total_chunks,
-                    duration_seconds=round(time.time() - started_at),
-                    bot_id=bot_id,
-                )
-        except Exception:
-            logger.warning("crawl-complete notification failed (non-fatal)", exc_info=True)
+                with get_session() as notif_session:
+                    notify_crawl_completed(
+                        notif_session,
+                        client_id=client_id,
+                        source=url,
+                        pages=pages_processed,
+                        chunks=total_chunks,
+                        duration_seconds=round(time.time() - started_at),
+                        bot_id=bot_id,
+                    )
+            except Exception:
+                logger.warning("crawl-complete notification failed (non-fatal)", exc_info=True)
 
         return result_payload
     except CrawlCancelled as exc:
@@ -828,4 +960,7 @@ async def run_full_crawl(
             footer_task.cancel()
             with contextlib.suppress(BaseException):
                 await footer_task
-        release_crawl_lock(client_id)
+        # Ownership-checked release: only frees the lock if this run still owns
+        # it. ``lock_token=None`` (job enqueued by an older API node during a
+        # rolling deploy) falls back to the legacy unconditional delete.
+        release_crawl_lock(client_id, lock_token)

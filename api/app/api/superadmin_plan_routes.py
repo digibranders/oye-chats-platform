@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
+from app.api.superadmin_routes_v2 import _require_write
 from app.config import DISPLAY_USD_TO_INR
 from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
@@ -192,6 +193,7 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
 @router.post("/plans")
 def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_superadmin)):
     """Create a new pricing plan."""
+    _require_write(superadmin)
     with get_session() as session:
         # Check slug uniqueness
         existing = session.execute(select(Plan).where(Plan.slug == request.slug)).scalars().first()
@@ -244,6 +246,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
 @router.put("/plans/{plan_id}")
 def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = Depends(get_superadmin)):
     """Update an existing plan. Only provided fields are modified."""
+    _require_write(superadmin)
     with get_session() as session:
         plan = session.execute(select(Plan).where(Plan.id == plan_id)).scalars().first()
         if not plan:
@@ -337,6 +340,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 @router.delete("/plans/{plan_id}")
 def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
     """Soft-delete a plan (set is_active=False). Cannot delete plans with active subscriptions."""
+    _require_write(superadmin)
     with get_session() as session:
         plan = session.execute(select(Plan).where(Plan.id == plan_id)).scalars().first()
         if not plan:
@@ -378,6 +382,7 @@ def read_pricing_content(superadmin: Client = Depends(get_superadmin)):
 @router.put("/pricing-content")
 def write_pricing_content(request: PricingContentRequest, superadmin: Client = Depends(get_superadmin)):
     """Upsert any subset of the website pricing-content blobs."""
+    _require_write(superadmin)
     with get_session() as session:
         set_pricing_content(session, request.model_dump(exclude_none=True))
         logger.info(f"Superadmin {superadmin.id} updated pricing content")
@@ -447,6 +452,7 @@ def update_subscription(
     superadmin: Client = Depends(get_superadmin),
 ):
     """Manual override: change plan, status, extend trial, etc."""
+    _require_write(superadmin)
     with get_session() as session:
         sub = session.execute(select(Subscription).where(Subscription.id == subscription_id)).scalars().first()
         if not sub:

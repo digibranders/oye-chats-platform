@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import os
+import uuid
 from typing import Any
 
 from app.core.cache import PREFIX, get_redis
@@ -36,7 +37,10 @@ _DEFAULT_LOCK_TTL = _SUBPROCESS_TIMEOUT + 120  # crawl + ingestion margin
 # Windows dev box. Production runs Redis + multiple workers and never reads
 # these.
 _local_progress: dict[int, dict[str, Any]] = {}
-_local_locks: set[int] = set()
+# Maps client_id → the ownership token currently holding the lock (``kind:hex``).
+# A dict (not a set) so the in-process fallback can enforce the same
+# compare-and-delete ownership check the Redis path does via Lua.
+_local_locks: dict[int, str] = {}
 _local_cancels: set[int] = set()
 
 
@@ -237,36 +241,95 @@ def clear_crawl_progress(client_id: int) -> None:
         client.delete(_progress_key(client_id))
 
 
-def acquire_crawl_lock(client_id: int, ttl: int = _DEFAULT_LOCK_TTL) -> bool:
-    """Try to take the per-client crawl lock. Returns True iff acquired.
+# Lua compare-and-delete: only remove the lock key if its value still matches
+# the caller's token. Executed server-side so the GET+DEL is atomic — a stale
+# holder whose token no longer matches (its TTL expired and someone else
+# re-acquired) can never delete the new owner's lock.
+_RELEASE_IF_OWNER_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+)
+
+
+def acquire_crawl_lock(client_id: int, ttl: int = _DEFAULT_LOCK_TTL, *, kind: str = "interactive") -> str | None:
+    """Try to take the per-client crawl lock. Returns an ownership token, or ``None``.
+
+    On success returns a ``"{kind}:{uuid_hex}"`` token that the caller MUST pass
+    back to :func:`release_crawl_lock` so the release is ownership-checked — a
+    holder whose TTL expired mid-run can then only ever free its own lock, never
+    a second crawl's freshly-acquired one. Returns ``None`` when the lock is
+    already held (existing ``if not acquire_crawl_lock(...)`` callers keep
+    working: ``None`` is falsy, a token string is truthy).
 
     Uses Redis ``SET NX EX`` so the lock survives across processes (API and
     worker can both check it) and self-expires if the holder crashes. Falls
-    back to an in-process set when Redis is unavailable so single-worker dev
+    back to an in-process dict when Redis is unavailable so single-worker dev
     still gets per-client serialization.
     """
+    token = uuid.uuid4().hex
+    value = f"{kind}:{token}"
     client = get_redis()
     if client is None:
         cid = int(client_id)
         if cid in _local_locks:
-            return False
-        _local_locks.add(cid)
-        return True
+            return None
+        _local_locks[cid] = value
+        return value
     try:
-        return bool(client.set(_lock_key(client_id), "1", nx=True, ex=ttl))
+        ok = client.set(_lock_key(client_id), value, nx=True, ex=ttl)
+        return value if ok else None
     except Exception:
+        # Fail open: hand back a token so the caller can still call release
+        # symmetrically. The lock isn't truly held, but that matches the prior
+        # fail-open behaviour (better a rare double-crawl on a Redis outage than
+        # a hard 429 wall for every customer).
         logger.debug("acquire_crawl_lock failed for client=%s", client_id, exc_info=True)
-        return True
+        return value
 
 
-def release_crawl_lock(client_id: int) -> None:
-    """Release the per-client crawl lock. Best-effort and idempotent."""
+def release_crawl_lock(client_id: int, token: str | None = None) -> None:
+    """Release the per-client crawl lock. Best-effort and idempotent.
+
+    When ``token`` is provided the release is an ownership-checked
+    compare-and-delete: the lock is freed only if it still holds this exact
+    token. This is what stops a stale holder (TTL expired mid-run) from
+    deleting a *different* crawl's lock.
+
+    When ``token`` is ``None`` the release is an unconditional delete. This
+    preserves correctness for any in-flight job enqueued by an older API node
+    during a rolling deploy (it carries no token to compare against).
+    """
     client = get_redis()
     if client is None:
-        _local_locks.discard(int(client_id))
+        cid = int(client_id)
+        # token is None → unconditional (legacy); else compare-and-delete.
+        if token is None or _local_locks.get(cid) == token:
+            _local_locks.pop(cid, None)
         return
     with contextlib.suppress(Exception):
-        client.delete(_lock_key(client_id))
+        if token is None:
+            client.delete(_lock_key(client_id))
+        else:
+            client.eval(_RELEASE_IF_OWNER_LUA, 1, _lock_key(client_id), token)
+
+
+def crawl_lock_holder(client_id: int) -> str | None:
+    """Return the current lock value (``"{kind}:{token}"``) or ``None`` if free.
+
+    Used by the crawl-preemption path to inspect who (interactive vs recrawl)
+    currently holds the lock without taking it.
+    """
+    client = get_redis()
+    if client is None:
+        return _local_locks.get(int(client_id))
+    try:
+        value = client.get(_lock_key(client_id))
+    except Exception:
+        return _local_locks.get(int(client_id))
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return value
 
 
 class CrawlerError(RuntimeError):

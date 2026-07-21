@@ -24,6 +24,9 @@ import { cn } from '../lib/utils';
  *   done       — success burst, dismiss button, links to Knowledge page
  *   cancelled  — informational, dismiss button, "X pages saved" note
  *   failed     — error chip, dismiss button, error message
+ *   no_content — terminal but NOT a success: pages were fetched but no
+ *                readable text was extracted (e.g. a JS-rendered site).
+ *                Uses the same non-success toast treatment as failed.
  *
  * Mobile: full-width sticky bar at the bottom. Desktop: 360px card pinned to
  * the bottom-right with a glass-morphism + gradient-border treatment so it
@@ -31,7 +34,7 @@ import { cn } from '../lib/utils';
  */
 
 const DOMAIN_RE = /^https?:\/\/(?:www\.)?([^/]+)/i;
-const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'failed']);
+const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'failed', 'no_content']);
 
 function deriveDomain(url) {
     if (!url) return null;
@@ -111,6 +114,13 @@ const GlobalCrawlIndicator = () => {
             showToast('info', 'Crawl cancelled.');
         } else if (crawl.status === 'failed') {
             showToast('error', crawl.error || 'Crawl failed.');
+        } else if (crawl.status === 'no_content') {
+            // Terminal but not a success: pages were fetched, but no readable
+            // text could be extracted from them (most often a JS-rendered
+            // site the HTTP-only crawler never sees hydrated). Never show
+            // this as "Crawl complete" — there's nothing for the bot to
+            // answer from.
+            showToast('warning', crawl.result?.message || 'No readable text found to train on.');
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [crawl.status, crawl.result]);

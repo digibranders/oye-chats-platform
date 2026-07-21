@@ -37,6 +37,21 @@ Group=oyechats
 SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/oyechats/platform/api
 EnvironmentFile=/opt/oyechats/platform/api/.env
+# Pin the gunicorn worker count explicitly so the constraint is visible
+# in-repo rather than being an accidental default.
+#
+# MUST STAY 1 until the WebSocket backplane work lands: the live-chat
+# ConnectionManager (app/services/live_chat_service.py) keeps visitor/
+# operator sockets in plain in-memory dicts, and nginx's ip_hash
+# (nginx/oyechats-api.conf) pins a client to this single upstream port, not
+# to a specific worker process behind it — so with >1 worker a visitor and
+# their assigned operator can land on different workers and stop seeing each
+# other's messages (live chat silently breaks). The async SSE bot-chat path
+# has the opposite pressure (one worker can stall on a blocking DB call), but
+# the correct fix for that is async DB work / Redis pub/sub for WebSockets
+# ("Phase 3", see gunicorn.conf.py docstring) — NOT bumping workers while the
+# ConnectionManager is still in-process. Raise this ONLY after that lands.
+Environment=WEB_CONCURRENCY=1
 # Exec the venv entrypoint directly instead of `/root/.local/bin/uv run`:
 # uv lives under /root (unreachable with ProtectHome=true) and `uv run` may
 # try to re-sync the venv, which the unprivileged user must not (and cannot)
