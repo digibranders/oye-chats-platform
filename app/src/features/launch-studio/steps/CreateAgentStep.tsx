@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { Bot } from 'lucide-react';
 import { Input, Card } from '../../../design-system';
-import { createBot, recordActivationEvent } from '../../../services/api';
+import { createBot, updateBot, recordActivationEvent } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
 /**
- * Step 2 — Create Agent. Creates the bot (or reuses an already-selected one) and
- * makes it the active agent for the rest of the flow.
+ * Step 2 — Create Agent. Names the agent. Creates a new bot, or (for a returning
+ * user with an existing agent) renames the selected one — the field stays
+ * editable so the name is never locked.
  */
 export function CreateAgentStep(props: StepProps) {
   const { selectedBot, selectBot, refreshBots } = useBotContext();
@@ -17,25 +18,28 @@ export function CreateAgentStep(props: StepProps) {
   const [error, setError] = useState<string | null>(null);
 
   const handleContinue = async () => {
-    // Already have an agent (returning user, or came back to this step) — reuse it.
-    if (selectedBot) {
-      props.onContinue();
-      return;
-    }
     const trimmed = name.trim();
     if (!trimmed) return;
 
     setSubmitting(true);
     setError(null);
     try {
-      const bot = await createBot({ name: trimmed });
-      await refreshBots();
-      selectBot(bot);
-      void recordActivationEvent('bot_created', { botId: bot.id });
+      if (selectedBot) {
+        // Existing agent — rename it if the name changed, then continue.
+        if (trimmed !== selectedBot.name) {
+          await updateBot(selectedBot.id, { name: trimmed });
+          await refreshBots();
+        }
+      } else {
+        const bot = await createBot({ name: trimmed });
+        await refreshBots();
+        selectBot(bot);
+        void recordActivationEvent('bot_created', { botId: bot.id });
+      }
       props.onContinue();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Could not create your agent. Please try again.',
+        err instanceof Error ? err.message : 'Could not save your agent. Please try again.',
       );
     } finally {
       setSubmitting(false);
@@ -50,8 +54,8 @@ export function CreateAgentStep(props: StepProps) {
       onContinue={handleContinue}
       isFirst={props.isFirst}
       isLast={props.isLast}
-      canContinue={(Boolean(selectedBot) || name.trim().length > 0) && !submitting}
-      continueLabel={submitting ? 'Creating…' : undefined}
+      canContinue={name.trim().length > 0 && !submitting}
+      continueLabel={submitting ? 'Saving…' : undefined}
     >
       <div className="space-y-4">
         <label className="block">
@@ -68,7 +72,7 @@ export function CreateAgentStep(props: StepProps) {
               onChange={(event) => setName(event.target.value)}
               placeholder="Support Assistant"
               className="pl-9"
-              disabled={Boolean(selectedBot) || submitting}
+              disabled={submitting}
               autoFocus
             />
           </div>
@@ -78,9 +82,8 @@ export function CreateAgentStep(props: StepProps) {
 
         <Card className="p-4">
           <p className="text-[12px] text-[var(--ds-text-subtle)]">
-            {selectedBot
-              ? `Continuing with your agent “${selectedBot.name}”.`
-              : 'This is the name visitors see at the top of the chat. Keep it short and friendly.'}
+            This is the name visitors see at the top of the chat. Keep it short and friendly —
+            “Support”, “Ava”, or your brand name all work well.
           </p>
         </Card>
       </div>
