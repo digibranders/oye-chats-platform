@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { X, MoreHorizontal, Bot, Headphones, CalendarDays } from 'lucide-react';
+import { formatBotMarkdown } from '../lib/formatBotMarkdown';
 
 function pathOf(url) {
     try {
@@ -222,7 +223,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                         <div className="text-[14px] text-[#16202C] font-light break-words">
                                             <div className="prose prose-sm max-w-none break-words font-light">
                                                 <ReactMarkdown components={{ a: PreviewSafeLink }}>
-                                                    {m.text}
+                                                    {formatBotMarkdown(m.text)}
                                                 </ReactMarkdown>
                                             </div>
                                         </div>
