@@ -31,7 +31,8 @@ import type {
 
 // ── Agents (bots) ────────────────────────────────────────────────────────────
 export function createBot(data: { name: string; website?: string; system_prompt?: string }): Promise<Bot>;
-export function updateBot(botId: number, data: Record<string, unknown>): Promise<Bot>;
+/** PATCH /bots/{id} returns a status message, NOT the bot — re-fetch/merge for fresh fields. */
+export function updateBot(botId: number, data: Record<string, unknown>): Promise<{ message: string }>;
 export function getBot(botId: number): Promise<Bot>;
 export function getBots(): Promise<Bot[]>;
 export function deleteBot(botId: number): Promise<Record<string, unknown>>;

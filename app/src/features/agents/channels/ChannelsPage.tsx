@@ -108,10 +108,15 @@ export function ChannelsPage(): ReactElement {
     setSavingMeetings(true);
     setMeetingsError(null);
     try {
-      const updated = (await updateBot(numericId, {
-        meeting_booking_enabled: next,
-      })) as ChannelBot;
-      setFetched({ token, bot: updated });
+      // PATCH /bots/{id} returns { message }, NOT the bot — so merge the single
+      // changed field into the current record instead of overwriting it (which
+      // would blank out bot_key, website, install status, etc.).
+      await updateBot(numericId, { meeting_booking_enabled: next });
+      setFetched((prev) =>
+        prev && prev.token === token
+          ? { token, bot: { ...prev.bot, meeting_booking_enabled: next } }
+          : prev,
+      );
     } catch (err: unknown) {
       setMeetingsError(err instanceof Error ? err.message : 'Couldn’t save. Please try again.');
     } finally {
