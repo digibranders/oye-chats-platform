@@ -15,6 +15,13 @@ export interface ActivityItem {
   meta?: ReactNode;
   /** Pre-formatted relative time, e.g. "5m ago". */
   time: string;
+  /**
+   * Machine-readable timestamp for the `<time datetime>` attribute (an ISO 8601
+   * string). Improves accessibility and lets assistive tech read the exact
+   * moment behind the relative `time` label. Omit when only a relative string
+   * is known.
+   */
+  dateTime?: string;
   /** Semantic color of the marker. Defaults to `neutral`. */
   tone?: ActivityTone;
 }
@@ -60,7 +67,10 @@ export function ActivityTimeline({ items, className }: ActivityTimelineProps) {
             <div className={cn('min-w-0 flex-1', isLast ? 'pb-0' : 'pb-5')}>
               <div className="flex items-baseline justify-between gap-3">
                 <p className="text-[13px] font-medium text-[var(--ds-text)]">{item.title}</p>
-                <time className="shrink-0 text-[12px] text-[var(--ds-text-subtle)]">
+                <time
+                  dateTime={item.dateTime}
+                  className="shrink-0 text-[12px] text-[var(--ds-text-subtle)]"
+                >
                   {item.time}
                 </time>
               </div>

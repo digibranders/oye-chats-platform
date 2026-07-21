@@ -4,8 +4,13 @@ import { cn } from '../lib/cn';
 export type ColumnAlign = 'left' | 'center' | 'right';
 
 export interface Column<T> {
-  /** Property on the row used as the default cell value and the column key. */
-  key: keyof T;
+  /**
+   * Column identity. A `keyof T` doubles as the default cell value (`row[key]`);
+   * a plain `string` lets purely presentational columns (actions, computed
+   * cells with their own `render`) carry a stable key without borrowing an
+   * unrelated data field.
+   */
+  key: keyof T | string;
   /** Column header. */
   header: ReactNode;
   /** Custom cell renderer. Falls back to the raw `row[key]` value. */
@@ -123,7 +128,7 @@ export function DataTable<T>({
                   >
                     {column.render
                       ? column.render(row, index)
-                      : (row[column.key] as ReactNode)}
+                      : (row[column.key as keyof T] as ReactNode)}
                   </td>
                 ))}
               </tr>

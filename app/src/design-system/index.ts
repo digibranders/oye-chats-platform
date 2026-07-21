@@ -15,6 +15,8 @@ export { cn } from './lib/cn';
 // Primitives
 export { Button } from './primitives/Button';
 export type { ButtonProps } from './primitives/Button';
+export { buttonVariants } from './primitives/buttonVariants';
+export type { ButtonVariantProps } from './primitives/buttonVariants';
 export { Card, CardHeader, CardTitle, CardContent, CardFooter } from './primitives/Card';
 export { StatusBadge } from './primitives/Badge';
 export type { StatusBadgeProps } from './primitives/Badge';

@@ -23,6 +23,12 @@ export interface ConversationCardProps {
   to?: string;
   /** Click handler (used when `to` is not supplied). */
   onClick?: () => void;
+  /**
+   * Marks the row as the active conversation for assistive tech — forwarded to
+   * `aria-current` on the underlying link/button. Use `"page"` (or `true`) when
+   * this row's conversation is the one currently open in the detail pane.
+   */
+  ariaCurrent?: boolean | 'page';
   className?: string;
 }
 
@@ -39,6 +45,7 @@ export function ConversationCard({
   status,
   to,
   onClick,
+  ariaCurrent,
   className,
 }: ConversationCardProps) {
   const inner = (
@@ -91,7 +98,7 @@ export function ConversationCard({
 
   if (to) {
     return (
-      <Link to={to} className={classes} aria-label={name}>
+      <Link to={to} className={classes} aria-label={name} aria-current={ariaCurrent}>
         {inner}
       </Link>
     );
@@ -99,7 +106,13 @@ export function ConversationCard({
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={classes} aria-label={name}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={classes}
+        aria-label={name}
+        aria-current={ariaCurrent}
+      >
         {inner}
       </button>
     );
