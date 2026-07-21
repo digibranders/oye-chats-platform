@@ -23,6 +23,8 @@ export interface PreviewState {
 export interface PreviewContextValue {
   preview: PreviewState;
   setPreview: (patch: Partial<PreviewState>) => void;
+  /** Ask the agent a question — streams the answer into the widget preview. */
+  ask: (question: string) => void;
 }
 
 export const PreviewContext = createContext<PreviewContextValue | null>(null);

@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { previewChatStream } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
-import { PreviewContext, type PreviewState } from './preview-context';
+import { PreviewContext, type PreviewMessage, type PreviewState } from './preview-context';
 
 const DEFAULTS: PreviewState = {
   primaryColor: '#ba68c8',
@@ -12,11 +13,23 @@ const DEFAULTS: PreviewState = {
   pending: false,
 };
 
+function newSessionId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `preview-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Append text to the trailing bot message (streaming). */
+function appendToLastBot(messages: PreviewMessage[], text: string): PreviewMessage[] {
+  const next = messages.slice();
+  const last = next[next.length - 1];
+  if (last && last.role === 'bot') next[next.length - 1] = { ...last, text: last.text + text };
+  return next;
+}
+
 /**
- * PreviewProvider — holds the live widget-preview config for Launch Studio.
- * Seeds from the selected agent so the preview is roughly accurate on every
- * step; the Customize step hydrates it with the agent's real appearance and
- * updates it as the user edits.
+ * PreviewProvider — holds the live widget-preview config for Launch Studio and
+ * owns the preview chat (Test step): `ask()` streams a real answer from the
+ * agent (previewChatStream) into the widget's message list.
  */
 export function PreviewProvider({ children }: { children: ReactNode }) {
   const { selectedBot } = useBotContext();
@@ -25,13 +38,43 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
     primaryColor: selectedBot?.primary_color || DEFAULTS.primaryColor,
     botLogo: selectedBot?.bot_logo ?? null,
   }));
+  const sessionRef = useRef<string | null>(null);
 
   const setPreview = useCallback(
     (patch: Partial<PreviewState>) => setState((prev) => ({ ...prev, ...patch })),
     [],
   );
 
-  const value = useMemo(() => ({ preview, setPreview }), [preview, setPreview]);
+  const ask = useCallback(
+    (question: string) => {
+      const q = question.trim();
+      if (!q || !selectedBot) return;
+      if (!sessionRef.current) sessionRef.current = newSessionId();
+
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, { role: 'user', text: q }, { role: 'bot', text: '' }],
+        pending: true,
+      }));
+
+      void previewChatStream(selectedBot.id, q, sessionRef.current, {
+        onChunk: (text) => setState((prev) => ({ ...prev, messages: appendToLastBot(prev.messages, text) })),
+        onFinal: () => setState((prev) => ({ ...prev, pending: false })),
+        onError: () =>
+          setState((prev) => {
+            const next = prev.messages.slice();
+            const last = next[next.length - 1];
+            if (last && last.role === 'bot' && !last.text) {
+              next[next.length - 1] = { ...last, text: 'Sorry, I couldn’t answer that just now.' };
+            }
+            return { ...prev, messages: next, pending: false };
+          }),
+      });
+    },
+    [selectedBot],
+  );
+
+  const value = useMemo(() => ({ preview, setPreview, ask }), [preview, setPreview, ask]);
 
   return <PreviewContext.Provider value={value}>{children}</PreviewContext.Provider>;
 }

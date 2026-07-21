@@ -34,6 +34,7 @@ export function updateClientSettings(
   botId?: number,
 ): Promise<Record<string, unknown>>;
 export function uploadLogo(file: File): Promise<{ url: string }>;
+export function uploadDocuments(files: File[], botId?: number): Promise<unknown>;
 
 export function completeOnboarding(): Promise<Record<string, unknown> | null>;
 export function recordActivationEvent(

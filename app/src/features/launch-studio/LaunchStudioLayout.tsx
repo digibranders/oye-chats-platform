@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, X } from 'lucide-react';
-import { ProgressStepper, type StepperItem } from '../../design-system';
+import { ProgressStepper, Progress, type StepperItem } from '../../design-system';
 import { WidgetPreview } from './preview/WidgetPreview';
 
 export interface LaunchStudioLayoutProps {
@@ -44,6 +44,21 @@ export function LaunchStudioLayout({
           Exit setup
         </Link>
       </header>
+
+      {/* Mobile progress — the step rail is hidden below lg, so keep the user
+          oriented with a compact "Step N of M" bar. */}
+      <div className="border-b border-[var(--ds-border)] px-4 py-3 lg:hidden">
+        <div className="mb-1.5 flex items-center justify-between text-[12px]">
+          <span className="font-medium text-[var(--ds-text)]">{steps[currentIndex]?.label}</span>
+          <span className="text-[var(--ds-text-subtle)]">
+            Step {currentIndex + 1} of {steps.length}
+          </span>
+        </div>
+        <Progress
+          value={((currentIndex + 1) / steps.length) * 100}
+          label={`Step ${currentIndex + 1} of ${steps.length}`}
+        />
+      </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_440px]">
         {/* Step rail */}

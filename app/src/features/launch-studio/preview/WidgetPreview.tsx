@@ -10,7 +10,7 @@ import { usePreview } from './preview-context';
  * step pushes a live conversation.
  */
 export function WidgetPreview() {
-  const { preview } = usePreview();
+  const { preview, ask } = usePreview();
   const { selectedBot } = useBotContext();
 
   const settings: WidgetPreviewSettings = {
@@ -24,7 +24,12 @@ export function WidgetPreview() {
 
   return (
     <div className="flex h-full items-center justify-center">
-      <WidgetChatPreview settings={settings} messages={preview.messages} pending={preview.pending} />
+      <WidgetChatPreview
+        settings={settings}
+        messages={preview.messages}
+        pending={preview.pending}
+        onSend={selectedBot ? ask : undefined}
+      />
     </div>
   );
 }

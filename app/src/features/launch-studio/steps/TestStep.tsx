@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, ArrowRight } from 'lucide-react';
 import { Card } from '../../../design-system';
 import { getSeedQuestions } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
+import { usePreview } from '../preview/preview-context';
 import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
@@ -13,13 +14,13 @@ const FALLBACK_QUESTIONS = [
 ];
 
 /**
- * Step 6 — Test Agent. Surfaces real seed questions for the agent. The user asks
- * one and watches it answer from its own content.
- * TODO(2b.2): stream the answer via previewChatStream into the live-preview panel
- * (requires promoting the panel to a real chat view).
+ * Step 6 — Test Agent. Ask a question (a suggested one or your own in the
+ * widget) and watch the real agent answer in the live preview on the right —
+ * streamed via previewChatStream. The aha moment.
  */
 export function TestStep(props: StepProps) {
   const { selectedBot } = useBotContext();
+  const { ask, preview } = usePreview();
   const [questions, setQuestions] = useState<string[]>(FALLBACK_QUESTIONS);
 
   useEffect(() => {
@@ -37,10 +38,12 @@ export function TestStep(props: StepProps) {
     };
   }, [selectedBot]);
 
+  const hasAsked = preview.messages.length > 0 || preview.pending;
+
   return (
     <StepShell
       title="Try it yourself"
-      description="Ask your agent anything. It'll answer from what it just learned — watch the preview."
+      description="Ask your agent anything — it answers from what it just learned. Watch the preview on the right."
       onBack={props.onBack}
       onContinue={props.onContinue}
       isFirst={props.isFirst}
@@ -53,9 +56,12 @@ export function TestStep(props: StepProps) {
             <button
               key={question}
               type="button"
-              className="rounded-full border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-1.5 text-[13px] text-[var(--ds-text)] transition-colors hover:border-[var(--ds-accent)] hover:text-[var(--ds-accent-text)]"
+              onClick={() => ask(question)}
+              disabled={preview.pending}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-1.5 text-[13px] text-[var(--ds-text)] transition-colors hover:border-[var(--ds-accent)] hover:text-[var(--ds-accent-text)] disabled:opacity-50"
             >
               {question}
+              <ArrowRight size={13} />
             </button>
           ))}
         </div>
@@ -64,7 +70,9 @@ export function TestStep(props: StepProps) {
             <Sparkles size={17} />
           </div>
           <p className="text-[13px] text-[var(--ds-text-muted)]">
-            Pick a question or type your own in the preview to see a real answer.
+            {hasAsked
+              ? 'Nice! Type follow-ups directly in the widget preview.'
+              : 'Pick a question or type your own in the widget preview to see a real answer.'}
           </p>
         </Card>
       </div>

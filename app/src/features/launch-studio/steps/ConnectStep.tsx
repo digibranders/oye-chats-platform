@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Globe, Upload } from 'lucide-react';
+import { Globe, Upload, Loader2, FileCheck2 } from 'lucide-react';
 import { Input, Card } from '../../../design-system';
-import { updateBot, recordActivationEvent } from '../../../services/api';
+import { updateBot, uploadDocuments, recordActivationEvent } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useCrawl } from '../../../context/CrawlContext';
 import { StepShell } from '../StepShell';
@@ -12,30 +12,54 @@ function normalizeUrl(value: string): string {
 }
 
 /**
- * Step 3 — Connect Website. Saves the website on the agent and kicks off a real
- * crawl (monitored on the AI Training step). Includes an upload fallback for
- * sites that can't be crawled.
+ * Step 3 — Connect Website. Saves the website and kicks off a real crawl
+ * (monitored on AI Training). Or upload documents instead — a real fallback for
+ * sites we can't crawl (JS-rendered / no site), which also lets the user proceed.
  */
 export function ConnectStep(props: StepProps) {
   const { selectedBot } = useBotContext();
   const { crawl, startCrawl } = useCrawl();
   const [url, setUrl] = useState(selectedBot?.website ?? '');
+  const [uploadedCount, setUploadedCount] = useState(0);
+  const [uploadingDocs, setUploadingDocs] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleFiles = async (fileList: FileList) => {
+    if (!selectedBot || fileList.length === 0) return;
+    setUploadingDocs(true);
+    setError(null);
+    try {
+      const files = Array.from(fileList);
+      await uploadDocuments(files, selectedBot.id);
+      setUploadedCount((count) => count + files.length);
+      void recordActivationEvent('documents_uploaded', { botId: selectedBot.id });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+    } finally {
+      setUploadingDocs(false);
+    }
+  };
+
   const handleContinue = async () => {
-    const trimmed = url.trim();
-    if (!trimmed) return;
     if (!selectedBot) {
       setError('Create your agent first.');
       return;
     }
+    const trimmed = url.trim();
+
+    // Documents-only path — already uploading/ingesting, just proceed.
+    if (!trimmed && uploadedCount > 0) {
+      props.onContinue();
+      return;
+    }
+    if (!trimmed) return;
+
     const site = normalizeUrl(trimmed);
     setSubmitting(true);
     setError(null);
     try {
       await updateBot(selectedBot.id, { website: site });
-      // Start the crawl unless one is already running / finished for this agent.
       const alreadyRunning =
         crawl.botId === selectedBot.id && (crawl.status === 'running' || crawl.status === 'done');
       if (!alreadyRunning) {
@@ -55,6 +79,9 @@ export function ConnectStep(props: StepProps) {
     }
   };
 
+  const canContinue =
+    (url.trim().length > 0 || uploadedCount > 0) && !submitting && !uploadingDocs;
+
   return (
     <StepShell
       title="Connect your website"
@@ -63,7 +90,7 @@ export function ConnectStep(props: StepProps) {
       onContinue={handleContinue}
       isFirst={props.isFirst}
       isLast={props.isLast}
-      canContinue={url.trim().length > 0 && !submitting}
+      canContinue={canContinue}
       continueLabel={submitting ? 'Starting…' : undefined}
     >
       <div className="space-y-4">
@@ -86,19 +113,48 @@ export function ConnectStep(props: StepProps) {
           </div>
         </label>
 
-        {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
+        <div className="flex items-center gap-3 text-[12px] text-[var(--ds-text-subtle)]">
+          <span className="h-px flex-1 bg-[var(--ds-border)]" />
+          or
+          <span className="h-px flex-1 bg-[var(--ds-border)]" />
+        </div>
 
-        <Card className="flex items-center gap-3 p-4">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-            <Upload size={17} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[13px] font-medium text-[var(--ds-text)]">No website? Upload documents</p>
-            <p className="text-[12px] text-[var(--ds-text-subtle)]">
-              PDFs, docs or text — a fallback for sites we can't crawl.
-            </p>
-          </div>
-        </Card>
+        <label className="block cursor-pointer">
+          <Card className="flex items-center gap-3 p-4 transition-colors hover:border-[var(--ds-accent)]">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+              {uploadingDocs ? (
+                <Loader2 size={17} className="animate-spin" />
+              ) : uploadedCount > 0 ? (
+                <FileCheck2 size={17} className="text-[var(--ds-success)]" />
+              ) : (
+                <Upload size={17} />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-[var(--ds-text)]">
+                {uploadedCount > 0
+                  ? `${uploadedCount} document${uploadedCount === 1 ? '' : 's'} added — add more or continue`
+                  : 'No website? Upload documents'}
+              </p>
+              <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                PDFs, docs or text — a fallback for sites we can't crawl.
+              </p>
+            </div>
+          </Card>
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.txt,.md,image/*"
+            className="hidden"
+            disabled={uploadingDocs}
+            onChange={(event) => {
+              if (event.target.files) handleFiles(event.target.files);
+              event.target.value = '';
+            }}
+          />
+        </label>
+
+        {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
       </div>
     </StepShell>
   );
