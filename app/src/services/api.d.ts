@@ -33,6 +33,7 @@ export function updateClientSettings(
   settings: Record<string, unknown>,
   botId?: number,
 ): Promise<Record<string, unknown>>;
+export function uploadLogo(file: File): Promise<{ url: string }>;
 
 export function completeOnboarding(): Promise<Record<string, unknown> | null>;
 export function recordActivationEvent(
