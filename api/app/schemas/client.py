@@ -131,6 +131,17 @@ class CrawlRequest(BaseModel):
         "pipeline remains authoritative — this only loosens the upfront ceiling so a "
         "9-new-page recrawl isn't blocked by a 1200-page worst-case reservation.",
     )
+    discovered_pages: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional client-supplied sitemap page count from a prior "
+        "/crawl/discover call. Used to right-size the credit pre-flight on an "
+        "INITIAL crawl (honored only when ``replace_source`` is NOT set) so a small "
+        "site isn't gated at the plan's full max-pages ceiling — e.g. a 13-page site "
+        "reserves 13×cost, not plan_max×cost. Per-page atomic deduction inside the "
+        "ingestion pipeline stays authoritative — this only tightens the upfront "
+        "reservation to the discovered count.",
+    )
     ordered_urls: list[str] | None = Field(
         default=None,
         description="Explicit, pre-ordered list of URLs to crawl (from a prior "
