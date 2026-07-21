@@ -383,10 +383,19 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         return _polite_offline_payload(bot, reason=f"subscription_{owner_status}")
 
     # ── Credit enforcement: must match /chat/stream ──
-    # Owner-preview (Build Studio) replies are free — skip deduction entirely.
+    # Owner-preview (Build Studio) replies are free — skip deduction entirely,
+    # but bounded by a per-bot daily quota (PREVIEW_DAILY_LIMIT) so an owner
+    # can't proxy real visitor traffic through preview for unlimited free LLM
+    # completions. See app/services/preview_quota.py.
     is_preview = getattr(bot, "_is_preview", False)
     cost = 0
-    if not is_preview:
+    if is_preview:
+        from app.services.preview_quota import check_and_increment_preview
+
+        if not check_and_increment_preview(bot.id):
+            logger.info("chat_preview_quota_exceeded bot_id=%s", bot.id)
+            raise HTTPException(status_code=429, detail="preview_daily_limit_reached")
+    else:
         from app.services import credit_service
 
         with get_session() as db:
@@ -508,12 +517,21 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 
     # ── Credit enforcement: deduct 1 credit per AI reply (configurable) ──
     # Owner-preview (Build Studio) replies are free — skip deduction entirely,
-    # mirroring POST /chat. ``cost`` stays 0 so the refund path below is a no-op.
-    from app.services import credit_service
-
+    # mirroring POST /chat, but bounded by a per-bot daily quota
+    # (PREVIEW_DAILY_LIMIT) so an owner can't proxy real visitor traffic
+    # through preview for unlimited free LLM completions. ``cost`` stays 0 so
+    # the refund path below is a no-op. See app/services/preview_quota.py.
     is_preview = getattr(bot, "_is_preview", False)
     cost = 0
-    if not is_preview:
+    if is_preview:
+        from app.services.preview_quota import check_and_increment_preview
+
+        if not check_and_increment_preview(bot.id):
+            logger.info("chat_stream_preview_quota_exceeded bot_id=%s", bot.id)
+            raise HTTPException(status_code=429, detail="preview_daily_limit_reached")
+    else:
+        from app.services import credit_service
+
         with get_session() as db:
             cost = credit_service.get_credit_cost(db, "ai_chat")
             try:
