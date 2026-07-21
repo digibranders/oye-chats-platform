@@ -1084,7 +1084,11 @@ async def crawl_endpoint(
                 max(crawl_request.expected_new_pages + RECRAWL_PRECHECK_BUFFER, 1),
             )
             precheck_is_recrawl = True
-        elif crawl_request.discovered_pages is not None and crawl_request.discovered_pages > 0:
+        elif (
+            not crawl_request.replace_source
+            and crawl_request.discovered_pages is not None
+            and crawl_request.discovered_pages > 0
+        ):
             # Initial crawl with a server-discovered sitemap count: size the
             # pre-flight to the actual page count rather than the plan ceiling,
             # so a small site (e.g. 13 pages) isn't gated at
