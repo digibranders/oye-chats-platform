@@ -387,4 +387,14 @@ Application foundation built in **incremental TypeScript**, coexisting with the 
 
 **Deferred to later phases (intentionally):** auth-gating + data contexts (Workspace/Agent/Notifications) wired when pages arrive; `AgentContext` (URL-param) lands with Phase 4 agent pages; token codemod of the 692 legacy `text-[Npx]` literals; account-menu dropdown.
 
-**Next:** Phase 2 — Launch Studio.
+### Phase 2a — Launch Studio structure ✅ SHIPPED (2026-07-21)
+
+Full-screen 8-step onboarding replacing legacy `/build`. UX scaffolded and fully navigable; **backend wiring deferred to Phase 2b** (seams marked `TODO(phase-2b)`).
+
+- **New shared components:** `ProgressStepper` (mandated), `Input` + `Progress` primitives.
+- **`features/launch-studio/`:** `LaunchStudioLayout` (full-screen shell outside app chrome — step rail · content · live-preview panel), `StepShell` (shared step chrome + Back/Continue), `LaunchStudio` (URL-driven state machine: forward-gating, resume via `localStorage`, finish → `/`), `steps.config`, and 8 step scaffolds.
+- **Mandate gaps closed:** **Review Knowledge** is now its own step (legacy had none); **Verify Installation** is standalone (legacy merged it into deploy); Connect includes a **document-upload fallback** (legacy was crawl-only).
+- **Routing:** `/launch → /launch/connect`, `/launch/:step → LaunchStudio`.
+- **Checks:** tsc ✓ · eslint ✓ (0 errors) · build ✓. **Browser-verified:** stepper done/current/locked states, forward-gating, step advance (Connect→Analyze), zero console errors.
+
+**Phase 2b (next):** wire the engine — createBot/updateBot, `CrawlContext` discovery+training, `getDocuments` for Review, `getSeedQuestions`+`previewChatStream` for Test (live preview panel), real embed snippet, `widget_installed_at` polling for Verify, `completeOnboarding` on finish. Requires standing up the auth + data-context layer.
