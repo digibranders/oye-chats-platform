@@ -19,6 +19,10 @@ export { Card, CardHeader, CardTitle, CardContent, CardFooter } from './primitiv
 export { StatusBadge } from './primitives/Badge';
 export type { StatusBadgeProps } from './primitives/Badge';
 export { Skeleton } from './primitives/Skeleton';
+export { Input } from './primitives/Input';
+export type { InputProps } from './primitives/Input';
+export { Progress } from './primitives/Progress';
+export type { ProgressProps } from './primitives/Progress';
 
 // Composite components
 export { SectionHeader } from './components/SectionHeader';
@@ -29,3 +33,5 @@ export { PageContainer } from './components/PageContainer';
 export type { PageContainerProps } from './components/PageContainer';
 export { Breadcrumbs } from './components/Breadcrumbs';
 export type { Crumb, BreadcrumbsProps } from './components/Breadcrumbs';
+export { ProgressStepper } from './components/ProgressStepper';
+export type { ProgressStepperProps, StepperItem } from './components/ProgressStepper';

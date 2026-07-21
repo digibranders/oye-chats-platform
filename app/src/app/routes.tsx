@@ -5,7 +5,6 @@ import {
   Inbox,
   Users,
   BarChart3,
-  Rocket,
   BookOpen,
   Palette,
   Radio,
@@ -21,6 +20,7 @@ import {
 } from 'lucide-react';
 import { AppShell } from '../shell/AppShell';
 import { PagePlaceholder } from './PagePlaceholder';
+import { LaunchStudio } from '../features/launch-studio/LaunchStudio';
 
 /**
  * Route Architecture — the Admin Platform 2.0 information architecture.
@@ -172,18 +172,13 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Launch Studio — full-screen onboarding, OUTSIDE the shell.
+  // Launch Studio — full-screen 8-step onboarding, OUTSIDE the app shell.
   {
     path: '/launch',
-    handle: { crumb: 'Launch Studio' },
-    element: (
-      <PagePlaceholder
-        title="Launch Studio"
-        description="Connect → Analyze → Train → Review → Test → Customize → Deploy → Verify."
-        phase={2}
-        icon={Rocket}
-      />
-    ),
+    children: [
+      { index: true, element: <Navigate to="connect" replace /> },
+      { path: ':step', element: <LaunchStudio /> },
+    ],
   },
 
   // Unknown routes fall back to Home.
