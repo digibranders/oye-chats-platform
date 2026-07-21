@@ -464,3 +464,81 @@ fieldset:disabled *:not(label) {
   cursor: not-allowed;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   WidgetChatPreview bot-message markdown — mirrors the real widget's
+   `.prose` rules (widget/src/index.css) so ReactMarkdown output in the Build
+   Studio / Bot Settings live preview renders identically to the embeddable
+   widget (bold, lists, links, inline code) instead of raw markdown syntax.
+   Scoped under `.widget-chat-preview` so it never leaks into the rest of the
+   admin app, which has no other use of the `.prose` class.
+   ────────────────────────────────────────────────────────────────────────── */
+.widget-chat-preview .prose {
+  line-height: 1.7;
+  font-weight: 300;
+}
+
+.widget-chat-preview .prose ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.widget-chat-preview .prose ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.widget-chat-preview .prose li {
+  margin-bottom: 0.3em;
+}
+
+.widget-chat-preview .prose p {
+  margin-bottom: 0.8em;
+}
+
+.widget-chat-preview .prose p:last-child {
+  margin-bottom: 0;
+}
+
+.widget-chat-preview .prose strong {
+  font-weight: 600;
+  color: #16202C;
+}
+
+.widget-chat-preview .prose a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.widget-chat-preview .prose a:hover {
+  text-decoration: underline;
+}
+
+.widget-chat-preview .prose code {
+  background-color: #f1f5f9;
+  padding: 0.15em 0.4em;
+  border-radius: 0.25em;
+  font-family: monospace;
+  font-size: 0.88em;
+  color: #16202C;
+}
+
+.widget-chat-preview .prose pre {
+  background-color: #f8fafc;
+  padding: 0.75em 1em;
+  border-radius: 0.5em;
+  overflow-x: auto;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  border: 1px solid #e2e8f0;
+}
+
+.widget-chat-preview .prose pre code {
+  background-color: transparent;
+  padding: 0;
+  color: #1e293b;
+}
+

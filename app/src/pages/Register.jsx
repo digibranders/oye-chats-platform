@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
-import { setAuthBundle } from '../utils/authStorage';
+import { setAuthBundle, getAuthItem, isSessionExpired } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
@@ -158,13 +158,26 @@ export default function Register() {
     }
   };
 
-  // NOTE: /register intentionally has NO "already authenticated → redirect"
-  // guard. It's the target of the marketing site's "Start free" CTA, so it
-  // must always render the form. The old guard redirected on mere token
-  // PRESENCE — a stale/server-invalidated token (common after a session
-  // lapse) sent the visitor to "/", which then 401'd and bounced them to
-  // /login, trapping the sign-up flow. New users, stale-token users, and
-  // logged-in users all reliably land on the form now.
+  // Already-authenticated redirect — mirrors Login.jsx so a browser with a
+  // live session opening /register lands in the app instead of the signup form.
+  // Gated on ``!isSessionExpired()`` on purpose: a *lapsed* session still
+  // renders the form. The old guard keyed off mere token PRESENCE, so a
+  // stale/expired token (common after a session lapse) sent the visitor to
+  // "/", which 401'd and bounced them to /login — trapping the sign-up flow.
+  // Checking the client-side expiry first keeps genuinely logged-in users
+  // moving while letting lapsed-token and brand-new visitors reach the form.
+  // Deep-link ``next`` and affiliate round-trips win over the default, exactly
+  // as in Login, so an invite link opened while logged in keeps its context.
+  if (getAuthItem('admin_token') && !isSessionExpired()) {
+    const isOperator = localStorage.getItem('auth_type') === 'operator';
+    if (safeNext) {
+      return <Navigate to={safeNext} replace />;
+    }
+    if (affiliateToken && !isOperator) {
+      return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} replace />;
+    }
+    return <Navigate to={isOperator ? '/support' : '/'} replace />;
+  }
 
   const strengthColor = strengthScore === 3 ? 'bg-emerald-500' : strengthScore === 2 ? 'bg-amber-500' : strengthScore === 1 ? 'bg-rose-500' : 'bg-surface-200';
 

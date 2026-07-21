@@ -274,7 +274,7 @@ export default function BuildStudio() {
 
                         {/* Live preview column */}
                         <div className="w-full lg:sticky lg:top-28">
-                            <LiveAgentPreview previewColor={previewColor} messages={previewMessages} pending={previewPending} />
+                            <LiveAgentPreview previewColor={previewColor} messages={previewMessages} pending={previewPending} onSend={sendPreview} />
                         </div>
                     </div>
             </MotionConfig>

@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, Globe, RefreshCw, ArrowRight, Sparkles, Check, Send } from 'lucide-react';
+import { Loader2, Globe, RefreshCw, ArrowRight, Sparkles, Check } from 'lucide-react';
 import { useCrawl } from '../../../context/CrawlContext';
 import { useBotContext } from '../../../context/BotContext';
 import { useToast } from '../../../context/ToastContext';
 import useEntitlements from '../../../hooks/useEntitlements';
 import { discoverCrawlUrls, getDocuments, getSeedQuestions, recordActivationEvent } from '../../../services/api';
 import { Button } from '../../../components/ui/Button';
-import { Input } from '../../../components/ui/Input';
 import Progress from '../../../components/ui/Progress';
 import { cn } from '../../../lib/utils';
 
@@ -55,8 +54,9 @@ const FAST_PATH_MIN_DOCS = 1;
  * site, auto-crawls all pages (default-all + opt-in customize), narrates the
  * work with a productive activity feed, then lets the user prove the agent by
  * asking a question that gets answered INSIDE the live widget preview (right
- * column). Verified seed-question chips make the first proof one tap; an
- * always-visible open input lets the user drive.
+ * column) — typed directly into the real widget's own message input, which
+ * doubles as the input surface once trained. Verified seed-question chips
+ * make the first proof one tap.
  *
  * `onAsk`/`sending` drive the shared preview conversation owned by BuildStudio
  * (so the answer renders in the widget, not a separate panel).
@@ -101,7 +101,6 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     const [started, setStarted] = useState(false);
     const [seeds, setSeeds] = useState(null); // null = not loaded, [] = none
     const [loadingSeeds, setLoadingSeeds] = useState(false);
-    const [openQ, setOpenQ] = useState('');
     const doneFiredRef = useRef(false);
     const autoStartRef = useRef(false);
     const autoAskedRef = useRef(false);
@@ -292,9 +291,8 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
     }, [trained, seeds, sending, askedCount, botId, onAsk]);
 
     const ask = (q) => {
-        const question = (q ?? openQ).trim();
+        const question = (q || '').trim();
         if (!question || sending) return;
-        setOpenQ('');
         if (!autoAskedRef.current) {
             autoAskedRef.current = true;
             recordActivationEvent('first_test_asked', { botId });
@@ -355,7 +353,7 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
                 </div>
 
                 <p className="text-sm text-[var(--text-secondary)]">
-                    Ask your agent a question — it&rsquo;ll answer right in the preview, using your site.
+                    Try a question below, or ask your agent anything in the live preview →
                 </p>
 
                 {loadingSeeds ? (
@@ -381,27 +379,6 @@ export default function ProveStep({ onDone, onAsk, sending, askedCount = 0 }) {
                         ))}
                     </div>
                 ) : null}
-
-                <div className="relative">
-                    <Input
-                        value={openQ}
-                        onChange={(e) => setOpenQ(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && ask()}
-                        placeholder={`Ask ${selectedBot?.company_name || 'your agent'} anything…`}
-                        aria-label="Ask your agent a question"
-                        className="pr-11"
-                        disabled={sending}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => ask()}
-                        disabled={sending || !openQ.trim()}
-                        aria-label="Send"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 grid h-7 w-7 place-items-center rounded-lg text-white bg-primary-600 hover:bg-primary-500 disabled:opacity-40 transition-colors"
-                    >
-                        {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                    </button>
-                </div>
 
                 <div>
                     <Button size="lg" variant={askedCount > 0 ? 'primary' : 'outline'} className="self-start" onClick={() => onDone?.()}>

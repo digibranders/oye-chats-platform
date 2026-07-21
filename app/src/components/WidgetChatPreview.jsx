@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { X, MoreHorizontal, Bot, Headphones, CalendarDays } from 'lucide-react';
 
 function pathOf(url) {
@@ -7,6 +8,69 @@ function pathOf(url) {
     } catch {
         return url;
     }
+}
+
+/**
+ * PreviewBotAvatar — the bot avatar variant switch (orb / mascot / uploaded
+ * logo / default), extracted once and reused by both the floating agent
+ * badge and the per-message avatar so the two stay visually identical.
+ * Mirrors widget/src/components/BotAvatar.jsx's `orb`/`mascot`/upload
+ * branches (size tokens match its `xs`/`sm` presets).
+ */
+const PREVIEW_AVATAR_SIZES = {
+    xs: { container: 'w-5 h-5', icon: 'w-[11px] h-[11px]', orbShadow: '0 0 4px' },
+    sm: { container: 'w-7 h-7', icon: 'w-3.5 h-3.5', orbShadow: '0 0 6px' },
+};
+
+function PreviewBotAvatar({ settings, size = 'sm' }) {
+    const s = PREVIEW_AVATAR_SIZES[size] || PREVIEW_AVATAR_SIZES.sm;
+    const color = settings.orb_color || settings.primary_color;
+
+    if (settings.avatar_type === 'orb') {
+        return (
+            <div
+                className={`${s.container} rounded-full flex-shrink-0`}
+                style={{
+                    background: `radial-gradient(circle at 35% 35%, ${color}44, ${color}bb, ${color})`,
+                    boxShadow: `${s.orbShadow} ${color}55`,
+                }}
+            />
+        );
+    }
+    if (settings.avatar_type === 'mascot') {
+        return (
+            <div className={`${s.container} rounded-full flex items-center justify-center flex-shrink-0`} style={{ backgroundColor: settings.primary_color }}>
+                <Bot className={`${s.icon} text-white`} />
+            </div>
+        );
+    }
+    if (settings.bot_logo) {
+        return <img src={settings.bot_logo} alt="logo" className={`${s.container} rounded-full object-cover flex-shrink-0`} />;
+    }
+    return (
+        <div className={`${s.container} rounded-full flex items-center justify-center flex-shrink-0`} style={{ backgroundColor: settings.primary_color }}>
+            <Bot className={`${s.icon} text-white`} />
+        </div>
+    );
+}
+
+/**
+ * PreviewSafeLink — minimal safe link renderer for bot-message markdown.
+ * Blocks non-http(s) URI schemes and opens external links in a new tab.
+ * Mirrors the spirit (not the full pill/icon-link logic) of the widget's
+ * `SafeLink` in widget/src/components/MessageBubble.jsx — this preview only
+ * needs visual fidelity for plain links, not the CTA-pill/icon-link variants.
+ */
+function PreviewSafeLink({ href, children, ...props }) {
+    const isSafe = typeof href === 'string' && /^https?:\/\//i.test(href);
+    if (!isSafe) {
+        return <span {...props}>{children}</span>;
+    }
+    return (
+        <a href={href} target="_blank" rel="noopener noreferrer" {...props} className="text-blue-600 font-medium hover:underline">
+            {children}
+        </a>
+    );
 }
 
 /**
@@ -22,7 +86,7 @@ export const WIDGET_FONT_STACK =
  * classic (light) theme, extracted verbatim from BotSettings' inline Live
  * Preview so Bot Settings and the Build Studio render pixel-identically and both
  * stay pinned to the real widget (see widget/src/components/{themeConfigs,
- * ChatWindow,WelcomeScreen,ChatInput}.jsx).
+ * ChatWindow,WelcomeScreen,ChatInput,MessageBubble,BotAvatar}.jsx).
  *
  * Presentational only: the caller owns the `state` tab switcher and passes the
  * current view; this component just renders the matching subtree.
@@ -43,9 +107,14 @@ export const WIDGET_FONT_STACK =
  *   agent proves itself inside the real widget. Omit for the static Bot Settings
  *   preview.
  * @param {boolean} [props.pending] Bot is answering — shows a typing indicator.
+ * @param {(question: string) => void} [props.onSend] When provided, the input
+ *   becomes a real controlled text field that submits into this handler (the
+ *   Build Studio Prove step, so the widget preview doubles as the actual
+ *   input surface). Omit for the static Bot Settings preview, which keeps the
+ *   presentational placeholder instead.
  * @param {string} [props.className] Extra classes for the outer widget frame.
  */
-export default function WidgetChatPreview({ settings, state = 'chat', messages = [], pending = false, className = '' }) {
+export default function WidgetChatPreview({ settings, state = 'chat', messages = [], pending = false, onSend, className = '' }) {
     // Live-chat affordance is gated by both the bot toggle and the plan
     // entitlement. When the entitlement isn't supplied (e.g. the Build Studio,
     // which has no per-field lock context) treat it as allowed.
@@ -64,6 +133,15 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }, [messages, pending]);
 
+    // Interactive input (Build Studio only — gated on `onSend` being supplied).
+    const [draft, setDraft] = useState('');
+    const submitDraft = () => {
+        const q = draft.trim();
+        if (!q || pending || !onSend) return;
+        onSend(q);
+        setDraft('');
+    };
+
     return (
         /* Chat Window Preview Wrapper — mirrors the real widget's classic
            (light) theme 1:1 (see widget/src/components/{themeConfigs,
@@ -71,7 +149,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
            matches widget/src/index.css so the preview can't drift from
            what visitors actually see. */
         <div
-            className={`w-full max-w-[380px] bg-[#F8F8F8] rounded-2xl overflow-hidden shadow-xl flex flex-col border border-[#BBE7FF]/30 transition-colors ${className}`}
+            className={`widget-chat-preview w-full max-w-[380px] bg-[#F8F8F8] rounded-2xl overflow-hidden shadow-xl flex flex-col border border-[#BBE7FF]/30 transition-colors ${className}`}
             style={{ fontFamily: WIDGET_FONT_STACK }}
         >
 
@@ -104,25 +182,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                         className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40"
                         style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
                     >
-                        {settings.avatar_type === 'orb' ? (
-                            <div
-                                className="w-7 h-7 rounded-full flex-shrink-0"
-                                style={{
-                                    background: `radial-gradient(circle at 35% 35%, ${settings.orb_color || settings.primary_color}44, ${settings.orb_color || settings.primary_color}bb, ${settings.orb_color || settings.primary_color})`,
-                                    boxShadow: `0 0 6px ${settings.orb_color || settings.primary_color}55`,
-                                }}
-                            />
-                        ) : settings.avatar_type === 'mascot' ? (
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: settings.primary_color }}>
-                                <Bot className="w-3.5 h-3.5 text-white" />
-                            </div>
-                        ) : settings.bot_logo ? (
-                            <img src={settings.bot_logo} alt="logo" className="w-7 h-7 rounded-full object-cover" />
-                        ) : (
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: settings.primary_color }}>
-                                <Bot className="w-3.5 h-3.5 text-white" />
-                            </div>
-                        )}
+                        <PreviewBotAvatar settings={settings} size="sm" />
                         <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
                             {settings.bot_name || 'AI Assistant'}
                         </span>
@@ -149,31 +209,52 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                     </div>
                                 </div>
                             ) : (
-                                <div key={i} className="flex flex-col items-start gap-1.5 max-w-[88%]">
-                                    <div className="rounded-2xl rounded-tl-md bg-white border border-gray-100 px-3.5 py-2 text-[14px] text-[#16202C] whitespace-pre-wrap break-words shadow-sm">
-                                        {m.text}
+                                // Bot message intentionally has NO bubble — mirrors
+                                // widget/src/components/MessageBubble.jsx's bot branch
+                                // ("AI message — avatar + plain text, NO bubble"). Do
+                                // not add bg-white/border/rounded-*/shadow here; that
+                                // would regress the live-preview fidelity fix.
+                                <div key={i} className="flex items-start gap-2 w-full">
+                                    <div className="flex-shrink-0 mt-1">
+                                        <PreviewBotAvatar settings={settings} size="xs" />
                                     </div>
-                                    {Array.isArray(m.sources) && m.sources.length > 0 && (
-                                        <div className="flex flex-wrap gap-1.5 pl-1">
-                                            {m.sources.slice(0, 3).map((s, j) => (
-                                                <span
-                                                    key={j}
-                                                    className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500"
-                                                    title={s}
-                                                >
-                                                    ◆ {pathOf(s)}
-                                                </span>
-                                            ))}
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-[14px] text-[#16202C] font-light break-words">
+                                            <div className="prose prose-sm max-w-none break-words font-light">
+                                                <ReactMarkdown components={{ a: PreviewSafeLink }}>
+                                                    {m.text}
+                                                </ReactMarkdown>
+                                            </div>
                                         </div>
-                                    )}
+                                        {Array.isArray(m.sources) && m.sources.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                                {m.sources.slice(0, 3).map((s, j) => (
+                                                    <span
+                                                        key={j}
+                                                        className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500"
+                                                        title={s}
+                                                    >
+                                                        ◆ {pathOf(s)}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )
                         )}
                         {showTyping && (
-                            <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-md bg-white border border-gray-100 px-3.5 py-2.5 self-start shadow-sm">
-                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '120ms' }} />
-                                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '240ms' }} />
+                            // Same no-bubble treatment as a completed bot turn — avatar
+                            // + bouncing dots, no white box around them.
+                            <div className="flex items-start gap-2 w-full">
+                                <div className="flex-shrink-0 mt-1">
+                                    <PreviewBotAvatar settings={settings} size="xs" />
+                                </div>
+                                <div className="flex items-center gap-1.5 py-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '120ms' }} />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: '240ms' }} />
+                                </div>
                             </div>
                         )}
                     </div>
@@ -265,16 +346,50 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                 show_branding feature flag). */}
             {state === 'chat' && (
                 <div className="px-4 pb-4 pt-2 bg-[#F8F8F8] shrink-0">
-                    {/* Input box */}
+                    {/* Input box — a real controlled field when `onSend` is
+                        supplied (Build Studio Prove step); otherwise the
+                        original presentational placeholder (Bot Settings). */}
                     <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
-                        <div className="flex-1 min-w-0">
-                            <span className="block text-[14px] text-gray-400 leading-[20px] truncate">
-                                {(settings.widget_messages || {}).input_placeholder || 'Write a message...'}
-                            </span>
-                        </div>
-                        <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-0.5 flex-shrink-0 text-[#BBE7FF]">
-                            <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
-                        </svg>
+                        {onSend ? (
+                            <>
+                                <div className="flex-1 min-w-0">
+                                    <input
+                                        type="text"
+                                        value={draft}
+                                        onChange={(e) => setDraft(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') submitDraft();
+                                        }}
+                                        placeholder={(settings.widget_messages || {}).input_placeholder || 'Write a message...'}
+                                        aria-label="Message"
+                                        disabled={pending}
+                                        className="flex-1 min-w-0 w-full text-[14px] leading-[20px] bg-transparent outline-none border-0 text-[#16202C] placeholder:text-gray-400 disabled:opacity-60"
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={submitDraft}
+                                    disabled={pending || !draft.trim()}
+                                    aria-label="Send"
+                                    className="mb-0.5 flex-shrink-0 text-[#BBE7FF] disabled:opacity-60"
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                    </svg>
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <div className="flex-1 min-w-0">
+                                    <span className="block text-[14px] text-gray-400 leading-[20px] truncate">
+                                        {(settings.widget_messages || {}).input_placeholder || 'Write a message...'}
+                                    </span>
+                                </div>
+                                <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-0.5 flex-shrink-0 text-[#BBE7FF]">
+                                    <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                </svg>
+                            </>
+                        )}
                     </div>
 
                     {/* Privacy notice */}
