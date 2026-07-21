@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { completeOnboarding } from '../../services/api';
 import { LaunchStudioLayout } from './LaunchStudioLayout';
 import {
   LAUNCH_STEPS,
@@ -72,7 +73,16 @@ export function LaunchStudio() {
 
   const handleContinue = () => {
     if (currentIndex === LAST_INDEX) {
-      navigate('/'); // onboarding complete → dashboard
+      // Onboarding complete → mark it server-side, clear local progress, go home.
+      void completeOnboarding().catch(() => {
+        /* non-blocking — the dashboard still loads if this fails */
+      });
+      try {
+        localStorage.removeItem(LAUNCH_PROGRESS_KEY);
+      } catch {
+        /* localStorage unavailable — ignore */
+      }
+      navigate('/');
       return;
     }
     const next = currentIndex + 1;
