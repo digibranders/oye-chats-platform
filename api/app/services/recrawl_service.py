@@ -44,6 +44,7 @@ from app.db.models import Bot, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
 from app.services.crawl_provider import fetch_urls
+from app.services.crawler_service import acquire_crawl_lock, release_crawl_lock
 
 logger = logging.getLogger(__name__)
 
@@ -179,58 +180,78 @@ async def recrawl_bot(bot_id: int) -> dict:
         _persist_summary(bot_id, summary, "empty", now)
         return {"status": "empty", **summary}
 
-    fetched_pages, failed_fetch = await _fetch_pages(urls, client_id)
-
-    # ``batch_web_ingestion`` is synchronous / DB-bound — hop to a thread so
-    # we don't block the ARQ event loop while the embedding provider works.
-    def _do_ingest() -> dict:
-        return batch_web_ingestion(
+    # Serialize auto-recrawl against interactive crawls and other recrawls for
+    # this client using the same per-client lock the interactive path uses
+    # (``document_routes.py``). Without it, a concurrent auto+manual crawl
+    # double-ingests the same URLs → duplicate chunks that permanently
+    # degrade retrieval (there is no unique index on Document to catch it at
+    # the DB layer).
+    if not acquire_crawl_lock(client_id):
+        logger.info(
+            "recrawl_bot: a crawl is already in progress for client %s (bot %s) — skipping this cycle",
             client_id,
-            fetched_pages,
-            bot_id=bot_id,
-            cost_per_page=0,  # auto-recrawl is funded by the subscription, not per-page.
-            deduct_reason="auto_recrawl",
+            bot_id,
         )
+        # Do NOT persist a summary: leaving next_recrawl_at untouched (still
+        # due) means the next hourly sweep retries this bot once the lock
+        # frees, instead of parking it for a full 7-day interval.
+        return {"status": "skipped", "reason": "crawl_in_progress"}
 
-    if fetched_pages:
-        loop = asyncio.get_running_loop()
-        try:
-            ingest_result = await loop.run_in_executor(None, _do_ingest)
-        except Exception:  # noqa: BLE001
-            logger.exception("recrawl_bot: ingestion failed for bot %s", bot_id)
-            ingest_result = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": True}
-    else:
-        ingest_result = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
+    try:
+        fetched_pages, failed_fetch = await _fetch_pages(urls, client_id)
 
-    # ``pages_charged`` is 0 because we set ``cost_per_page=0``, so we can't
-    # read "how many pages actually changed" off that field. Instead we
-    # approximate: any page that produced new chunks flipped the hash and
-    # therefore counts as changed. ``pages_charged`` becomes the changed
-    # count for the sole run where cost_per_page > 0, so leave the
-    # approximation here scoped to auto-recrawl only.
-    total_chunks = int(ingest_result.get("chunks") or 0)
-    changed_pages = int(ingest_result.get("pages_charged") or 0)
-    if changed_pages == 0 and total_chunks > 0:
-        # Fallback estimate when billing was disabled: at least one page
-        # changed. The customer sees ``chunks_updated`` as the honest signal;
-        # ``changed_pages`` is best-effort.
-        changed_pages = 1
+        # ``batch_web_ingestion`` is synchronous / DB-bound — hop to a thread so
+        # we don't block the ARQ event loop while the embedding provider works.
+        def _do_ingest() -> dict:
+            return batch_web_ingestion(
+                client_id,
+                fetched_pages,
+                bot_id=bot_id,
+                cost_per_page=0,  # auto-recrawl is funded by the subscription, not per-page.
+                deduct_reason="auto_recrawl",
+            )
 
-    fetched_count = len(fetched_pages)
-    unchanged_pages = max(0, fetched_count - changed_pages)
-    failed_count = len(failed_fetch)
+        if fetched_pages:
+            loop = asyncio.get_running_loop()
+            try:
+                ingest_result = await loop.run_in_executor(None, _do_ingest)
+            except Exception:  # noqa: BLE001
+                logger.exception("recrawl_bot: ingestion failed for bot %s", bot_id)
+                ingest_result = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": True}
+        else:
+            ingest_result = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
 
-    summary = {
-        "total_urls": len(urls),
-        "changed_pages": changed_pages,
-        "unchanged_pages": unchanged_pages,
-        "failed": failed_count,
-        "failed_urls": failed_fetch[:_MAX_ERRORS_IN_SUMMARY],
-        "chunks_updated": total_chunks,
-    }
-    status = _classify_status(changed=changed_pages, failed=failed_count, total=len(urls))
-    _persist_summary(bot_id, summary, status, now)
-    return {"status": status, **summary}
+        # ``pages_charged`` is 0 because we set ``cost_per_page=0``, so we can't
+        # read "how many pages actually changed" off that field. Instead we
+        # approximate: any page that produced new chunks flipped the hash and
+        # therefore counts as changed. ``pages_charged`` becomes the changed
+        # count for the sole run where cost_per_page > 0, so leave the
+        # approximation here scoped to auto-recrawl only.
+        total_chunks = int(ingest_result.get("chunks") or 0)
+        changed_pages = int(ingest_result.get("pages_charged") or 0)
+        if changed_pages == 0 and total_chunks > 0:
+            # Fallback estimate when billing was disabled: at least one page
+            # changed. The customer sees ``chunks_updated`` as the honest signal;
+            # ``changed_pages`` is best-effort.
+            changed_pages = 1
+
+        fetched_count = len(fetched_pages)
+        unchanged_pages = max(0, fetched_count - changed_pages)
+        failed_count = len(failed_fetch)
+
+        summary = {
+            "total_urls": len(urls),
+            "changed_pages": changed_pages,
+            "unchanged_pages": unchanged_pages,
+            "failed": failed_count,
+            "failed_urls": failed_fetch[:_MAX_ERRORS_IN_SUMMARY],
+            "chunks_updated": total_chunks,
+        }
+        status = _classify_status(changed=changed_pages, failed=failed_count, total=len(urls))
+        _persist_summary(bot_id, summary, status, now)
+        return {"status": status, **summary}
+    finally:
+        release_crawl_lock(client_id)
 
 
 def _persist_summary(bot_id: int, summary: dict, status: str, now: datetime) -> None:
