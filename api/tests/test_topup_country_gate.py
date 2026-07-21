@@ -112,6 +112,10 @@ def test_topup_proceeds_for_domestic_billing_country(db):
     api = _api(db, client)
     with (
         patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        # CI has no Razorpay keys, so the endpoint's ``if not RAZORPAY_ENABLED``
+        # guard (subscription_routes.py:109) would 503 before reaching the
+        # patched order call. Force it enabled — same as test_checkout_country_gate.
+        patch.object(subscription_routes, "RAZORPAY_ENABLED", True),
         patch(
             "app.services.razorpay_service.create_topup_order",
             return_value={
