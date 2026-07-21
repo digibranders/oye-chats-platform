@@ -1,0 +1,99 @@
+import { NavLink } from 'react-router-dom';
+import { Sparkles } from 'lucide-react';
+import { PRIMARY_NAV } from './nav.config';
+import { cn } from '../design-system';
+
+export interface SidebarProps {
+  /** Desktop icon-rail mode. Ignored on mobile (drawer is always full width). */
+  collapsed: boolean;
+  isMobile: boolean;
+  /** Mobile drawer open/closed. */
+  mobileOpen: boolean;
+  /** Called after navigating (closes the mobile drawer). */
+  onNavigate: () => void;
+}
+
+/**
+ * Sidebar — the one navigation rail. Renders exactly the six primary
+ * destinations from `nav.config`. Warm-neutral surface with volt-violet used
+ * only for the active state (accent-only per mandate). Responsive: an
+ * icon-collapsible rail on desktop, an off-canvas drawer on mobile.
+ */
+export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: SidebarProps) {
+  const showLabels = isMobile || !collapsed;
+
+  return (
+    <aside
+      className={cn(
+        'fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-[var(--ds-border)] bg-[var(--ds-sidebar-bg)] transition-[width,transform] duration-300',
+        isMobile ? 'w-60' : collapsed ? 'w-[68px]' : 'w-60',
+        isMobile && !mobileOpen && '-translate-x-full',
+      )}
+    >
+      {/* Brand */}
+      <div className="flex h-16 shrink-0 items-center gap-2.5 px-4">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]">
+          <Sparkles size={17} />
+        </div>
+        {showLabels && (
+          <span className="text-[15px] font-bold tracking-tight text-[var(--ds-text)]">
+            OyeChats
+          </span>
+        )}
+      </div>
+
+      {/* Primary navigation */}
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+        {PRIMARY_NAV.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onNavigate}
+              title={!showLabels ? item.label : undefined}
+              className={({ isActive }) =>
+                cn(
+                  'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
+                  showLabels ? 'w-full' : 'w-11 justify-center',
+                  isActive
+                    ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
+                    : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]',
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--ds-accent)]" />
+                  )}
+                  <Icon
+                    size={18}
+                    className={cn(
+                      'shrink-0 transition-colors',
+                      isActive
+                        ? 'text-[var(--ds-accent)]'
+                        : 'text-[var(--ds-text-subtle)] group-hover:text-[var(--ds-text-muted)]',
+                    )}
+                  />
+                  {showLabels && <span className="truncate">{item.label}</span>}
+                </>
+              )}
+            </NavLink>
+          );
+        })}
+      </nav>
+
+      {/* Footer marker — keeps the rail visually anchored; real account/help
+          controls live in the TopBar user menu, not here (no duplicate nav). */}
+      {showLabels && (
+        <div className="shrink-0 px-5 py-4">
+          <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
+            Admin 2.0
+          </p>
+        </div>
+      )}
+    </aside>
+  );
+}
