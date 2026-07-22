@@ -251,6 +251,43 @@ const svelte = {
 };
 
 // ---------------------------------------------------------------------------
+// Astro
+// ---------------------------------------------------------------------------
+const astro = {
+    id: 'astro',
+    name: 'Astro',
+    category: 'framework',
+    description: 'Astro static or SSR sites',
+    getSteps: (botKey, env) => [
+        {
+            title: 'Add the script to your shared layout',
+            description:
+                'Open your base layout (e.g. src/layouts/Layout.astro) and paste the script just before the closing </body> tag. The is:inline directive tells Astro to leave this third-party script untouched, so it loads on every page that uses the layout.',
+            code: `---
+// src/layouts/Layout.astro
+---
+<html lang="en">
+  <head>
+    <slot name="head" />
+  </head>
+  <body>
+    <slot />
+
+    <script is:inline src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+  </body>
+</html>`,
+            language: 'astro',
+        },
+        {
+            title: 'Build and deploy',
+            description:
+                'Run npm run build and deploy your dist/ output (or SSR adapter). The widget only runs in the browser, so it works with both static and server-rendered Astro sites.',
+            code: null,
+        },
+    ],
+};
+
+// ---------------------------------------------------------------------------
 // WordPress
 // ---------------------------------------------------------------------------
 const wordpress = {
@@ -538,6 +575,7 @@ export const platforms = [
     vue,
     angular,
     svelte,
+    astro,
     wordpress,
     shopify,
     squarespace,
