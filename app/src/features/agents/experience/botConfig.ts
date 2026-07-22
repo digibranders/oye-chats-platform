@@ -196,19 +196,38 @@ export function draftFromBot(raw: Record<string, unknown>): BotConfigDraft {
   };
 }
 
+// ── Normalizers ───────────────────────────────────────────────────────────────
+// Shared by the PATCH builders (what we send) and the save handlers (what we
+// commit to the baseline + visible draft), so the UI always reflects exactly
+// what the server persisted — no drift between a clamped/cleaned value on the
+// wire and a stale raw value on screen.
+
+/** Clamp the numeric live-chat fields into their persisted ranges. */
+export function normalizeLiveChat(config: LiveChatConfig): LiveChatConfig {
+  return {
+    ...config,
+    queueTimeoutSeconds: clamp(config.queueTimeoutSeconds, QUEUE_TIMEOUT.min, QUEUE_TIMEOUT.max),
+    maxQueueSize: clamp(config.maxQueueSize, MAX_QUEUE.min, MAX_QUEUE.max),
+  };
+}
+
+/** Trim every service row and drop the blank ones the server would reject. */
+export function normalizeServiceEntries(services: ServiceEntry[]): ServiceEntry[] {
+  return services
+    .map((s) => ({ name: s.name.trim(), url: s.url.trim() }))
+    .filter((s) => s.name.length > 0);
+}
+
 // ── Per-slice PATCH builders ──────────────────────────────────────────────────
 export function liveChatPatch(config: LiveChatConfig): Record<string, unknown> {
+  const c = normalizeLiveChat(config);
   return {
-    live_chat_enabled: config.enabled,
-    waiting_message: config.waitingMessage,
-    offline_message: config.offlineMessage,
-    handoff_delay_seconds: config.handoffDelaySeconds,
-    live_chat_queue_timeout_seconds: clamp(
-      config.queueTimeoutSeconds,
-      QUEUE_TIMEOUT.min,
-      QUEUE_TIMEOUT.max,
-    ),
-    live_chat_max_queue_size: clamp(config.maxQueueSize, MAX_QUEUE.min, MAX_QUEUE.max),
+    live_chat_enabled: c.enabled,
+    waiting_message: c.waitingMessage,
+    offline_message: c.offlineMessage,
+    handoff_delay_seconds: c.handoffDelaySeconds,
+    live_chat_queue_timeout_seconds: c.queueTimeoutSeconds,
+    live_chat_max_queue_size: c.maxQueueSize,
   };
 }
 
@@ -220,10 +239,10 @@ export function leadFormPatch(config: LeadFormConfig): Record<string, unknown> {
 }
 
 export function servicesPatch(services: ServiceEntry[]): Record<string, unknown> {
-  const cleaned = services
-    .map((s) => ({ name: s.name.trim(), url: s.url.trim() }))
-    .filter((s) => s.name.length > 0)
-    .map((s) => ({ name: s.name, url: s.url.length > 0 ? s.url : null }));
+  const cleaned = normalizeServiceEntries(services).map((s) => ({
+    name: s.name,
+    url: s.url.length > 0 ? s.url : null,
+  }));
   return { services: cleaned };
 }
 

@@ -30,6 +30,8 @@ import {
   draftFromBot,
   leadFormPatch,
   liveChatPatch,
+  normalizeLiveChat,
+  normalizeServiceEntries,
   servicesPatch,
   sliceEqual,
 } from './botConfig';
@@ -126,7 +128,12 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
       try {
         await updateBot(saveBotId, buildPatch());
         if (botIdRef.current !== saveBotId) return;
+        // Commit the normalized/clamped slice to BOTH the baseline and the
+        // visible draft, so the UI shows exactly what the server stored (e.g. an
+        // out-of-range queue timeout or a dropped blank service row) rather than
+        // the un-persisted value the user typed.
         setBaseline((prev) => (prev ? commit(prev) : prev));
+        setDraft((prev) => (prev ? commit(prev) : prev));
         setStatus((s) => ({ ...s, [key]: { saving: false, error: null, saved: true } }));
       } catch (err) {
         if (botIdRef.current !== saveBotId) return;
@@ -188,7 +195,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
             dirty={!sliceEqual(draft.liveChat, baseline.liveChat)}
             status={status.liveChat}
             onSave={() => {
-              const value = draft.liveChat;
+              const value = normalizeLiveChat(draft.liveChat);
               void runSave('liveChat', () => liveChatPatch(value), (prev) => ({ ...prev, liveChat: value }));
             }}
           />
@@ -218,7 +225,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
         dirty={!sliceEqual(draft.services, baseline.services)}
         status={status.services}
         onSave={() => {
-          const value = draft.services;
+          const value = normalizeServiceEntries(draft.services);
           void runSave('services', () => servicesPatch(value), (prev) => ({ ...prev, services: value }));
         }}
       />
@@ -430,8 +437,8 @@ function LiveChatCard({
             />
 
             <TextField
-              label="Offline / unavailable message"
-              hint="Shown when live chat is off or every operator is offline."
+              label="No-operators handoff message"
+              hint="The live-chat handoff reply shown when a visitor asks for a human but live chat is off or every operator is offline. Different from the widget's general “Offline banner” (under Services & copy)."
               value={value.offlineMessage}
               placeholder={LIVE_CHAT_PLACEHOLDERS.offlineMessage}
               maxLength={200}
@@ -752,7 +759,9 @@ function WidgetCopyCard({
             onChange={(e) => onChange((prev) => ({ ...prev, offlineMessage: e.target.value }))}
           />
           <p className="text-[11px] text-[var(--ds-text-subtle)]">
-            Shown inside the widget when no operators are online. Keep it warm and action-oriented.
+            The widget's general offline notice shown when no operators are online. Different from the
+            live-chat “No-operators handoff message” (under Live chat &amp; leads). Keep it warm and
+            action-oriented.
           </p>
         </div>
         <TextField

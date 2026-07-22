@@ -58,13 +58,31 @@ const DEFAULTS = {
   inputPlaceholder: 'Write a message…',
 } as const;
 
-/** Keys inside `widget_messages` that this page owns (everything else is preserved). */
+/**
+ * Keys inside `widget_messages` that the Experience page owns, so they must NOT
+ * ride the appearance/messages passthrough (`extraWidgetMessages`). Two groups:
+ *
+ * 1. Appearance-owned — `settingsFromDraft` (this file) re-writes these on every
+ *    save from the current draft.
+ * 2. Copy-owned — the WidgetCopyCard (`BotConfigSection`) is their SOLE writer,
+ *    persisting them via its own `copyPatch` slice. They are excluded here only
+ *    so the appearance save never re-sends a stale page-load snapshot of them;
+ *    the backend deep-merges `widget_messages`, so leaving them out of the
+ *    appearance PATCH keeps the copy card's values intact.
+ */
 const MANAGED_WIDGET_MESSAGE_KEYS = new Set([
+  // Appearance-owned (written by settingsFromDraft below)
   'welcome_greeting',
   'welcome_subtitle',
   'welcome_suggestions',
   'welcome_suggestions_layout',
   'input_placeholder',
+  // Copy-owned (written only by BotConfigSection's WidgetCopyCard / copyPatch)
+  'offline_message',
+  'live_chat_label',
+  'greeting_message',
+  'rating_prompt',
+  'end_chat_label',
 ]);
 
 function asString(value: unknown, fallback = ''): string {
