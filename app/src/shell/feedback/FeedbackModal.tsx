@@ -20,6 +20,7 @@ import {
   ImagePlus,
   Inbox,
   Info,
+  Lightbulb,
   Loader2,
   MessageSquare,
   MoreHorizontal,
@@ -75,7 +76,7 @@ interface ComposeAttachment {
 
 const TYPES: ReadonlyArray<{ id: FeedbackTypeId; label: string; icon: LucideIcon }> = [
   { id: 'bug', label: 'Bug', icon: Bug },
-  { id: 'feature_request', label: 'Feature', icon: MessageSquare },
+  { id: 'feature_request', label: 'Feature', icon: Lightbulb },
   { id: 'question', label: 'Question', icon: HelpCircle },
   { id: 'other', label: 'Other', icon: MoreHorizontal },
 ];
@@ -312,6 +313,12 @@ export function FeedbackModal({
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Mirror the latest attachments in a ref so the unmount-only cleanup effect
+  // revokes the URLs actually held at unmount — not the empty mount-render
+  // array it would otherwise close over (leaking every preview URL on a
+  // close-without-submit).
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uidRef = useRef(0);
   const typeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -387,13 +394,15 @@ export function FeedbackModal({
     return () => document.removeEventListener('paste', onPaste);
   }, [open, activeTab, addFiles]);
 
-  // Revoke any object URLs still held when the modal unmounts.
-  useEffect(() => {
-    return () => {
-      attachments.forEach((a) => URL.revokeObjectURL(a.previewUrl));
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only cleanup of whatever attachments exist at that time
-  }, []);
+  // Revoke any object URLs still held when the modal unmounts. Reads through
+  // the ref so it revokes whatever attachments exist at unmount, not the
+  // mount-render snapshot.
+  useEffect(
+    () => () => {
+      attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+    },
+    [],
+  );
 
   if (!open) return null;
 
