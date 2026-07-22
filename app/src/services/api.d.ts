@@ -226,6 +226,26 @@ export function verifyTopupPayment(payload: {
 
 // ── Security / account ───────────────────────────────────────────────────────
 export function changeClientPassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }>;
+/** POST /auth/operator-change-password — an operator changes their own password. */
+export function operatorChangePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ message: string }>;
+/**
+ * Start an email change: verifies the current password, stores the new
+ * address as pending, and emails it a confirmation code. The login email
+ * does not change until confirmClientEmailChange succeeds.
+ */
+export function requestClientEmailChange(
+  newEmail: string,
+  currentPassword: string,
+): Promise<{ message: string; pending_email: string }>;
+/** Confirm a pending email change with the OTP sent to the new address. */
+export function confirmClientEmailChange(
+  otp: string,
+): Promise<{ id: number; name: string; email: string; pending_email: null }>;
+/** Cancel a pending email change before it's confirmed. */
+export function cancelClientEmailChange(): Promise<{ ok: boolean }>;
 export function getClientApiKey(): Promise<{ api_key_masked: string }>;
 export function regenerateClientApiKey(): Promise<{ ok: boolean; api_key: string; api_key_masked: string }>;
 

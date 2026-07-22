@@ -46,6 +46,8 @@ export interface CurrentUser {
   id: number;
   name?: string;
   email?: string;
+  /** Set only for clients with an unconfirmed change-email request in flight; null/undefined otherwise. Always unset for operators. */
+  pending_email?: string | null;
   company_name?: string;
   website?: string;
   bot_count?: number;
