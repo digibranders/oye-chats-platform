@@ -32,6 +32,8 @@ import { updateAffiliateCode } from '../../services/api';
 import { type AffiliateCodeView, formatPct, referralShareUrl } from './affiliateModel';
 import { useAffiliateData } from './useAffiliateData';
 import { CreateCodeModal } from './CreateCodeModal';
+import { EditCodeModal } from './EditCodeModal';
+import { ReferralsModal } from './ReferralsModal';
 
 /**
  * Where a `?ref=CODE` visitor lands — the public marketing site captures the
@@ -87,6 +89,8 @@ function CopyLinkButton({ url, label }: { url: string; label: string }): ReactEl
 export function AffiliatePage(): ReactElement {
   const { loading, notEnrolled, error, profile, codes, stats, reload } = useAffiliateData();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editCode, setEditCode] = useState<AffiliateCodeView | null>(null);
+  const [referralsFor, setReferralsFor] = useState<AffiliateCodeView | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -175,6 +179,12 @@ export function AffiliatePage(): ReactElement {
         render: (row) => (
           <div className="flex items-center justify-end gap-1">
             <CopyLinkButton url={referralShareUrl(row.code, REFERRAL_BASE_URL)} label={`Copy share link for ${row.code}`} />
+            <Button type="button" variant="ghost" size="sm" onClick={() => setReferralsFor(row)}>
+              View
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditCode(row)}>
+              Edit
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -330,6 +340,24 @@ export function AffiliatePage(): ReactElement {
           setCreateOpen(false);
           reload();
         }}
+      />
+
+      <EditCodeModal
+        open={editCode !== null}
+        onClose={() => setEditCode(null)}
+        code={editCode}
+        poolPct={poolPct}
+        onSaved={() => {
+          setEditCode(null);
+          reload();
+        }}
+      />
+
+      <ReferralsModal
+        open={referralsFor !== null}
+        onClose={() => setReferralsFor(null)}
+        codeId={referralsFor?.id ?? null}
+        codeName={referralsFor?.code ?? null}
       />
     </PageContainer>
   );

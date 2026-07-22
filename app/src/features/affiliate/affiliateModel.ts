@@ -128,6 +128,88 @@ export function toAffiliateStats(raw: unknown): AffiliateStatsView {
   };
 }
 
+// ── Per-code referral detail (`GET /affiliate/codes/{id}/referrals`) ─────────
+
+/** How each ₹ of a referred bill splits, as whole percents. */
+export interface ReferralBreakdown {
+  poolPct: number;
+  affiliatePct: number;
+  customerDiscountPct: number;
+  codeUnusedPoolPct: number;
+}
+
+/** Aggregate monthly-equivalent money across all of a code's paying referrals (INR minor). */
+export interface ReferralDistribution {
+  /** Dominant currency of the set, or null when there are no paying referrals. */
+  currency: string | null;
+  payingReferrals: number;
+  monthlyTotalMinor: number;
+  monthlyAffiliateMinor: number;
+  monthlyCustomerSavedMinor: number;
+}
+
+/** One referred customer with their per-bill contribution (INR minor). */
+export interface ReferralCustomer {
+  clientId: number;
+  name: string | null;
+  /** Masked on the affiliate route, full on the super-admin route. */
+  email: string | null;
+  attributedAt: string | null;
+  planSlug: string;
+  currency: string;
+  fullPriceMinor: number;
+  paidMinor: number;
+  affiliateEarnsMinor: number;
+  customerSavedMinor: number;
+}
+
+export interface ReferralDetailView {
+  code: string;
+  breakdown: ReferralBreakdown;
+  distribution: ReferralDistribution;
+  referrals: ReferralCustomer[];
+}
+
+export function toReferralDetail(raw: unknown): ReferralDetailView {
+  const record = asRecord(raw) ?? {};
+  const breakdown = asRecord(record.breakdown) ?? {};
+  const distribution = asRecord(record.distribution) ?? {};
+  const referralsRaw = Array.isArray(record.referrals) ? record.referrals : [];
+
+  return {
+    code: toText(record.code),
+    breakdown: {
+      poolPct: toNumber(breakdown.pool_pct),
+      affiliatePct: toNumber(breakdown.affiliate_pct),
+      customerDiscountPct: toNumber(breakdown.customer_discount_pct),
+      codeUnusedPoolPct: toNumber(breakdown.code_unused_pool_pct),
+    },
+    distribution: {
+      currency: toOptionalText(distribution.currency),
+      payingReferrals: toNumber(distribution.paying_referrals),
+      monthlyTotalMinor: toNumber(distribution.monthly_total_cents),
+      monthlyAffiliateMinor: toNumber(distribution.monthly_affiliate_cents),
+      monthlyCustomerSavedMinor: toNumber(distribution.monthly_customer_saved_cents),
+    },
+    referrals: referralsRaw.map((r) => {
+      const row = asRecord(r) ?? {};
+      const pricing = asRecord(row.pricing) ?? {};
+      return {
+        clientId: toNumber(row.client_id),
+        name: toOptionalText(row.name),
+        email: toOptionalText(row.email),
+        attributedAt: toOptionalText(row.attributed_at),
+        planSlug: toText(pricing.plan_slug),
+        currency: toText(pricing.currency) || 'INR',
+        fullPriceMinor: toNumber(pricing.full_price_cents),
+        paidMinor: toNumber(pricing.paid_cents),
+        affiliateEarnsMinor: toNumber(pricing.affiliate_earns_cents),
+        customerSavedMinor: toNumber(pricing.customer_saved_cents),
+      };
+    }),
+  };
+}
+
 // ── Formatters ───────────────────────────────────────────────────────────────
 
 /** Format INR minor units (paise) as a rupee string: `142350 → "₹1,423.50"`. */
