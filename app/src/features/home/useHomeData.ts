@@ -21,6 +21,7 @@ import {
   getTopQuestions,
 } from '../../services/api';
 import type { Bot, TopQuestion } from '../../types/domain';
+import type { FeedbackItem } from '../feedback/types';
 import {
   aggregateTotals,
   buildActivity,
@@ -71,7 +72,7 @@ async function loadHomeData(): Promise<HomeData> {
         getDashboardStats(bot.id).catch(() => null),
         getLeadStats(bot.id).catch(() => null),
         getTopQuestions(bot.id).catch((): TopQuestion[] => []),
-        getFeedbackData(bot.id).catch((): Array<Record<string, unknown>> => []),
+        getFeedbackData(bot.id).catch((): FeedbackItem[] => []),
       ]);
       return { bot, stats, leads, questions, feedback };
     }),
