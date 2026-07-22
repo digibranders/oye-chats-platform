@@ -342,7 +342,6 @@ export function ChannelsPage(): ReactElement {
     <PageContainer
       title="Channels"
       description="Where your AI agent is connected and talking to people."
-      className="px-4 py-6 md:px-8"
     >
       {body()}
     </PageContainer>

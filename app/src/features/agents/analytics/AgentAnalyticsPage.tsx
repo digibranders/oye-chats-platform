@@ -108,11 +108,7 @@ export function AgentAnalyticsPage(): ReactElement {
   // Agent list still resolving — hold the layout with skeletons.
   if (agentLoading && !agent) {
     return (
-      <PageContainer
-        title="Analytics"
-        description="How your AI is performing."
-        className="px-4 py-6 md:px-8"
-      >
+      <PageContainer title="Analytics" description="How your AI is performing.">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-28 rounded-xl" />
@@ -126,7 +122,7 @@ export function AgentAnalyticsPage(): ReactElement {
   // Route points at an agent that doesn't exist (or the list failed to load).
   if (!agent) {
     return (
-      <PageContainer title="Analytics" className="px-4 py-6 md:px-8">
+      <PageContainer title="Analytics">
         <EmptyState
           icon={AlertTriangle}
           title={agentError ? 'Couldn’t load this agent' : 'Agent not found'}
@@ -144,11 +140,7 @@ export function AgentAnalyticsPage(): ReactElement {
 
   if (error) {
     return (
-      <PageContainer
-        title="Analytics"
-        description="How your AI is performing."
-        className="px-4 py-6 md:px-8"
-      >
+      <PageContainer title="Analytics" description="How your AI is performing.">
         <EmptyState
           icon={AlertTriangle}
           title="Couldn’t load analytics"
@@ -182,11 +174,7 @@ export function AgentAnalyticsPage(): ReactElement {
     : 0;
 
   return (
-    <PageContainer
-      title="Analytics"
-      description="How your AI is performing."
-      className="px-4 py-6 md:px-8"
-    >
+    <PageContainer title="Analytics" description="How your AI is performing.">
       {/* KPI row — the four numbers that summarise agent health. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard
