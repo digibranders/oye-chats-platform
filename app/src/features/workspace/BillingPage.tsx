@@ -1,4 +1,5 @@
-import { type ReactElement, type ReactNode, useMemo, useState } from 'react';
+import { type ReactElement, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Building2,
@@ -27,13 +28,12 @@ import {
   cn,
 } from '../../design-system';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { Tabs } from '../../design-system/components/Tabs';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
-import { BillingSummaryBand } from './billing/BillingSummaryBand';
-import { PlanMatrix } from './billing/PlanMatrix';
+import { BillingSummaryCards } from './billing/BillingSummaryCards';
+import { ComparePlans } from './billing/ComparePlans';
 import { PlanConfirmDrawer } from './billing/PlanConfirmDrawer';
 import type { BillingCycle } from './billing/planMath';
 import {
@@ -46,40 +46,30 @@ import {
   type PlanView,
 } from './billingModel';
 
-type TabKey = 'plan' | 'invoices' | 'details';
-
-const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
-  { key: 'plan', label: 'Plan & seats' },
-  { key: 'invoices', label: 'Invoices' },
-  { key: 'details', label: 'Billing details' },
-];
-
 /**
- * BillingPage — the Workspace ▸ Billing surface. One job: answer
- * "What am I paying?". A single summary band states the current plan, cost,
- * seats, renewal, and payment method (each fact exactly once); the Plan tab
- * carries a dense feature-matrix comparison and seat management; Invoices and
- * Billing details round out the money record.
+ * BillingPage — the Workspace ▸ Billing surface: a subscription-management
+ * dashboard answering "what am I paying for?". Four summary cards
+ * (Subscription · Renewal · Payment · Credits) lead; issued invoices and the
+ * buyer's tax identity follow; the full plan comparison lives in a collapsed
+ * disclosure at the bottom (users come here to manage, not to re-shop).
  *
- * Credit balance and usage live on the separate Workspace ▸ Usage page — this
- * page is deliberately about money owed and paid, not consumption.
- *
+ * Credit balance and consumption live on the separate Workspace ▸ Usage page.
  * Choosing a plan opens the slim {@link PlanConfirmDrawer}, which runs the
  * shared checkout money-path against the real Razorpay + subscription
- * endpoints. Every success reloads the page and surfaces a message in the
- * aria-live notice region.
+ * endpoints. Every success reloads and surfaces a message in the aria-live
+ * notice region.
  */
 export function BillingPage(): ReactElement {
   const { loading, error, data, reload } = useBillingData();
-  const [tab, setTab] = useState<TabKey>('plan');
+  const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
 
   const subscription = data?.subscription ?? null;
   const plan = data?.plan ?? null;
 
-  // Comparison billing cycle — seeded from the active subscription so the
-  // matrix opens showing the customer's own cadence.
+  // Comparison billing cycle — seeded to the customer's own cadence.
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
+  const [compareOpen, setCompareOpen] = useState(false);
   const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
   const [topupOpen, setTopupOpen] = useState(false);
   const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
@@ -92,6 +82,14 @@ export function BillingPage(): ReactElement {
   const handleSuccess = (message: string): void => {
     setNotice(message);
     reload();
+  };
+
+  // "Change plan" reveals the comparison disclosure and scrolls it into view.
+  const openCompare = (): void => {
+    setCompareOpen(true);
+    requestAnimationFrame(() =>
+      document.getElementById('compare-plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
   };
 
   // Seat math mirrors legacy pages/Billing.jsx: a plan with zero included seats
@@ -122,12 +120,21 @@ export function BillingPage(): ReactElement {
     : formatDate(subscription?.currentPeriodEnd ?? null);
   const renewalCaption = subscription?.trialEnd ? 'Trial ends' : pendingCancel ? 'Plan ends' : 'Renews';
 
-  const paymentLabel = subscription?.paymentProvider ? capitalize(subscription.paymentProvider) : '—';
+  const autoRenew = Boolean(subscription?.hasActive && !subscription.cancelAtPeriodEnd);
+  // A Free plan isn't billed, so it has no payment method regardless of the
+  // subscription's default provider value.
+  const provider = plan?.isPaid ? subscription?.paymentProvider ?? null : null;
+  const paymentLabel = provider ? capitalize(provider) : 'None';
+  const paymentSub = provider
+    ? provider.toLowerCase() === 'razorpay'
+      ? 'UPI, card, or NetBanking via Razorpay.'
+      : 'Billed manually by our team.'
+    : 'Added when you start a paid plan.';
 
   return (
     <PageContainer
       title="Billing"
-      description="Your plan, seats, invoices, and payment method — everything you're paying for."
+      description="Manage your subscription, payment methods and invoices."
       actions={
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setTopupOpen(true)}>
@@ -177,20 +184,23 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
-          {/* Consolidated money summary — every fact appears exactly once. */}
-          <BillingSummaryBand
+          {/* Subscription-management overview — four focused cards. */}
+          <BillingSummaryCards
             planName={plan?.name ?? 'Free'}
             status={subscription.status}
-            costLabel={priceLabel}
-            seats={totalSeats}
+            priceLabel={priceLabel}
+            isPaid={Boolean(plan?.isPaid)}
             renewalCaption={renewalCaption}
             renewalLabel={renewalLabel}
+            autoRenew={autoRenew}
             paymentLabel={paymentLabel}
-            isPaid={Boolean(plan?.isPaid)}
-            onChangePlan={() => setTab('plan')}
+            paymentSub={paymentSub}
+            creditsPerMonth={plan?.creditsPerMonth ?? 0}
+            onChangePlan={openCompare}
+            onViewUsage={() => void navigate('/workspace/usage')}
           />
 
-          {/* Scheduled downgrade — applies account-wide, so it sits above tabs. */}
+          {/* Scheduled downgrade — applies account-wide. */}
           {subscription.scheduledChange && (
             <ScheduledChangeBanner
               planName={subscription.scheduledChange.planName}
@@ -207,37 +217,32 @@ export function BillingPage(): ReactElement {
             />
           )}
 
-          <Tabs
-            ariaLabel="Billing sections"
-            value={tab}
-            onChange={(key) => setTab(key as TabKey)}
-            tabs={TABS.map((item) => ({ key: item.key, label: item.label }))}
-          />
-
-          {/* All three panels stay mounted (inactive ones `hidden`) so every
-              tab's aria-controls target resolves in the DOM, per the WAI-ARIA
-              tabs contract. */}
-          <TabPanel tabKey="plan" active={tab === 'plan'}>
-            <PlanAndSeatsTab
-              plan={plan}
+          {/* Operator seats — only meaningful once the plan includes them. */}
+          {includedSeats > 0 && (
+            <SeatManager
               totalSeats={totalSeats}
               includedSeats={includedSeats}
-              availablePlans={data.availablePlans}
-              cycle={cycle}
-              onCycleChange={setCycle}
-              onSelectPlan={(candidate) => setConfirmPlan(candidate)}
+              seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
               onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
               onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
             />
-          </TabPanel>
+          )}
 
-          <TabPanel tabKey="invoices" active={tab === 'invoices'}>
-            <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
-          </TabPanel>
+          <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
 
-          <TabPanel tabKey="details" active={tab === 'details'}>
-            <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
-          </TabPanel>
+          <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
+
+          {data.availablePlans.length > 0 && (
+            <ComparePlans
+              plans={data.availablePlans}
+              currentSlug={plan?.slug ?? 'free'}
+              cycle={cycle}
+              onCycleChange={setCycle}
+              onSelect={(candidate) => setConfirmPlan(candidate)}
+              open={compareOpen}
+              onOpenChange={setCompareOpen}
+            />
+          )}
         </>
       )}
 
@@ -276,91 +281,7 @@ export function BillingPage(): ReactElement {
   );
 }
 
-// ── Tab panel wrapper (a11y association with the Tabs pattern) ────────────────
-
-function TabPanel({
-  tabKey,
-  active,
-  children,
-}: {
-  tabKey: TabKey;
-  active: boolean;
-  children: ReactNode;
-}): ReactElement {
-  return (
-    <div
-      role="tabpanel"
-      id={`tabpanel-${tabKey}`}
-      aria-labelledby={`tab-${tabKey}`}
-      hidden={!active}
-      tabIndex={active ? 0 : -1}
-      className="space-y-6 focus-visible:outline-none"
-    >
-      {children}
-    </div>
-  );
-}
-
-// ── Plan & seats ──────────────────────────────────────────────────────────────
-
-interface PlanAndSeatsTabProps {
-  plan: PlanView | null;
-  totalSeats: number;
-  includedSeats: number;
-  availablePlans: PlanView[];
-  cycle: BillingCycle;
-  onCycleChange: (cycle: BillingCycle) => void;
-  onSelectPlan: (plan: PlanView) => void;
-  onAddSeat: () => void;
-  onRemoveSeat: () => void;
-}
-
-function PlanAndSeatsTab({
-  plan,
-  totalSeats,
-  includedSeats,
-  availablePlans,
-  cycle,
-  onCycleChange,
-  onSelectPlan,
-  onAddSeat,
-  onRemoveSeat,
-}: PlanAndSeatsTabProps): ReactElement {
-  const seatPriceLabel = plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—';
-
-  return (
-    <>
-      {/* Seat manager — only meaningful once the plan includes seats. On Free,
-          the summary band's "Choose a plan" is the path to seats. */}
-      {includedSeats > 0 && (
-        <SeatManager
-          totalSeats={totalSeats}
-          includedSeats={includedSeats}
-          seatPriceLabel={seatPriceLabel}
-          onAddSeat={onAddSeat}
-          onRemoveSeat={onRemoveSeat}
-        />
-      )}
-
-      {/* Plan comparison — the real catalog from getSubscriptionPlans. */}
-      {availablePlans.length > 0 && (
-        <section aria-label="Available plans" className="space-y-4">
-          <SectionHeader
-            title="Compare plans"
-            description="Pick the plan that matches how much you expect your AI to handle."
-          />
-          <PlanMatrix
-            plans={availablePlans}
-            currentSlug={plan?.slug ?? 'free'}
-            cycle={cycle}
-            onCycleChange={onCycleChange}
-            onSelect={onSelectPlan}
-          />
-        </section>
-      )}
-    </>
-  );
-}
+// ── Operator seats ────────────────────────────────────────────────────────────
 
 function SeatManager({
   totalSeats,

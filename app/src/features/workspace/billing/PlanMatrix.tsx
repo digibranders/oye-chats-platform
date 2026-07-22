@@ -73,6 +73,8 @@ export interface PlanMatrixProps {
   cycle: BillingCycle;
   onCycleChange: (cycle: BillingCycle) => void;
   onSelect: (plan: PlanView) => void;
+  /** Suppress the built-in cycle toggle when a parent already renders one. */
+  hideToggle?: boolean;
 }
 
 /**
@@ -88,6 +90,7 @@ export function PlanMatrix({
   cycle,
   onCycleChange,
   onSelect,
+  hideToggle = false,
 }: PlanMatrixProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
   const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
@@ -98,30 +101,11 @@ export function PlanMatrix({
   return (
     <div className="space-y-4">
       {/* Monthly / Annual toggle */}
-      <div className="flex justify-end">
-        <div
-          role="group"
-          aria-label="Billing cycle"
-          className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-subtle)] p-0.5 text-[13px]"
-        >
-          {(['monthly', 'annual'] as const).map((key) => (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={cycle === key}
-              onClick={() => onCycleChange(key)}
-              className={cn(
-                'rounded-md px-3 py-1.5 font-medium transition-colors',
-                cycle === key
-                  ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
-                  : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-              )}
-            >
-              {key === 'monthly' ? 'Monthly' : maxDiscount > 0 ? `Annual · save ${maxDiscount}%` : 'Annual'}
-            </button>
-          ))}
+      {!hideToggle && (
+        <div className="flex justify-end">
+          <CycleToggle cycle={cycle} maxDiscount={maxDiscount} onCycleChange={onCycleChange} />
         </div>
-      </div>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-[var(--ds-border)]">
         <table className="w-full min-w-[720px] border-collapse text-[13px]">
@@ -182,6 +166,43 @@ export function PlanMatrix({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** The Monthly / Annual segmented control, shared by the matrix and the
+ *  Compare-plans disclosure so both drive one cycle. */
+export function CycleToggle({
+  cycle,
+  maxDiscount,
+  onCycleChange,
+}: {
+  cycle: BillingCycle;
+  maxDiscount: number;
+  onCycleChange: (cycle: BillingCycle) => void;
+}): ReactElement {
+  return (
+    <div
+      role="group"
+      aria-label="Billing cycle"
+      className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-subtle)] p-0.5 text-[13px]"
+    >
+      {(['monthly', 'annual'] as const).map((key) => (
+        <button
+          key={key}
+          type="button"
+          aria-pressed={cycle === key}
+          onClick={() => onCycleChange(key)}
+          className={cn(
+            'rounded-md px-3 py-1.5 font-medium transition-colors',
+            cycle === key
+              ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+              : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
+          )}
+        >
+          {key === 'monthly' ? 'Monthly' : maxDiscount > 0 ? `Annual · save ${maxDiscount}%` : 'Annual'}
+        </button>
+      ))}
     </div>
   );
 }
