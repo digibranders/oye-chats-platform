@@ -55,7 +55,7 @@ export function InboxPage(): ReactElement {
       <div role="tabpanel" id="tabpanel-live" aria-labelledby="tab-live" hidden={tab !== 'live'}>
         {tab === 'live' && (
           <FeatureGate feature="live_chat" intent="live_chat">
-            <LiveChatPanel operator={operator} />
+            <LiveChatPanel operator={operator} botId={botId} />
           </FeatureGate>
         )}
       </div>
