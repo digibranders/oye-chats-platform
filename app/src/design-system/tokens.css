@@ -68,6 +68,7 @@
   --ds-radius-2xl: 20px;
   --ds-radius-full: 9999px;
 
+  /* Forward contract — spacing/type/motion scale; adopt incrementally. */
   /* Spacing — 4px base scale */
   --ds-space-1: 4px;
   --ds-space-2: 8px;

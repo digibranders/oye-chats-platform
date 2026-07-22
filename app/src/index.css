@@ -251,7 +251,7 @@ body {
 
 /* ── Gradient mesh for auth pages — Voltage Paper violet ── */
 .gradient-mesh {
-  background: linear-gradient(-45deg, #4a044e, #701a75, #a21caf, #86198f, #701a75);
+  background: linear-gradient(-45deg, #2E1065, #4C1D95, #7C3AED, #6D28D9);
   background-size: 400% 400%;
   animation: gradient-shift 15s ease infinite;
 }
