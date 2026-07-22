@@ -59,3 +59,5 @@ export { Tabs } from './components/Tabs';
 export type { TabsProps, TabItem } from './components/Tabs';
 export { Modal } from './components/Modal';
 export type { ModalProps, ModalSize } from './components/Modal';
+export { Popover } from './components/Popover';
+export type { PopoverProps, PopoverAlign, PopoverTriggerProps } from './components/Popover';
