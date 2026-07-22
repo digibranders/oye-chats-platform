@@ -310,13 +310,33 @@ export function parseModel(raw: Record<string, unknown> | null, framework: strin
   }
 
   const order = readOrder(raw);
+  const resolvedFramework = toStr(raw.framework, framework);
+
+  // A non-empty but DIMENSIONLESS config (e.g. `{"framework":"bant"}` — what the
+  // backend stores when a framework is stamped without a full config) would
+  // otherwise render zero scoring dimensions and let "Apply" persist an empty
+  // conversation_order. Seed the default dimensions so the editor always has a
+  // complete starting point, while preserving any thresholds/decay/behavioural
+  // that were stored. (Only BANT presets are available client-side; non-BANT
+  // dimensions are filled from the framework preset at scoring time server-side.)
+  if (order.length === 0) {
+    return {
+      framework: resolvedFramework,
+      order: [...DEFAULT_ORDER],
+      dimensions: structuredClone(DEFAULT_DIMENSIONS),
+      thresholds: coerceThresholds(raw.thresholds),
+      decay: coerceDecay(raw.decay),
+      behavioral: coerceBehavioral(raw.behavioral_config),
+    };
+  }
+
   const dimensions: Record<string, QualDimension> = {};
   for (const key of order) {
     dimensions[key] = coerceDimension(raw[key], key);
   }
 
   return {
-    framework: toStr(raw.framework, framework),
+    framework: resolvedFramework,
     order,
     dimensions,
     thresholds: coerceThresholds(raw.thresholds),

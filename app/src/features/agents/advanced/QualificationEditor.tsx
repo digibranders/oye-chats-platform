@@ -443,43 +443,49 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
         </div>
       </section>
 
-      {/* ── Score decay ────────────────────────────────────────────────────────*/}
-      <section className="space-y-3 border-t border-[var(--ds-border)] pt-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Timer size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
-            <h3 className="text-[13px] font-semibold text-[var(--ds-text)]">Score decay</h3>
-          </div>
-          <Toggle
-            checked={model.decay.enabled}
-            onChange={(next) => patchDecay({ enabled: next })}
-            label="Enable score decay"
-          />
-        </div>
-        <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          Gradually lower stale lead scores over time so fresh intent ranks higher.
-        </p>
-        {model.decay.enabled && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NumberField
-              id="decay-timeline"
-              label="Timeline decay per 30 days"
-              value={model.decay.timeline_decay_per_30d}
-              step={1}
-              min={0}
-              onChange={(raw) => patchDecay({ timeline_decay_per_30d: toInt(raw, 0) })}
-            />
-            <NumberField
-              id="decay-need"
-              label="Need decay per 30 days"
-              value={model.decay.need_decay_per_30d}
-              step={1}
-              min={0}
-              onChange={(raw) => patchDecay({ need_decay_per_30d: toInt(raw, 0) })}
+      {/* ── Score decay ────────────────────────────────────────────────────────
+          Decay is applied by the backend per `{dimension}_decay_per_30d`, and
+          these two knobs write `timeline_`/`need_` — which only exist on BANT.
+          For every other framework they'd map to non-existent dimensions and
+          silently no-op, so the section is shown only for BANT. */}
+      {framework === 'bant' && (
+        <section className="space-y-3 border-t border-[var(--ds-border)] pt-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <Timer size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
+              <h3 className="text-[13px] font-semibold text-[var(--ds-text)]">Score decay</h3>
+            </div>
+            <Toggle
+              checked={model.decay.enabled}
+              onChange={(next) => patchDecay({ enabled: next })}
+              label="Enable score decay"
             />
           </div>
-        )}
-      </section>
+          <p className="text-[12px] text-[var(--ds-text-subtle)]">
+            Gradually lower stale lead scores over time so fresh intent ranks higher.
+          </p>
+          {model.decay.enabled && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <NumberField
+                id="decay-timeline"
+                label="Timeline decay per 30 days"
+                value={model.decay.timeline_decay_per_30d}
+                step={1}
+                min={0}
+                onChange={(raw) => patchDecay({ timeline_decay_per_30d: toInt(raw, 0) })}
+              />
+              <NumberField
+                id="decay-need"
+                label="Need decay per 30 days"
+                value={model.decay.need_decay_per_30d}
+                step={1}
+                min={0}
+                onChange={(raw) => patchDecay({ need_decay_per_30d: toInt(raw, 0) })}
+              />
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── Behavioural scoring ────────────────────────────────────────────────*/}
       <section className="space-y-3 border-t border-[var(--ds-border)] pt-5">

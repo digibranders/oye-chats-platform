@@ -1812,10 +1812,23 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 bot.bant_config = merged_bant_config
 
             if "bant_config" in update_data and update_data["bant_config"] is not None:
+                # The qualification editor always sends the COMPLETE authoritative
+                # config, so store it wholesale. A shallow merge would resurrect
+                # dimensions the user removed or renamed — orphan dimension dicts
+                # linger at the top level and ``_dimension_keys`` re-scores them,
+                # silently corrupting every session's composite score. Replacing
+                # is the only way a removal actually takes effect. Reads fall back
+                # to the framework preset (``get_framework_config`` deep-merges the
+                # preset under the stored config), so a config that omits a key is
+                # still complete at scoring time.
                 incoming_bant = dict(update_data["bant_config"])
-                merged_bant = dict(bot.bant_config or {})
-                merged_bant.update(incoming_bant)
-                bot.bant_config = merged_bant
+                # Preserve the framework applied just above if the payload omits it
+                # (e.g. a combined framework-switch + config save).
+                if "framework" not in incoming_bant:
+                    existing_framework = (bot.bant_config or {}).get("framework")
+                    if existing_framework:
+                        incoming_bant["framework"] = existing_framework
+                bot.bant_config = incoming_bant
                 update_data.pop("bant_config")
 
             # Normalize services to ``[{name, url}]`` regardless of whether the
