@@ -211,6 +211,68 @@ def test_no_ledger_scope_goes_negative_after_partial_refund(db):
     assert _balances(db, client.id, None) == 0
 
 
+def test_cumulative_partial_refunds_flip_status_to_refunded(db):
+    """Finding #5: an invoice fully refunded via SEVERAL partial refunds must end
+    up ``refunded``, not stay ``partially_refunded``. The handler accumulates
+    each refund event's amount (deduped on refund id) into refunded_minor."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-cumul")
+    credit_service.grant_topup(db, client.id, 1000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_cumul",
+    )
+    db.add(inv)
+    db.commit()
+
+    # First 50% refund → partially_refunded.
+    rzp._handle_refund_created(db, _refund_payload("pay_cumul", 2000, refund_id="rf_c1"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.status == "partially_refunded"
+    assert inv.refunded_minor == 2000
+
+    # Second 50% refund (distinct refund id) → cumulative 4000 == charge → refunded.
+    rzp._handle_refund_created(db, _refund_payload("pay_cumul", 2000, refund_id="rf_c2"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.status == "refunded"
+    assert inv.refunded_minor == 4000
+
+
+def test_duplicate_refund_event_does_not_double_accumulate(db):
+    """The refund-id dedup must keep refunded_minor exact: a redelivered
+    refund.created (same refund id) claws once and accumulates once."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-cumul-dup")
+    credit_service.grant_topup(db, client.id, 1000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_cumul_dup",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_cumul_dup", 2000, refund_id="rf_dup"))
+    rzp._handle_refund_created(db, _refund_payload("pay_cumul_dup", 2000, refund_id="rf_dup"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.refunded_minor == 2000  # accumulated once, not 4000
+    assert inv.status == "partially_refunded"
+
+
 def test_payment_captured_fetches_order_notes_when_absent(db, monkeypatch):
     """payment.captured carries only the payment entity; top-up metadata lives on
     the order's notes. The handler must fetch the order so a top-up grants from
