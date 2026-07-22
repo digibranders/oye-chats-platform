@@ -340,3 +340,38 @@ export function uploadFeedbackAttachment(file: File): Promise<{ url: string }>;
 
 /** GET /client/feedback — the caller's own feedback, newest first. */
 export function getMyFeedback(): Promise<PlatformFeedbackItem[]>;
+
+// ── Live chat: operator console ──────────────────────────────────────────────
+// Runtime wrappers live in services/api.js; typed loosely (callers cast to a
+// local response shape). Consumed by the Inbox live-chat operator console.
+
+/** GET /operators/queue — waiting sessions + this operator's active chats. */
+export function getOperatorQueue(): Promise<Record<string, unknown>>;
+/** GET /operators/qualified-sessions — bot sessions eligible for proactive takeover. */
+export function getQualifiedBotSessions(limit?: number): Promise<Record<string, unknown>>;
+/** POST /operators/accept/{sessionId} — take a waiting visitor (bot→live). */
+export function acceptChat(sessionId: string, operatorId?: number | null): Promise<Record<string, unknown>>;
+/** POST /operators/close/{sessionId} — end an active chat (live→bot). */
+export function closeOperatorChat(sessionId: string): Promise<Record<string, unknown>>;
+/** POST /operators/transfer/{sessionId} — hand a chat to another operator/department. */
+export function transferChat(sessionId: string, data: Record<string, unknown>): Promise<Record<string, unknown>>;
+/** GET /operators/session/{sessionId} — visitor identity/geo/device + history. */
+export function getSessionDetails(sessionId: string): Promise<Record<string, unknown>>;
+/** POST /operators/connect-request — proactively invite a bot-session visitor to a human. */
+export function sendConnectRequest(
+  sessionId: string,
+  operatorId?: number | null,
+): Promise<Record<string, unknown>>;
+
+// ── Knowledge: recrawl lifecycle ─────────────────────────────────────────────
+/** POST /bots/{id}/crawl/cancel — stop an in-progress crawl. */
+export function cancelCrawl(botId: number): Promise<Record<string, unknown>>;
+/** Preview a recrawl diff (unchanged/new/removed) before spending credits; mode 'full' | 'delta'. */
+export function diffRecrawl(
+  url: string,
+  replaceSource?: string | null,
+  botId?: number,
+  mode?: string,
+): Promise<Record<string, unknown>>;
+/** GET recrawl history/status for a bot's sources. */
+export function getRecrawlStatus(botId: number): Promise<Record<string, unknown>>;
