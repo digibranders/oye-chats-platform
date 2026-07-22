@@ -30,6 +30,7 @@ import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { AffiliatePage } from '../features/affiliate/AffiliatePage';
 import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
+import { InviteAirlock } from '../features/workspace/InviteAirlock';
 import { SettingsPage } from '../features/settings';
 
 // Error surfaces — attached as `errorElement`s so route/render crashes render an
@@ -67,6 +68,10 @@ export const router = createBrowserRouter([
       { path: '/forgot-password', element: <ForgotPassword /> },
       { path: '/auth/callback', element: <OAuthCallback /> },
       { path: '/affiliate-invite', element: <AffiliateInvite /> },
+      // Team-invite airlock — public magic link; resolves the token and routes
+      // on auth state. Must stay OUTSIDE the ProtectedLayout guard so an
+      // invited (often signed-out) visitor can land and accept.
+      { path: '/invite/:token', element: <InviteAirlock /> },
 
       // ── Authenticated area — token guard + reused Workspace/Bot/Crawl providers ──
       {
