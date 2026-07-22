@@ -21,6 +21,7 @@ import {
   Input,
   MetricCard,
   PageContainer,
+  QuotaMeter,
   SectionHeader,
   Skeleton,
   StatusBadge,
@@ -44,6 +45,8 @@ import {
 } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Department, type Operator, type OperatorInvite } from '../../types/domain';
 
 // ── Local helpers ────────────────────────────────────────────────────────────
@@ -149,6 +152,10 @@ export function MembersPage(): ReactElement {
   // (and the solo-owner case where role is still null) can.
   const canManage = currentRole !== 'operator';
   const selectedBotId = selectedBot?.id ?? null;
+
+  const { entitlements, limitFor, withinLimit } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const seatLimit = limitFor('operators');
 
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -273,6 +280,14 @@ export function MembersPage(): ReactElement {
   };
 
   const data = phase.status === 'ready' ? phase.data : null;
+
+  // Workspace-wide seat usage. `getOperators()` (above) already fetches every
+  // active operator for the client — not just this bot's roster — so its
+  // length matches what `entitlements.usage.operators` counts server-side.
+  // Prefer the entitlements value (authoritative, workspace-scoped); fall
+  // back to what the page already loaded only if it's ever absent.
+  const seatsUsed = entitlements.usage.operators ?? data?.operators.length ?? 0;
+  const atSeatLimit = !withinLimit('operators', seatsUsed);
 
   // Derived, bot-scoped rosters. Operators and invites are bound to a single
   // bot; departments are workspace-level and shown in full.
@@ -538,8 +553,22 @@ export function MembersPage(): ReactElement {
 
   const canInvite = canManage && !!selectedBotId;
 
+  const handleInviteClick = (): void => {
+    if (atSeatLimit) {
+      openUpgradeModal({
+        title: 'You’ve used all your seats',
+        description:
+          seatLimit === -1
+            ? 'Upgrade your plan to invite more members.'
+            : `You’ve used all ${seatLimit} seat${seatLimit === 1 ? '' : 's'} on your plan. Upgrade to invite more members.`,
+      });
+      return;
+    }
+    setInviteOpen((open) => !open);
+  };
+
   const pageActions = canInvite ? (
-    <Button onClick={() => setInviteOpen((open) => !open)}>
+    <Button onClick={handleInviteClick}>
       <UserPlus size={16} aria-hidden="true" />
       Invite member
     </Button>
@@ -551,6 +580,13 @@ export function MembersPage(): ReactElement {
       description="Everyone who can see conversations and answer visitors in this workspace."
       actions={pageActions}
     >
+      {/* Seats used against the plan's operator limit — workspace-wide. */}
+      {phase.status === 'ready' && (
+        <div className="max-w-xs">
+          <QuotaMeter label="Seats" used={seatsUsed} limit={seatLimit} />
+        </div>
+      )}
+
       {/* Live feedback for every mutation. */}
       <div aria-live="polite" className="empty:hidden">
         {feedback && (
@@ -893,7 +929,7 @@ export function MembersPage(): ReactElement {
                       description="Invite a teammate to help answer conversations."
                       action={
                         canInvite ? (
-                          <Button onClick={() => setInviteOpen(true)}>
+                          <Button onClick={handleInviteClick}>
                             <UserPlus size={16} aria-hidden="true" />
                             Invite member
                           </Button>
