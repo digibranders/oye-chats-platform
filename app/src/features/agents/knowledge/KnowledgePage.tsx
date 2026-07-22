@@ -72,7 +72,10 @@ export function KnowledgePage(): ReactElement {
   // Delta ("updated pages only") re-crawl is a Standard+ perk. The menu still
   // surfaces the option to lower tiers for discoverability; clicks route to the
   // upgrade flow instead of the diff endpoint. The backend re-enforces the gate.
-  const canUseDeltaRecrawl = planSlug === 'standard' || planSlug === 'enterprise';
+  // Slugs MUST mirror `plan_service._DELTA_RECRAWL_PLAN_SLUGS` = {standard,
+  // professional}; there is no 'enterprise' tier, so 'professional' (the top
+  // paid tier) must be granted delta here or it's wrongly shown an upgrade badge.
+  const canUseDeltaRecrawl = planSlug === 'standard' || planSlug === 'professional';
 
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -232,13 +235,38 @@ export function KnowledgePage(): ReactElement {
 
   // Confirm the previewed re-crawl. Prefer the diff's exact URL list (more
   // reliable + faster than re-running the recursive crawler) unless the diff
-  // was capped/errored, in which case the backend re-discovers.
+  // was capped/truncated/errored, in which case the backend re-discovers.
   const confirmRecrawl = useCallback(async (): Promise<void> => {
     const diff = recrawlDiff;
     if (diff == null || agentId == null) return;
-    const orderedUrls = diff.capped
-      ? null
-      : Array.from(new Set([...diff.newUrls, ...diff.unchangedUrls])).filter(Boolean);
+
+    // Guard (money): a full re-crawl where discovery SUCCEEDED but found zero
+    // pages (HTTP 200, sitemap_total=0) means the sitemap was temporarily
+    // unavailable — we don't know the site's page set, and with force_reingest
+    // this would silently re-scrape+re-bill every stale stored URL. Refuse.
+    // Mirrors the modal's block; this is the non-UI safety net. The explicit
+    // preview-failure path (recrawlDiffError set) is exempt: it deliberately
+    // proceeds with ordered_urls omitted so the backend re-discovers. Delta is
+    // unaffected — it reconciles against stored URLs at ingest time.
+    if (diff.mode === 'full' && diff.sitemapTotal === 0 && recrawlDiffError === null) {
+      setActionError(
+        "No pages discovered — the site's sitemap may be temporarily unavailable; try again shortly.",
+      );
+      return;
+    }
+
+    // The preview buckets are capped at 500 URLs while the counts are full, so
+    // if either bucket was truncated the union is only a partial slice of the
+    // real crawl set. Passing a partial list as authoritative would silently
+    // skip every page beyond the cap (under-refresh). In that case — or when
+    // discovery itself was capped — omit ordered_urls so the backend re-crawls
+    // the whole site by discovery (an empty/omitted list means "crawl all").
+    const listsTruncated =
+      diff.newUrls.length < diff.newPages || diff.unchangedUrls.length < diff.unchanged;
+    const orderedUrls =
+      diff.capped || listsTruncated
+        ? null
+        : Array.from(new Set([...diff.newUrls, ...diff.unchangedUrls])).filter(Boolean);
     setRecrawlStarting(true);
     setActionError(null);
     try {
@@ -246,6 +274,11 @@ export function KnowledgePage(): ReactElement {
         url: diff.crawlUrl,
         botId: agentId,
         botName: agentName,
+        // NOTE: JS-rendering mode isn't persisted on the source record
+        // (KnowledgeSource carries no per-source JS flag, and we may only edit
+        // files under features/agents/knowledge/), so a SPA source originally
+        // crawled with useJs:true re-crawls HTTP-only here and may return empty.
+        // Carry the flag through once the source record exposes it.
         useJs: false,
         replaceSource: diff.replaceSource,
         mode: diff.mode,
@@ -261,7 +294,7 @@ export function KnowledgePage(): ReactElement {
     } finally {
       setRecrawlStarting(false);
     }
-  }, [recrawlDiff, agentId, agentName, startCrawl, closeRecrawlModal]);
+  }, [recrawlDiff, recrawlDiffError, agentId, agentName, startCrawl, closeRecrawlModal]);
 
   const handleGetCredits = useCallback((): void => {
     closeRecrawlModal();

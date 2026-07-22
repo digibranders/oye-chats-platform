@@ -83,9 +83,24 @@ export function RecrawlDiffModal({
   );
 
   const isDelta = diff.mode === 'delta';
-  const required = diff.creditsRequiredFull;
-  const showFullCost = diff.mode === 'full' && diff.sitemapTotal > 0;
-  const fullBlocked = diff.mode === 'full' && diff.exceedsBalance;
+
+  // The full re-crawl set is every page that will actually be scraped: pages
+  // discovered as new PLUS stored pages still alive (unchanged). These buckets
+  // are disjoint by construction, so the crawl-set size is their sum. Cost and
+  // the insufficient-balance guard MUST key off this — never off
+  // `sitemap_total`. When sitemap discovery times out the endpoint still
+  // returns 200 with sitemap_total=0 (and `credits_required_full`/
+  // `exceeds_balance` derived from it), which would otherwise hide the cost
+  // line and silently neutralise the balance guard while a full re-crawl still
+  // force-reingests every unchanged page.
+  const crawlSetSize = diff.unchanged + diff.newPages;
+  const required = crawlSetSize * diff.costPerPage;
+
+  // Full re-crawl with an empty sitemap = discovery failed/timed out; we can't
+  // verify the site's page set, so block rather than let the user spend on it.
+  const emptyDiscovery = diff.mode === 'full' && !error && diff.sitemapTotal === 0;
+  const showFullCost = diff.mode === 'full' && !emptyDiscovery;
+  const fullBlocked = showFullCost && required > diff.balance;
   const activeBucket = viewing ? buckets.find((b) => b.key === viewing) ?? null : null;
 
   const confirmLabel = fullBlocked
@@ -113,7 +128,7 @@ export function RecrawlDiffModal({
           <Button
             variant={fullBlocked ? 'danger' : 'primary'}
             onClick={fullBlocked ? onGetCredits : onConfirm}
-            disabled={starting}
+            disabled={starting || emptyDiscovery}
           >
             {starting ? (
               'Starting…'
@@ -155,6 +170,17 @@ export function RecrawlDiffModal({
               </span>
             </p>
             <p className="break-words pl-6 font-mono text-[11px] opacity-80">{error}</p>
+          </div>
+        ) : emptyDiscovery ? (
+          <div className="space-y-1.5 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-warning)]">
+            <p className="flex items-start gap-2">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>
+                No pages discovered — the site&apos;s sitemap may be temporarily unavailable. Try
+                again shortly. We won&apos;t start a full re-crawl until we can confirm the pages to
+                scrape, so you&apos;re never charged for a set we can&apos;t verify.
+              </span>
+            </p>
           </div>
         ) : (
           <>
@@ -223,7 +249,7 @@ export function RecrawlDiffModal({
                 </p>
                 <p className="mt-1 tabular-nums">
                   {diff.costPerPage.toLocaleString()} credit{diff.costPerPage === 1 ? '' : 's'} per page ×{' '}
-                  {diff.sitemapTotal.toLocaleString()} page{diff.sitemapTotal === 1 ? '' : 's'} — you have{' '}
+                  {crawlSetSize.toLocaleString()} page{crawlSetSize === 1 ? '' : 's'} — you have{' '}
                   <span className="font-semibold text-[var(--ds-text)]">
                     {diff.balance.toLocaleString()}
                   </span>{' '}
