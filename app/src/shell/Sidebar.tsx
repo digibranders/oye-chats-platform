@@ -1,6 +1,7 @@
 import { type ReactElement } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Lock, Sparkles } from 'lucide-react';
+import { Lock } from 'lucide-react';
+import { OyeChatsMark } from './OyeChatsMark';
 import { PRIMARY_NAV, SECONDARY_NAV, type NavItem } from './nav.config';
 import { cn } from '../design-system';
 import { useEntitlements } from '../hooks/useEntitlements';
@@ -164,9 +165,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
     >
       {/* Brand */}
       <div className="flex h-16 shrink-0 items-center gap-2.5 px-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]">
-          <Sparkles size={17} />
-        </div>
+        <OyeChatsMark size={32} />
         {showLabels && (
           <span className="text-[15px] font-bold tracking-tight text-[var(--ds-text)]">
             OyeChats

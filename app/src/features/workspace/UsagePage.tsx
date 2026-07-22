@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowUpRight,
+  CalendarClock,
   FileText,
   Globe,
   ListOrdered,
@@ -12,9 +13,10 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { Button, EmptyState, PageContainer, Skeleton, cn } from '../../design-system';
+import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton, cn } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { InsightCard } from '../../design-system/components/InsightCard';
+import { useEntitlements } from '../../hooks/useEntitlements';
 import {
   formatCredits,
   formatDate,
@@ -27,6 +29,79 @@ import { TopupModal } from './billing/TopupModal';
 import { UsageHero } from './usage/UsageHero';
 import { CreditBreakdown } from './usage/CreditBreakdown';
 import { ConsumptionTrend } from './usage/ConsumptionTrend';
+
+// ── Plan limits (entitlement-driven quota meters) ────────────────────────────
+
+const UNLIMITED = -1;
+
+function formatLimit(limit: number, unit: string): string {
+  return limit === UNLIMITED ? 'Unlimited' : `${limit.toLocaleString()} ${unit}`;
+}
+
+interface PlanLimitStatProps {
+  readonly label: string;
+  readonly icon: LucideIcon;
+  /** Formatted value — the limit alone, no "used" fraction, for the two limit
+   * keys the backend doesn't report usage for (`page_scraping`,
+   * `chat_history_days`), so this stays honest instead of implying a fill. */
+  readonly value: string;
+  readonly caption: string;
+}
+
+/** An informational limit tile — a ceiling with no matching usage count. */
+function PlanLimitStat({ label, icon: Icon, value, caption }: PlanLimitStatProps): ReactElement {
+  return (
+    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+          <Icon size={16} aria-hidden="true" />
+        </span>
+      </div>
+      <div className="mt-3">
+        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">{value}</span>
+        <p className="mt-1 text-[13px] text-[var(--ds-text-subtle)]">{caption}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * PlanLimitsSection — the plan's numeric ceilings. `bots` / `operators` /
+ * `documents` / `leads` are usage-populated keys, so they render as real
+ * used/limit meters. `page_scraping` and `chat_history_days` have no per-page
+ * usage on this workspace-wide view, so they render as honest limit-only stats.
+ */
+function PlanLimitsSection(): ReactElement {
+  const { entitlements, limitFor } = useEntitlements();
+
+  return (
+    <section aria-label="Plan limits" className="space-y-4">
+      <SectionHeader
+        title="Plan limits"
+        description="The ceilings on your current plan, alongside what your workspace has used."
+      />
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+        <QuotaMeter label="Agents" used={entitlements.usage.bots ?? 0} limit={limitFor('bots')} />
+        <QuotaMeter label="Members" used={entitlements.usage.operators ?? 0} limit={limitFor('operators')} />
+        <QuotaMeter label="Documents" used={entitlements.usage.documents ?? 0} limit={limitFor('documents')} />
+        <QuotaMeter label="Leads" used={entitlements.usage.leads ?? 0} limit={limitFor('leads')} />
+        <PlanLimitStat
+          label="Page scraping"
+          icon={Globe}
+          value={formatLimit(limitFor('page_scraping'), 'pages')}
+          caption="Pages your plan allows crawling per period."
+        />
+        <PlanLimitStat
+          label="Chat history retention"
+          icon={CalendarClock}
+          value={formatLimit(limitFor('chat_history_days'), 'days')}
+          caption="How far back conversation history is kept."
+        />
+      </div>
+    </section>
+  );
+}
 
 const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
   credit: 'text-[var(--ds-success)]',
@@ -244,6 +319,9 @@ export function UsagePage(): ReactElement {
             <CreditBreakdown balance={phase.balance} />
             {phase.trend.status === 'ready' && <ConsumptionTrend points={phase.trend.points} />}
           </div>
+
+          {/* Plan limits — entitlement-driven quota meters (grafted from design). */}
+          <PlanLimitsSection />
 
           {/* Itemized ledger, grouped by day. */}
           <section aria-label="Consumption history" className="space-y-3">
