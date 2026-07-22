@@ -28,11 +28,24 @@ import { InsightCard } from '../../../design-system/components/InsightCard';
 import { DataTable, type Column } from '../../../design-system/components/DataTable';
 import { useAgent } from '../../../context/AgentContext';
 import { useCrawl } from '../../../context/CrawlContext';
+import type { StartCrawlOptions } from '../../../context/CrawlContext';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getDocuments, getDocumentPages, deleteDocument } from '../../../services/api';
 import type { KnowledgeSource, SourcePage } from '../../../types/domain';
 import { PagesDrawer } from '../../launch-studio/PagesDrawer';
 import { AddKnowledgePanel } from './AddKnowledgePanel';
+import { AutoRecrawlCard } from './AutoRecrawlCard';
+import { RecrawlMenu } from './RecrawlMenu';
+import { RecrawlDiffModal } from './RecrawlDiffModal';
+import {
+  asApiError,
+  crawlUrlFor,
+  fetchRecrawlDiff,
+  rootDomainOf,
+  type RecrawlDiff,
+  type RecrawlMode,
+} from './recrawl-api';
 import {
   formatRelativeDate,
   isUrlSource,
@@ -51,12 +64,27 @@ import {
 export function KnowledgePage(): ReactElement {
   const { agent, loading: agentLoading } = useAgent();
   const agentId = agent?.id ?? null;
-  const { crawl } = useCrawl();
-  const { entitlements, limitFor, withinLimit } = useEntitlements();
+  const agentName = agent?.name ?? null;
+  const { crawl, startCrawl } = useCrawl();
+  const { entitlements, limitFor, withinLimit, planSlug } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+
+  // Delta ("updated pages only") re-crawl is a Standard+ perk. The menu still
+  // surfaces the option to lower tiers for discoverability; clicks route to the
+  // upgrade flow instead of the diff endpoint. The backend re-enforces the gate.
+  const canUseDeltaRecrawl = planSlug === 'standard' || planSlug === 'enterprise';
 
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // ── Re-crawl lifecycle ────────────────────────────────────────────
+  const [recrawlLoadingFor, setRecrawlLoadingFor] = useState<string | null>(null);
+  const [recrawlDiff, setRecrawlDiff] = useState<RecrawlDiff | null>(null);
+  const [recrawlDiffError, setRecrawlDiffError] = useState<string | null>(null);
+  const [recrawlStarting, setRecrawlStarting] = useState(false);
+  // Bumped when a crawl finishes so AutoRecrawlCard reloads its last-run summary.
+  const [recrawlReloadToken, setRecrawlReloadToken] = useState(0);
 
   const [pagesBySource, setPagesBySource] = useState<Record<string, SourcePage[]>>({});
   const [drawerSource, setDrawerSource] = useState<string | null>(null);
@@ -120,12 +148,128 @@ export function KnowledgePage(): ReactElement {
   // When a crawl for THIS agent reaches a terminal state, pull the fresh source
   // list so newly-learned pages appear.
   const crawlOwned = crawl.botId === null || crawl.botId === agentId;
+  const crawlRunning = crawlOwned && (crawl.status === 'running' || crawl.status === 'cancelling');
   useEffect(() => {
     if (!crawlOwned) return;
     if (crawl.status === 'done' || crawl.status === 'cancelled') {
       void refresh();
+      // Surface the fresh last-run summary in the auto-recrawl card.
+      setRecrawlReloadToken((n) => n + 1);
     }
   }, [crawl.status, crawlOwned, refresh]);
+
+  // ── Re-crawl actions ──────────────────────────────────────────────
+  const closeRecrawlModal = useCallback((): void => {
+    setRecrawlDiff(null);
+    setRecrawlDiffError(null);
+  }, []);
+
+  // Fetch the pre-recrawl diff for a source, then open the cost-preview modal.
+  // On a plan-gated delta request we route to the upgrade flow; on a soft
+  // failure we still open the modal so the user can proceed without the preview.
+  const requestRecrawl = useCallback(
+    async (name: string, mode: RecrawlMode): Promise<void> => {
+      if (agentId == null) return;
+      const crawlUrl = crawlUrlFor(name);
+      const replaceSource = rootDomainOf(name);
+      setRecrawlLoadingFor(name);
+      setActionError(null);
+      setRecrawlDiff(null);
+      setRecrawlDiffError(null);
+      try {
+        const data = await fetchRecrawlDiff(crawlUrl, replaceSource, agentId, mode);
+        setRecrawlDiff({ mode, docName: name, crawlUrl, replaceSource, ...data });
+      } catch (err) {
+        const apiErr = asApiError(err);
+        const detail = typeof apiErr.detail === 'object' ? apiErr.detail : undefined;
+        if (
+          apiErr.status === 403 &&
+          detail?.error === 'feature_not_available' &&
+          detail?.feature === 'delta_recrawl'
+        ) {
+          openUpgradeModal({
+            title: 'Updated-pages-only re-crawl',
+            description:
+              'Re-crawling only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
+          });
+          return;
+        }
+        if (apiErr.status === 429) {
+          setActionError(
+            'Too many scan requests — please wait a few minutes before scanning again.',
+          );
+          return;
+        }
+        // Network/auth failure — still let the user proceed with a plain confirm.
+        setRecrawlDiff({
+          mode,
+          docName: name,
+          crawlUrl,
+          replaceSource,
+          sitemapTotal: 0,
+          unchanged: 0,
+          newPages: 0,
+          removedPages: 0,
+          unchangedUrls: [],
+          newUrls: [],
+          removedUrls: [],
+          costPerPage: 1,
+          creditsRequiredFull: 0,
+          balance: 0,
+          exceedsBalance: false,
+          capped: true,
+        });
+        setRecrawlDiffError(
+          apiErr.message ??
+            (typeof apiErr.detail === 'string' ? apiErr.detail : "We couldn't preview the changes."),
+        );
+      } finally {
+        setRecrawlLoadingFor(null);
+      }
+    },
+    [agentId, openUpgradeModal],
+  );
+
+  // Confirm the previewed re-crawl. Prefer the diff's exact URL list (more
+  // reliable + faster than re-running the recursive crawler) unless the diff
+  // was capped/errored, in which case the backend re-discovers.
+  const confirmRecrawl = useCallback(async (): Promise<void> => {
+    const diff = recrawlDiff;
+    if (diff == null || agentId == null) return;
+    const orderedUrls = diff.capped
+      ? null
+      : Array.from(new Set([...diff.newUrls, ...diff.unchangedUrls])).filter(Boolean);
+    setRecrawlStarting(true);
+    setActionError(null);
+    try {
+      const opts: StartCrawlOptions = {
+        url: diff.crawlUrl,
+        botId: agentId,
+        botName: agentName,
+        useJs: false,
+        replaceSource: diff.replaceSource,
+        mode: diff.mode,
+        orderedUrls: orderedUrls && orderedUrls.length > 0 ? orderedUrls : null,
+        expectedNewPages: diff.mode === 'delta' ? diff.newPages : null,
+      };
+      await startCrawl(opts);
+      closeRecrawlModal();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "We couldn't start the re-crawl. Please try again.",
+      );
+    } finally {
+      setRecrawlStarting(false);
+    }
+  }, [recrawlDiff, agentId, agentName, startCrawl, closeRecrawlModal]);
+
+  const handleGetCredits = useCallback((): void => {
+    closeRecrawlModal();
+    openUpgradeModal({
+      title: 'Not enough credits',
+      description: 'Upgrade your plan or buy a top-up to run this full re-crawl.',
+    });
+  }, [closeRecrawlModal, openUpgradeModal]);
 
   const openPages = useCallback(
     async (source: string): Promise<void> => {
@@ -271,9 +415,25 @@ export function KnowledgePage(): ReactElement {
           ) : (
             <div className="flex items-center justify-end gap-1">
               {isUrlSource(row.name) && (
-                <Button variant="ghost" size="sm" onClick={() => void openPages(row.name)}>
-                  View pages
-                </Button>
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => void openPages(row.name)}>
+                    View pages
+                  </Button>
+                  <RecrawlMenu
+                    canUseDelta={canUseDeltaRecrawl}
+                    loading={recrawlLoadingFor === row.name}
+                    disabled={crawlRunning}
+                    onFullRecrawl={() => void requestRecrawl(row.name, 'full')}
+                    onDeltaRecrawl={() => void requestRecrawl(row.name, 'delta')}
+                    onUpgrade={() =>
+                      openUpgradeModal({
+                        title: 'Updated-pages-only re-crawl',
+                        description:
+                          'Re-crawling only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
+                      })
+                    }
+                  />
+                </>
               )}
               <Button
                 ref={(el) => {
@@ -291,7 +451,18 @@ export function KnowledgePage(): ReactElement {
           ),
       },
     ],
-    [confirmingDelete, deleting, handleDelete, openPages, cancelConfirm],
+    [
+      confirmingDelete,
+      deleting,
+      handleDelete,
+      openPages,
+      cancelConfirm,
+      canUseDeltaRecrawl,
+      recrawlLoadingFor,
+      crawlRunning,
+      requestRecrawl,
+      openUpgradeModal,
+    ],
   );
 
   // ── Render ────────────────────────────────────────────────────────
@@ -409,7 +580,31 @@ export function KnowledgePage(): ReactElement {
             documentsLocked={documentsAtLimit}
             pagesLocked={pagesAtLimit}
           />
+
+          <AutoRecrawlCard
+            botId={agentId}
+            reloadToken={recrawlReloadToken}
+            onUpgrade={() =>
+              openUpgradeModal({
+                title: 'Weekly auto-recrawl',
+                description:
+                  'Automatically refresh your crawled websites every week on the Standard plan. Upgrade to enable it.',
+              })
+            }
+          />
         </div>
+      )}
+
+      {recrawlDiff && (
+        <RecrawlDiffModal
+          open
+          diff={recrawlDiff}
+          error={recrawlDiffError}
+          starting={recrawlStarting}
+          onConfirm={() => void confirmRecrawl()}
+          onGetCredits={handleGetCredits}
+          onClose={closeRecrawlModal}
+        />
       )}
 
       {drawerSource && (

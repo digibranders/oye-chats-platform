@@ -14,8 +14,10 @@ import {
   Loader2,
   Lock,
   Search,
+  StopCircle,
   Upload,
   UploadCloud,
+  Zap,
 } from 'lucide-react';
 import { Button, Card, Input, Progress, cn } from '../../../design-system';
 import { discoverCrawlUrls, uploadDocuments } from '../../../services/api';
@@ -65,7 +67,7 @@ export function AddKnowledgePanel({
   documentsLocked = false,
   pagesLocked = false,
 }: AddKnowledgePanelProps): ReactElement {
-  const { crawl, startCrawl } = useCrawl();
+  const { crawl, startCrawl, cancelCrawl } = useCrawl();
   const { openUpgradeModal } = useUpgradeModal();
   const [mode, setMode] = useState<AddMode>('website');
 
@@ -74,6 +76,11 @@ export function AddKnowledgePanel({
   const [estimate, setEstimate] = useState<CrawlDiscovery | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [websiteError, setWebsiteError] = useState<string | null>(null);
+  // JavaScript mode renders SPA sites (Next.js/React) before extracting text.
+  const [useJs, setUseJs] = useState(false);
+  // Two-step inline confirm for cancelling an in-progress crawl.
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   // ── Upload sub-flow ───────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -138,17 +145,32 @@ export function AddKnowledgePanel({
     const trimmed = siteUrl.trim();
     if (!trimmed) return;
     setWebsiteError(null);
+    setCancelConfirm(false);
+    setCancelError(null);
     try {
       const opts: StartCrawlOptions = {
         url: normalizeUrl(trimmed),
         botId: agentId,
         botName: agentName,
+        useJs,
       };
       if (estimate && estimate.total_found > 0) opts.discoveredTotal = estimate.total_found;
       await startCrawl(opts);
     } catch (err) {
       setWebsiteError(
         err instanceof Error ? err.message : "We couldn't start the crawl. Please try again.",
+      );
+    }
+  }
+
+  async function handleCancel(): Promise<void> {
+    setCancelConfirm(false);
+    setCancelError(null);
+    try {
+      await cancelCrawl();
+    } catch (err) {
+      setCancelError(
+        err instanceof Error ? err.message : "We couldn't stop the crawl. Please try again.",
       );
     }
   }
@@ -270,6 +292,56 @@ export function AddKnowledgePanel({
               )}
             </div>
 
+            {/* JavaScript-mode toggle — renders SPA sites before extracting text. */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={useJs}
+              onClick={() => {
+                setUseJs((v) => !v);
+                setEstimate(null);
+              }}
+              disabled={crawlRunning}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-60',
+                useJs
+                  ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
+                  : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:border-[var(--ds-border-strong)]',
+              )}
+            >
+              <span
+                className={cn(
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                  useJs
+                    ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
+                    : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]',
+                )}
+              >
+                <Zap size={15} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium text-[var(--ds-text)]">
+                  JavaScript mode
+                </span>
+                <span className="mt-0.5 block text-[12px] text-[var(--ds-text-muted)]">
+                  Turn on for Next.js, React and other single-page-app sites.
+                </span>
+              </span>
+              <span
+                className={cn(
+                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+                  useJs ? 'bg-[var(--ds-accent)]' : 'bg-[var(--ds-border-strong)]',
+                )}
+              >
+                <span
+                  className={cn(
+                    'absolute top-0.5 h-4 w-4 rounded-full bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-sm)] transition-all',
+                    useJs ? 'left-[18px]' : 'left-0.5',
+                  )}
+                />
+              </span>
+            </button>
+
             {/* Discovery estimate */}
             {estimate && !crawlRunning && (
               <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3 text-[13px] text-[var(--ds-text-muted)]">
@@ -298,12 +370,64 @@ export function AddKnowledgePanel({
 
             {/* Live crawl progress */}
             {crawlRunning ? (
-              <CrawlProgress
-                pages={crawl.urls}
-                done={crawl.pagesCrawled}
-                total={crawl.discoveredTotal}
-                status={crawl.status}
-              />
+              <div className="space-y-3">
+                <CrawlProgress
+                  pages={crawl.urls}
+                  done={crawl.pagesCrawled}
+                  total={crawl.discoveredTotal}
+                  status={crawl.status}
+                />
+                {cancelConfirm ? (
+                  <div
+                    role="group"
+                    aria-label="Confirm stopping the crawl"
+                    className="space-y-3 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-3"
+                  >
+                    <div className="text-[13px] text-[var(--ds-text)]">
+                      <p className="font-medium">Stop this crawl?</p>
+                      <p className="mt-0.5 text-[var(--ds-text-muted)]">
+                        Pages already discovered are discarded, and you won&apos;t be charged for a
+                        crawl that didn&apos;t finish.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => void handleCancel()}
+                        disabled={crawl.status === 'cancelling' || crawl.cancelInFlight}
+                      >
+                        <StopCircle size={14} aria-hidden="true" /> Stop crawl
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setCancelConfirm(false)}>
+                        Keep crawling
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCancelConfirm(true)}
+                    disabled={crawl.status === 'cancelling' || crawl.cancelInFlight}
+                  >
+                    {crawl.status === 'cancelling' || crawl.cancelInFlight ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" aria-hidden="true" /> Stopping…
+                      </>
+                    ) : (
+                      <>
+                        <StopCircle size={14} aria-hidden="true" /> Cancel crawl
+                      </>
+                    )}
+                  </Button>
+                )}
+                {cancelError && (
+                  <StatusNote tone="danger" icon={AlertCircle}>
+                    {cancelError}
+                  </StatusNote>
+                )}
+              </div>
             ) : crawlIsOurs && crawl.status === 'done' ? (
               <StatusNote tone="success" icon={CheckCircle2}>
                 Finished — your AI learned {crawl.pagesCrawled} page
