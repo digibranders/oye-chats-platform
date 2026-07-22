@@ -37,7 +37,7 @@ function CopyableCode({ code, label }: { code: string; label: string }) {
         type="button"
         onClick={copy}
         aria-label={copied ? `${label} copied` : `Copy ${label}`}
-        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       >
         {copied ? <Check size={14} className="text-[var(--ds-success)]" /> : <Copy size={14} />}
       </button>
@@ -96,14 +96,14 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
                 aria-label={showKey ? 'Hide embed key' : 'Show embed key'}
-                className="flex h-6 w-6 items-center justify-center rounded text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+                className="flex h-6 w-6 items-center justify-center rounded text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
               </button>
               <button
                 type="button"
                 onClick={copyKey}
-                className="flex items-center gap-1 rounded px-1 text-[11px] font-semibold uppercase text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+                className="flex items-center gap-1 rounded px-1 text-[11px] font-semibold uppercase text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {keyCopied ? <Check size={12} /> : <Copy size={12} />}
                 {keyCopied ? 'Copied' : 'Copy'}
@@ -129,7 +129,7 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="See your agent live (opens in a new tab)"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
           >
             <ExternalLink size={14} aria-hidden="true" />
             See your agent live
@@ -151,7 +151,7 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
             <button
               type="button"
               onClick={() => setPlatformId(null)}
-              className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <ChevronLeft size={14} aria-hidden="true" />
               Change platform
@@ -194,7 +194,7 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
                         onClick={() => setPlatformId(p.id)}
                         className={cn(
                           'flex items-center justify-between gap-2 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-3 text-left transition-colors',
-                          'hover:border-[var(--ds-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+                          'hover:border-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                         )}
                       >
                         <span className="min-w-0">

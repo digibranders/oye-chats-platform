@@ -91,7 +91,7 @@ export function ConversationCard({
   const classes = cn(
     'flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition-colors',
     (to || onClick) &&
-      'hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+      'hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
     unread && 'bg-[var(--ds-accent-soft)]',
     className,
   );

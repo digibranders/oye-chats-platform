@@ -76,7 +76,7 @@ export function EngagementChart({ data, loading }: EngagementChartProps): ReactE
                 aria-pressed={range === r.id}
                 onClick={() => setRange(r.id)}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+                  'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                   range === r.id
                     ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
                     : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',

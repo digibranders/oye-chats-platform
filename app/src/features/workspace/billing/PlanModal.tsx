@@ -532,7 +532,7 @@ function TierRailCard({
       aria-pressed={isSelected}
       className={cn(
         'relative w-full min-h-[84px] rounded-xl border px-4 py-3.5 text-left transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+        'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
         isSelected
           ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] shadow-[var(--ds-shadow-sm)]'
           : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:border-[var(--ds-border-strong,var(--ds-text-subtle))]',
@@ -920,7 +920,7 @@ function ReferralBlock({ referral }: { referral: ReferralView }): ReactElement {
             className={cn(
               'flex-1 rounded-lg border bg-[var(--ds-bg-surface)] px-3 py-1.5 font-mono text-sm uppercase tracking-widest text-[var(--ds-text)]',
               'placeholder:font-sans placeholder:tracking-normal placeholder:text-[var(--ds-text-subtle)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--ds-ring)] disabled:opacity-60',
+              'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:opacity-60',
               status === 'invalid' ? 'border-[var(--ds-danger)]' : 'border-[var(--ds-border)]',
             )}
           />

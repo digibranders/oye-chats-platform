@@ -448,7 +448,7 @@ export function LeadsPage(): ReactElement {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search name, email, company…"
-                className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)] sm:max-w-xs"
+                className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] sm:max-w-xs"
               />
               <label htmlFor="lead-contact-filter" className="sr-only">
                 Filter by contact type
@@ -457,7 +457,7 @@ export function LeadsPage(): ReactElement {
                 id="lead-contact-filter"
                 value={contactFilter}
                 onChange={(event) => setContactFilter(event.target.value as ContactFilter)}
-                className="h-9 shrink-0 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]"
+                className="h-9 shrink-0 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {CONTACT_FILTER_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>

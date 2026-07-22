@@ -41,7 +41,7 @@ function TextAreaField({
         placeholder={placeholder}
         aria-describedby={`${hintId} ${counterId}`}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full resize-y rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2.5 text-sm text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]"
+        className="w-full resize-y rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2.5 text-sm text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       />
       <div className="flex items-center justify-between gap-3">
         <p id={hintId} className="text-[11px] text-[var(--ds-text-subtle)]">

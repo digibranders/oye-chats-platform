@@ -175,7 +175,7 @@ function Switch({ checked, onChange, disabled = false, label }: SwitchProps): Re
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)] disabled:cursor-not-allowed disabled:opacity-50',
+        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50',
         checked ? 'bg-[var(--ds-accent)]' : 'bg-[var(--ds-border-strong)]',
       )}
     >
@@ -230,7 +230,7 @@ function EmailChips({ id, emails, onChange, placeholder }: EmailChipsProps): Rea
 
   return (
     <div>
-      <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 py-1.5 focus-within:border-[var(--ds-accent)] focus-within:ring-2 focus-within:ring-[var(--ds-accent-soft)]">
+      <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 py-1.5 focus-within:border-[var(--ds-accent)] focus-within:outline-none focus-within:shadow-[0_0_0_1px_var(--ds-ring)]">
         {emails.map((email) => (
           <span
             key={email}

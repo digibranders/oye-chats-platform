@@ -113,7 +113,7 @@ export function Tabs({ tabs, value, onChange, ariaLabel, className }: TabsProps)
             onClick={() => !tab.disabled && onChange(tab.key)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              '-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)] disabled:cursor-not-allowed disabled:opacity-40',
+              '-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-40',
               selected
                 ? 'border-[var(--ds-accent)] text-[var(--ds-accent-text)]'
                 : 'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
