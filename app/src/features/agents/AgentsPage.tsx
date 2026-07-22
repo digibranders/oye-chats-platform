@@ -106,19 +106,15 @@ function AgentsLoading(): ReactElement {
  */
 export function AgentsPage(): ReactElement {
   const { bots, loading, error, refreshBots } = useBotContext();
-  const { withinLimit } = useEntitlements();
+  const { withinLimit, planName } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
 
   const openAgentLimitUpgrade = useCallback((): void => {
     setCreateOpen(false);
-    openUpgradeModal({
-      title: 'Agent limit reached',
-      description:
-        'Your workspace has reached its agent limit on the current plan. Upgrade to add another agent.',
-    });
-  }, [openUpgradeModal]);
+    openUpgradeModal('add_bot', { current: bots.length, planName });
+  }, [openUpgradeModal, bots.length, planName]);
 
   const handleAddAgent = useCallback((): void => {
     if (!withinLimit('bots', bots.length)) {

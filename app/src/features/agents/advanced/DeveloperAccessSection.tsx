@@ -64,7 +64,7 @@ export function DeveloperAccessSection(): ReactElement {
       />
 
       <div className="grid gap-4 sm:grid-cols-1">
-        <FeatureGate feature="webhooks" requiredPlan="Standard">
+        <FeatureGate feature="webhooks" intent="webhooks_integration" requiredPlan="Standard">
           <DeveloperAccessCard
             icon={WebhookIcon}
             title="Webhooks"
@@ -74,7 +74,7 @@ export function DeveloperAccessSection(): ReactElement {
           />
         </FeatureGate>
 
-        <FeatureGate feature="api_access" requiredPlan="Standard">
+        <FeatureGate feature="api_access" intent="view_integrations" requiredPlan="Standard">
           <DeveloperAccessCard
             icon={KeyRound}
             title="API access"

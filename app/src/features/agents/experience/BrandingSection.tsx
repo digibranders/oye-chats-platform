@@ -118,13 +118,7 @@ export function BrandingSection({
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                openUpgradeModal({
-                  feature: 'branding_removable',
-                  title: 'Removing branding is a paid feature',
-                  description: 'Upgrade your plan to hide the “Powered by OyeChats” footer in your widget.',
-                })
-              }
+              onClick={() => openUpgradeModal('branding_removable')}
             >
               <Lock size={13} aria-hidden="true" />
               Upgrade to remove branding

@@ -266,13 +266,7 @@ export function ChannelsPage(): ReactElement {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() =>
-                    openUpgradeModal({
-                      feature: 'integrations',
-                      title: 'Meetings is a paid feature',
-                      description: 'Upgrade your plan to let visitors book meetings inside the chat.',
-                    })
-                  }
+                  onClick={() => openUpgradeModal('meetings_integration')}
                 >
                   <Lock size={13} aria-hidden="true" />
                   Upgrade to connect

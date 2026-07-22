@@ -5,11 +5,20 @@ import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { Button } from '../primitives/Button';
 import { PlanBadge } from './PlanBadge';
 import type { FeatureKey } from '../../types/domain';
+import type { UpgradeIntentKey } from '../../context/upgradeIntents';
 
 export interface FeatureGateProps {
   /** The flag on `entitlements.features` this gate checks, e.g. "live_chat". */
   feature: FeatureKey;
   children: ReactNode;
+  /**
+   * The upgrade-intent registry key for this gate's copy (see
+   * `context/upgradeIntents.ts`). When set, the default locked fallback
+   * renders the richer `LockedFeatureCard` (eyebrow, headline, highlights)
+   * and the upgrade modal opens with this intent's specific copy instead of
+   * the generic `{ feature }` reason.
+   */
+  intent?: UpgradeIntentKey;
   /**
    * Rendered when locked. Defaults to a built-in upgrade card. Pass `null`
    * to render nothing at all — good for sidebar items that should simply
@@ -80,10 +89,17 @@ function LockedFeatureCard({ feature, requiredPlan, planName, onUpgrade }: Locke
  * instead of the legacy module-scope hook + intent registry.
  *
  * Usage:
- *   <FeatureGate feature="webhooks"><WebhookManager /></FeatureGate>
+ *   <FeatureGate feature="webhooks" intent="webhooks_integration"><WebhookManager /></FeatureGate>
  *   <FeatureGate feature="bant" fallback={null}><SidebarItem /></FeatureGate>
  */
-export function FeatureGate({ feature, children, fallback, loadingFallback, requiredPlan }: FeatureGateProps): ReactNode {
+export function FeatureGate({
+  feature,
+  intent,
+  children,
+  fallback,
+  loadingFallback,
+  requiredPlan,
+}: FeatureGateProps): ReactNode {
   const { hasFeature, loading, planName } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
 
@@ -99,12 +115,20 @@ export function FeatureGate({ feature, children, fallback, loadingFallback, requ
     return fallback;
   }
 
+  const openGateUpgrade = (): void => {
+    if (intent) {
+      openUpgradeModal(intent);
+      return;
+    }
+    openUpgradeModal({ feature });
+  };
+
   return (
     <LockedFeatureCard
       feature={feature}
       requiredPlan={requiredPlan}
       planName={planName}
-      onUpgrade={() => openUpgradeModal({ feature })}
+      onUpgrade={openGateUpgrade}
     />
   );
 }

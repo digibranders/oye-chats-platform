@@ -558,10 +558,7 @@ export function MembersPage(): ReactElement {
     // returns true for the unlimited (-1) sentinel — so the copy can assume a
     // real seat count here.
     if (atSeatLimit) {
-      openUpgradeModal({
-        title: 'You’ve used all your seats',
-        description: `You’ve used all ${seatLimit} seat${seatLimit === 1 ? '' : 's'} on your plan. Upgrade to invite more members.`,
-      });
+      openUpgradeModal('add_operator');
       return;
     }
     setInviteOpen((open) => !open);
