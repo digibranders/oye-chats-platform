@@ -20,14 +20,17 @@ import {
 import { BrandingSection } from './BrandingSection';
 import { MessagesSection } from './MessagesSection';
 import { PersonalitySection } from './PersonalitySection';
+import { BotConfigSection } from './BotConfigSection';
 import { ExperiencePreview } from './ExperiencePreview';
 
-type SectionKey = 'branding' | 'messages' | 'personality';
+type SectionKey = 'branding' | 'messages' | 'personality' | 'liveChatLeads' | 'servicesCopy';
 
 const SECTION_TABS: TabItem[] = [
   { key: 'branding', label: 'Branding' },
   { key: 'messages', label: 'Messages' },
   { key: 'personality', label: 'Personality' },
+  { key: 'liveChatLeads', label: 'Live chat & leads' },
+  { key: 'servicesCopy', label: 'Services & copy' },
 ];
 
 /** Narrows the Tabs' string key to a SectionKey without an unchecked assertion. */
@@ -217,6 +220,8 @@ export function ExperiencePage(): ReactElement {
               {activeSection === 'personality' && (
                 <PersonalitySection draft={draft} onChange={updateDraft} />
               )}
+              {activeSection === 'liveChatLeads' && <BotConfigSection variant="handoff" />}
+              {activeSection === 'servicesCopy' && <BotConfigSection variant="content" />}
             </div>
 
             {/* Sticky save bar — appears whenever there's something to act on. */}
