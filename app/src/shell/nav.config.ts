@@ -1,4 +1,4 @@
-import { Home, Bot, Inbox, Users, BarChart3, Building2, type LucideIcon } from 'lucide-react';
+import { Home, Bot, Inbox, Users, BarChart3, Building2, Settings, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -23,4 +23,10 @@ export const PRIMARY_NAV: NavItem[] = [
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification' },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across agents' },
   { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and settings' },
+];
+
+/** Secondary, bottom-anchored nav — preferences, separate from the primary
+ *  object-nav. Account/workspace switching stays in the TopBar menu. */
+export const SECONDARY_NAV: NavItem[] = [
+  { to: '/settings', label: 'Settings', icon: Settings, hint: 'Profile, workspace and preferences' },
 ];

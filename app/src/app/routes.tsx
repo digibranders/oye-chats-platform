@@ -28,7 +28,7 @@ import { UsagePage } from '../features/workspace/UsagePage';
 import { SecurityPage } from '../features/workspace/SecurityPage';
 import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
-import { SettingsPage } from '../features/workspace/SettingsPage';
+import { SettingsPage } from '../features/settings';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
 // so its layout + steps stay out of the initial bundle.
@@ -102,9 +102,14 @@ export const router = createBrowserRouter([
               { path: 'security', handle: { crumb: 'Security' }, element: <SecurityPage /> },
               { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
               { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
-              { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
             ],
           },
+          // Old Workspace ▸ Settings tab moved out to a top-level page —
+          // redirect so existing links/bookmarks keep working.
+          { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
+
+          // ── Settings — bottom-anchored secondary nav, not an object tab ──
+          { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
         ],
       },
 

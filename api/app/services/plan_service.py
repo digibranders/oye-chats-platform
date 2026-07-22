@@ -93,8 +93,21 @@ def get_plan_by_id(session: Session, plan_id: int) -> Plan | None:
 
 
 def get_default_plan(session: Session) -> Plan | None:
-    """Return the plan marked as default (auto-assigned to new signups)."""
-    return session.execute(select(Plan).where(Plan.is_default.is_(True))).scalars().first()
+    """Return the ACTIVE plan marked as default (auto-assigned to new signups).
+
+    Filters on ``is_active`` so a deactivated/soft-deleted default is never
+    handed to a new signup — ``delete_plan`` soft-deletes (``is_active=False``)
+    and could leave ``is_default`` set, which would silently drive new-signup
+    entitlements and credit grants off a "deleted" plan (finding). Orders by id
+    for a deterministic pick if more than one active default somehow exists.
+    """
+    return (
+        session.execute(
+            select(Plan).where(Plan.is_default.is_(True), Plan.is_active.is_(True)).order_by(Plan.id)
+        )
+        .scalars()
+        .first()
+    )
 
 
 def get_client_subscription(session: Session, client_id: int) -> Subscription | None:

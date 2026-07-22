@@ -315,7 +315,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
         # generic 500.
         from app.services import razorpay_service
 
-        minted_ids: dict[str, str] = {}
+        minted_ids: dict[str, str | None] = {}
         for price_field, (id_field, period) in _PRICE_TO_PLAN_ID.items():
             new_price = update_data.get(price_field)
             if (
@@ -323,6 +323,14 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                 and int(new_price) != int(getattr(plan, price_field) or 0)
                 and id_field not in update_data
             ):
+                # A ₹0 (free) tier has no recurring Razorpay plan to mint —
+                # create_plan_for_price rejects a non-positive amount with a
+                # ValueError that would escape as a 500. Clear the gateway id
+                # instead so "make this tier free" is a clean, supported edit.
+                if int(new_price) <= 0:
+                    minted_ids[id_field] = None
+                    logger.info("Plan %s %s price set to 0 (free) — clearing Razorpay plan id", plan.id, period)
+                    continue
                 try:
                     new_rzp_id = razorpay_service.create_plan_for_price(
                         name=f"{plan.name} ({period})",
@@ -399,6 +407,11 @@ def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
             )
 
         plan.is_active = False
+        # Clear the default flag on soft-delete: a deactivated-but-still-default
+        # plan would otherwise be handed to new signups (finding). get_default_plan
+        # also filters is_active as defence-in-depth, but a deactivated plan should
+        # never remain the marked default in the first place.
+        plan.is_default = False
         session.commit()
 
         logger.info(f"Superadmin {superadmin.id} deactivated plan {plan_id} ({plan.name})")
