@@ -21,7 +21,6 @@ import { cn } from '../../lib/utils';
 // Brand palette for data-viz. Primary = violet; series scale for multi-line.
 export const CHART_COLORS = {
   primary: '#7C3AED',
-  primarySoft: '#f0abfc',
   emerald: '#10b981',
   amber: '#f59e0b',
   rose: '#f43f5e',

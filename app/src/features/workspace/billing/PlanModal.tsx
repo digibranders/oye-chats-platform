@@ -920,7 +920,7 @@ function ReferralBlock({ referral }: { referral: ReferralView }): ReactElement {
             className={cn(
               'flex-1 rounded-lg border bg-[var(--ds-bg-surface)] px-3 py-1.5 font-mono text-sm uppercase tracking-widest text-[var(--ds-text)]',
               'placeholder:font-sans placeholder:tracking-normal placeholder:text-[var(--ds-text-subtle)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--ds-ring)] disabled:opacity-60',
+              'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:opacity-60',
               status === 'invalid' ? 'border-[var(--ds-danger)]' : 'border-[var(--ds-border)]',
             )}
           />

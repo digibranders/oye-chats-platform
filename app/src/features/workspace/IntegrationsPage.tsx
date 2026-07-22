@@ -230,7 +230,7 @@ function EmailChips({ id, emails, onChange, placeholder }: EmailChipsProps): Rea
 
   return (
     <div>
-      <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 py-1.5 focus-within:border-[var(--ds-accent)] focus-within:ring-2 focus-within:ring-[var(--ds-accent-soft)]">
+      <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 py-1.5 focus-within:border-[var(--ds-accent)] focus-within:outline-none focus-within:shadow-[0_0_0_1px_var(--ds-ring)]">
         {emails.map((email) => (
           <span
             key={email}
