@@ -6,7 +6,11 @@ import { openRazorpayCheckout } from '../../../lib/razorpay';
 import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../../services/api';
 
 interface TopupPack {
+  /** INR charge amount (major unit, rupees) — the canonical price on the Razorpay rail. */
+  inr?: number;
+  /** Legacy alias for the INR charge amount. */
   amount?: number;
+  /** USD display price (shown to non-INR buyers) — never charged. */
   usd?: number;
   display_amount?: number;
   display_currency?: string;
@@ -14,6 +18,11 @@ interface TopupPack {
   credits: number;
   bonus_pct?: number;
   badge?: string;
+}
+
+/** The INR amount Razorpay charges for a pack — never the USD display figure. */
+function chargeInr(pack: TopupPack): number {
+  return Number(pack.inr ?? pack.amount ?? 0);
 }
 
 export interface TopupModalProps {
@@ -76,7 +85,8 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
   }, [open]);
 
   async function handleBuy(pack: TopupPack): Promise<void> {
-    const amount = Number(pack.amount ?? pack.usd ?? 0);
+    // Razorpay charges INR — send the pack's INR price, never the USD figure.
+    const amount = chargeInr(pack);
     if (!amount) {
       setError('Pack is misconfigured (missing amount).');
       return;
@@ -162,8 +172,11 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {packs.map((pack, idx) => {
-            const amount = Number(pack.amount ?? pack.usd ?? 0);
-            const shownAmount = isInr ? amount : Number(pack.display_amount ?? amount);
+            const amount = chargeInr(pack);
+            // INR buyers see the INR charge; non-INR buyers see the USD display
+            // price (the Razorpay rail still charges INR — that gate lives on
+            // the server). Never show the USD number with a ₹ symbol.
+            const shownAmount = isInr ? amount : Number(pack.usd ?? pack.display_amount ?? amount);
             const shownCurrency = isInr
               ? 'INR'
               : (pack.display_currency || pack.currency || 'USD').toUpperCase();

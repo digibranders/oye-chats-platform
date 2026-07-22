@@ -155,26 +155,24 @@ def create_topup_order(
     including the order id, key id (public, safe to expose), and the pack
     metadata it should display in the modal.
 
-    The pack must come from ``pricing_config.topup_packs`` and have an
-    ``amount`` (in the pack's currency major unit — rupees for INR — NOT
-    paise; we convert here so the config table stays human-readable).
+    The pack must come from ``pricing_config.topup_packs`` and carry an INR
+    price under ``inr`` (rupees, major unit — NOT paise; we convert here so the
+    config table stays human-readable). ``amount`` is accepted as a legacy
+    alias. Any ``usd`` on the pack is DISPLAY ONLY — Razorpay charges INR, so we
+    must never bill the USD figure.
 
     Top-ups intentionally do NOT honour referral discounts — that incentive
     fires only on subscription checkout. See subscription_routes.create_checkout.
-
-    Standard Razorpay test/live merchant accounts can only charge INR. A
-    USD-priced pack on this provider would silently mis-bill the customer,
-    so we fail-fast with ValueError instead of letting the order create.
     """
-    if not pack.get("amount"):
-        raise ValueError("Top-up pack is missing 'amount'")
+    amount_inr_major = pack.get("inr") if pack.get("inr") is not None else pack.get("amount")
+    if not amount_inr_major:
+        raise ValueError("Top-up pack is missing an INR amount ('inr')")
 
-    currency = str(pack.get("currency", "INR")).upper()
-    if currency != "INR":
-        raise ValueError(f"Razorpay only supports INR top-ups; got '{currency}'.")
+    # Razorpay charges INR on this rail regardless of the display currency.
+    currency = "INR"
 
     rzp = _get_razorpay()
-    amount_inr = int(pack["amount"])
+    amount_inr = int(amount_inr_major)
     amount_paise = amount_inr * 100
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
@@ -190,12 +188,16 @@ def create_topup_order(
         "amount_inr": str(amount_inr),
         "bonus_pct": str(bonus_pct),
     }
-    # The modal advertises USD prices while Razorpay charges INR. Carry the
-    # display price into notes so the invoice line can name the pack the
-    # customer actually chose ("$249 pack") — GST documents must state values
-    # in INR, so the USD figure stays descriptive only.
+    # The modal advertises USD prices to non-INR buyers while Razorpay charges
+    # INR. Carry the display price into notes so the invoice line can name the
+    # pack the customer chose ("$249 pack") — GST documents must state values in
+    # INR, so the USD figure stays descriptive only. Fall back to the pack's
+    # ``usd`` when no explicit display_amount is configured.
     display_amount = pack.get("display_amount")
     display_currency = str(pack.get("display_currency") or "").upper()
+    if display_amount is None and pack.get("usd") is not None:
+        display_amount = pack.get("usd")
+        display_currency = "USD"
     if display_amount is not None and display_currency:
         symbol = "$" if display_currency == "USD" else f"{display_currency} "
         notes["display_price"] = f"{symbol}{display_amount}"

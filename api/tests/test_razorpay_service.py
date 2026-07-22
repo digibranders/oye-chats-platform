@@ -113,6 +113,29 @@ def test_create_topup_order_sends_paise_inr_and_notes():
     assert result["prefill"]["email"] == "ops@acme.example"
 
 
+def test_create_topup_order_reads_inr_key_and_never_charges_usd():
+    """Regression: packs carry the INR price under ``inr`` (config schema), with
+    ``usd`` as a display-only figure. The order must charge the INR rupees as
+    paise — never the USD number — and stamp the USD price in notes."""
+    from app.services import razorpay_service
+
+    fake_client = MagicMock()
+    fake_client.order.create.return_value = {"id": "order_inr", "status": "created"}
+
+    # Matches the live pricing_config.topup_packs shape exactly.
+    pack = {"inr": 1599, "usd": 19, "credits": 2000, "bonus_pct": 0}
+
+    with patch.object(razorpay_service, "_get_razorpay", return_value=fake_client):
+        result = razorpay_service.create_topup_order(MagicMock(), _make_client(7), pack)
+
+    sent = fake_client.order.create.call_args.kwargs["data"]
+    assert sent["amount"] == 159900  # ₹1,599 → paise, NOT the $19 figure
+    assert sent["currency"] == "INR"
+    assert sent["notes"]["amount_inr"] == "1599"
+    assert sent["notes"]["display_price"] == "$19"  # usd carried as display-only
+    assert result["amount"] == 159900
+
+
 def test_create_topup_order_rejects_pack_without_amount():
     from app.services import razorpay_service
 

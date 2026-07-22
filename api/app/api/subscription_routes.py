@@ -1950,14 +1950,14 @@ class TopupRequest(BaseModel):
 
 
 def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
-    """Find a pack whose configured amount matches ``requested_amount``.
+    """Find a pack whose configured INR price matches ``requested_amount``.
 
-    Top-up packs in the new (INR) schema use the ``amount`` key; legacy
-    Legacy packs used ``usd``. We accept either so older admin clients
-    continue to work during cutover.
+    Packs carry their INR charge under ``inr`` (``amount`` is a legacy alias).
+    The frontend sends that INR amount, so we match on it. ``usd`` is a
+    display-only figure and is accepted only as a last-resort legacy fallback.
     """
     for pack in packs:
-        if int(pack.get("amount") or pack.get("usd") or 0) == requested_amount:
+        if int(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0) == requested_amount:
             return pack
     return None
 
