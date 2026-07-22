@@ -12,6 +12,7 @@ import {
   FileText,
   Globe,
   Loader2,
+  Lock,
   Search,
   Upload,
   UploadCloud,
@@ -20,6 +21,7 @@ import { Button, Card, Input, Progress, cn } from '../../../design-system';
 import { discoverCrawlUrls, uploadDocuments } from '../../../services/api';
 import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import type { CrawlDiscovery, CrawlStatus, KnowledgeSource } from '../../../types/domain';
 import {
   SUPPORTED_EXTENSIONS,
@@ -40,6 +42,12 @@ export interface AddKnowledgePanelProps {
   onChanged: () => void | Promise<void>;
   /** Softer heading when the agent has no knowledge yet. */
   isEmpty?: boolean;
+  /** True when the workspace is at/over its `documents` plan limit — the
+   * upload sub-flow is replaced with an upgrade prompt instead of the dropzone. */
+  documentsLocked?: boolean;
+  /** True when the workspace is at/over its `page_scraping` plan limit — the
+   * website sub-flow is replaced with an upgrade prompt instead of the crawl form. */
+  pagesLocked?: boolean;
 }
 
 /**
@@ -54,8 +62,11 @@ export function AddKnowledgePanel({
   existingSources,
   onChanged,
   isEmpty = false,
+  documentsLocked = false,
+  pagesLocked = false,
 }: AddKnowledgePanelProps): ReactElement {
   const { crawl, startCrawl } = useCrawl();
+  const { openUpgradeModal } = useUpgradeModal();
   const [mode, setMode] = useState<AddMode>('website');
 
   // ── Website sub-flow ──────────────────────────────────────────────
@@ -208,6 +219,20 @@ export function AddKnowledgePanel({
 
       <div className="p-5">
         {mode === 'website' ? (
+          pagesLocked ? (
+            <LockedAddCard
+              icon={Globe}
+              title="Page limit reached"
+              description="You've used all the website pages included on your plan. Upgrade to crawl more pages."
+              onUpgrade={() =>
+                openUpgradeModal({
+                  title: 'Page limit reached',
+                  description:
+                    "You've used all the website pages included on your plan. Upgrade to crawl more pages.",
+                })
+              }
+            />
+          ) : (
           <div className="space-y-4">
             <div>
               <label
@@ -330,6 +355,20 @@ export function AddKnowledgePanel({
               )}
             </div>
           </div>
+          )
+        ) : documentsLocked ? (
+          <LockedAddCard
+            icon={FileText}
+            title="Document limit reached"
+            description="You've used all the documents included on your plan. Upgrade to add more."
+            onUpgrade={() =>
+              openUpgradeModal({
+                title: 'Document limit reached',
+                description:
+                  "You've used all the documents included on your plan. Upgrade to add more.",
+              })
+            }
+          />
         ) : (
           <div className="space-y-4">
             <div
@@ -408,6 +447,35 @@ export function AddKnowledgePanel({
 }
 
 // ── Local presentational helpers ────────────────────────────────────
+
+/** Replaces a sub-flow (website or files) when its plan quota is exhausted. */
+function LockedAddCard({
+  icon: Icon,
+  title,
+  description,
+  onUpgrade,
+}: {
+  icon: typeof Globe;
+  title: string;
+  description: string;
+  onUpgrade: () => void;
+}): ReactElement {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-6 py-10 text-center">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
+        <Icon size={18} aria-hidden="true" />
+      </span>
+      <div className="max-w-sm space-y-1">
+        <p className="text-[14px] font-semibold text-[var(--ds-text)]">{title}</p>
+        <p className="text-[13px] text-[var(--ds-text-muted)]">{description}</p>
+      </div>
+      <Button onClick={onUpgrade}>
+        <Lock size={13} aria-hidden="true" />
+        Upgrade plan
+      </Button>
+    </div>
+  );
+}
 
 function CrawlProgress({
   pages,

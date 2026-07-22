@@ -18,6 +18,7 @@ import {
   Button,
   EmptyState,
   PageContainer,
+  QuotaMeter,
   SectionHeader,
   Skeleton,
   StatusBadge,
@@ -27,6 +28,7 @@ import { InsightCard } from '../../../design-system/components/InsightCard';
 import { DataTable, type Column } from '../../../design-system/components/DataTable';
 import { useAgent } from '../../../context/AgentContext';
 import { useCrawl } from '../../../context/CrawlContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getDocuments, getDocumentPages, deleteDocument } from '../../../services/api';
 import type { KnowledgeSource, SourcePage } from '../../../types/domain';
 import { PagesDrawer } from '../../launch-studio/PagesDrawer';
@@ -50,6 +52,7 @@ export function KnowledgePage(): ReactElement {
   const { agent, loading: agentLoading } = useAgent();
   const agentId = agent?.id ?? null;
   const { crawl } = useCrawl();
+  const { entitlements, limitFor, withinLimit } = useEntitlements();
 
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -192,6 +195,19 @@ export function KnowledgePage(): ReactElement {
     };
   }, [sources]);
 
+  // ── Plan quotas ──────────────────────────────────────────────────
+  // `documents` is a usage-populated key (backend counts uploaded files) —
+  // prefer it, falling back to what this page already loaded. `page_scraping`
+  // is NOT populated server-side, so "used" is always derived from the sum of
+  // this agent's crawled page counts (`stats.websitePages`) — never fabricated.
+  const documentsUsed = entitlements.usage.documents ?? stats.documents;
+  const documentsLimit = limitFor('documents');
+  const documentsAtLimit = !withinLimit('documents', documentsUsed);
+
+  const pagesUsed = stats.websitePages;
+  const pagesLimit = limitFor('page_scraping');
+  const pagesAtLimit = !withinLimit('page_scraping', pagesUsed);
+
   const columns = useMemo<Column<KnowledgeSource>[]>(
     () => [
       {
@@ -333,6 +349,17 @@ export function KnowledgePage(): ReactElement {
             </>
           )}
 
+          <section aria-labelledby="knowledge-quotas-heading" className="space-y-3">
+            <SectionHeader
+              title={<span id="knowledge-quotas-heading">Plan limits</span>}
+              description="How much of your plan's knowledge capacity is in use."
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <QuotaMeter label="Documents" used={documentsUsed} limit={documentsLimit} />
+              <QuotaMeter label="Website pages" used={pagesUsed} limit={pagesLimit} />
+            </div>
+          </section>
+
           {actionError && (
             <div
               role="alert"
@@ -369,6 +396,8 @@ export function KnowledgePage(): ReactElement {
             existingSources={sources ?? []}
             onChanged={refresh}
             isEmpty={stats.total === 0}
+            documentsLocked={documentsAtLimit}
+            pagesLocked={pagesAtLimit}
           />
         </div>
       )}
