@@ -120,7 +120,7 @@ def test_pricing_content_round_trip(db, monkeypatch):
     c = _client(db, monkeypatch)
     payload = {
         "faq": [{"q": "Refunds?", "a": "Pro-rated."}],
-        "feature_matrix": [{"label": "SSO", "category": "security", "values": {"free": False, "enterprise": True}}],
+        "feature_matrix": [{"label": "SSO", "category": "security", "values": {"free": False, "professional": True}}],
         "topup_packs": [{"usd": 19, "credits": 2000, "bonusPct": 0, "perThousandUsd": 9.5}],
         "credit_costs": [{"action": "1 AI reply", "credits": 1}],
     }

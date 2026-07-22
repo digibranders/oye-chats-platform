@@ -261,7 +261,7 @@ def enforce_feature(session: Session, client_id: int, feature: str) -> None:
 # Plans that unlock the "updated pages only" (delta) recrawl mode. Free/Starter
 # get the option in the UI but see an upgrade CTA — the backend enforces the
 # same gate so a forged request from an older tier is still rejected.
-_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
 
 
 def can_use_delta_recrawl(plan: Plan) -> bool:
@@ -503,7 +503,7 @@ class TrialUnavailable(Exception):
     response without parsing English. Reasons:
 
     * ``plan_not_found``        — slug doesn't match an active plan.
-    * ``plan_not_trialable``    — ``trial_days <= 0`` (e.g. free or enterprise).
+    * ``plan_not_trialable``    — ``trial_days <= 0`` (e.g. the free plan).
     * ``already_trialed``       — client previously held a sub (active or
       expired) on this exact plan. One trial per plan, lifetime.
     * ``active_paid_subscription`` — client is on a paid plan already

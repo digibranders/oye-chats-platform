@@ -412,7 +412,7 @@ class Bot(Base):
 
     # ── Auto-recrawl (weekly refresh of previously-crawled URLs) ──────────
     # Gated by the ``auto_recrawl`` feature flag on the client's plan
-    # (Standard + Enterprise). ``next_recrawl_at`` is stamped as
+    # (Standard + Professional). ``next_recrawl_at`` is stamped as
     # ``now + 7 days`` on toggle-on and cleared on toggle-off — see
     # ``recrawl_service`` and ``task_auto_recrawl_sweep``. The partial
     # index ``ix_bots_next_recrawl_due`` keeps the sweep query cheap.
@@ -508,7 +508,7 @@ class LeadInfo(Base):
     # lead row (not just the session) so attribution survives session
     # pruning by retention policies. Populated only when the owning
     # client is on a plan that includes the Lead Source Attribution
-    # feature (Standard / Enterprise). See ``chat_routes.lead_capture_endpoint``.
+    # feature (Standard / Professional). See ``chat_routes.lead_capture_endpoint``.
     utm_params = Column(JSONB, nullable=True)
     visitor_journey = Column(JSONB, nullable=True)
 
@@ -1055,8 +1055,8 @@ class Plan(Base):
     __tablename__ = "plans"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)  # "Free", "Starter", "Standard", "Enterprise"
-    slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "enterprise"
+    name = Column(String, nullable=False)  # "Free", "Starter", "Standard", "Professional"
+    slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "professional"
     description = Column(Text, nullable=True)
 
     # Pricing (stored in *minor units* of the configured currency — paise for

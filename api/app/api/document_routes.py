@@ -1057,8 +1057,8 @@ async def crawl_endpoint(
         # pre-flight uses ``effective_max_pages * cost_per_page`` as an upper
         # bound. The real deduction happens per-page atomically inside
         # batch_web_ingestion. Using the post-clamp value keeps the
-        # pre-flight honest — without this, an Enterprise customer who
-        # passed ``max_pages=5000`` could be blocked here because we
+        # pre-flight honest — without this, a customer on a high page-limit
+        # plan who passed ``max_pages=5000`` could be blocked here because we
         # mis-multiplied by the unclamped request.
         #
         # Recrawl exception: when ``replace_source`` is set the ingestion

@@ -277,7 +277,7 @@ class TestOperatorSeatEntitlement:
         assert result.limits["operators"] == 2
 
     def test_unlimited_ceiling_is_left_untouched(self):
-        """Enterprise-style ``-1`` ceilings bypass the seat math entirely."""
+        """Unlimited ``-1`` ceilings bypass the seat math entirely."""
         plan = self._make_plan(operators_ceiling=-1, included_operator_seats=5)
         result = self._compute_with(plan, operator_quantity=1)
         assert result.limits["operators"] == -1
@@ -503,7 +503,7 @@ class TestIsLeadsDashboardEnabled:
         ):
             assert is_leads_dashboard_enabled(1, session) is False
 
-    @pytest.mark.parametrize("slug", ["starter", "standard", "enterprise", "custom-paid"])
+    @pytest.mark.parametrize("slug", ["starter", "standard", "professional", "custom-paid"])
     def test_paid_slugs_allowed(self, slug):
         session = MagicMock()
         with patch(

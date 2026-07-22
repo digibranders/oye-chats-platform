@@ -191,7 +191,7 @@ def get_visitors_endpoint(
         with get_session() as session:
             # Plan-driven chat-history retention. A Free customer with a
             # 7-day cap only sees conversations from the last week; unlimited
-            # plans (Enterprise, and defensively any lookup failure) pass
+            # plans (Professional, and defensively any lookup failure) pass
             # ``None`` so no time filter is applied.
             retention_days = get_chat_history_retention_days(auth["client_id"], session)
             created_after = datetime.now(UTC) - timedelta(days=retention_days) if retention_days != UNLIMITED else None

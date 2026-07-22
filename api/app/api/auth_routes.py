@@ -400,7 +400,6 @@ def get_my_entitlements(auth: dict = Depends(get_current_client_or_operator)):
     payload = entitlements.to_json_dict()
     # Derived helpers — saves the frontend a handful of conditionals.
     payload["is_free"] = entitlements.plan_slug == "free"
-    payload["is_enterprise"] = entitlements.plan_slug == "enterprise"
     payload["topup_allowed"] = entitlements.has_feature("topup_allowed")
     return payload
 

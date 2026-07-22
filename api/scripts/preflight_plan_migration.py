@@ -63,14 +63,12 @@ EXPECTED_PLAN_LIMITS = {
     "free": {"credits": 250, "bots": 1, "operators": 0, "leads": 15, "page_scraping": 30, "documents": 5},
     "starter": {"credits": 3000, "bots": 1, "operators": 1, "leads": 35, "page_scraping": 300, "documents": 15},
     "standard": {"credits": 10000, "bots": 2, "operators": 2, "leads": -1, "page_scraping": 1200, "documents": 35},
-    "enterprise": {"credits": -1, "bots": -1, "operators": -1, "leads": -1, "page_scraping": -1, "documents": -1},
 }
 
 EXPECTED_PLAN_FEATURES = {
     "free": {"live_chat": False, "bant": False, "topup_allowed": False, "webhooks": False, "api_access": False},
     "starter": {"live_chat": True, "bant": True, "topup_allowed": True, "webhooks": False, "api_access": False},
     "standard": {"live_chat": True, "bant": True, "topup_allowed": True, "webhooks": True, "api_access": True},
-    "enterprise": {"live_chat": True, "bant": True, "topup_allowed": True, "webhooks": True, "api_access": True},
 }
 
 EXPECTED_PRICING = {

@@ -157,8 +157,7 @@ class StartTrialRequest(BaseModel):
 
     The slug is the public plan identifier the pricing page renders against
     (``starter`` / ``standard``). The slug must point at an active plan with
-    ``trial_days > 0`` — the free plan and enterprise tier are intentionally
-    excluded.
+    ``trial_days > 0`` — the free plan is intentionally excluded.
     """
 
     plan_slug: str = Field(..., min_length=1, max_length=64)
@@ -755,8 +754,9 @@ def checkout_quote(
             amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
 
-        # Free plan: render a quote but mark checkout as unsupported.
-        if inr_minor == 0 and plan.slug != "enterprise":
+        # Free plan (any zero-price plan): render a quote but mark checkout as
+        # unsupported.
+        if inr_minor == 0:
             return {
                 "country": country,
                 "currency": currency,
@@ -768,21 +768,6 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": None,
                 "reason": "free_plan",
-            }
-
-        # Enterprise is always contact-sales.
-        if plan.slug == "enterprise":
-            return {
-                "country": country,
-                "currency": currency,
-                "amount_minor": amount_minor,
-                "amount_display": amount_display,
-                "billing_cycle": billing_cycle,
-                "provider": None,
-                "methods": [],
-                "checkout_supported": False,
-                "contact_sales": "developer@oyechats.com",
-                "reason": "enterprise",
             }
 
         # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
@@ -958,7 +943,7 @@ def create_checkout(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
-        if plan.monthly_price_cents == 0 and plan.slug != "enterprise":
+        if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
         # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a

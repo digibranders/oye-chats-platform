@@ -1843,7 +1843,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
         raise HTTPException(status_code=500, detail="Failed to save bot settings.") from e
 
 
-# ── Auto-recrawl (Standard + Enterprise plans) ───────────────────────────────
+# ── Auto-recrawl (Standard + Professional plans) ────────────────────────────
 #
 # Two endpoints back the KnowledgeBase → Auto-Recrawl card:
 #
@@ -1963,7 +1963,7 @@ def update_recrawl(
                     "error": "feature_locked",
                     "feature": "auto_recrawl",
                     "current_plan": entitlements.plan_slug,
-                    "message": ("Auto-recrawl is available on Standard and Enterprise plans. Upgrade to enable it."),
+                    "message": ("Auto-recrawl is available on Standard and Professional plans. Upgrade to enable it."),
                     "upgrade_url": "/billing",
                 },
             )
