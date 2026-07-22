@@ -1,12 +1,15 @@
-import { type ReactElement } from 'react';
-import { Target, ChevronDown, Info } from 'lucide-react';
-import { Card, SectionHeader, StatusBadge, cn } from '../../../design-system';
+import { type ReactElement, useState } from 'react';
+import { Target, ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { Card, SectionHeader, StatusBadge, Button, cn } from '../../../design-system';
 import { FRAMEWORK_OPTIONS, readThresholds } from './advanced.config';
+import { QualificationEditor } from './QualificationEditor';
 
 interface QualificationSectionProps {
   framework: string;
   bantConfig: Record<string, unknown> | null;
   onFrameworkChange: (key: string) => void;
+  /** Commit an edited `bant_config` back to the page draft. */
+  onBantConfigChange: (config: Record<string, unknown>) => void;
 }
 
 /**
@@ -20,7 +23,9 @@ export function QualificationSection({
   framework,
   bantConfig,
   onFrameworkChange,
+  onBantConfigChange,
 }: QualificationSectionProps): ReactElement {
+  const [editorOpen, setEditorOpen] = useState(false);
   const thresholds = readThresholds(bantConfig);
   const isCustom = framework === 'custom';
 
@@ -87,17 +92,33 @@ export function QualificationSection({
           </div>
         )}
 
-        {/* Fine-grained per-dimension scoring is intentionally edited in the
-            dedicated qualification editor; this surface wires the framework
-            choice and shows the read-only summary above. */}
-        <div className="flex items-start gap-2.5 rounded-lg bg-[var(--ds-bg-sunken)] p-3.5">
-          <Info size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
+        {/* Fine-grained scoring opens in a focused editor so the heavy config
+            model doesn't crowd this page. Applying there marks the page dirty;
+            the page's save bar persists it. */}
+        <div className="flex flex-col gap-3 rounded-lg bg-[var(--ds-bg-sunken)] p-3.5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
-            Fine-grained scoring — dimension weights, tier thresholds and score decay — is edited in
-            the dedicated qualification editor. Choosing a framework here sets the starting point.
+            Tune dimension weights and options, tier thresholds, score decay, and behavioural
+            scoring. Choosing a framework above sets the starting point.
           </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => setEditorOpen(true)}
+          >
+            <SlidersHorizontal size={14} aria-hidden="true" />
+            Edit scoring model
+          </Button>
         </div>
       </Card>
+
+      <QualificationEditor
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        framework={framework}
+        config={bantConfig}
+        onApply={onBantConfigChange}
+      />
     </section>
   );
 }

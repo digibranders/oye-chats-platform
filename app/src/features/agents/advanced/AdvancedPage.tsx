@@ -136,6 +136,11 @@ export function AdvancedPage(): ReactElement {
     [presets],
   );
 
+  const setBantConfig = useCallback((config: Record<string, unknown>) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, bantConfig: config } : prev));
+  }, []);
+
   const toggleFlag = useCallback((flagKey: string, next: boolean) => {
     setSaveError(null);
     setDraft((prev) =>
@@ -186,10 +191,14 @@ export function AdvancedPage(): ReactElement {
     setSaveError(null);
     try {
       const frameworkChanged = draft.qualificationFramework !== initial.qualificationFramework;
+      const bantConfigChanged =
+        stableStringify(draft.bantConfig) !== stableStringify(initial.bantConfig);
 
       // Widget-scoped settings persist through the settings endpoint; the
-      // qualification framework is a distinct concern saved via updateBot
-      // (mirrors Qualification.jsx), including its preset scoring config.
+      // qualification framework + scoring config are a distinct concern saved via
+      // updateBot (mirrors Qualification.jsx). Persist the framework whenever it
+      // OR the bant_config changed, keeping the stored `framework` field in sync
+      // with the selected framework.
       const tasks: Array<Promise<unknown>> = [
         updateClientSettings(
           {
@@ -200,11 +209,16 @@ export function AdvancedPage(): ReactElement {
           agentId,
         ),
       ];
-      if (frameworkChanged) {
+      if (frameworkChanged || bantConfigChanged) {
         const qualificationPayload: Record<string, unknown> = {
           qualification_framework: draft.qualificationFramework,
         };
-        if (draft.bantConfig) qualificationPayload.bant_config = draft.bantConfig;
+        if (draft.bantConfig) {
+          qualificationPayload.bant_config = {
+            ...draft.bantConfig,
+            framework: draft.qualificationFramework,
+          };
+        }
         tasks.push(updateBot(agentId, qualificationPayload));
       }
 
@@ -282,6 +296,7 @@ export function AdvancedPage(): ReactElement {
               framework={draft.qualificationFramework}
               bantConfig={draft.bantConfig}
               onFrameworkChange={setFramework}
+              onBantConfigChange={setBantConfig}
             />
 
             <div className="border-t border-[var(--ds-border)]" />
