@@ -250,22 +250,31 @@ CHECKOUT_TEST_CLIENT_IDS: frozenset[int] = frozenset(
 )
 RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 
-# RAZORPAY_SEAT_PLAN_ID — Razorpay Plan ID for the ₹499/month extra-seat add-on.
+# RAZORPAY_SEAT_PLAN_ID — Razorpay Plan ID for the ₹449/month extra-seat add-on.
 #   Extra operator seats are billed on a SEPARATE add-on subscription against
 #   this plan (quantity = number of extra seats); never as quantity on the main
 #   plan, which would multiply the whole plan price. Env-driven with NO baked-in
 #   default — set the test-mode plan id in local/staging .env and the live plan id
 #   in production, so a plan id is never hardcoded in the repo. Empty/unset means
 #   the seat add-on is disabled until configured.
+#
+#   OPS INVARIANT: the Razorpay plan behind this id MUST charge exactly
+#   ``RAZORPAY_SEAT_PLAN_PRICE_CENTS`` (below). To change the seat price, mint a
+#   NEW Razorpay seat plan at the new amount and repoint BOTH this id and the
+#   price env together — Razorpay plans are immutable, so the price and the id
+#   always move as a pair.
 RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
 
-# The per-seat price that ``RAZORPAY_SEAT_PLAN_ID`` ACTUALLY charges (INR minor
-# units). All extra seats bill against that single global plan, so this — not a
-# plan's ``extra_seat_price_cents`` — is the amount the customer is charged.
-# Surfaced to the UI so the displayed seat price always equals the charged price
-# (finding J); a plan whose ``extra_seat_price_cents`` differs is logged as a
-# misconfiguration rather than silently showing a price it won't bill.
-RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "49900"))
+# Canonical extra-operator-seat price — the SINGLE source of truth for both what
+# the customer is charged and what every surface displays, so the two can never
+# drift (finding H3 / J). All extra seats bill against the one global seat plan
+# (``RAZORPAY_SEAT_PLAN_ID``); the INR amount below is that plan's actual charge,
+# and the USD amount is the international-rail equivalent. A plan row's
+# ``extra_seat_price_cents`` is kept equal to this by the seed + the plan-edit
+# guard — display always equals charge.
+#   INR: ₹449/seat/month · International: $5/seat/month
+RAZORPAY_SEAT_PLAN_PRICE_CENTS: int = int(os.getenv("RAZORPAY_SEAT_PLAN_PRICE_CENTS", "44900"))
+EXTRA_SEAT_PRICE_USD_CENTS: int = int(os.getenv("EXTRA_SEAT_PRICE_USD_CENTS", "500"))
 
 # Default billing provider for all subscriptions and top-ups.
 BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()

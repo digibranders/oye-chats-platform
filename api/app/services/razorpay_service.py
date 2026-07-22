@@ -49,6 +49,7 @@ from app.config import (
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
     RAZORPAY_SEAT_PLAN_ID,
+    RAZORPAY_SEAT_PLAN_PRICE_CENTS,
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
@@ -602,12 +603,13 @@ def create_seat_addon_subscription(
     *,
     extra_seats: int,
 ) -> dict[str, Any]:
-    """Create a separate ₹499 × extra_seats Razorpay subscription for operator seats.
+    """Create a separate (seat-price × extra_seats) Razorpay subscription for operator seats.
 
     Must be a distinct subscription from the main plan. Razorpay `quantity`
     multiplies the entire plan amount, which would make the main plan wrong
-    (₹4,599×2 instead of ₹4,599+₹499). The Extra-Seat plan's amount IS the
-    per-seat price (₹499), so ₹499 × extra_seats is exactly right here.
+    (e.g. ₹949×2 instead of ₹949+₹449). The Extra-Seat plan's amount IS the
+    per-seat price (₹449 — ``RAZORPAY_SEAT_PLAN_PRICE_CENTS``), so
+    ``price × extra_seats`` is exactly right here.
     """
     if extra_seats < 1:
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
@@ -658,13 +660,14 @@ def _seat_checkout_payload(
     round-trip just to rebuild it — the JS SDK only needs subscription_id + key.
     ``short_url`` (Razorpay's hosted checkout) is included when known so a webhook
     path can email the customer a re-authorization link."""
+    seat_rupees = RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
         "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
-        "description": f"{extra_seats} extra seat(s) — ₹499/seat/month",
+        "description": f"{extra_seats} extra seat(s) — ₹{seat_rupees}/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",

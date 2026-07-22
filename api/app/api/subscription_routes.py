@@ -25,7 +25,7 @@ from app.config import (
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
-from app.core.pricing import format_amount
+from app.core.pricing import format_amount, seat_price
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service
@@ -1583,19 +1583,25 @@ def change_seat_count(
         # (P0-3). extra_seats is clamped at 0 inside the helper.
         extra_seats = new_total - floor
 
-        # Finding J: all extra seats bill against the single global seat plan, so
-        # the price the customer is actually charged is RAZORPAY_SEAT_PLAN_PRICE_CENTS
-        # — NOT the plan's own extra_seat_price_cents. Surface the charged price
-        # (below) and log any per-plan divergence so a misconfigured plan can't
-        # silently display a seat price it will never bill.
-        seat_price_cents = app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS
-        if extra_seats > 0 and int(plan.extra_seat_price_cents or 0) != seat_price_cents:
+        # Finding H3/J: all extra seats bill against the single global seat plan,
+        # so the amount charged is the canonical seat price — NOT a plan's own
+        # ``extra_seat_price_cents``. Resolve the charged price in the customer's
+        # currency (₹449 INR / $5 international) so the displayed price always
+        # equals what the add-on bills. Log any per-plan divergence so a
+        # misconfigured plan row is visible (the plan-edit guard normally keeps
+        # them equal).
+        seat_price_cents, seat_currency = seat_price(
+            inr_cents=app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS,
+            usd_cents=app_config.EXTRA_SEAT_PRICE_USD_CENTS,
+            currency=plan.currency,
+        )
+        if extra_seats > 0 and int(plan.extra_seat_price_cents or 0) != app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS:
             logger.warning(
                 "Plan %s extra_seat_price_cents=%s but the seat add-on charges %s — "
                 "displaying the charged price; fix the plan config to match.",
                 plan.id,
                 plan.extra_seat_price_cents,
-                seat_price_cents,
+                app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS,
             )
 
         try:
@@ -1628,7 +1634,7 @@ def change_seat_count(
                 "operator_quantity": sub.operator_quantity,  # unchanged until webhook
                 "included_operator_seats": floor,
                 "extra_seat_price_cents": seat_price_cents,
-                "currency": plan.currency,
+                "currency": seat_currency,
             }
 
         # Edit against an already-authorized add-on (or a reduction) → the change
@@ -1643,7 +1649,7 @@ def change_seat_count(
             "operator_quantity": new_total,
             "included_operator_seats": floor,
             "extra_seat_price_cents": seat_price_cents,
-            "currency": plan.currency,
+            "currency": seat_currency,
         }
 
 

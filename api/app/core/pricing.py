@@ -50,6 +50,34 @@ def display_price(
     return converted, "USD"
 
 
+def seat_price(
+    *,
+    inr_cents: int,
+    usd_cents: int,
+    country: str | None = None,
+    currency: str | None = None,
+) -> tuple[int, str]:
+    """Return ``(minor_units, currency)`` for ONE extra operator seat.
+
+    The seat price is global — one INR amount actually charged by the single
+    seat add-on plan, and one USD equivalent for the international rail — so
+    unlike :func:`display_price` there is no per-plan USD fallback: callers pass
+    the canonical ``config.RAZORPAY_SEAT_PLAN_PRICE_CENTS`` /
+    ``config.EXTRA_SEAT_PRICE_USD_CENTS`` so every surface shows exactly what the
+    seat add-on bills.
+
+    Currency selection: an explicit ``currency`` wins (``"usd"`` → USD, anything
+    else → INR); otherwise a non-Indian ``country`` (``!= "IN"``, matching
+    :func:`display_price`) selects USD. ``country`` of ``None`` with no currency
+    defaults to INR — the live single rail.
+    """
+    # Explicit currency wins; otherwise a non-Indian country selects USD.
+    is_usd = currency.lower() == "usd" if currency is not None else (country is not None and country != "IN")
+    if is_usd:
+        return int(usd_cents or 0), "USD"
+    return int(inr_cents or 0), "INR"
+
+
 def _group_indian(major: int) -> str:
     """Group an integer with the Indian numbering system (lakh/crore).
 
