@@ -66,15 +66,77 @@ export interface CurrentUser {
 }
 
 /**
- * Resolved plan entitlements returned by GET /auth/me/entitlements. Kept
- * minimal — only the field the profile menu's plan chip reads; widen as more
- * surfaces consume this (see `hooks/useEntitlements.js` for the fuller
- * legacy shape: limits/features/usage).
+ * Numeric plan ceilings. `-1` is the UNLIMITED sentinel (see
+ * `plan_entitlements_service.py::UNLIMITED`) — never a real count.
+ */
+export type LimitKey =
+  | 'credits'
+  | 'bots'
+  | 'operators'
+  | 'leads'
+  | 'page_scraping'
+  | 'documents'
+  | 'chat_history_days';
+
+/** Boolean/enum plan feature flags. */
+export type FeatureKey =
+  | 'live_chat'
+  | 'bant'
+  | 'branding_removable'
+  | 'webhooks'
+  | 'api_access'
+  | 'online_support'
+  | 'topup_allowed'
+  | 'integrations';
+
+export type EntitlementLimits = Record<LimitKey, number>;
+
+/**
+ * `integrations` is the one non-boolean feature flag: `"all"` grants full
+ * integration access, `"reply_to_only"` restricts to reply-to email delivery
+ * (see `PlanEntitlements.has_feature` in `plan_entitlements_service.py`).
+ */
+export interface EntitlementFeatures {
+  live_chat: boolean;
+  bant: boolean;
+  branding_removable: boolean;
+  webhooks: boolean;
+  api_access: boolean;
+  online_support: boolean;
+  topup_allowed: boolean;
+  integrations: 'all' | 'reply_to_only';
+}
+
+/**
+ * Current-period usage counters. The backend's `_build_usage` only populates
+ * `bots` / `operators` / `documents` / `leads` today — `credits`,
+ * `page_scraping`, and `chat_history_days` are reserved keys the service
+ * comments as "left to callers that need them" and are NOT currently sent.
+ * Typed as a partial map so callers can't assume every `LimitKey` is present.
+ */
+export type EntitlementUsage = Partial<Record<LimitKey, number>>;
+
+/**
+ * Resolved plan entitlements returned by GET /auth/me/entitlements.
+ *
+ * Verified field-by-field against the backend: `plan_slug` / `plan_name` /
+ * `subscription_status` / `limits` / `features` / `usage` come from
+ * `PlanEntitlements.to_json_dict()` (`plan_entitlements_service.py`);
+ * `is_free` / `is_enterprise` / `topup_allowed` are appended by the route
+ * handler (`auth_routes.py::get_my_entitlements`). `client_id` is present
+ * via `dataclasses.asdict` but is an internal identifier, not a UI field.
  */
 export interface Entitlements {
-  plan_slug?: string;
-  plan_name?: string;
-  subscription_status?: string;
+  client_id?: number;
+  plan_slug: string;
+  plan_name: string;
+  subscription_status: string;
+  limits: EntitlementLimits;
+  features: EntitlementFeatures;
+  usage: EntitlementUsage;
+  is_free: boolean;
+  is_enterprise: boolean;
+  topup_allowed: boolean;
 }
 
 export interface Workspace {
