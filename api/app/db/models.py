@@ -1349,6 +1349,11 @@ class Invoice(Base):
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String, default="inr", server_default="inr", nullable=False)
     status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
+    # Cumulative refunded amount (minor units) across ALL refund events for this
+    # charge. Accumulated per refund event (deduped on refund id) so the status
+    # flips to "refunded" once several PARTIAL refunds sum to the full charge,
+    # instead of staying "partially_refunded" forever (finding #5).
+    refunded_minor = Column(Integer, default=0, server_default="0", nullable=False)
 
     # Provider references
     razorpay_payment_id = Column(String, unique=True, index=True, nullable=True)
@@ -1416,7 +1421,9 @@ class Invoice(Base):
 # registration/payment status). The finalize transition itself — invoice_number
 # going NULL→value in the same UPDATE — is allowed.
 _INVOICE_FROZEN_EXEMPT = frozenset(
-    {"pdf_url", "invoice_url", "emailed_at", "status", "irn", "signed_qr", "razorpay_invoice_id"}
+    # refunded_minor accompanies the ``status`` transition (partially_refunded /
+    # refunded) — a post-issuance lifecycle field, not a frozen tax/amount column.
+    {"pdf_url", "invoice_url", "emailed_at", "status", "refunded_minor", "irn", "signed_qr", "razorpay_invoice_id"}
 )
 
 

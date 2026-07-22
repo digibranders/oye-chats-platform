@@ -2474,7 +2474,14 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     # issued here — refund.created only means "initiated", and a bank refund
     # can still fail; the note is issued by _handle_refund_processed once the
     # settlement actually clears.
-    inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
+    #
+    # Finding #5: compare the CUMULATIVE refunded amount to the charge, not just
+    # this event's amount — otherwise an invoice fully refunded via several
+    # partial refunds stays "partially_refunded" forever. Each refund event is
+    # deduped on its refund id above, so accumulating here counts each exactly
+    # once.
+    inv.refunded_minor = int(inv.refunded_minor or 0) + refund_minor
+    inv.status = "refunded" if inv.refunded_minor >= charge_minor else "partially_refunded"
     session.flush()
 
     logger.info(
