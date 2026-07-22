@@ -5,18 +5,18 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* ── Primary — Volt violet (Voltage Paper — matches oyechats.com) ──
-     Ramp centered so 600 = the brand volt #A21CAF. */
-  --color-primary-50: #fdf4ff;
-  --color-primary-100: #fae8ff;
-  --color-primary-200: #f5d0fe;
-  --color-primary-300: #f0abfc;
-  --color-primary-400: #e879f9;
-  --color-primary-500: #d946ef;
-  --color-primary-600: #a21caf;
-  --color-primary-700: #86198f;
-  --color-primary-800: #701a75;
-  --color-primary-900: #4a044e;
+  /* ── Primary — Violet (Voltage Paper — matches oyechats.com) ──
+     Ramp centered so 600 = the brand violet #7C3AED. */
+  --color-primary-50: #F5F3FF;
+  --color-primary-100: #EDE9FE;
+  --color-primary-200: #DDD6FE;
+  --color-primary-300: #C4B5FD;
+  --color-primary-400: #A78BFA;
+  --color-primary-500: #8B5CF6;
+  --color-primary-600: #7C3AED;
+  --color-primary-700: #6D28D9;
+  --color-primary-800: #5B21B6;
+  --color-primary-900: #4C1D95;
 
   /* ── App canvas — used by bg-canvas surfaces (warm white, Voltage Paper) ── */
   --color-canvas: #ffffff;

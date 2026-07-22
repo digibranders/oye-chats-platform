@@ -2,8 +2,8 @@
  * Design System — Semantic Tokens (Admin Platform 2.0)
  * =====================================================
  * A semantic layer on top of the existing Tailwind `@theme` palette in
- * `index.css` (Voltage Paper). Per the rebuild mandate, volt-violet
- * (#A21CAF) is used as an ACCENT only — surfaces, nav, and chrome are
+ * `index.css` (Voltage Paper). Per the rebuild mandate, violet
+ * (#7C3AED) is used as an ACCENT only — surfaces, nav, and chrome are
  * warm-neutral (paper / ink). Components read these vars via
  * `bg-[var(--ds-*)]` / `text-[var(--ds-*)]` so the whole shell recolors
  * from one place and light/dark stay in lockstep.
@@ -31,12 +31,12 @@
   --ds-text-subtle: #a1a1aa;
   --ds-text-invert: #fafafa;
 
-  /* Accent — volt violet, used sparingly (primary actions, active state) */
-  --ds-accent: #a21caf;
-  --ds-accent-hover: #86198f;
+  /* Accent — violet, used sparingly (primary actions, active state) */
+  --ds-accent: #7C3AED;
+  --ds-accent-hover: #6D28D9;
   --ds-accent-fg: #ffffff;
-  --ds-accent-soft: rgba(162, 28, 175, 0.08);
-  --ds-accent-text: #86198f;
+  --ds-accent-soft: rgba(124, 58, 237, 0.08);
+  --ds-accent-text: #5B21B6;
 
   /* Semantic status — single source for success/warning/danger/info chrome */
   --ds-success: #059669;
@@ -50,7 +50,7 @@
   --ds-status-fg: #ffffff;
 
   /* Focus ring */
-  --ds-ring: #a21caf;
+  --ds-ring: #7C3AED;
 
   /* Elevation */
   --ds-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.05);
@@ -76,14 +76,14 @@
   --ds-text-subtle: #71717a;
   --ds-text-invert: #18181b;
 
-  /* Filled-button accent stays dark enough for white text to clear WCAG AA
-     (white on #a21caf ≈ 6.5:1). The brighter volt hue lives in --ds-accent-text
-     / --ds-ring / --ds-accent-soft, which sit on dark surfaces, not under text. */
-  --ds-accent: #a21caf;
-  --ds-accent-hover: #b81fc6;
+  /* Filled-button accent stays dark enough for white text to clear WCAG AA.
+     The brighter violet hue lives in --ds-accent-text / --ds-ring /
+     --ds-accent-soft, which sit on dark surfaces, not under text. */
+  --ds-accent: #7C3AED;
+  --ds-accent-hover: #8B5CF6;
   --ds-accent-fg: #ffffff;
-  --ds-accent-soft: rgba(217, 70, 239, 0.14);
-  --ds-accent-text: #e879f9;
+  --ds-accent-soft: rgba(139, 92, 246, 0.16);
+  --ds-accent-text: #A78BFA;
 
   --ds-success: #10b981;
   --ds-success-soft: rgba(16, 185, 129, 0.14);
@@ -95,7 +95,7 @@
   --ds-info-soft: rgba(56, 189, 248, 0.14);
   --ds-status-fg: #ffffff;
 
-  --ds-ring: #d946ef;
+  --ds-ring: #8B5CF6;
 
   --ds-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --ds-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
