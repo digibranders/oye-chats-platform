@@ -2229,6 +2229,79 @@ def _enter_past_due(local: Subscription) -> None:
     local.status = "past_due"
 
 
+def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bool:
+    """Reverse the FIRST period's activation grant if its charge never paid (#2).
+
+    A UPI ``subscription.activated`` grants the first period's credits BEFORE the
+    first debit. If that debit then fails — ``subscription.pending`` /
+    ``subscription.halted`` with no successful ``subscription.charged`` — the
+    customer would keep a full period of credits they never paid for.
+
+    The activation grant is the ONLY grant that precedes its payment: every later
+    period grants atomically WITH ``subscription.charged`` (renewals never
+    pre-grant). So "this subscription has zero paid invoices" cleanly identifies
+    an unpaid activation grant, without any fragile period-timestamp matching —
+    a later-cycle failure has ≥1 paid invoice and never pre-granted, so it is
+    correctly left alone.
+
+    Revoke = reset the period's UNUSED plan credits (scoped to the sub's bot, so
+    the client pool / other bots and any rollover top-up are untouched) and roll
+    the period marker back to ``current_period_start``. The rollback lets a later
+    successful retry (``period_end > start``) re-grant the period, while every
+    prior period (``end <= start``) still no-ops under the monotonic guard.
+
+    Idempotent: after a revoke the marker equals ``current_period_start``, so a
+    redelivered pending/halted short-circuits on the marker guard below. Returns
+    ``True`` when a grant was revoked.
+
+    Concurrency: ``subscription.charged`` and ``subscription.halted`` for the
+    same sub can be delivered in overlapping transactions. Without a lock, this
+    revoke could read "no paid invoice", the charged handler could then commit
+    its grant + paid invoice, and our reset would zero a PAID customer's fresh
+    credits. We take a ``SELECT ... FOR UPDATE`` row lock (the same guard
+    ``grant_subscription_period_once`` uses) so revoke and grant serialize:
+    whoever locks first commits, the loser re-reads and sees the other's effect
+    (an advanced marker + paid invoice → skip, or a rolled-back marker → grant).
+    ``flush`` first so the caller's just-set ``_enter_past_due`` write is pushed
+    before the re-read (read-your-own-writes under ``autoflush=False``).
+    """
+    session.flush()
+    session.refresh(local, with_for_update=True)
+
+    marker = local.last_granted_period_end
+    start = local.current_period_start
+    # Nothing granted for the current period, no period anchor to roll back to,
+    # or already revoked (marker sits at/below the period start).
+    if marker is None or start is None or marker <= start:
+        return False
+
+    # Any successful charge on THIS subscription writes a paid Invoice; its
+    # absence means the activation grant was never paid. Scoped to this sub so a
+    # client's other (per-bot) subscriptions can't mask an unpaid first charge.
+    has_paid_charge = (
+        session.execute(
+            select(Invoice.id)
+            .where(Invoice.subscription_id == local.id, Invoice.status == "paid")
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if has_paid_charge is not None:
+        return False
+
+    credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
+    local.last_granted_period_end = start
+    logger.info(
+        "Revoked unpaid activation grant for subscription %s (client %s, bot %s) — "
+        "first charge never paid; rolled marker back to period start for a clean re-grant on retry",
+        local.razorpay_subscription_id,
+        local.client_id,
+        local.bot_id,
+    )
+    return True
+
+
 def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -2237,6 +2310,9 @@ def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> st
     if not local:
         return "Subscription not found"
     _enter_past_due(local)
+    # Reverse an unpaid first-period activation grant (#2) so a customer whose
+    # UPI first charge fails doesn't keep a free period of credits.
+    _revoke_unpaid_activation_grant(session, local)
     session.flush()
     return f"Subscription {sub_entity.get('id')} halted"
 
@@ -2249,6 +2325,7 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     if not local:
         return "Subscription not found"
     _enter_past_due(local)
+    _revoke_unpaid_activation_grant(session, local)
     session.flush()
     return f"Subscription {sub_entity.get('id')} pending"
 
