@@ -19,6 +19,7 @@ import {
   DataTable,
   EmptyState,
   Input,
+  LockedFeatureCard,
   MetricCard,
   PageContainer,
   QuotaMeter,
@@ -153,7 +154,7 @@ export function MembersPage(): ReactElement {
   const canManage = currentRole !== 'operator';
   const selectedBotId = selectedBot?.id ?? null;
 
-  const { entitlements, limitFor, withinLimit } = useEntitlements();
+  const { entitlements, isFree, limitFor, withinLimit } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   const seatLimit = limitFor('operators');
 
@@ -224,7 +225,11 @@ export function MembersPage(): ReactElement {
 
   // Load / reload. No synchronous setState in the effect body — the first
   // setState always follows an await, so `loading` is a genuine derived phase.
+  // Free-plan workspaces never issue this fetch — the page renders the
+  // upgrade teaser below instead, so there's no roster to load in the first
+  // place. Re-runs (and starts fetching) the moment `isFree` flips false.
   useEffect(() => {
+    if (isFree) return;
     let active = true;
     void (async () => {
       try {
@@ -271,7 +276,7 @@ export function MembersPage(): ReactElement {
     return () => {
       active = false;
     };
-  }, [refreshToken]);
+  }, [refreshToken, isFree]);
 
   const reload = (): void => setRefreshToken((token) => token + 1);
   const retry = (): void => {
@@ -318,6 +323,25 @@ export function MembersPage(): ReactElement {
   const showSelfCta = canManage && !!selectedBotId && data?.currentUserId != null && !selfOperator;
 
   const onlineCount = botOperators.filter((operator) => operator.is_online).length;
+
+  // ── Free-plan gate ───────────────────────────────────────────────────────
+  // Placed after every hook call (rules-of-hooks requires hooks to run
+  // unconditionally) but before any mutation/render logic: a Free workspace
+  // only ever sees the upgrade teaser for Members, never the roster, loading
+  // skeleton, or error state. Pairs with the fetch guard above, which never
+  // issues the roster request in the first place.
+  if (isFree) {
+    return (
+      <PageContainer
+        title="Members"
+        description="Everyone who can see conversations and answer visitors in this workspace."
+      >
+        <div className="mx-auto w-full max-w-md py-12">
+          <LockedFeatureCard intent="view_team" icon={Users} />
+        </div>
+      </PageContainer>
+    );
+  }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
