@@ -23,6 +23,8 @@ export type { StatusBadgeProps } from './primitives/Badge';
 export { Skeleton } from './primitives/Skeleton';
 export { Input } from './primitives/Input';
 export type { InputProps } from './primitives/Input';
+export { Textarea } from './primitives/Textarea';
+export type { TextareaProps } from './primitives/Textarea';
 export { Progress } from './primitives/Progress';
 export type { ProgressProps } from './primitives/Progress';
 
