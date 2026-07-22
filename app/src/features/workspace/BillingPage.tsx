@@ -1,11 +1,9 @@
-import { type ReactElement, type ReactNode, useMemo, useState } from 'react';
+import { type ReactElement, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowUpRight,
   Building2,
   CalendarClock,
-  Check,
-  CreditCard,
   Download,
   ExternalLink,
   FileText,
@@ -14,7 +12,6 @@ import {
   Plus,
   ReceiptText,
   RefreshCw,
-  Sparkles,
   Users,
   Wallet,
   X,
@@ -30,60 +27,50 @@ import {
   StatusBadge,
   cn,
 } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { Tabs } from '../../design-system/components/Tabs';
 import { useBillingData } from './useBillingData';
-import { PlanModal } from './billing/PlanModal';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
+import { BillingSummaryCards } from './billing/BillingSummaryCards';
+import { ComparePlans } from './billing/ComparePlans';
+import { PlanConfirmDrawer } from './billing/PlanConfirmDrawer';
 import type { BillingCycle } from './billing/planMath';
 import {
-  formatCredits,
   formatDate,
   formatMoneyMinor,
-  humanizeStatus,
   INVOICE_KIND_LABEL,
   statusTone,
   type BillingDetailsView,
   type InvoiceView,
   type PlanView,
-  type SubscriptionView,
 } from './billingModel';
 
-type TabKey = 'plan' | 'invoices' | 'details';
-
-const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
-  { key: 'plan', label: 'Plan & seats' },
-  { key: 'invoices', label: 'Invoices' },
-  { key: 'details', label: 'Billing details' },
-];
-
 /**
- * BillingPage — the Workspace ▸ Billing surface. One job: answer
- * "What am I paying?". Shows the current plan and its cost, operator seats,
- * the payment method on file, issued invoices (real, downloadable), and the
- * buyer's tax/billing identity.
+ * BillingPage — the Workspace ▸ Billing surface: a subscription-management
+ * dashboard answering "what am I paying for?". Four summary cards
+ * (Subscription · Renewal · Payment · Credits) lead; issued invoices and the
+ * buyer's tax identity follow; the full plan comparison lives in a collapsed
+ * disclosure at the bottom (users come here to manage, not to re-shop).
  *
- * Credit balance and usage live on the separate Workspace ▸ Usage page — this
- * page is deliberately about money owed and paid, not consumption.
- *
- * Plan-change, seat, top-up, and billing-detail mutations open the redesigned
- * checkout modals (`billing/`), which reuse the legacy money-path logic against
- * the real Razorpay + subscription endpoints. Every success reloads the page
- * and surfaces a status message in the aria-live notice region.
+ * Credit balance and consumption live on the separate Workspace ▸ Usage page.
+ * Choosing a plan opens the slim {@link PlanConfirmDrawer}, which runs the
+ * shared checkout money-path against the real Razorpay + subscription
+ * endpoints. Every success reloads and surfaces a message in the aria-live
+ * notice region.
  */
 export function BillingPage(): ReactElement {
   const { loading, error, data, reload } = useBillingData();
-  const [tab, setTab] = useState<TabKey>('plan');
+  const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Checkout modal state.
-  const [planModal, setPlanModal] = useState<{ open: boolean; initialSlug: string | null }>({
-    open: false,
-    initialSlug: null,
-  });
+  const subscription = data?.subscription ?? null;
+  const plan = data?.plan ?? null;
+
+  // Comparison billing cycle — seeded to the customer's own cadence.
+  const [cycle, setCycle] = useState<BillingCycle>('monthly');
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
   const [topupOpen, setTopupOpen] = useState(false);
   const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
     open: false,
@@ -97,11 +84,13 @@ export function BillingPage(): ReactElement {
     reload();
   };
 
-  const openPlanModal = (initialSlug: string | null = null): void =>
-    setPlanModal({ open: true, initialSlug });
-
-  const subscription = data?.subscription ?? null;
-  const plan = data?.plan ?? null;
+  // "Change plan" reveals the comparison disclosure and scrolls it into view.
+  const openCompare = (): void => {
+    setCompareOpen(true);
+    requestAnimationFrame(() =>
+      document.getElementById('compare-plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  };
 
   // Seat math mirrors legacy pages/Billing.jsx: a plan with zero included seats
   // (Free) always shows 0 total, ignoring the Subscription model's legacy
@@ -125,22 +114,27 @@ export function BillingPage(): ReactElement {
   // "Renews" would be dishonest. scheduledChange (a downgrade) takes precedence
   // since it has its own banner; a bare pending cancellation is otherwise
   // invisible on the page.
-  const pendingCancel = Boolean(
-    subscription?.cancelAtPeriodEnd && !subscription.scheduledChange,
-  );
+  const pendingCancel = Boolean(subscription?.cancelAtPeriodEnd && !subscription.scheduledChange);
   const renewalLabel = subscription?.trialEnd
     ? formatDate(subscription.trialEnd)
     : formatDate(subscription?.currentPeriodEnd ?? null);
-  const renewalCaption = subscription?.trialEnd
-    ? 'Trial ends'
-    : pendingCancel
-      ? 'Plan ends'
-      : 'Renews';
+  const renewalCaption = subscription?.trialEnd ? 'Trial ends' : pendingCancel ? 'Plan ends' : 'Renews';
+
+  const autoRenew = Boolean(subscription?.hasActive && !subscription.cancelAtPeriodEnd);
+  // A Free plan isn't billed, so it has no payment method regardless of the
+  // subscription's default provider value.
+  const provider = plan?.isPaid ? subscription?.paymentProvider ?? null : null;
+  const paymentLabel = provider ? capitalize(provider) : 'None';
+  const paymentSub = provider
+    ? provider.toLowerCase() === 'razorpay'
+      ? 'UPI, card, or NetBanking via Razorpay.'
+      : 'Billed manually by our team.'
+    : 'Added when you start a paid plan.';
 
   return (
     <PageContainer
       title="Billing"
-      description="Your plan, seats, invoices, and payment method — everything you're paying for."
+      description="Manage your subscription, payment methods and invoices."
       actions={
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setTopupOpen(true)}>
@@ -190,19 +184,23 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
-          {/* At-a-glance money summary — always visible above the tabs. */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard label="Current plan" value={plan?.name ?? 'Free'} icon={Sparkles} />
-            <MetricCard
-              label={plan?.isPaid ? `Cost per ${cycleLabel}` : 'Cost'}
-              value={priceLabel}
-              icon={Wallet}
-            />
-            <MetricCard label="Operator seats" value={totalSeats} icon={Users} />
-            <MetricCard label={renewalCaption} value={renewalLabel} icon={CalendarClock} />
-          </div>
+          {/* Subscription-management overview — four focused cards. */}
+          <BillingSummaryCards
+            planName={plan?.name ?? 'Free'}
+            status={subscription.status}
+            priceLabel={priceLabel}
+            isPaid={Boolean(plan?.isPaid)}
+            renewalCaption={renewalCaption}
+            renewalLabel={renewalLabel}
+            autoRenew={autoRenew}
+            paymentLabel={paymentLabel}
+            paymentSub={paymentSub}
+            creditsPerMonth={plan?.creditsPerMonth ?? 0}
+            onChangePlan={openCompare}
+            onViewUsage={() => void navigate('/workspace/usage')}
+          />
 
-          {/* Scheduled downgrade — applies account-wide, so it sits above tabs. */}
+          {/* Scheduled downgrade — applies account-wide. */}
           {subscription.scheduledChange && (
             <ScheduledChangeBanner
               planName={subscription.scheduledChange.planName}
@@ -219,55 +217,47 @@ export function BillingPage(): ReactElement {
             />
           )}
 
-          <Tabs
-            ariaLabel="Billing sections"
-            value={tab}
-            onChange={(key) => setTab(key as TabKey)}
-            tabs={TABS.map((item) => ({ key: item.key, label: item.label }))}
-          />
-
-          {/* All three panels stay mounted (inactive ones `hidden`) so every
-              tab's aria-controls target resolves in the DOM, per the WAI-ARIA
-              tabs contract. */}
-          <TabPanel tabKey="plan" active={tab === 'plan'}>
-            <PlanAndSeatsTab
-              plan={plan}
-              subscription={subscription}
+          {/* Operator seats — only meaningful once the plan includes them. */}
+          {includedSeats > 0 && (
+            <SeatManager
               totalSeats={totalSeats}
               includedSeats={includedSeats}
-              availablePlans={data.availablePlans}
-              onChangePlan={() => openPlanModal(null)}
-              onSelectPlan={(slug) => openPlanModal(slug)}
+              seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
               onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
               onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
             />
-          </TabPanel>
+          )}
 
-          <TabPanel tabKey="invoices" active={tab === 'invoices'}>
-            <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
-          </TabPanel>
+          <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
 
-          <TabPanel tabKey="details" active={tab === 'details'}>
-            <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
-          </TabPanel>
+          <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
+
+          {data.availablePlans.length > 0 && (
+            <ComparePlans
+              plans={data.availablePlans}
+              currentSlug={plan?.slug ?? 'free'}
+              cycle={cycle}
+              onCycleChange={setCycle}
+              onSelect={(candidate) => setConfirmPlan(candidate)}
+              open={compareOpen}
+              onOpenChange={setCompareOpen}
+            />
+          )}
         </>
       )}
 
-      {/* Checkout modals — reuse the legacy money-path against real endpoints. */}
-      {planModal.open && (
-        <PlanModal
-          open={planModal.open}
-          onClose={() => setPlanModal({ open: false, initialSlug: null })}
-          currentPlanSlug={plan?.slug ?? 'free'}
-          currentSubscriptionStatus={subscription?.status ?? null}
-          currentBillingCycle={(subscription?.billingCycle as BillingCycle) ?? 'monthly'}
-          hasActiveSubscription={Boolean(subscription?.hasActive)}
-          trialEndIso={subscription?.trialEnd ?? null}
-          dataRetentionUntilIso={subscription?.dataRetentionUntil ?? null}
-          initialSlug={planModal.initialSlug}
-          onSuccess={handleSuccess}
-        />
-      )}
+      {/* Slim confirm drawer — runs the shared checkout money-path. */}
+      <PlanConfirmDrawer
+        open={confirmPlan !== null}
+        onClose={() => setConfirmPlan(null)}
+        plan={confirmPlan}
+        cycle={cycle}
+        currentPlanSlug={plan?.slug ?? 'free'}
+        currentSubscriptionStatus={subscription?.status ?? null}
+        hasActiveSubscription={Boolean(subscription?.hasActive)}
+        currentMonthlyPriceMinor={plan?.monthlyPriceMinor ?? 0}
+        onSuccess={handleSuccess}
+      />
 
       <TopupModal open={topupOpen} onClose={() => setTopupOpen(false)} onSuccess={handleSuccess} />
 
@@ -291,281 +281,56 @@ export function BillingPage(): ReactElement {
   );
 }
 
-// ── Tab panel wrapper (a11y association with the Tabs pattern) ────────────────
+// ── Operator seats ────────────────────────────────────────────────────────────
 
-function TabPanel({
-  tabKey,
-  active,
-  children,
-}: {
-  tabKey: TabKey;
-  active: boolean;
-  children: ReactNode;
-}): ReactElement {
-  return (
-    <div
-      role="tabpanel"
-      id={`tabpanel-${tabKey}`}
-      aria-labelledby={`tab-${tabKey}`}
-      hidden={!active}
-      tabIndex={active ? 0 : -1}
-      className="space-y-6 focus-visible:outline-none"
-    >
-      {children}
-    </div>
-  );
-}
-
-// ── Plan & seats ──────────────────────────────────────────────────────────────
-
-interface PlanAndSeatsTabProps {
-  plan: PlanView | null;
-  subscription: SubscriptionView;
-  totalSeats: number;
-  includedSeats: number;
-  availablePlans: PlanView[];
-  onChangePlan: () => void;
-  onSelectPlan: (slug: string) => void;
-  onAddSeat: () => void;
-  onRemoveSeat: () => void;
-}
-
-function PlanAndSeatsTab({
-  plan,
-  subscription,
+function SeatManager({
   totalSeats,
   includedSeats,
-  availablePlans,
-  onChangePlan,
-  onSelectPlan,
+  seatPriceLabel,
   onAddSeat,
   onRemoveSeat,
-}: PlanAndSeatsTabProps): ReactElement {
-  const isPaid = Boolean(plan?.isPaid);
-  const cycleLabel = subscription.billingCycle === 'annual' ? 'year' : 'month';
-  const priceMinor =
-    plan && plan.isPaid
-      ? subscription.billingCycle === 'annual'
-        ? plan.annualPriceMinor
-        : plan.monthlyPriceMinor
-      : 0;
-  const seatPriceLabel = plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—';
-
-  const paymentDescription = subscription.paymentProvider
-    ? `Billed securely via ${capitalize(subscription.paymentProvider)} — UPI, card, or NetBanking.`
-    : 'No payment method on file yet. Choose a paid plan to add one.';
-
-  return (
-    <>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Current plan */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-1 flex-col pt-5">
-            <div className="flex items-center gap-2">
-              <CreditCard size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Current plan</h3>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-                {plan?.name ?? 'Free'}
-              </span>
-              <StatusBadge tone={statusTone(subscription.status)}>
-                {humanizeStatus(subscription.status)}
-              </StatusBadge>
-            </div>
-            <dl className="mt-4 space-y-2 text-[13px]">
-              <DetailRow
-                label="Cost"
-                value={isPaid ? `${formatMoneyMinor(priceMinor)} / ${cycleLabel}` : 'No paid subscription'}
-              />
-              <DetailRow
-                label="Credits"
-                value={
-                  plan && plan.creditsPerMonth > 0
-                    ? `${formatCredits(plan.creditsPerMonth)} / month`
-                    : '—'
-                }
-              />
-              <DetailRow label="Billing cycle" value={capitalize(subscription.billingCycle)} />
-            </dl>
-            <div className="mt-auto pt-5">
-              <Button onClick={onChangePlan}>
-                <ArrowUpRight size={16} aria-hidden="true" />
-                {isPaid ? 'Change plan' : 'Choose a plan'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Operator seats */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-1 flex-col pt-5">
-            <div className="flex items-center gap-2">
-              <Users size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Operator seats</h3>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-                {totalSeats}
-              </span>
-              <span className="text-[13px] text-[var(--ds-text-muted)]">total seats</span>
-            </div>
-            <dl className="mt-4 space-y-2 text-[13px]">
-              <DetailRow
-                label="Included"
-                value={
-                  includedSeats > 0
-                    ? `${includedSeats} with your plan`
-                    : 'Free plan includes none'
-                }
-              />
-              <DetailRow label="Extra seat" value={includedSeats > 0 ? `${seatPriceLabel} each` : '—'} />
-            </dl>
-            <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
-              {includedSeats === 0 ? (
-                <Button onClick={onChangePlan}>
-                  <ArrowUpRight size={16} aria-hidden="true" />
-                  Upgrade to add seats
-                </Button>
-              ) : (
-                <>
-                  <Button variant="outline" onClick={onAddSeat}>
-                    <Plus size={16} aria-hidden="true" />
-                    Add seat
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={onRemoveSeat}
-                    disabled={totalSeats <= includedSeats}
-                    title={
-                      totalSeats <= includedSeats
-                        ? `You can’t go below the ${includedSeats} included with your plan`
-                        : undefined
-                    }
-                  >
-                    <Minus size={16} aria-hidden="true" />
-                    Remove seat
-                  </Button>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Payment method */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-1 flex-col pt-5">
-            <div className="flex items-center gap-2">
-              <Wallet size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Payment method</h3>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-                {subscription.paymentProvider ? capitalize(subscription.paymentProvider) : 'None'}
-              </span>
-            </div>
-            <p className="mt-4 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-              {paymentDescription}
-            </p>
-            <div className="mt-auto pt-5">
-              <Button
-                variant="outline"
-                onClick={onChangePlan}
-                disabled={!subscription.paymentProvider}
-              >
-                <CreditCard size={16} aria-hidden="true" />
-                Manage payment method
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Plan comparison — real catalog from getSubscriptionPlans. */}
-      {availablePlans.length > 0 && (
-        <section aria-label="Available plans" className="space-y-4">
-          <SectionHeader
-            title="Compare plans"
-            description="Pick the plan that matches how much you expect your AI to handle."
-          />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {availablePlans.map((candidate) => (
-              <PlanOption
-                key={candidate.slug}
-                plan={candidate}
-                current={candidate.slug === plan?.slug}
-                cycle={subscription.billingCycle}
-                onSelect={() => onSelectPlan(candidate.slug)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-    </>
-  );
-}
-
-function PlanOption({
-  plan,
-  current,
-  cycle,
-  onSelect,
 }: {
-  plan: PlanView;
-  current: boolean;
-  cycle: string;
-  onSelect: () => void;
+  totalSeats: number;
+  includedSeats: number;
+  seatPriceLabel: string;
+  onAddSeat: () => void;
+  onRemoveSeat: () => void;
 }): ReactElement {
-  // Match the pricing shown in the summary card above: when the customer bills
-  // annually, compare on the annual figure (falling back to monthly for plans
-  // that carry no annual price) so the current tier's number is consistent.
-  const useAnnual = cycle === 'annual' && plan.annualPriceMinor > 0;
-  const priceMinor = useAnnual ? plan.annualPriceMinor : plan.monthlyPriceMinor;
-  const cycleSuffix = useAnnual ? '/yr' : '/mo';
   return (
-    <Card
-      className={cn(
-        'flex flex-col',
-        current ? 'border-[var(--ds-accent)] ring-1 ring-[var(--ds-accent)]' : '',
-      )}
-    >
-      <CardContent className="flex flex-1 flex-col pt-5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[15px] font-semibold text-[var(--ds-text)]">{plan.name}</span>
-        {current && (
-          <StatusBadge tone="accent" dot>
-            Current
-          </StatusBadge>
-        )}
-      </div>
-      <div className="mt-3 flex items-baseline gap-1">
-        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-          {plan.isPaid ? formatMoneyMinor(priceMinor) : 'Free'}
-        </span>
-        {plan.isPaid && <span className="text-[13px] text-[var(--ds-text-muted)]">{cycleSuffix}</span>}
-      </div>
-      <ul className="mt-4 flex-1 space-y-2 text-[13px] text-[var(--ds-text-muted)]">
-        <li className="flex items-center gap-2">
-          <Check size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-success)]" />
-          {plan.creditsPerMonth > 0 ? `${formatCredits(plan.creditsPerMonth)} credits / month` : 'Trial credits'}
-        </li>
-        <li className="flex items-center gap-2">
-          <Check size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-success)]" />
-          {plan.includedSeats > 0
-            ? `${plan.includedSeats} operator seat${plan.includedSeats === 1 ? '' : 's'}`
-            : 'No operator seats'}
-        </li>
-      </ul>
-      <div className="mt-5">
-        <Button
-          variant={current ? 'outline' : 'primary'}
-          onClick={onSelect}
-          disabled={current}
-          className="w-full"
-        >
-          {current ? 'Your plan' : 'Select plan'}
-        </Button>
-      </div>
+    <Card>
+      <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-subtle)] text-[var(--ds-text-muted)]">
+            <Users size={18} aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-[15px] font-semibold text-[var(--ds-text)]">
+              {totalSeats} operator seat{totalSeats === 1 ? '' : 's'}
+            </p>
+            <p className="text-[13px] text-[var(--ds-text-muted)]">
+              {includedSeats} included with your plan · {seatPriceLabel} per extra seat
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            onClick={onRemoveSeat}
+            disabled={totalSeats <= includedSeats}
+            title={
+              totalSeats <= includedSeats
+                ? `You can’t go below the ${includedSeats} included with your plan`
+                : undefined
+            }
+          >
+            <Minus size={16} aria-hidden="true" />
+            Remove
+          </Button>
+          <Button variant="outline" onClick={onAddSeat}>
+            <Plus size={16} aria-hidden="true" />
+            Add seat
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -628,9 +393,7 @@ function InvoicesTab({
         <span
           className={cn(
             'tabular-nums font-medium',
-            invoice.kind === 'credit_note'
-              ? 'text-[var(--ds-text-muted)]'
-              : 'text-[var(--ds-text)]',
+            invoice.kind === 'credit_note' ? 'text-[var(--ds-text-muted)]' : 'text-[var(--ds-text)]',
           )}
         >
           {formatMoneyMinor(invoice.amountMinor, invoice.currency)}
@@ -815,15 +578,6 @@ function DetailBlock({
 
 // ── Shared bits ───────────────────────────────────────────────────────────────
 
-function DetailRow({ label, value }: { label: string; value: ReactNode }): ReactElement {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 text-[var(--ds-text-muted)]">{label}</dt>
-      <dd className="min-w-0 break-words text-right font-medium text-[var(--ds-text)]">{value}</dd>
-    </div>
-  );
-}
-
 function ScheduledChangeBanner({
   planName,
   effectiveAt,
@@ -838,19 +592,13 @@ function ScheduledChangeBanner({
       role="status"
       className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
     >
-      <CalendarClock
-        size={16}
-        aria-hidden="true"
-        className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
-      />
+      <CalendarClock size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
       <div>
         <p className="font-semibold text-[var(--ds-text)]">
           Scheduled downgrade to {planName ?? 'a different plan'}
           {effectiveAt ? ` on ${formatDate(effectiveAt)}` : ''}.
         </p>
-        <p className="mt-0.5 text-[var(--ds-text-muted)]">
-          You’ll keep {currentPlanName} until then.
-        </p>
+        <p className="mt-0.5 text-[var(--ds-text-muted)]">You’ll keep {currentPlanName} until then.</p>
       </div>
     </div>
   );
@@ -868,11 +616,7 @@ function CancellationBanner({
       role="status"
       className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
     >
-      <AlertTriangle
-        size={16}
-        aria-hidden="true"
-        className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
-      />
+      <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
       <div>
         <p className="font-semibold text-[var(--ds-text)]">
           {planName} ends{endsAt ? ` on ${formatDate(endsAt)}` : ' at the end of the current period'} and
@@ -896,17 +640,9 @@ function capitalize(value: string): string {
 function LoadingState(): ReactElement {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
+      <Skeleton className="h-28 rounded-xl" />
       <Skeleton className="h-9 w-72 rounded-lg" />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <Skeleton key={index} className="h-56 rounded-xl" />
-        ))}
-      </div>
+      <Skeleton className="h-80 rounded-xl" />
     </div>
   );
 }

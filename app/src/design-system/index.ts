@@ -63,6 +63,8 @@ export { Modal } from './components/Modal';
 export type { ModalProps, ModalSize } from './components/Modal';
 export { Popover } from './components/Popover';
 export type { PopoverProps, PopoverAlign, PopoverTriggerProps } from './components/Popover';
+export { Drawer } from './components/Drawer';
+export type { DrawerProps, DrawerWidth } from './components/Drawer';
 
 // Composite components — Plan entitlements gating
 export { PlanBadge } from './components/PlanBadge';

@@ -85,7 +85,7 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 60
 
 # Sentinel meaning "no limit" / "unlimited" — used as the JSONB value for
-# Enterprise tier and as the return value for "this limit doesn't apply".
+# unlimited plan limits and as the return value for "this limit doesn't apply".
 UNLIMITED = -1
 
 # Fallback Free-plan limits/features used when no plan row can be resolved
@@ -125,7 +125,7 @@ class PlanEntitlements:
     """Resolved entitlements for a single client. Returned by ``get_entitlements``."""
 
     client_id: int
-    plan_slug: str  # "free" | "starter" | "standard" | "enterprise" | custom slug
+    plan_slug: str  # "free" | "starter" | "standard" | "professional" | custom slug
     plan_name: str
     # Subscription status: "active" | "trialing" | "past_due" | "canceled" |
     # "expired" | "none" (no subscription row). Drives the dashboard banner.
@@ -294,11 +294,11 @@ def get_entitlements(
 # The gate lives here so backend routes and the frontend entitlement
 # response agree on the rule without duplicating the slug list.
 #
-# Rule: "Standard" and "Enterprise" plans expose full attribution.
+# Rule: "Standard" and "Professional" plans expose full attribution.
 # Everyone else (Free / Starter / custom slugs) sees leads without the
 # source badge and journey timeline. The Leads UI renders an upsell tile
 # in the same slot so the feature is discoverable without leaking data.
-LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
 
 
 def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> bool:
@@ -327,7 +327,7 @@ def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
 
     Leads is a paid-tier surface — the Free plan hides the sidebar link,
     and the ``/leads`` API mirrors that with a 403. Every paid tier
-    (Starter / Standard / Enterprise, plus any custom slug that isn't
+    (Starter / Standard / Professional, plus any custom slug that isn't
     ``"free"``) gets access; individual quota (Starter capped at 35 leads
     per period, Standard unlimited) is enforced separately via the
     ``limits.leads`` counter, not this feature gate.
@@ -391,7 +391,7 @@ def is_bant_enabled_for_plan(client_id: int, db_session: Session) -> bool:
     Chat hot-path gate: the rag pipeline reads this before running BANT
     extraction, offering team-connect cards, or shipping the qualification
     system prompt. When a customer downgrades from a BANT-enabled tier
-    (Standard / Enterprise) to one without it (Free / Starter), this flips
+    (Standard / Professional) to one without it (Free / Starter), this flips
     to False on the next entitlements cache cycle (≤60s) and every new
     chat runs without qualification. Historical BANT signals stay visible
     in Insights — this gate only stops NEW scoring.
@@ -537,11 +537,11 @@ def can_client_add_new_bot(client_id: int, db_session: Session) -> AddBotDecisio
        subscription. Holding a paid subscription does **not** grant a
        free second bot — each bot's subscription funds exactly one bot.
 
-    This rule applies uniformly across Free, Starter, Standard, and
-    Enterprise. Enterprise customers who want unlimited bots under one
-    master subscription are handled outside this gate (super-admin sets
-    ``is_legacy_pooled=true`` on each Enterprise-account bot at
-    provisioning time so they share the master subscription's credits).
+    This rule applies uniformly across all plans. Legacy pooled accounts
+    that hold unlimited bots under one master subscription are handled
+    outside this gate (super-admin sets ``is_legacy_pooled=true`` on each
+    such bot at provisioning time so they share the master subscription's
+    credits).
     """
     active_bots = int(
         db_session.execute(

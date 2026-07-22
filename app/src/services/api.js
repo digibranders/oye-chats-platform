@@ -571,7 +571,7 @@ export const deleteDocument = async (documentName, botId) => {
 
 // ── Auto-recrawl ─────────────────────────────────────────────────────────────
 // Weekly automatic refresh of a bot's previously-crawled URLs. Only
-// available on Standard + Enterprise plans; Free / Starter clients get a
+// available on Standard + Professional plans; Free / Starter clients get a
 // 403 on PATCH with { error: 'feature_locked', current_plan, upgrade_url }
 // that the admin UI surfaces via the existing FeatureGate / UpgradeModal
 // flow. The ARQ sweep fires on schedule — there is no manual trigger.
@@ -1971,6 +1971,30 @@ export const updateBillingDetails = async (patch) => {
     }
 };
 
+/**
+ * Honest pre-checkout quote — the single source of truth for what the pay
+ * button will charge, before any payment surface opens. Returns the resolved
+ * currency, amount (minor units + display string), payment methods, and
+ * whether checkout is supported at all (`checkout_supported: false` with a
+ * `reason` of `free_plan` / `intl_usd_pending` → render Contact Sales instead
+ * of a pay button). Proration is applied server-side at activation and is
+ * intentionally NOT part of this quote.
+ */
+export const getCheckoutQuote = async (planId, billingCycle = 'monthly', billingCountry = null) => {
+    try {
+        const response = await api.get('/subscriptions/checkout/quote', {
+            params: {
+                plan_id: planId,
+                billing_cycle: billingCycle,
+                ...(billingCountry ? { billing_country: billingCountry } : {}),
+            },
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to fetch checkout quote');
+    }
+};
+
 export const createCheckoutSession = async (planId, billingCycle = 'monthly', billingCountry = null) => {
     try {
         const response = await api.post('/subscriptions/checkout', {
@@ -2062,6 +2086,20 @@ export const getCreditHistory = async ({ page = 1, limit = 50 } = {}) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load credit history');
+    }
+};
+
+/**
+ * Daily credit consumption for the Usage-page trend → `{ days, series: [{ date,
+ * credits_used }] }`. The series is zero-filled and ascending (one entry per
+ * day in the window), summing only metered consumption debits.
+ */
+export const getCreditDaily = async ({ days = 30 } = {}) => {
+    try {
+        const response = await api.get('/credits/daily', { params: { days } });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load consumption trend');
     }
 };
 

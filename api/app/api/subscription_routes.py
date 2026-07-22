@@ -8,11 +8,11 @@ subscription cancellation. Razorpay webhook handling lives in
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import config as app_config
 from app.api.auth import get_current_client_or_operator, require_verified_email
@@ -157,8 +157,7 @@ class StartTrialRequest(BaseModel):
 
     The slug is the public plan identifier the pricing page renders against
     (``starter`` / ``standard``). The slug must point at an active plan with
-    ``trial_days > 0`` — the free plan and enterprise tier are intentionally
-    excluded.
+    ``trial_days > 0`` — the free plan is intentionally excluded.
     """
 
     plan_slug: str = Field(..., min_length=1, max_length=64)
@@ -755,8 +754,9 @@ def checkout_quote(
             amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
 
-        # Free plan: render a quote but mark checkout as unsupported.
-        if inr_minor == 0 and plan.slug != "enterprise":
+        # Free plan (any zero-price plan): render a quote but mark checkout as
+        # unsupported.
+        if inr_minor == 0:
             return {
                 "country": country,
                 "currency": currency,
@@ -768,21 +768,6 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": None,
                 "reason": "free_plan",
-            }
-
-        # Enterprise is always contact-sales.
-        if plan.slug == "enterprise":
-            return {
-                "country": country,
-                "currency": currency,
-                "amount_minor": amount_minor,
-                "amount_display": amount_display,
-                "billing_cycle": billing_cycle,
-                "provider": None,
-                "methods": [],
-                "checkout_supported": False,
-                "contact_sales": "developer@oyechats.com",
-                "reason": "enterprise",
             }
 
         # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
@@ -958,7 +943,7 @@ def create_checkout(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
-        if plan.monthly_price_cents == 0 and plan.slug != "enterprise":
+        if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
         # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
@@ -1893,6 +1878,60 @@ def get_credit_history(
         ]
 
 
+# Reasons that represent actual metered consumption (always debit rows). Kept
+# in sync with the four usage buckets the balance breakdown reports, so the
+# trend and the breakdown agree on what "credits used" means. Deliberately
+# excludes plan_grant (grants + monthly resets), topup, refund, expiry, and
+# manual_adjust — none of which are consumption.
+_CONSUMPTION_REASONS = ("ai_chat", "url_scan", "email_send", "document_upload")
+
+
+@credits_router.get("/daily")
+def get_credit_daily(
+    client: Client = Depends(get_current_client),
+    days: int = 30,
+):
+    """Daily credit consumption for the last ``days`` days (zero-filled).
+
+    Sums the magnitude of consumption debits per calendar day (UTC) so the
+    Usage page can render a trend line. Returns a complete ascending series —
+    one entry per day in the window, ``credits_used = 0`` on quiet days — so
+    the client can render without gap-filling.
+    """
+    days = max(min(int(days or 30), 90), 1)
+    now = datetime.now(UTC)
+    window_start = now - timedelta(days=days)
+    first_day = (now - timedelta(days=days - 1)).date()
+
+    # Cast to a UTC calendar date so grouping is stable regardless of the DB
+    # session timezone (created_at is a timezone-aware UTC timestamp).
+    day_col = func.date(func.timezone("UTC", CreditLedger.created_at))
+
+    with get_session() as session:
+        rows = session.execute(
+            select(
+                day_col.label("day"),
+                func.coalesce(func.sum(-CreditLedger.delta), 0).label("used"),
+            )
+            .where(
+                CreditLedger.client_id == client.id,
+                CreditLedger.reason.in_(_CONSUMPTION_REASONS),
+                CreditLedger.created_at >= window_start,
+            )
+            .group_by(day_col)
+        ).all()
+
+        by_day = {str(r.day): int(r.used or 0) for r in rows}
+        series = [
+            {
+                "date": (day := (first_day + timedelta(days=offset)).isoformat()),
+                "credits_used": by_day.get(day, 0),
+            }
+            for offset in range(days)
+        ]
+        return {"days": days, "series": series}
+
+
 class TopupRequest(BaseModel):
     """Top-up purchase request.
 
@@ -1917,14 +1956,14 @@ class TopupRequest(BaseModel):
 
 
 def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
-    """Find a pack whose configured amount matches ``requested_amount``.
+    """Find a pack whose configured INR price matches ``requested_amount``.
 
-    Top-up packs in the new (INR) schema use the ``amount`` key; legacy
-    Legacy packs used ``usd``. We accept either so older admin clients
-    continue to work during cutover.
+    Packs carry their INR charge under ``inr`` (``amount`` is a legacy alias).
+    The frontend sends that INR amount, so we match on it. ``usd`` is a
+    display-only figure and is accepted only as a last-resort legacy fallback.
     """
     for pack in packs:
-        if int(pack.get("amount") or pack.get("usd") or 0) == requested_amount:
+        if int(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0) == requested_amount:
             return pack
     return None
 

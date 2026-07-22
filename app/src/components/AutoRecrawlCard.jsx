@@ -14,7 +14,7 @@ import { cn } from '../lib/utils';
 /**
  * AutoRecrawlCard — bot-scoped weekly auto-refresh of crawled URLs.
  *
- * Standard / Enterprise plans see a working toggle plus the last-run
+ * Standard / Professional plans see a working toggle plus the last-run
  * summary and the next scheduled run. Free / Starter plans see the same
  * layout with the toggle rendered as OFF; clicking it opens the shared
  * upgrade modal via ``requestUpgrade('auto_recrawl')`` instead of hitting

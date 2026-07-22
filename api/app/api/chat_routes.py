@@ -616,7 +616,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             # owning client's plan includes Lead Source Attribution. Free /
             # Starter clients still get their lead captured (with contact
             # info) — they just don't get the durable per-lead attribution
-            # copy that Standard / Enterprise clients see in the Leads UI.
+            # copy that Standard / Professional clients see in the Leads UI.
             utm_snapshot: dict | None = None
             journey_snapshot: list | None = None
             if bot.client_id and is_lead_source_attribution_enabled(bot.client_id, session):

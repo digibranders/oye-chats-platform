@@ -32,7 +32,12 @@ import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { AffiliatePage } from '../features/affiliate/AffiliatePage';
 import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
 import { SettingsPage } from '../features/settings';
-import { NotFoundPage } from '../features/system/NotFoundPage';
+
+// Error surfaces — attached as `errorElement`s so route/render crashes render an
+// on-brand recovery UI instead of React Router's default developer screen.
+import { RootErrorBoundary } from './errors/RootErrorBoundary';
+import { PageErrorBoundary } from './errors/PageErrorBoundary';
+import { NotFoundPage } from './errors/NotFoundPage';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
 // so its layout + steps stay out of the initial bundle.
@@ -45,98 +50,117 @@ const LaunchStudio = lazy(() =>
  * The AI Agent is a first-class URL object: `/agents/:agentId/<tab>` (the six
  * tabs each answer one question). Launch Studio is a full-screen route OUTSIDE
  * the shell — temporary onboarding, never navigation.
+ *
+ * Error handling: a pathless root layout owns the app-wide `errorElement`
+ * (`RootErrorBoundary`) so a shell/provider crash or a public-page loader error
+ * surfaces on-brand full-screen. In-shell pages sit under a pathless
+ * `PageErrorBoundary` so a single page crash renders inside the shell — the
+ * sidebar/top bar survive and the user can navigate away.
  */
 export const router = createBrowserRouter([
-  // ── Public — reused legacy auth pages; no guard, no data providers ──
-  { path: '/login', element: <Login /> },
-  { path: '/register', element: <Register /> },
-  { path: '/verify-email', element: <VerifyEmail /> },
-  { path: '/forgot-password', element: <ForgotPassword /> },
-  { path: '/auth/callback', element: <OAuthCallback /> },
-  { path: '/affiliate-invite', element: <AffiliateInvite /> },
-
-  // ── Authenticated area — token guard + reused Workspace/Bot/Crawl providers ──
   {
-    element: <ProtectedLayout />,
+    errorElement: <RootErrorBoundary />,
     children: [
-      {
-        path: '/',
-        element: <AppShell />,
-        handle: { crumb: 'Home' },
-        children: [
-          { index: true, element: <HomePage /> },
+      // ── Public — reused legacy auth pages; no guard, no data providers ──
+      { path: '/login', element: <Login /> },
+      { path: '/register', element: <Register /> },
+      { path: '/verify-email', element: <VerifyEmail /> },
+      { path: '/forgot-password', element: <ForgotPassword /> },
+      { path: '/auth/callback', element: <OAuthCallback /> },
+      { path: '/affiliate-invite', element: <AffiliateInvite /> },
 
-          // ── AI Agents ──────────────────────────────────────────────
+      // ── Authenticated area — token guard + reused Workspace/Bot/Crawl providers ──
+      {
+        element: <ProtectedLayout />,
+        children: [
           {
-            path: 'agents',
-            handle: { crumb: 'AI Agents' },
+            path: '/',
+            element: <AppShell />,
+            // A crash in the shell chrome itself escalates to the full-screen boundary.
+            errorElement: <RootErrorBoundary />,
+            handle: { crumb: 'Home' },
             children: [
-              { index: true, element: <AgentsPage /> },
+              // Pathless layout: page-level crashes bubble here and render the
+              // in-shell PageErrorBoundary through the shell's <Outlet />, so the
+              // sidebar and top bar survive and the user can navigate away.
               {
-                path: ':agentId',
-                handle: { crumb: 'Agent' },
-                element: <AgentLayout />,
+                errorElement: <PageErrorBoundary />,
                 children: [
-                  { index: true, element: <Navigate to="overview" replace /> },
-                  { path: 'overview', handle: { crumb: 'Overview' }, element: <OverviewPage /> },
-                  { path: 'knowledge', handle: { crumb: 'Knowledge' }, element: <KnowledgePage /> },
-                  { path: 'experience', handle: { crumb: 'Experience' }, element: <ExperiencePage /> },
-                  { path: 'channels', handle: { crumb: 'Channels' }, element: <ChannelsPage /> },
-                  { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AgentAnalyticsPage /> },
-                  { path: 'advanced', handle: { crumb: 'Advanced' }, element: <AdvancedPage /> },
+                  { index: true, element: <HomePage /> },
+
+                  // ── AI Agents ──────────────────────────────────────────────
+                  {
+                    path: 'agents',
+                    handle: { crumb: 'AI Agents' },
+                    children: [
+                      { index: true, element: <AgentsPage /> },
+                      {
+                        path: ':agentId',
+                        handle: { crumb: 'Agent' },
+                        element: <AgentLayout />,
+                        children: [
+                          { index: true, element: <Navigate to="overview" replace /> },
+                          { path: 'overview', handle: { crumb: 'Overview' }, element: <OverviewPage /> },
+                          { path: 'knowledge', handle: { crumb: 'Knowledge' }, element: <KnowledgePage /> },
+                          { path: 'experience', handle: { crumb: 'Experience' }, element: <ExperiencePage /> },
+                          { path: 'channels', handle: { crumb: 'Channels' }, element: <ChannelsPage /> },
+                          { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AgentAnalyticsPage /> },
+                          { path: 'advanced', handle: { crumb: 'Advanced' }, element: <AdvancedPage /> },
+                        ],
+                      },
+                    ],
+                  },
+
+                  // ── Operations ─────────────────────────────────────────────
+                  { path: 'inbox', handle: { crumb: 'Inbox' }, element: <InboxPage /> },
+                  { path: 'leads', handle: { crumb: 'Leads' }, element: <LeadsPage /> },
+                  { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AnalyticsPage /> },
+
+                  // ── Workspace ──────────────────────────────────────────────
+                  {
+                    path: 'workspace',
+                    handle: { crumb: 'Workspace' },
+                    element: <WorkspaceLayout />,
+                    children: [
+                      { index: true, element: <Navigate to="general" replace /> },
+                      { path: 'general', handle: { crumb: 'General' }, element: <GeneralPage /> },
+                      { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
+                      { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
+                      { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
+                      { path: 'security', handle: { crumb: 'Security' }, element: <SecurityPage /> },
+                      { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
+                      { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
+                      { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
+                    ],
+                  },
+                  // Old Workspace ▸ Settings tab moved out to a top-level page —
+                  // redirect so existing links/bookmarks keep working.
+                  { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
+
+                  // ── Settings — bottom-anchored secondary nav, not an object tab ──
+                  { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
+
+                  // Unknown routes get a real, in-shell 404 (sidebar/topbar survive).
+                  { path: '*', element: <NotFoundPage /> },
                 ],
               },
             ],
           },
 
-          // ── Operations ─────────────────────────────────────────────
-          { path: 'inbox', handle: { crumb: 'Inbox' }, element: <InboxPage /> },
-          { path: 'leads', handle: { crumb: 'Leads' }, element: <LeadsPage /> },
-          { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AnalyticsPage /> },
-
-          // ── Workspace ──────────────────────────────────────────────
+          // Launch Studio — full-screen 8-step onboarding, OUTSIDE the app shell.
           {
-            path: 'workspace',
-            handle: { crumb: 'Workspace' },
-            element: <WorkspaceLayout />,
+            path: '/launch',
             children: [
-              { index: true, element: <Navigate to="general" replace /> },
-              { path: 'general', handle: { crumb: 'General' }, element: <GeneralPage /> },
-              { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
-              { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
-              { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
-              { path: 'security', handle: { crumb: 'Security' }, element: <SecurityPage /> },
-              { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
-              { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
-              { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
+              { index: true, element: <Navigate to="welcome" replace /> },
+              {
+                path: ':step',
+                element: (
+                  <Suspense fallback={null}>
+                    <LaunchStudio />
+                  </Suspense>
+                ),
+              },
             ],
-          },
-          // Old Workspace ▸ Settings tab moved out to a top-level page —
-          // redirect so existing links/bookmarks keep working.
-          { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
-
-          // ── Settings — bottom-anchored secondary nav, not an object tab ──
-          { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
-
-          // Unknown routes get a real 404 — rendered inside the shell so
-          // sidebar/topbar navigation stays available — instead of a silent
-          // redirect to Home that hides broken links.
-          { path: '*', element: <NotFoundPage /> },
-        ],
-      },
-
-      // Launch Studio — full-screen 8-step onboarding, OUTSIDE the app shell.
-      {
-        path: '/launch',
-        children: [
-          { index: true, element: <Navigate to="welcome" replace /> },
-          {
-            path: ':step',
-            element: (
-              <Suspense fallback={null}>
-                <LaunchStudio />
-              </Suspense>
-            ),
           },
         ],
       },

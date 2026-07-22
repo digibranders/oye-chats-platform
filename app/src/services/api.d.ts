@@ -187,6 +187,12 @@ export function createCheckoutSession(
   billingCycle?: 'monthly' | 'annual',
   billingCountry?: string | null,
 ): Promise<Record<string, unknown>>;
+/** Honest pre-checkout quote → `{ amount_display, checkout_supported, reason, contact_sales, … }`. No proration. */
+export function getCheckoutQuote(
+  planId: number,
+  billingCycle?: 'monthly' | 'annual',
+  billingCountry?: string | null,
+): Promise<Record<string, unknown>>;
 /** Change plan on an existing subscription → `{ status | provider, … }` (switched / downgrade_scheduled / checkout). */
 export function changePlan(planId: number, billingCycle?: string | null): Promise<Record<string, unknown>>;
 /** Start the plan's configured free trial (no card). */
@@ -245,6 +251,8 @@ export function acceptAffiliateInviteExisting(
 // ── Credits / top-ups ────────────────────────────────────────────────────────
 export function getCreditBalance(): Promise<Record<string, unknown>>;
 export function getCreditHistory(params?: { page?: number; limit?: number }): Promise<Record<string, unknown>>;
+/** Daily consumption trend → `{ days, series: [{ date, credits_used }] }` (zero-filled, ascending). */
+export function getCreditDaily(params?: { days?: number }): Promise<Record<string, unknown>>;
 export function getTopupPacks(): Promise<Array<Record<string, unknown>>>;
 /** Start a top-up purchase → Razorpay order payload (`order_id`, `amount`, `key_id`, …). */
 export function initiateTopup(

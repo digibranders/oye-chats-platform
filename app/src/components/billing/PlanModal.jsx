@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FALLBACK_USD_TO_INR } from '../../lib/currency';
 import {
     X, Check, Sparkles, Loader2, Crown, Zap,
-    ShieldCheck, ExternalLink, Star, AlertCircle, Mail,
+    ShieldCheck, ExternalLink, Star, AlertCircle,
     Gift, CheckCircle2, XCircle,
     AlertTriangle, Calendar,
 } from 'lucide-react';
@@ -30,7 +30,6 @@ const TIER_META = {
     free:       { icon: Sparkles, accent: 'slate',   description: 'Start exploring AI-powered chat' },
     starter:    { icon: Zap,      accent: 'primary', description: 'For growing teams with live chat needs' },
     standard:   { icon: Crown,    accent: 'primary', description: 'Full AI + BANT sales intelligence' },
-    enterprise: { icon: ShieldCheck, accent: 'slate', description: 'Custom credits, dedicated support' },
 };
 
 const ACCENTS = {
@@ -221,14 +220,6 @@ export default function PlanModal({
 
     async function handleCta(actionKind = 'auto') {
         if (!selected) return;
-        if (selected.slug === 'enterprise') {
-            window.open(
-                `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Enterprise plan inquiry')}`,
-                '_blank',
-                'noopener,noreferrer',
-            );
-            return;
-        }
         if (selected.slug === 'free') {
             // Free path. With an active sub the backend schedules a
             // cancellation at period end; without one there's literally
@@ -686,7 +677,6 @@ function FocusedPlan({
     const accent = ACCENTS[meta.accent] || ACCENTS.slate;
     const features = useMemo(() => buildFeatureList(plan, geo), [plan, geo]);
     const isFree = plan.slug === 'free';
-    const isEnterprise = plan.slug === 'enterprise';
     const currentPrice = Number(currentPlan?.monthly_price_usd_cents || currentPlan?.monthly_price_cents || 0);
     const targetPrice = Number(plan.monthly_price_usd_cents || plan.monthly_price_cents || 0);
     const isUpgradeFromPaid = hasActiveSubscription && currentPrice > 0 && targetPrice > currentPrice;
@@ -699,8 +689,8 @@ function FocusedPlan({
     const primary = ctas[0];
 
     // Referral discount only applies to paid recurring plans. Free has no
-    // price to discount; Enterprise is a custom-quote conversation.
-    const referralEligible = !isFree && !isEnterprise;
+    // price to discount.
+    const referralEligible = !isFree;
     const activeDiscount = referralEligible && referral?.appliedCode ? referral.discountPct || 0 : 0;
 
     return (
@@ -811,9 +801,7 @@ function FocusedPlan({
                         >
                             {submitting && i === 0 ? (
                                 <Loader2 size={16} className="animate-spin" />
-                            ) : !showIcon ? null : isEnterprise ? (
-                                <Mail size={16} />
-                            ) : isFree ? null : (
+                            ) : !showIcon ? null : isFree ? null : (
                                 <ExternalLink size={16} />
                             )}
                             {cta.label}
@@ -1004,16 +992,6 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
     const { cents, symbol: sym } = usdAvailable
         ? { cents: Number(planCents) || 0, currency: 'USD', symbol: '$' }
         : toDisplayPrice(planCents, plan.currency || 'INR', geo);
-    if (plan.slug === 'enterprise') {
-        return (
-            <div>
-                <span className="text-4xl font-bold tracking-tight text-surface-900 dark:text-surface-50">Custom</span>
-                <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">
-                    Tailored credit allocation, dedicated account manager, SLA.
-                </p>
-            </div>
-        );
-    }
     if (!cents) {
         return (
             <div>
@@ -1201,14 +1179,6 @@ function ctasFor({
             note: 'You’re on this plan. To change billing cycle or cancel, use the billing portal on the Billing overview.',
         }];
     }
-    if (plan.slug === 'enterprise') {
-        return [{
-            kind: 'enterprise',
-            variant: 'primary',
-            label: 'Contact sales',
-            note: 'A sales engineer will reach out within one business day with a custom proposal.',
-        }];
-    }
     if (plan.slug === 'free') {
         if (hasActiveSubscription) {
             return [{
@@ -1288,7 +1258,6 @@ const CRAWL_FALLBACK_BY_SLUG = {
     free:       { pages: 20,    depth: 2 },
     starter:    { pages: -1,    depth: 4 },
     standard:   { pages: -1,    depth: 4 },
-    enterprise: { pages: 10000, depth: 5 },
 };
 
 function buildFeatureList(plan, geo) {
@@ -1315,21 +1284,6 @@ function buildFeatureList(plan, geo) {
     const fallback = CRAWL_FALLBACK_BY_SLUG[plan.slug] || null;
     const maxCrawlPages = planLimits.max_crawl_pages ?? fallback?.pages;
     const maxCrawlDepth = planLimits.max_crawl_depth ?? fallback?.depth;
-
-    if (plan.slug === 'enterprise') {
-        out.push('Custom credit allocation');
-        out.push('Unlimited operator seats');
-        if (maxCrawlPages === -1) {
-            out.push(`Unlimited pages per crawl (depth ${maxCrawlDepth ?? 5})`);
-        } else if (maxCrawlPages != null) {
-            out.push(`Crawl up to ${maxCrawlPages.toLocaleString()} pages (depth ${maxCrawlDepth ?? 5})`);
-        }
-        out.push('BANT lead qualification scoring');
-        out.push('Dedicated account manager');
-        out.push('Custom SLA & uptime guarantee');
-        out.push('SSO + audit logs');
-        return out;
-    }
 
     if (credits != null) {
         out.push(`${credits.toLocaleString()} credits / month`);
@@ -1405,7 +1359,6 @@ function renderPriceLabel(plan, billingCycle, geo, compact = false) {
         const planCents = billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents;
         ({ cents, symbol: sym } = toDisplayPrice(planCents, plan.currency || 'INR', geo));
     }
-    if (plan.slug === 'enterprise') return 'Custom';
     if (!cents) return compact ? 'Free' : `${sym}0`;
     const major = cents / 100;
     const value = `${sym}${Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}`;

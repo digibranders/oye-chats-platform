@@ -208,7 +208,7 @@ class WorkerSettings:
     # ~27 min — matches CRAWL_SUBPROCESS_TIMEOUT so ARQ never kills a crawl
     # that the subprocess itself is still allowed to run. Sized to fit
     # Standard plan's 1500-page advertised cap with margin and to give
-    # Enterprise customers a usable single-shot ceiling until auto-
+    # large single-shot crawls a usable ceiling until auto-
     # segmentation (Tier 3) ships.
     job_timeout = int(os.getenv("WORKER_JOB_TIMEOUT", "1600"))
     # Max attempts for a job that raises arq.worker.Retry (e.g. email tasks —

@@ -3,7 +3,7 @@
 The customer-facing feature is simple: toggle it on, and every 7 days the
 platform re-fetches every URL that was previously ingested for the bot,
 re-embedding only pages whose content actually changed. Free / Starter
-plans see the toggle locked; Standard / Enterprise plans have the
+plans see the toggle locked; Standard / Professional plans have the
 ``auto_recrawl`` feature flag flipped on in ``plans.features``.
 
 Under the hood the whole "only changed pages" contract is inherited for

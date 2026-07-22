@@ -44,7 +44,6 @@ export const TIER_META: Record<string, { accent: 'accent' | 'neutral'; descripti
   free: { accent: 'neutral', description: 'Start exploring AI-powered chat' },
   starter: { accent: 'accent', description: 'For growing teams with live chat needs' },
   standard: { accent: 'accent', description: 'Full AI + BANT sales intelligence' },
-  enterprise: { accent: 'neutral', description: 'Custom credits, dedicated support' },
 };
 
 export const MOST_POPULAR_SLUG = 'standard';
@@ -58,7 +57,6 @@ const CRAWL_FALLBACK_BY_SLUG: Record<string, { pages: number; depth: number }> =
   free: { pages: 20, depth: 2 },
   starter: { pages: -1, depth: 4 },
   standard: { pages: -1, depth: 4 },
-  enterprise: { pages: 10000, depth: 5 },
 };
 
 interface DisplayPrice {
@@ -119,7 +117,6 @@ export function renderPriceLabel(
     const planCents = billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents;
     ({ cents, symbol: sym } = toDisplayPrice(planCents, plan.currency || 'INR', geo));
   }
-  if (plan.slug === 'enterprise') return 'Custom';
   if (!cents) return compact ? 'Free' : `${sym}0`;
   const major = cents / 100;
   const value = `${sym}${Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}`;
@@ -170,21 +167,6 @@ export function buildFeatureList(plan: PlanRow, geo: Geo | null): string[] {
   const fallback = CRAWL_FALLBACK_BY_SLUG[plan.slug] || null;
   const maxCrawlPages = planLimits.max_crawl_pages ?? fallback?.pages;
   const maxCrawlDepth = planLimits.max_crawl_depth ?? fallback?.depth;
-
-  if (plan.slug === 'enterprise') {
-    out.push('Custom credit allocation');
-    out.push('Unlimited operator seats');
-    if (maxCrawlPages === -1) {
-      out.push(`Unlimited pages per crawl (depth ${maxCrawlDepth ?? 5})`);
-    } else if (maxCrawlPages != null) {
-      out.push(`Crawl up to ${maxCrawlPages.toLocaleString()} pages (depth ${maxCrawlDepth ?? 5})`);
-    }
-    out.push('BANT lead qualification scoring');
-    out.push('Dedicated account manager');
-    out.push('Custom SLA & uptime guarantee');
-    out.push('SSO + audit logs');
-    return out;
-  }
 
   if (credits != null) {
     out.push(`${credits.toLocaleString()} credits / month`);
@@ -262,7 +244,6 @@ export type CtaKind =
   | 'trial'
   | 'current'
   | 'noop'
-  | 'enterprise'
   | 'downgrade_free';
 
 export interface Cta {
@@ -317,16 +298,6 @@ export function ctasFor({
         variant: 'primary',
         label: 'Current plan',
         note: 'You’re on this plan. To change billing cycle or cancel, use the controls on the Billing overview.',
-      },
-    ];
-  }
-  if (plan.slug === 'enterprise') {
-    return [
-      {
-        kind: 'enterprise',
-        variant: 'primary',
-        label: 'Contact sales',
-        note: 'A sales engineer will reach out within one business day with a custom proposal.',
       },
     ];
   }
