@@ -28,6 +28,7 @@ import {
   EmptyState,
   InsightCard,
   Input,
+  LockedFeatureCard,
   PageContainer,
   SectionHeader,
   Skeleton,
@@ -46,6 +47,7 @@ import {
   updateWebhook,
 } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
 import { type Bot, type Webhook, type WebhookDelivery } from '../../types/domain';
 
 // ── Bot integration fields ────────────────────────────────────────────────────
@@ -1124,6 +1126,7 @@ interface WebhookResult {
 export function IntegrationsPage(): ReactElement {
   const { selectedBot, refreshBots, loading: botsLoading } = useBotContext();
   const selectedBotId = selectedBot?.id ?? null;
+  const { isFree } = useEntitlements();
 
   const [tab, setTab] = useState<TabKey>('webhooks');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -1132,9 +1135,11 @@ export function IntegrationsPage(): ReactElement {
 
   // Load webhooks for the selected agent. No synchronous setState in the effect
   // body — the first write always follows the await, and loading is derived
-  // from whether `result` matches the current agent.
+  // from whether `result` matches the current agent. Free-plan workspaces
+  // never issue this fetch — the page renders the upgrade teaser below
+  // instead. Re-runs (and starts fetching) the moment `isFree` flips false.
   useEffect(() => {
-    if (!selectedBotId) return;
+    if (!selectedBotId || isFree) return;
     let active = true;
     void (async () => {
       try {
@@ -1149,7 +1154,7 @@ export function IntegrationsPage(): ReactElement {
     return () => {
       active = false;
     };
-  }, [selectedBotId, refreshToken]);
+  }, [selectedBotId, refreshToken, isFree]);
 
   const forCurrentBot = result !== null && result.botId === selectedBotId;
   const webhooksLoading = !!selectedBotId && !forCurrentBot;
@@ -1160,6 +1165,24 @@ export function IntegrationsPage(): ReactElement {
   );
 
   const reloadWebhooks = (): void => setRefreshToken((token) => token + 1);
+
+  // ── Free-plan gate ───────────────────────────────────────────────────────
+  // Placed after every hook call (rules-of-hooks requires hooks to run
+  // unconditionally) but before any other derived/render logic. Takes
+  // priority over the "pick an agent" empty state below — a Free workspace
+  // can't use Integrations regardless of which agent is selected.
+  if (isFree) {
+    return (
+      <PageContainer
+        title="Integrations"
+        description="Connect OyeChats to your CRM, calendar, and inbox."
+      >
+        <div className="mx-auto w-full max-w-md py-12">
+          <LockedFeatureCard intent="view_integrations" icon={WebhookIcon} />
+        </div>
+      </PageContainer>
+    );
+  }
 
   // ── Derived connection status for the overview tiles ─────────────────────────
 

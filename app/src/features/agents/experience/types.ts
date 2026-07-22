@@ -16,6 +16,11 @@ export interface ExperienceDraft {
   avatarType: AvatarType;
   orbColor: string;
   botLogo: string | null;
+  /** `feature_flags.show_branding` — true shows the "Powered by OyeChats"
+   * footer. Only a workspace with the `branding_removable` plan feature can
+   * turn this off; the backend force-sets it back to `true` on save
+   * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
+  showBranding: boolean;
 
   // ── Messages (widget_messages.*) ────────────────────────────────────────────
   welcomeGreeting: string;
@@ -88,6 +93,10 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 /**
  * Build the editable draft from the raw settings payload returned by
  * `getClientSettings(botId)`. Unknown / missing fields fall back to sensible
@@ -99,6 +108,7 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
   for (const [key, value] of Object.entries(widgetMessages)) {
     if (!MANAGED_WIDGET_MESSAGE_KEYS.has(key)) extraWidgetMessages[key] = value;
   }
+  const featureFlags = asRecord(raw.feature_flags);
 
   return {
     primaryColor: asNonEmptyString(raw.primary_color, DEFAULTS.primaryColor),
@@ -106,6 +116,7 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
     avatarType: asAvatarType(raw.avatar_type),
     orbColor: asString(raw.orb_color, DEFAULTS.orbColor),
     botLogo: typeof raw.bot_logo === 'string' && raw.bot_logo.length > 0 ? raw.bot_logo : null,
+    showBranding: asBoolean(featureFlags.show_branding, true),
 
     welcomeGreeting: asNonEmptyString(widgetMessages.welcome_greeting, DEFAULTS.welcomeGreeting),
     welcomeSubtitle: asNonEmptyString(widgetMessages.welcome_subtitle, DEFAULTS.welcomeSubtitle),
@@ -137,6 +148,9 @@ export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknow
     orb_color: draft.orbColor || null,
     bot_logo: draft.botLogo,
     launcher_logo: draft.botLogo,
+    // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) — other
+    // stored feature flags (managed on the Advanced tab) are untouched.
+    feature_flags: { show_branding: draft.showBranding },
 
     widget_messages: {
       ...draft.extraWidgetMessages,

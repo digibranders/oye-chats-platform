@@ -1,7 +1,9 @@
-import { Menu, PanelLeft, Search, Moon, Sun, User } from 'lucide-react';
-import { Breadcrumbs, cn, useTheme } from '../design-system';
+import { Menu, PanelLeft, Search } from 'lucide-react';
+import { Breadcrumbs } from '../design-system';
 import { useBreadcrumbs } from './useBreadcrumbs';
 import { NotificationCenter } from './NotificationCenter';
+import { ThemeToggle } from './ThemeToggle';
+import { ProfileMenu } from './ProfileMenu';
 
 export interface TopBarProps {
   isMobile: boolean;
@@ -17,7 +19,6 @@ export interface TopBarProps {
  */
 export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps) {
   const crumbs = useBreadcrumbs();
-  const { resolvedTheme, toggle } = useTheme();
 
   return (
     <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-[var(--ds-border)] bg-[var(--ds-bg-canvas)]/80 px-4 backdrop-blur-md md:px-6">
@@ -50,30 +51,13 @@ export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps)
         </button>
 
         {/* Theme toggle */}
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]"
-        >
-          {resolvedTheme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
+        <ThemeToggle />
 
-        {/* Notifications (placeholder) */}
+        {/* Notifications */}
         <NotificationCenter />
 
-        {/* Account menu (placeholder) */}
-        <button
-          type="button"
-          aria-label="Account"
-          title="Account — coming soon"
-          className={cn(
-            'ml-1 flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]',
-            'transition-colors hover:text-[var(--ds-text)]',
-          )}
-        >
-          <User size={16} />
-        </button>
+        {/* Account menu */}
+        <ProfileMenu />
       </div>
     </header>
   );

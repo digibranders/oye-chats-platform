@@ -3,6 +3,7 @@ import { Bot as BotIcon, Loader2, AlertCircle } from 'lucide-react';
 import { createBot } from '../../services/api';
 import { type Bot } from '../../types/domain';
 import { Button, Input } from '../../design-system';
+import { requiresSubscription } from '../../utils/apiErrors';
 
 export interface CreateAgentDialogProps {
   /** Whether the modal is mounted/visible. */
@@ -11,6 +12,13 @@ export interface CreateAgentDialogProps {
   onClose: () => void;
   /** Called with the freshly created agent so the parent can refresh + navigate. */
   onCreated: (bot: Bot) => void;
+  /**
+   * Called instead of showing an inline error when `createBot` returns 402
+   * `must_subscribe` — the dialog closes itself; the parent is responsible
+   * for opening the upgrade modal (kept out of this dialog so both the
+   * pre-emptive limit check and this reactive 402 path share one call site).
+   */
+  onRequiresUpgrade: () => void;
 }
 
 /** Prefix a bare host with https:// so createBot always receives a real URL. */
@@ -26,31 +34,26 @@ function messageFromError(err: unknown): string {
 }
 
 /**
- * True when the API refused because a paid subscription is required (2nd+ agent).
- * The backend returns HTTP 402 with `detail.must_subscribe` on the createBot call.
- */
-function requiresSubscription(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { status?: number; data?: { detail?: { must_subscribe?: boolean } } };
-  return e.status === 402 && e.data?.detail?.must_subscribe === true;
-}
-
-/**
  * CreateAgentDialog — the focused "new agent" modal for the AI Agents page.
  *
  * ONE job: name the agent (and optionally point it at a website), then create
  * it. Reuses the legacy `createBot` API. The first agent on an account is free;
- * additional agents require a plan, so a 402 is surfaced as clear guidance
- * rather than a raw error. The full paid-agent checkout (Razorpay) lives in the
- * legacy CreateBotWizard and is intentionally out of scope here.
+ * additional agents require a plan, so a 402 `must_subscribe` response closes
+ * this dialog and routes to `onRequiresUpgrade` (the shared upgrade modal)
+ * instead of surfacing a raw error. The full paid-agent checkout (Razorpay)
+ * lives in the legacy CreateBotWizard and is intentionally out of scope here.
  */
-export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialogProps): ReactElement | null {
+export function CreateAgentDialog({
+  open,
+  onClose,
+  onCreated,
+  onRequiresUpgrade,
+}: CreateAgentDialogProps): ReactElement | null {
   const titleId = useId();
   const [name, setName] = useState('');
   const [website, setWebsite] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [needsPlan, setNeedsPlan] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -72,7 +75,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
       setName('');
       setWebsite('');
       setError('');
-      setNeedsPlan(false);
       setSubmitting(false);
     }
   }
@@ -129,7 +131,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setName('');
     setWebsite('');
     setError('');
-    setNeedsPlan(false);
     onClose();
   };
 
@@ -137,7 +138,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     event.preventDefault();
     if (!trimmedName || submitting) return;
     setError('');
-    setNeedsPlan(false);
     setSubmitting(true);
     try {
       const normalizedWebsite = normalizeWebsite(website);
@@ -148,8 +148,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
       onCreated(bot);
     } catch (err) {
       if (requiresSubscription(err)) {
-        setNeedsPlan(true);
-        setError('Your free agent is already in use. Adding another agent needs a paid plan.');
+        // Paywalled: close this dialog and hand off to the shared upgrade
+        // modal instead of showing a raw/inline error.
+        onClose();
+        onRequiresUpgrade();
       } else {
         setError(messageFromError(err));
       }
@@ -255,12 +257,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                 )}
               </Button>
             </div>
-
-            {needsPlan && (
-              <p className="text-center text-[12px] text-[var(--ds-text-muted)]">
-                Add a plan in Workspace &rsaquo; Billing to create more agents.
-              </p>
-            )}
           </form>
         </div>
       </div>

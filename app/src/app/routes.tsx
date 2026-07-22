@@ -22,6 +22,7 @@ import { InboxPage } from '../features/inbox/InboxPage';
 import { LeadsPage } from '../features/leads/LeadsPage';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
 import { WorkspaceLayout } from '../features/workspace/WorkspaceLayout';
+import { GeneralPage } from '../features/workspace/GeneralPage';
 import { MembersPage } from '../features/workspace/MembersPage';
 import { BillingPage } from '../features/workspace/BillingPage';
 import { UsagePage } from '../features/workspace/UsagePage';
@@ -30,7 +31,8 @@ import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { AffiliatePage } from '../features/affiliate/AffiliatePage';
 import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
-import { SettingsPage } from '../features/workspace/SettingsPage';
+import { SettingsPage } from '../features/settings';
+import { NotFoundPage } from '../features/system/NotFoundPage';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
 // so its layout + steps stay out of the initial bundle.
@@ -98,7 +100,8 @@ export const router = createBrowserRouter([
             handle: { crumb: 'Workspace' },
             element: <WorkspaceLayout />,
             children: [
-              { index: true, element: <Navigate to="members" replace /> },
+              { index: true, element: <Navigate to="general" replace /> },
+              { path: 'general', handle: { crumb: 'General' }, element: <GeneralPage /> },
               { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
               { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
               { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
@@ -106,9 +109,19 @@ export const router = createBrowserRouter([
               { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
               { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
               { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
-              { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
             ],
           },
+          // Old Workspace ▸ Settings tab moved out to a top-level page —
+          // redirect so existing links/bookmarks keep working.
+          { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
+
+          // ── Settings — bottom-anchored secondary nav, not an object tab ──
+          { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
+
+          // Unknown routes get a real 404 — rendered inside the shell so
+          // sidebar/topbar navigation stays available — instead of a silent
+          // redirect to Home that hides broken links.
+          { path: '*', element: <NotFoundPage /> },
         ],
       },
 
@@ -129,7 +142,4 @@ export const router = createBrowserRouter([
       },
     ],
   },
-
-  // Unknown routes fall back to Home.
-  { path: '*', element: <Navigate to="/" replace /> },
 ]);

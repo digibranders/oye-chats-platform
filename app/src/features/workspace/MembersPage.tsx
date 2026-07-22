@@ -19,8 +19,10 @@ import {
   DataTable,
   EmptyState,
   Input,
+  LockedFeatureCard,
   MetricCard,
   PageContainer,
+  QuotaMeter,
   SectionHeader,
   Skeleton,
   StatusBadge,
@@ -44,6 +46,8 @@ import {
 } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Department, type Operator, type OperatorInvite } from '../../types/domain';
 
 // ── Local helpers ────────────────────────────────────────────────────────────
@@ -150,6 +154,10 @@ export function MembersPage(): ReactElement {
   const canManage = currentRole !== 'operator';
   const selectedBotId = selectedBot?.id ?? null;
 
+  const { entitlements, isFree, limitFor, withinLimit } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const seatLimit = limitFor('operators');
+
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -217,7 +225,11 @@ export function MembersPage(): ReactElement {
 
   // Load / reload. No synchronous setState in the effect body — the first
   // setState always follows an await, so `loading` is a genuine derived phase.
+  // Free-plan workspaces never issue this fetch — the page renders the
+  // upgrade teaser below instead, so there's no roster to load in the first
+  // place. Re-runs (and starts fetching) the moment `isFree` flips false.
   useEffect(() => {
+    if (isFree) return;
     let active = true;
     void (async () => {
       try {
@@ -264,7 +276,7 @@ export function MembersPage(): ReactElement {
     return () => {
       active = false;
     };
-  }, [refreshToken]);
+  }, [refreshToken, isFree]);
 
   const reload = (): void => setRefreshToken((token) => token + 1);
   const retry = (): void => {
@@ -273,6 +285,14 @@ export function MembersPage(): ReactElement {
   };
 
   const data = phase.status === 'ready' ? phase.data : null;
+
+  // Workspace-wide seat usage. `getOperators()` (above) already fetches every
+  // active operator for the client — not just this bot's roster — so its
+  // length matches what `entitlements.usage.operators` counts server-side.
+  // Prefer the entitlements value (authoritative, workspace-scoped); fall
+  // back to what the page already loaded only if it's ever absent.
+  const seatsUsed = entitlements.usage.operators ?? data?.operators.length ?? 0;
+  const atSeatLimit = !withinLimit('operators', seatsUsed);
 
   // Derived, bot-scoped rosters. Operators and invites are bound to a single
   // bot; departments are workspace-level and shown in full.
@@ -303,6 +323,25 @@ export function MembersPage(): ReactElement {
   const showSelfCta = canManage && !!selectedBotId && data?.currentUserId != null && !selfOperator;
 
   const onlineCount = botOperators.filter((operator) => operator.is_online).length;
+
+  // ── Free-plan gate ───────────────────────────────────────────────────────
+  // Placed after every hook call (rules-of-hooks requires hooks to run
+  // unconditionally) but before any mutation/render logic: a Free workspace
+  // only ever sees the upgrade teaser for Members, never the roster, loading
+  // skeleton, or error state. Pairs with the fetch guard above, which never
+  // issues the roster request in the first place.
+  if (isFree) {
+    return (
+      <PageContainer
+        title="Members"
+        description="Everyone who can see conversations and answer visitors in this workspace."
+      >
+        <div className="mx-auto w-full max-w-md py-12">
+          <LockedFeatureCard intent="view_team" icon={Users} />
+        </div>
+      </PageContainer>
+    );
+  }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
@@ -538,8 +577,19 @@ export function MembersPage(): ReactElement {
 
   const canInvite = canManage && !!selectedBotId;
 
+  const handleInviteClick = (): void => {
+    // `atSeatLimit` is only ever true for a finite limit — `withinLimit`
+    // returns true for the unlimited (-1) sentinel — so the copy can assume a
+    // real seat count here.
+    if (atSeatLimit) {
+      openUpgradeModal('add_operator');
+      return;
+    }
+    setInviteOpen((open) => !open);
+  };
+
   const pageActions = canInvite ? (
-    <Button onClick={() => setInviteOpen((open) => !open)}>
+    <Button onClick={handleInviteClick}>
       <UserPlus size={16} aria-hidden="true" />
       Invite member
     </Button>
@@ -551,6 +601,13 @@ export function MembersPage(): ReactElement {
       description="Everyone who can see conversations and answer visitors in this workspace."
       actions={pageActions}
     >
+      {/* Seats used against the plan's operator limit — workspace-wide. */}
+      {phase.status === 'ready' && (
+        <div className="max-w-xs">
+          <QuotaMeter label="Seats" used={seatsUsed} limit={seatLimit} />
+        </div>
+      )}
+
       {/* Live feedback for every mutation. */}
       <div aria-live="polite" className="empty:hidden">
         {feedback && (
@@ -893,7 +950,7 @@ export function MembersPage(): ReactElement {
                       description="Invite a teammate to help answer conversations."
                       action={
                         canInvite ? (
-                          <Button onClick={() => setInviteOpen(true)}>
+                          <Button onClick={handleInviteClick}>
                             <UserPlus size={16} aria-hidden="true" />
                             Invite member
                           </Button>

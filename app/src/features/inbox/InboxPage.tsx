@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react';
 import { PageContainer } from '../../design-system';
 import { Tabs, type TabItem } from '../../design-system/components/Tabs';
+import { FeatureGate } from '../../design-system/components/FeatureGate';
 import { useBotContext } from '../../context/BotContext';
 import { OfflineMessagesPanel } from './OfflineMessagesPanel';
 import { LiveChatPanel } from './LiveChatPanel';
@@ -50,7 +51,11 @@ export function InboxPage(): ReactElement {
       </div>
 
       <div role="tabpanel" id="tabpanel-live" aria-labelledby="tab-live" hidden={tab !== 'live'}>
-        {tab === 'live' && <LiveChatPanel operator={operator} />}
+        {tab === 'live' && (
+          <FeatureGate feature="live_chat" intent="live_chat">
+            <LiveChatPanel operator={operator} />
+          </FeatureGate>
+        )}
       </div>
     </PageContainer>
   );

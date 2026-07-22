@@ -1,8 +1,6 @@
 import { type ReactElement } from 'react';
-import { Radio, Users, MessageSquare, Hammer, AlertCircle } from 'lucide-react';
+import { Radio, MessageSquare, AlertCircle } from 'lucide-react';
 import { Button, StatusBadge, EmptyState, Skeleton } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
-import { InsightCard } from '../../design-system/components/InsightCard';
 import { type OperatorStatusState } from './useOperatorStatus';
 
 export interface LiveChatPanelProps {
@@ -14,9 +12,9 @@ export interface LiveChatPanelProps {
  *
  * The full real-time operator console (WebSocket sessions, typing indicators,
  * canned-response insertion, handoff) is a large surface deliberately NOT ported
- * here. This renders a faithful, structured placeholder: availability state,
- * live counters (stubbed at zero), and a waiting-queue empty state, so the shape
- * of the finished experience is legible.
+ * here. This renders a faithful, honest placeholder: availability state (real,
+ * wired to the operator-status API) and a single "coming soon" empty state.
+ * No fabricated activity metrics — there is no live data to show yet.
  *
  * TODO(inbox/live-chat): build the console against `ws_routes.py` /
  * `live_chat_service.py` — active conversations list, message thread, operator
@@ -27,13 +25,6 @@ export function LiveChatPanel({ operator }: LiveChatPanelProps): ReactElement {
 
   return (
     <div className="space-y-6">
-      <InsightCard
-        icon={Hammer}
-        tone="info"
-        title="The live chat console is coming soon"
-        body="You’ll be able to take real-time conversations from visitors right here — see who’s waiting, reply instantly, and hand off between teammates. For now, set your availability so incoming chats route correctly once it’s live."
-      />
-
       {/* Availability — real, wired to the operator status API. */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
         <div className="flex items-center gap-3">
@@ -83,16 +74,10 @@ export function LiveChatPanel({ operator }: LiveChatPanelProps): ReactElement {
         </div>
       )}
 
-      {/* Stubbed live counters — shape of the finished console. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <MetricCard label="Active conversations" value="0" icon={MessageSquare} />
-        <MetricCard label="Waiting for an operator" value="0" icon={Users} />
-      </div>
-
       <EmptyState
         icon={MessageSquare}
-        title="No live conversations yet"
-        description="When the live console ships, active visitor chats will appear here in real time."
+        title="Live chat console is coming soon"
+        description="You’ll be able to take real-time conversations from visitors right here — see who’s waiting, reply instantly, and hand off between teammates. For now, set your availability above so incoming chats route correctly once it’s live."
       />
     </div>
   );

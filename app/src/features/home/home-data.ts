@@ -9,6 +9,7 @@
  * actually returned.
  */
 import type { Bot, TopQuestion } from '../../types/domain';
+import type { FeedbackItem } from '../feedback/types';
 
 // ── Primitive coercion helpers ───────────────────────────────────────────────
 
@@ -256,7 +257,7 @@ export function mergeTopQuestions(perAgent: readonly TopQuestion[][], limit = 6)
 
 export interface FeedbackBucket {
   botName: string;
-  items: Array<Record<string, unknown>>;
+  items: FeedbackItem[];
 }
 
 export interface OfflineActivityInput {

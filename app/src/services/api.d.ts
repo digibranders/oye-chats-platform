@@ -12,6 +12,7 @@ import type {
   CrawlDiscovery,
   CurrentUser,
   Department,
+  Entitlements,
   KnowledgeSource,
   Lead,
   LeadsQuery,
@@ -28,6 +29,7 @@ import type {
   WebhookDeliveriesResult,
   Workspace,
 } from '../types/domain';
+import type { FeedbackItem } from '../features/feedback/types';
 
 // ── Agents (bots) ────────────────────────────────────────────────────────────
 export function createBot(data: { name: string; website?: string; system_prompt?: string }): Promise<Bot>;
@@ -82,6 +84,8 @@ export function recordActivationEvent(
 
 // ── Identity / workspace ─────────────────────────────────────────────────────
 export function getCurrentUser(): Promise<CurrentUser>;
+/** GET /auth/me/entitlements. Throws on failure — callers fall back / hide gracefully. */
+export function getEntitlements(): Promise<Entitlements>;
 export function getMyWorkspaces(): Promise<{ workspaces: Workspace[] }>;
 /**
  * Update the authenticated client's display name. Email changes go through the
@@ -97,7 +101,7 @@ export function getActivityStats(botId?: number): Promise<ActivityPoint[]>;
 export function getTopQuestions(botId?: number): Promise<TopQuestion[]>;
 export function getRatingsSummary(botId?: number): Promise<Record<string, unknown>>;
 export function getResolutionSummary(botId?: number): Promise<Record<string, unknown>>;
-export function getFeedbackData(botId?: number): Promise<Array<Record<string, unknown>>>;
+export function getFeedbackData(botId?: number): Promise<FeedbackItem[]>;
 export function getVisitorsData(botId?: number): Promise<Array<Record<string, unknown>>>;
 export function getChatHistory(
   sessionId: string,
@@ -256,6 +260,26 @@ export function verifyTopupPayment(payload: {
 
 // ── Security / account ───────────────────────────────────────────────────────
 export function changeClientPassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }>;
+/** POST /auth/operator-change-password — an operator changes their own password. */
+export function operatorChangePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ message: string }>;
+/**
+ * Start an email change: verifies the current password, stores the new
+ * address as pending, and emails it a confirmation code. The login email
+ * does not change until confirmClientEmailChange succeeds.
+ */
+export function requestClientEmailChange(
+  newEmail: string,
+  currentPassword: string,
+): Promise<{ message: string; pending_email: string }>;
+/** Confirm a pending email change with the OTP sent to the new address. */
+export function confirmClientEmailChange(
+  otp: string,
+): Promise<{ id: number; name: string; email: string; pending_email: null }>;
+/** Cancel a pending email change before it's confirmed. */
+export function cancelClientEmailChange(): Promise<{ ok: boolean }>;
 export function getClientApiKey(): Promise<{ api_key_masked: string }>;
 export function regenerateClientApiKey(): Promise<{ ok: boolean; api_key: string; api_key_masked: string }>;
 
@@ -266,3 +290,45 @@ export function updateWebhook(webhookId: number, data: Record<string, unknown>):
 export function deleteWebhook(webhookId: number): Promise<Record<string, unknown>>;
 export function getWebhookDeliveries(webhookId: number, page?: number): Promise<WebhookDeliveriesResult>;
 export function testWebhook(webhookId: number): Promise<Record<string, unknown>>;
+
+// ── Platform feedback (admin → OyeChats product feedback widget) ────────────
+// Distinct from `FeedbackItem` (`features/feedback/types`), which is the
+// visitor thumbs-up/down rating log on a bot's own conversations.
+
+/** A single feedback attachment as persisted/returned by the backend. */
+export interface PlatformFeedbackAttachment {
+  url: string;
+  name?: string;
+  content_type?: string;
+}
+
+/** One row from `GET /client/feedback` — the caller's own submitted feedback. */
+export interface PlatformFeedbackItem {
+  id: number;
+  message: string;
+  type: 'bug' | 'feature_request' | 'question' | 'other';
+  area: 'billing' | 'bots' | 'knowledge' | 'live_chat' | 'dashboard' | 'widget' | 'other' | null;
+  severity: 'low' | 'medium' | 'high' | 'critical' | null;
+  context: Record<string, unknown> | null;
+  attachments: PlatformFeedbackAttachment[] | null;
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  admin_response: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** POST /client/feedback — submit a classified feedback entry. */
+export function submitPlatformFeedback(payload: {
+  message: string;
+  type?: string;
+  area?: string | null;
+  severity?: string | null;
+  context?: Record<string, unknown> | null;
+  attachments?: PlatformFeedbackAttachment[] | null;
+}): Promise<{ ok: true }>;
+
+/** POST /client/feedback/upload (multipart) — upload one attachment, returns its hosted URL. */
+export function uploadFeedbackAttachment(file: File): Promise<{ url: string }>;
+
+/** GET /client/feedback — the caller's own feedback, newest first. */
+export function getMyFeedback(): Promise<PlatformFeedbackItem[]>;

@@ -428,11 +428,15 @@ export function useNotifications() {
             loading: false,
             incomingHandoff: null,
             dismissIncomingHandoff: () => {},
-            markRead: () => {},
-            markAllRead: () => {},
-            dismiss: () => {},
-            clearAll: () => {},
-            refresh: () => {},
+            // Async actions resolve to a Promise (not undefined) so a caller
+            // that `await`s the no-provider fallback path can't throw on
+            // `undefined.then`. Matches the real methods' `() => Promise<void>`
+            // signature declared in NotificationContext.d.ts.
+            markRead: () => Promise.resolve(),
+            markAllRead: () => Promise.resolve(),
+            dismiss: () => Promise.resolve(),
+            clearAll: () => Promise.resolve(),
+            refresh: () => Promise.resolve(),
         };
     }
     return ctx;
