@@ -220,7 +220,7 @@ export function AdvancedPage(): ReactElement {
   // ── States: no agent / loading / error ──────────────────────────────────────
   if (agentId === null && !agentLoading) {
     return (
-      <div className="px-4 py-6 md:px-8">
+      <div>
         <PageContainer title="Advanced">
           <EmptyState
             icon={SlidersHorizontal}
@@ -239,7 +239,7 @@ export function AdvancedPage(): ReactElement {
   const loading = draft === null && loadError === null;
 
   return (
-    <div className="px-4 py-6 md:px-8">
+    <div>
       <PageContainer
         title="Advanced"
         description="How your agent decides what to answer, qualifies leads, and behaves in the widget. These are power-user settings — the defaults suit most sites."

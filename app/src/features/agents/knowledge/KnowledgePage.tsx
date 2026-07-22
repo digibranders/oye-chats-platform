@@ -285,7 +285,6 @@ export function KnowledgePage(): ReactElement {
     <PageContainer
       title="Knowledge"
       description="Everything your AI can answer from — the websites and documents it has learned."
-      className="px-4 py-6 md:px-8"
     >
       {loading ? (
         <LoadingState />
