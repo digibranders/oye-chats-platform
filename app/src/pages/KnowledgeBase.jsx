@@ -80,7 +80,7 @@ export default function KnowledgeBase() {
   // Delta recrawl ("Updated pages only") is a Standard+ perk. The RecrawlMenu
   // still shows the option to non-entitled tiers so it's discoverable, but
   // clicks route to /billing instead of the diff endpoint.
-  const canUseDeltaRecrawl = entitlements.planSlug === 'standard' || entitlements.planSlug === 'enterprise';
+  const canUseDeltaRecrawl = entitlements.planSlug === 'standard' || entitlements.planSlug === 'professional';
   const docsLimit = entitlements.limitFor('documents');
   const docsUsed = Number(entitlements.usage?.documents ?? 0);
   const isUnlimitedDocs = docsLimit === -1;
@@ -778,7 +778,7 @@ export default function KnowledgeBase() {
                     {' / '}
                     {isUnlimitedDocs ? '∞' : docsLimit}
                   </span>
-                  {!isUnlimitedDocs && entitlements.planSlug !== 'enterprise' && (docsAtLimit || docsNearLimit) && (
+                  {!isUnlimitedDocs && (docsAtLimit || docsNearLimit) && (
                     <a
                       href="/billing"
                       className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
@@ -913,7 +913,7 @@ export default function KnowledgeBase() {
                         , depth {crawlLimits.maxDepth}.
                       </>
                     )}
-                    {crawlLimits.planSlug !== 'enterprise' && crawlLimits.maxPages !== -1 && (
+                    {crawlLimits.maxPages !== -1 && (
                       <>
                         {' '}
                         <a
@@ -1583,7 +1583,7 @@ export default function KnowledgeBase() {
               </div>
             )}
 
-            {/* AUTO-RECRAWL — weekly refresh of crawled URLs (Standard/Enterprise) */}
+            {/* AUTO-RECRAWL — weekly refresh of crawled URLs (Standard/Professional) */}
             {selectedBot?.id && <AutoRecrawlCard botId={selectedBot.id} />}
           </div>
         )}
@@ -1642,7 +1642,7 @@ export default function KnowledgeBase() {
                       const isUrl = doc.name.startsWith('http://') || doc.name.startsWith('https://');
                       const Icon = isUrl ? LinkIcon : FileText;
                       const dateStr = doc.ingested_at ? new Date(doc.ingested_at).toLocaleDateString() : 'Unknown';
-                      // History expander is a Website-only, Standard/Enterprise-only affordance.
+                      // History expander is a Website-only, Standard/Professional-only affordance.
                       // Free / Starter customers never see the chevron so the sources table
                       // stays visually identical to their existing experience.
                       const showHistoryChevron = isUrl && autoRecrawlAvailable;
@@ -1666,7 +1666,7 @@ export default function KnowledgeBase() {
                               ) : (
                                 <span className="text-sm font-medium text-surface-900 dark:text-white truncate max-w-[280px]">{doc.name}</span>
                               )}
-                              {/* Recrawl-history chevron — Website + Standard/Enterprise only.
+                              {/* Recrawl-history chevron — Website + Standard/Professional only.
                                   Renders to the right of the URL text. Free / Starter customers
                                   simply don't see it, so the row stays visually clean. */}
                               {showHistoryChevron && (

@@ -68,7 +68,6 @@ const FREE_FALLBACK = {
     },
     usage: {},
     is_free: true,
-    is_enterprise: false,
     topup_allowed: false,
 };
 
@@ -162,7 +161,6 @@ function decorate(raw) {
         planSlug: data.plan_slug,
         planName: data.plan_name,
         isFree: data.plan_slug === 'free' || data.is_free,
-        isEnterprise: data.plan_slug === 'enterprise' || data.is_enterprise,
         topupAllowed: data.topup_allowed,
         hasFeature: (name) => Boolean((data.features || {})[name]),
         limitFor: (name) => {

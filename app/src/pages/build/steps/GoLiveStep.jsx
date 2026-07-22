@@ -200,16 +200,13 @@ export default function GoLiveStep() {
                     <ArrowRight size={16} />
                 </Button>
                 {/* Contextual plan awareness at the commitment moment — a quiet,
-                    informational line, not a hard sell. Hidden on Enterprise
-                    (no higher tier to move to). */}
-                {!entitlements.isEnterprise && (
-                    <p className="text-xs text-[var(--text-muted)]">
-                        You&rsquo;re on the <span className="font-medium text-[var(--text-secondary)]">{entitlements.planName}</span> plan.{' '}
-                        <Link to="/billing" className="font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">
-                            Compare plans
-                        </Link>
-                    </p>
-                )}
+                    informational line, not a hard sell. */}
+                <p className="text-xs text-[var(--text-muted)]">
+                    You&rsquo;re on the <span className="font-medium text-[var(--text-secondary)]">{entitlements.planName}</span> plan.{' '}
+                    <Link to="/billing" className="font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">
+                        Compare plans
+                    </Link>
+                </p>
             </div>
         </div>
     );

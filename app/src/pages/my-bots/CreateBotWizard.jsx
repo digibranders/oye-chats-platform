@@ -89,7 +89,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
         getSubscriptionPlans()
             .then((all) => {
                 const paid = (all || [])
-                    .filter((p) => p.slug !== 'free' && p.slug !== 'enterprise')
+                    .filter((p) => p.slug !== 'free')
                     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
                 setPaidPlans(paid);
                 if (paid.length > 0 && !paid.find((p) => p.slug === selectedPlanSlug)) {

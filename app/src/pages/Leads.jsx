@@ -31,7 +31,7 @@ const BANT_LABELS = { need: 'Need', budget: 'Budget', authority: 'Authority', ti
 // ``plan_entitlements_service.LEAD_SOURCE_ATTRIBUTION_SLUGS`` — the API also
 // strips the ``source`` block for lower tiers, but keeping the same list here
 // lets the UI swap in an upsell tile instead of an empty row.
-const SOURCE_ATTRIBUTION_PLAN_SLUGS = new Set(['standard', 'enterprise']);
+const SOURCE_ATTRIBUTION_PLAN_SLUGS = new Set(['standard', 'professional']);
 
 // Colored chip presets for the common UTM sources so a scan of the Leads
 // table reads like a channel report. Unknown sources fall through to the

@@ -7,7 +7,6 @@ import {
   ExternalLink,
   Gift,
   Loader2,
-  Mail,
   ShieldCheck,
   Sparkles,
   Star,
@@ -41,13 +40,10 @@ import {
   type PlanRow,
 } from './planMath';
 
-const SUPPORT_EMAIL = (import.meta.env.VITE_SALES_EMAIL as string | undefined) || 'support@oyechats.com';
-
 const TIER_ICON: Record<string, LucideIcon> = {
   free: Sparkles,
   starter: Zap,
   standard: Crown,
-  enterprise: ShieldCheck,
 };
 
 type ReferralStatus = 'idle' | 'applying' | 'applied' | 'invalid';
@@ -195,14 +191,6 @@ export function PlanModal({
 
   async function handleCta(actionKind: string = 'auto'): Promise<void> {
     if (!selected) return;
-    if (selected.slug === 'enterprise') {
-      window.open(
-        `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Enterprise plan inquiry')}`,
-        '_blank',
-        'noopener,noreferrer',
-      );
-      return;
-    }
     if (selected.slug === 'free') {
       if (hasActiveSubscription) {
         setSubmitError('');
@@ -623,7 +611,6 @@ function FocusedPlan({
   const isCurrent = plan.slug === currentPlanSlug;
   const features = useMemo(() => buildFeatureList(plan, geo), [plan, geo]);
   const isFree = plan.slug === 'free';
-  const isEnterprise = plan.slug === 'enterprise';
   const currentPrice = Number(currentPlan?.monthly_price_usd_cents || currentPlan?.monthly_price_cents || 0);
   const targetPrice = Number(plan.monthly_price_usd_cents || plan.monthly_price_cents || 0);
   const isUpgradeFromPaid = hasActiveSubscription && currentPrice > 0 && targetPrice > currentPrice;
@@ -640,7 +627,7 @@ function FocusedPlan({
   });
   const primary = ctas[0];
 
-  const referralEligible = !isFree && !isEnterprise;
+  const referralEligible = !isFree;
   const activeDiscount = referralEligible && referral.appliedCode ? referral.discountPct || 0 : 0;
 
   return (
@@ -720,9 +707,7 @@ function FocusedPlan({
             >
               {submitting && i === 0 ? (
                 <Loader2 size={16} className="animate-spin" />
-              ) : !showIcon ? null : isEnterprise ? (
-                <Mail size={16} />
-              ) : isFree ? null : (
+              ) : !showIcon ? null : isFree ? null : (
                 <ExternalLink size={16} />
               )}
               {cta.label}
@@ -756,17 +741,6 @@ function PriceBlock({
   discountPct?: number;
   appliedCode?: string | null;
 }): ReactElement {
-  if (plan.slug === 'enterprise') {
-    return (
-      <div>
-        <span className="text-4xl font-bold tracking-tight text-[var(--ds-text)]">Custom</span>
-        <p className="mt-1 text-[12px] text-[var(--ds-text-muted)]">
-          Tailored credit allocation, dedicated account manager, SLA.
-        </p>
-      </div>
-    );
-  }
-
   const { cents, symbol: sym, hasMonthlyCents, hasAnnualCents } = resolveDisplayCents(
     plan,
     billingCycle,
