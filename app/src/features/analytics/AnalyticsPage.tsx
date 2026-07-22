@@ -40,13 +40,15 @@ import { MessageTrendChart } from './MessageTrendChart';
 import { TopQuestionsList } from './TopQuestionsList';
 import { LeadFunnel } from './LeadFunnel';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
+import { FeedbackPanel } from '../feedback/FeedbackPanel';
 
-type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction';
+type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'feedback';
 
 const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'conversations', label: 'Conversations' },
   { key: 'leads', label: 'Leads' },
   { key: 'satisfaction', label: 'Satisfaction' },
+  { key: 'feedback', label: 'Feedback' },
 ];
 
 /** Narrow the Tabs string key back to the AnalyticsTab union without casting. */
@@ -453,6 +455,19 @@ export function AnalyticsPage(): ReactElement {
                   <SatisfactionBreakdown ratings={data.ratings} />
                 </CardContent>
               </Card>
+            </div>
+          )}
+
+          {/* Feedback */}
+          {tab === 'feedback' && (
+            <div
+              role="tabpanel"
+              id="tabpanel-feedback"
+              aria-labelledby="tab-feedback"
+              tabIndex={0}
+              className="focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              <FeedbackPanel />
             </div>
           )}
         </>
