@@ -30,6 +30,7 @@ import {
   cn,
 } from '../../design-system';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
+import { cancelScheduledChange, resumeSubscription } from '../../services/api';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
@@ -84,6 +85,37 @@ export function BillingPage(): ReactElement {
   const handleSuccess = (message: string): void => {
     setNotice(message);
     reload();
+  };
+
+  // Subscription-lifecycle reversals (undo a scheduled downgrade / reactivate a
+  // pending cancellation). Both APIs exist; the banners were display-only.
+  const [lifecycleBusy, setLifecycleBusy] = useState<'cancel_scheduled' | 'reactivate' | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+
+  const handleCancelScheduled = async (): Promise<void> => {
+    setLifecycleBusy('cancel_scheduled');
+    setLifecycleError(null);
+    try {
+      await cancelScheduledChange();
+      handleSuccess('Scheduled change cancelled — you’ll stay on your current plan.');
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : 'Couldn’t cancel the scheduled change.');
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
+
+  const handleReactivate = async (): Promise<void> => {
+    setLifecycleBusy('reactivate');
+    setLifecycleError(null);
+    try {
+      await resumeSubscription();
+      handleSuccess('Subscription reactivated — it will keep renewing.');
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : 'Couldn’t reactivate your subscription.');
+    } finally {
+      setLifecycleBusy(null);
+    }
   };
 
   // Seat math mirrors legacy pages/Billing.jsx: a plan with zero included seats
@@ -197,24 +229,40 @@ export function BillingPage(): ReactElement {
 
           {/* Segmented sub-tabs — a pill control, distinct from the underline
               Workspace tabs above, so the two nav levels read as a hierarchy. */}
+          {/* Data-retention purge warning — trial/subscription lapsed and the
+              account's data is scheduled for deletion. Shown across all tabs
+              because it's the most urgent thing on the page. */}
+          {subscription.dataRetentionUntil && (
+            <DataRetentionBanner
+              purgeAt={subscription.dataRetentionUntil}
+              onChoosePlan={() => setActiveTab('plans')}
+            />
+          )}
+
           <BillingTabs active={activeTab} onChange={setActiveTab} />
 
           {activeTab === 'plans' && (
             <div className="space-y-6">
-              {/* Scheduled downgrade — applies account-wide. */}
+              {/* Scheduled downgrade — applies account-wide. Reversible. */}
               {subscription.scheduledChange && (
                 <ScheduledChangeBanner
                   planName={subscription.scheduledChange.planName}
                   effectiveAt={subscription.scheduledChange.effectiveAt}
                   currentPlanName={plan?.name ?? 'your current plan'}
+                  onKeepPlan={() => void handleCancelScheduled()}
+                  busy={lifecycleBusy === 'cancel_scheduled'}
+                  error={lifecycleBusy === null ? lifecycleError : null}
                 />
               )}
 
-              {/* Pending full cancellation — the plan ends and won't renew. */}
+              {/* Pending full cancellation — the plan ends and won't renew. Reversible. */}
               {pendingCancel && (
                 <CancellationBanner
                   endsAt={subscription.currentPeriodEnd}
                   planName={plan?.name ?? 'your current plan'}
+                  onReactivate={() => void handleReactivate()}
+                  busy={lifecycleBusy === 'reactivate'}
+                  error={lifecycleBusy === null ? lifecycleError : null}
                 />
               )}
 
@@ -637,53 +685,143 @@ function DetailBlock({
 
 // ── Shared bits ───────────────────────────────────────────────────────────────
 
-function ScheduledChangeBanner({
-  planName,
-  effectiveAt,
-  currentPlanName,
+/** A warning-toned banner with a reversal action + inline error. */
+function LifecycleBanner({
+  icon: Icon,
+  title,
+  detail,
+  actionLabel,
+  onAction,
+  busy,
+  error,
 }: {
-  planName: string | null;
-  effectiveAt: string | null;
-  currentPlanName: string;
+  icon: LucideIcon;
+  title: ReactElement | string;
+  detail: string;
+  actionLabel: string;
+  onAction: () => void;
+  busy: boolean;
+  error: string | null;
 }): ReactElement {
   return (
     <div
       role="status"
-      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
+      className="rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
     >
-      <CalendarClock size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
-      <div>
-        <p className="font-semibold text-[var(--ds-text)]">
+      <div className="flex items-start gap-3">
+        <Icon size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[var(--ds-text)]">{title}</p>
+          <p className="mt-0.5 text-[var(--ds-text-muted)]">{detail}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onAction} disabled={busy} className="shrink-0">
+          {busy ? 'Working…' : actionLabel}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 pl-7 text-[12px] text-[var(--ds-danger)]">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ScheduledChangeBanner({
+  planName,
+  effectiveAt,
+  currentPlanName,
+  onKeepPlan,
+  busy,
+  error,
+}: {
+  planName: string | null;
+  effectiveAt: string | null;
+  currentPlanName: string;
+  onKeepPlan: () => void;
+  busy: boolean;
+  error: string | null;
+}): ReactElement {
+  return (
+    <LifecycleBanner
+      icon={CalendarClock}
+      title={
+        <>
           Scheduled downgrade to {planName ?? 'a different plan'}
           {effectiveAt ? ` on ${formatDate(effectiveAt)}` : ''}.
-        </p>
-        <p className="mt-0.5 text-[var(--ds-text-muted)]">You’ll keep {currentPlanName} until then.</p>
-      </div>
-    </div>
+        </>
+      }
+      detail={`You’ll keep ${currentPlanName} until then.`}
+      actionLabel={`Keep ${currentPlanName}`}
+      onAction={onKeepPlan}
+      busy={busy}
+      error={error}
+    />
   );
 }
 
 function CancellationBanner({
   endsAt,
   planName,
+  onReactivate,
+  busy,
+  error,
 }: {
   endsAt: string | null;
   planName: string;
+  onReactivate: () => void;
+  busy: boolean;
+  error: string | null;
+}): ReactElement {
+  return (
+    <LifecycleBanner
+      icon={AlertTriangle}
+      title={
+        <>
+          {planName} ends{endsAt ? ` on ${formatDate(endsAt)}` : ' at the end of the current period'} and won’t
+          renew.
+        </>
+      }
+      detail="You’ll keep access until then. Reactivate before it ends to stay on the plan."
+      actionLabel="Reactivate"
+      onAction={onReactivate}
+      busy={busy}
+      error={error}
+    />
+  );
+}
+
+/**
+ * DataRetentionBanner — the account has lapsed and its data is scheduled for
+ * permanent deletion on `purgeAt`. The most urgent thing on the page, so it's
+ * danger-toned and shown above the tabs regardless of which tab is active.
+ */
+function DataRetentionBanner({
+  purgeAt,
+  onChoosePlan,
+}: {
+  purgeAt: string;
+  onChoosePlan: () => void;
 }): ReactElement {
   return (
     <div
-      role="status"
-      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
+      role="alert"
+      className="mb-6 rounded-xl border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
     >
-      <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
-      <div>
-        <p className="font-semibold text-[var(--ds-text)]">
-          {planName} ends{endsAt ? ` on ${formatDate(endsAt)}` : ' at the end of the current period'} and
-          won’t renew.
-        </p>
-        <p className="mt-0.5 text-[var(--ds-text-muted)]">
-          You’ll keep access until then. Reactivate any time before it ends to stay on the plan.
-        </p>
+      <div className="flex items-start gap-3">
+        <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-danger)]" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[var(--ds-text)]">
+            Your data is scheduled for deletion on {formatDate(purgeAt)}.
+          </p>
+          <p className="mt-0.5 text-[var(--ds-text-muted)]">
+            Your subscription has lapsed. Choose a plan before this date to keep your agents, knowledge, and
+            conversations — after it, they’re permanently removed.
+          </p>
+        </div>
+        <Button size="sm" onClick={onChoosePlan} className="shrink-0">
+          Choose a plan
+        </Button>
       </div>
     </div>
   );
