@@ -21,14 +21,15 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
   { path: 'security', label: 'Security' },
   { path: 'api-keys', label: 'API Keys' },
   { path: 'integrations', label: 'Integrations' },
-  { path: 'settings', label: 'Settings' },
 ];
 
 /**
  * WorkspaceLayout — parent route element for `/workspace/*`. Adds the section
  * navigation the Workspace area was missing, so Members, Billing, Usage,
- * Security, API Keys, Integrations, and Settings are all reachable by clicking
- * (previously only Members rendered; the rest were URL-only).
+ * Security, API Keys, and Integrations are all reachable by clicking
+ * (previously only Members rendered; the rest were URL-only). Settings moved
+ * out to the top-level `/settings` page — see the bottom-anchored secondary
+ * nav — since it covers account/profile, not workspace-admin, concerns.
  *
  * Kept deliberately minimal: the app breadcrumb already reads "Workspace" and
  * each section page renders its own title, so this layout is just the tab row —
@@ -40,7 +41,7 @@ export function WorkspaceLayout(): ReactElement {
   return (
     <div className="flex min-h-full flex-col">
       {/* Section nav — real nav semantics; NavLink stamps aria-current on the
-          active section. Horizontally scrollable so all seven fit on mobile. */}
+          active section. Horizontally scrollable so all six fit on mobile. */}
       <nav
         aria-label="Workspace sections"
         className="mx-auto w-full max-w-7xl overflow-x-auto border-b border-[var(--ds-border)]"

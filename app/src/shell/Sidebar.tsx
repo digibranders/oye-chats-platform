@@ -1,6 +1,7 @@
+import { type ReactElement } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
-import { PRIMARY_NAV } from './nav.config';
+import { PRIMARY_NAV, SECONDARY_NAV, type NavItem } from './nav.config';
 import { cn } from '../design-system';
 
 export interface SidebarProps {
@@ -11,6 +12,57 @@ export interface SidebarProps {
   mobileOpen: boolean;
   /** Called after navigating (closes the mobile drawer). */
   onNavigate: () => void;
+}
+
+interface NavLinkItemProps {
+  item: NavItem;
+  showLabels: boolean;
+  onNavigate: () => void;
+}
+
+/** One nav link, shared by the primary and secondary nav lists so their
+ *  markup, active-state styling, and collapsed behavior can never drift. */
+function NavLinkItem({ item, showLabels, onNavigate }: NavLinkItemProps): ReactElement {
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      onClick={onNavigate}
+      title={!showLabels ? item.label : undefined}
+      className={({ isActive }) =>
+        cn(
+          'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
+          showLabels ? 'w-full' : 'w-11 justify-center',
+          isActive
+            ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
+            : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]',
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--ds-accent)]" />
+          )}
+          <Icon
+            size={18}
+            className={cn(
+              'shrink-0 transition-colors',
+              isActive
+                ? 'text-[var(--ds-accent)]'
+                : 'text-[var(--ds-text-subtle)] group-hover:text-[var(--ds-text-muted)]',
+            )}
+          />
+          {showLabels ? (
+            <span className="truncate">{item.label}</span>
+          ) : (
+            <span className="sr-only">{item.label}</span>
+          )}
+        </>
+      )}
+    </NavLink>
+  );
 }
 
 /**
@@ -50,60 +102,22 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
 
       {/* Primary navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {PRIMARY_NAV.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              onClick={onNavigate}
-              title={!showLabels ? item.label : undefined}
-              className={({ isActive }) =>
-                cn(
-                  'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors',
-                  showLabels ? 'w-full' : 'w-11 justify-center',
-                  isActive
-                    ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
-                    : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]',
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--ds-accent)]" />
-                  )}
-                  <Icon
-                    size={18}
-                    className={cn(
-                      'shrink-0 transition-colors',
-                      isActive
-                        ? 'text-[var(--ds-accent)]'
-                        : 'text-[var(--ds-text-subtle)] group-hover:text-[var(--ds-text-muted)]',
-                    )}
-                  />
-                  {showLabels ? (
-                    <span className="truncate">{item.label}</span>
-                  ) : (
-                    <span className="sr-only">{item.label}</span>
-                  )}
-                </>
-              )}
-            </NavLink>
-          );
-        })}
+        {PRIMARY_NAV.map((item) => (
+          <NavLinkItem key={item.to} item={item} showLabels={showLabels} onNavigate={onNavigate} />
+        ))}
       </nav>
 
-      {/* Footer marker — keeps the rail visually anchored; real account/help
-          controls live in the TopBar user menu, not here (no duplicate nav). */}
-      {showLabels && (
-        <div className="shrink-0 px-5 py-4">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Admin 2.0
-          </p>
-        </div>
-      )}
+      {/* Secondary navigation — bottom-anchored, below the primary object-nav.
+          Preferences only (e.g. Settings); account/workspace switching stays
+          in the TopBar user menu, so this never duplicates that nav. */}
+      <nav
+        aria-label="Secondary navigation"
+        className="shrink-0 space-y-1 border-t border-[var(--ds-border)] px-3 py-2"
+      >
+        {SECONDARY_NAV.map((item) => (
+          <NavLinkItem key={item.to} item={item} showLabels={showLabels} onNavigate={onNavigate} />
+        ))}
+      </nav>
     </aside>
   );
 }
