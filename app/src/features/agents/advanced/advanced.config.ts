@@ -2,7 +2,6 @@ import {
   type LucideIcon,
   Paperclip,
   ThumbsUp,
-  Tag,
   ListOrdered,
   MessageCircle,
   FileText,
@@ -96,7 +95,10 @@ export interface FeatureFlagDef {
 export const FEATURE_FLAGS: readonly FeatureFlagDef[] = [
   { key: 'file_sharing', label: 'File sharing', desc: 'Let visitors attach files in the chat.', icon: Paperclip, default: false },
   { key: 'post_chat_rating', label: 'Post-chat rating', desc: 'Ask visitors to rate the conversation when it ends.', icon: ThumbsUp, default: true },
-  { key: 'show_branding', label: '“Powered by” branding', desc: 'Show the OyeChats footer in the widget.', icon: Tag, default: true },
+  // NOTE: "Powered by" branding (show_branding) is intentionally NOT listed here.
+  // It's a plan-gated control owned by Experience ▸ Branding
+  // (gated on the `branding_removable` feature); an ungated toggle here would be
+  // a silent no-op for plans the server forces show_branding=true on.
   { key: 'queue_position', label: 'Queue position', desc: 'Show visitors their place in the live-chat queue.', icon: ListOrdered, default: false },
   { key: 'typing_preview', label: 'Typing indicator', desc: 'Show a typing animation while the bot or a teammate replies.', icon: MessageCircle, default: true },
   { key: 'email_transcript', label: 'Email transcript', desc: 'Offer visitors an emailed copy of the conversation.', icon: FileText, default: false },

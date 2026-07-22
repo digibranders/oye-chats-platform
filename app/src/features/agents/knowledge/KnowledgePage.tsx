@@ -355,8 +355,18 @@ export function KnowledgePage(): ReactElement {
               description="How much of your plan's knowledge capacity is in use."
             />
             <div className="grid gap-4 sm:grid-cols-2">
-              <QuotaMeter label="Documents" used={documentsUsed} limit={documentsLimit} />
-              <QuotaMeter label="Website pages" used={pagesUsed} limit={pagesLimit} />
+              <div className="space-y-1">
+                <QuotaMeter label="Documents" used={documentsUsed} limit={documentsLimit} />
+                {/* The `documents` limit is workspace-scoped, so this count spans
+                    every agent — not just the rows visible on this agent's page. */}
+                <p className="text-[11px] text-[var(--ds-text-subtle)]">
+                  Across all agents in your workspace
+                </p>
+              </div>
+              <div className="space-y-1">
+                <QuotaMeter label="Website pages" used={pagesUsed} limit={pagesLimit} />
+                <p className="text-[11px] text-[var(--ds-text-subtle)]">This agent</p>
+              </div>
             </div>
           </section>
 

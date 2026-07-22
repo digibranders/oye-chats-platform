@@ -554,13 +554,13 @@ export function MembersPage(): ReactElement {
   const canInvite = canManage && !!selectedBotId;
 
   const handleInviteClick = (): void => {
+    // `atSeatLimit` is only ever true for a finite limit — `withinLimit`
+    // returns true for the unlimited (-1) sentinel — so the copy can assume a
+    // real seat count here.
     if (atSeatLimit) {
       openUpgradeModal({
         title: 'You’ve used all your seats',
-        description:
-          seatLimit === -1
-            ? 'Upgrade your plan to invite more members.'
-            : `You’ve used all ${seatLimit} seat${seatLimit === 1 ? '' : 's'} on your plan. Upgrade to invite more members.`,
+        description: `You’ve used all ${seatLimit} seat${seatLimit === 1 ? '' : 's'} on your plan. Upgrade to invite more members.`,
       });
       return;
     }
