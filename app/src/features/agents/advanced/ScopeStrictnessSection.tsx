@@ -84,7 +84,7 @@ export function ScopeStrictnessSection({
               onKeyDown={handleKeyDown}
               className={cn(
                 'rounded-xl border p-4 text-left transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+                'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                 checked
                   ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
                   : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:border-[var(--ds-text-subtle)]',

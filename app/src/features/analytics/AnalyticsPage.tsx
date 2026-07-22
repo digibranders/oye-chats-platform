@@ -184,8 +184,8 @@ function RangeControl({
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={
               selected
-                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]'
-                : 'rounded-md px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]'
+                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]'
+                : 'rounded-md px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]'
             }
           >
             {range.label}
@@ -272,7 +272,7 @@ export function AnalyticsPage(): ReactElement {
           action={
             <Link
               to="/agents"
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]"
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <BotIcon size={16} aria-hidden="true" />
               Create an AI agent
@@ -344,7 +344,7 @@ export function AnalyticsPage(): ReactElement {
               id="tabpanel-conversations"
               aria-labelledby="tab-conversations"
               tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <Card>
                 <CardHeader>
@@ -411,7 +411,7 @@ export function AnalyticsPage(): ReactElement {
               id="tabpanel-leads"
               aria-labelledby="tab-leads"
               tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                 <MetricCard label="Total leads" value={data.leads.total.toLocaleString()} icon={Users} />
@@ -440,7 +440,7 @@ export function AnalyticsPage(): ReactElement {
               id="tabpanel-satisfaction"
               aria-labelledby="tab-satisfaction"
               tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <Card>
                 <CardHeader>

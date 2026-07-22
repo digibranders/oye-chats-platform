@@ -178,7 +178,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
                 disabled={submitting || submittingPack !== null}
                 className={cn(
                   'relative rounded-2xl border p-5 text-left transition-colors',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+                  'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                   'disabled:cursor-not-allowed disabled:opacity-60',
                   featured
                     ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] hover:border-[var(--ds-accent-hover)]'

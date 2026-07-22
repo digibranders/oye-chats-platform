@@ -188,7 +188,7 @@ export function SecurityPage(): ReactElement {
             ref={feedbackRef}
             tabIndex={-1}
             className={cn(
-              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
               feedback.tone === 'success'
                 ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
                 : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
@@ -458,7 +458,7 @@ function PasswordToggle({ shown, onToggle }: PasswordToggleProps): ReactElement 
       onClick={onToggle}
       aria-label={shown ? 'Hide password' : 'Show password'}
       aria-pressed={shown}
-      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
     >
       {shown ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
     </button>

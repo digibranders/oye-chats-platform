@@ -51,7 +51,7 @@ export function QualificationSection({
               onChange={(event) => onFrameworkChange(event.target.value)}
               className={cn(
                 'h-10 w-full appearance-none rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] pl-3 pr-9 text-sm text-[var(--ds-text)] outline-none transition-colors',
-                'focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]',
+                'focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
               )}
             >
               {FRAMEWORK_OPTIONS.map((option) => (

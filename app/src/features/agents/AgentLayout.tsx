@@ -73,7 +73,7 @@ function AgentShell(): ReactElement {
                   className={({ isActive }) =>
                     cn(
                       'inline-flex items-center whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+                      'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                       isActive
                         ? 'border-[var(--ds-accent)] text-[var(--ds-text)]'
                         : 'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',

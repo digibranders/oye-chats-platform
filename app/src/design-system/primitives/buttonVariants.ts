@@ -7,12 +7,13 @@ import { cva, type VariantProps } from 'class-variance-authority';
  * same visual treatment: `<Link className={buttonVariants({ variant: 'outline' })} />`.
  */
 export const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--ds-radius-lg)] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)] disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--ds-radius-lg)] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
         // Accent — the ONLY place violet leads.
-        primary: 'bg-[var(--ds-accent)] text-[var(--ds-accent-fg)] hover:bg-[var(--ds-accent-hover)] shadow-[var(--ds-shadow-sm)]',
+        primary:
+          'bg-[var(--ds-accent)] text-[var(--ds-accent-fg)] hover:bg-[var(--ds-accent-hover)] shadow-[var(--ds-shadow-sm)] hover:-translate-y-px active:translate-y-0 transition-transform',
         secondary:
           'bg-[var(--ds-bg-sunken)] text-[var(--ds-text)] hover:bg-[var(--ds-border)]',
         outline:

@@ -91,7 +91,7 @@ const EDITABLE_ROLES: ReadonlyArray<{ value: string; label: string }> = [
 ];
 
 const selectClass =
-  'h-10 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none transition-colors focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]';
+  'h-10 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none transition-colors focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]';
 const labelClass = 'mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]';
 
 // ── Data loading state machine ───────────────────────────────────────────────

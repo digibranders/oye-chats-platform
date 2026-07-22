@@ -86,7 +86,7 @@ export function AgentCard({
   );
 
   const classes = cn(
-    'block w-full rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 text-left shadow-[var(--ds-shadow-sm)] transition-colors hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+    'block w-full rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 text-left shadow-[var(--ds-shadow-sm)] transition-colors hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
     className,
   );
 

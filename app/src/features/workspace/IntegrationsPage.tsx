@@ -175,7 +175,7 @@ function Switch({ checked, onChange, disabled = false, label }: SwitchProps): Re
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)] disabled:cursor-not-allowed disabled:opacity-50',
+        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50',
         checked ? 'bg-[var(--ds-accent)]' : 'bg-[var(--ds-border-strong)]',
       )}
     >

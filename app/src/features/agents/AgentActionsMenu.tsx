@@ -185,7 +185,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             setOpen(true);
           }
         }}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-[var(--ds-text-subtle)] transition-colors hover:border-[var(--ds-border)] hover:bg-[var(--ds-bg-surface)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]"
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-[var(--ds-text-subtle)] transition-colors hover:border-[var(--ds-border)] hover:bg-[var(--ds-bg-surface)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       >
         <MoreHorizontal size={16} aria-hidden="true" />
       </button>
@@ -245,7 +245,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
                     setRenaming(false);
                   }
                 }}
-                className="h-8 w-full rounded-md border border-[var(--ds-accent)] bg-[var(--ds-bg-surface)] px-2 text-[13px] text-[var(--ds-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]"
+                className="h-8 w-full rounded-md border border-[var(--ds-accent)] bg-[var(--ds-bg-surface)] px-2 text-[13px] text-[var(--ds-text)] outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               />
               <div className="mt-2 flex items-center justify-end gap-1.5">
                 <button

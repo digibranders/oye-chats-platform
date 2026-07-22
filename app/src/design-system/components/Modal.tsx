@@ -190,7 +190,7 @@ export function Modal({
               type="button"
               onClick={requestClose}
               aria-label="Close"
-              className="-mr-1.5 -mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="-mr-1.5 -mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <X size={18} aria-hidden="true" />
             </button>
