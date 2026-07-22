@@ -15,6 +15,7 @@ interface WorkspaceSection {
  * workspace-wide settings only — never agent configuration.
  */
 const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
+  { path: 'general', label: 'General' },
   { path: 'members', label: 'Members' },
   { path: 'billing', label: 'Billing' },
   { path: 'usage', label: 'Usage' },
@@ -25,11 +26,13 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
 
 /**
  * WorkspaceLayout — parent route element for `/workspace/*`. Adds the section
- * navigation the Workspace area was missing, so Members, Billing, Usage,
- * Security, API Keys, and Integrations are all reachable by clicking
- * (previously only Members rendered; the rest were URL-only). Settings moved
- * out to the top-level `/settings` page — see the bottom-anchored secondary
- * nav — since it covers account/profile, not workspace-admin, concerns.
+ * navigation the Workspace area was missing, so General, Members, Billing,
+ * Usage, Security, API Keys, and Integrations are all reachable by clicking
+ * (previously only Members rendered; the rest were URL-only). The top-level
+ * `/settings` page is account/profile-only (your name, appearance, sign-in
+ * security) — General is the org-level counterpart: workspace identity
+ * (company, website, agent count) and agent-wide defaults, which never
+ * belonged on a personal Settings page.
  *
  * Kept deliberately minimal: the app breadcrumb already reads "Workspace" and
  * each section page renders its own title, so this layout is just the tab row —
@@ -41,7 +44,7 @@ export function WorkspaceLayout(): ReactElement {
   return (
     <div className="flex min-h-full flex-col">
       {/* Section nav — real nav semantics; NavLink stamps aria-current on the
-          active section. Horizontally scrollable so all six fit on mobile. */}
+          active section. Horizontally scrollable so all seven fit on mobile. */}
       <nav
         aria-label="Workspace sections"
         className="mx-auto w-full max-w-7xl overflow-x-auto border-b border-[var(--ds-border)]"

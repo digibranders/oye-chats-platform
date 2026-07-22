@@ -22,6 +22,7 @@ import { InboxPage } from '../features/inbox/InboxPage';
 import { LeadsPage } from '../features/leads/LeadsPage';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
 import { WorkspaceLayout } from '../features/workspace/WorkspaceLayout';
+import { GeneralPage } from '../features/workspace/GeneralPage';
 import { MembersPage } from '../features/workspace/MembersPage';
 import { BillingPage } from '../features/workspace/BillingPage';
 import { UsagePage } from '../features/workspace/UsagePage';
@@ -95,7 +96,8 @@ export const router = createBrowserRouter([
             handle: { crumb: 'Workspace' },
             element: <WorkspaceLayout />,
             children: [
-              { index: true, element: <Navigate to="members" replace /> },
+              { index: true, element: <Navigate to="general" replace /> },
+              { path: 'general', handle: { crumb: 'General' }, element: <GeneralPage /> },
               { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
               { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
               { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
