@@ -73,3 +73,5 @@ export { UpgradeModal } from './components/UpgradeModal';
 export type { UpgradeModalProps, UpgradeModalReason } from './components/UpgradeModal';
 export { FeatureGate } from './components/FeatureGate';
 export type { FeatureGateProps } from './components/FeatureGate';
+export { LockedFeatureCard } from './components/LockedFeatureCard';
+export type { LockedFeatureCardProps } from './components/LockedFeatureCard';

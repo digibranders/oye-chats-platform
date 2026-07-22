@@ -4,6 +4,7 @@ import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { Button } from '../primitives/Button';
 import { PlanBadge } from './PlanBadge';
+import { LockedFeatureCard as RichLockedFeatureCard } from './LockedFeatureCard';
 import type { FeatureKey } from '../../types/domain';
 import type { UpgradeIntentKey } from '../../context/upgradeIntents';
 
@@ -43,16 +44,18 @@ function humanize(key: FeatureKey): string {
     .join(' ');
 }
 
-interface LockedFeatureCardProps {
+interface DefaultLockedCardProps {
   feature: FeatureKey;
   requiredPlan?: string;
   planName: string;
   onUpgrade: () => void;
 }
 
-/** Default upgrade card. Designed to fit inside content areas — for sidebar
- * items, pass `fallback={null}` to the gate instead of relying on this. */
-function LockedFeatureCard({ feature, requiredPlan, planName, onUpgrade }: LockedFeatureCardProps): ReactElement {
+/** Fallback upgrade card used when the gate has no `intent` (so there's no
+ * registry copy to pull a richer teaser from). Designed to fit inside
+ * content areas — for sidebar items, pass `fallback={null}` to the gate
+ * instead of relying on this. */
+function DefaultLockedCard({ feature, requiredPlan, planName, onUpgrade }: DefaultLockedCardProps): ReactElement {
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-[var(--ds-radius-xl)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-6 py-10 text-center">
       <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
@@ -81,8 +84,13 @@ function LockedFeatureCard({ feature, requiredPlan, planName, onUpgrade }: Locke
 /**
  * FeatureGate — wraps children behind a plan feature check (mandate shared
  * component). Renders the children unchanged when the workspace's plan
- * includes `feature`; otherwise renders `fallback` (or the built-in locked
- * card) and, on interaction with its CTA, opens the upgrade modal.
+ * includes `feature`; otherwise renders `fallback` (or a locked card) and,
+ * on interaction with its CTA, opens the upgrade modal.
+ *
+ * When `intent` is set, the locked fallback is the richer, registry-backed
+ * `LockedFeatureCard` (eyebrow, headline, highlights, all pulled from
+ * `UPGRADE_INTENTS`) and the modal opens with that intent's specific copy.
+ * Without `intent`, it falls back to the plainer generic locked card.
  *
  * Ported from the legacy `components/FeatureGate.jsx`, restyled to the new
  * design system and driven by `useEntitlements()` / `useUpgradeModal()`
@@ -115,20 +123,16 @@ export function FeatureGate({
     return fallback;
   }
 
-  const openGateUpgrade = (): void => {
-    if (intent) {
-      openUpgradeModal(intent);
-      return;
-    }
-    openUpgradeModal({ feature });
-  };
+  if (intent) {
+    return <RichLockedFeatureCard intent={intent} />;
+  }
 
   return (
-    <LockedFeatureCard
+    <DefaultLockedCard
       feature={feature}
       requiredPlan={requiredPlan}
       planName={planName}
-      onUpgrade={openGateUpgrade}
+      onUpgrade={() => openUpgradeModal({ feature })}
     />
   );
 }

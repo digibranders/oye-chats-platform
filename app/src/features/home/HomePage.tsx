@@ -19,7 +19,17 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { Button, Card, EmptyState, PageContainer, PlanBadge, QuotaMeter, SectionHeader, Skeleton } from '../../design-system';
+import {
+  Button,
+  Card,
+  EmptyState,
+  LockedFeatureCard,
+  PageContainer,
+  PlanBadge,
+  QuotaMeter,
+  SectionHeader,
+  Skeleton,
+} from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { InsightCard, type InsightCardProps } from '../../design-system/components/InsightCard';
 import { ActionCard, type ActionCardProps } from '../../design-system/components/ActionCard';
@@ -388,6 +398,7 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
   const insight = buildHealthInsight(data);
   const recommendations = buildRecommendations(data);
   const activityItems = toActivityItems(data.activity);
+  const { hasFeature } = useEntitlements();
 
   return (
     <div className="space-y-8">
@@ -471,6 +482,12 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
           <section aria-label="Plan and usage">
             <PlanUsageCard />
           </section>
+
+          {!hasFeature('bant') && (
+            <section aria-label="Lead qualification">
+              <LockedFeatureCard intent="view_qualification" icon={Target} />
+            </section>
+          )}
 
           <section aria-label="Recommended next steps" className="space-y-4">
             <InsightCard
