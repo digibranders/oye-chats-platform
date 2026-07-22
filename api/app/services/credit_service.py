@@ -978,14 +978,22 @@ def clawback_refund(
     # clamp instead of multiplying past the original grant.
     refund_fraction = min(1.0, float(refund_minor) / float(charge_minor))
 
-    # Prefer the grant LINKED to this invoice (remediation C2 / NV5): grants
+    # Prefer the grant(s) LINKED to this invoice (remediation C2 / NV5): grants
     # stamp ``reference_id = Invoice.id`` at grant time, so we can claw back the
-    # exact grant the refunded invoice paid for — not the most-recent grant of
+    # exact grant(s) the refunded invoice paid for — not the most-recent grant of
     # the same type, which mis-attributes when a client holds two same-scope
     # top-ups or refunds an old subscription invoice after a renewal.
-    grant = None
+    #
+    # Finding #3: a single invoice's entitlement can span MORE THAN ONE grant row
+    # (e.g. an activation partial + a proration top-up, or an annual grant the
+    # credits backfill split into two rows). Clawing back only ONE row
+    # under-reverses a full refund. Collect ALL grants linked to this invoice and
+    # spread the clawback across them. This is safe from over-claw precisely
+    # because every row is scoped to THIS invoice — it can never reach a later
+    # period's still-in-use grant.
+    linked_grants: list[CreditLedger] = []
     if invoice_id is not None:
-        grant = (
+        linked_grants = list(
             session.execute(
                 select(CreditLedger)
                 .where(
@@ -995,17 +1003,21 @@ def clawback_refund(
                     CreditLedger.reference_id == invoice_id,
                 )
                 .order_by(CreditLedger.created_at.desc())
-                .limit(1)
             )
             .scalars()
-            .first()
+            .all()
         )
 
-    # Fallback for legacy / unlinked grants (rows created before C2 linking, or
-    # an activation grant with no invoice): the most-recent matching grant in
-    # scope is in practice the one this invoice paid for.
-    if grant is None:
-        grant = (
+    if linked_grants:
+        grants = linked_grants
+    else:
+        # Fallback for legacy / unlinked grants (rows created before C2 linking,
+        # or an activation grant with no invoice): the most-recent matching grant
+        # in scope is in practice the one this invoice paid for. Kept to a SINGLE
+        # row here — summing every unlinked grant in scope could reverse a later
+        # period's still-in-use credits, which the invoice linkage above exists
+        # to prevent.
+        one = (
             session.execute(
                 select(CreditLedger)
                 .where(
@@ -1019,30 +1031,48 @@ def clawback_refund(
             .scalars()
             .first()
         )
-    if grant is None:
+        grants = [one] if one is not None else []
+
+    if not grants:
         return (0, None)
 
-    consumed = _consumed_against(session, grant.id)
-    remaining = int(grant.delta) - consumed
-    if remaining <= 0:
+    # Intended clawback = the refunded fraction of the TOTAL credits these grants
+    # represent (matches the fraction of money refunded).
+    total_granted = sum(int(g.delta) for g in grants)
+    intended = int(round(float(total_granted) * refund_fraction))
+    if intended <= 0:
         return (0, None)
 
-    intended = int(round(float(grant.delta) * refund_fraction))
-    clawback = min(intended, remaining)
-    if clawback <= 0:
-        return (0, None)
+    # Spread the clawback across the grants (newest first), each capped at its own
+    # unconsumed remaining, until the intended amount is satisfied.
+    total_clawed = 0
+    last_entry_id: int | None = None
+    for grant in grants:
+        if total_clawed >= intended:
+            break
+        consumed = _consumed_against(session, grant.id)
+        remaining = int(grant.delta) - consumed
+        if remaining <= 0:
+            continue
+        take = min(intended - total_clawed, remaining)
+        if take <= 0:
+            continue
+        entry = CreditLedger(
+            client_id=client_id,
+            bot_id=bot_id,
+            delta=-take,
+            reason="refund",
+            grant_id=grant.id,
+            note=note,
+        )
+        session.add(entry)
+        session.flush()
+        total_clawed += take
+        last_entry_id = entry.id
 
-    entry = CreditLedger(
-        client_id=client_id,
-        bot_id=bot_id,
-        delta=-clawback,
-        reason="refund",
-        grant_id=grant.id,
-        note=note,
-    )
-    session.add(entry)
-    session.flush()
-    return (clawback, entry.id)
+    if total_clawed <= 0:
+        return (0, None)
+    return (total_clawed, last_entry_id)
 
 
 def reverse_refund_clawback(
