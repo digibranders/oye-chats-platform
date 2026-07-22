@@ -31,6 +31,9 @@ export interface CurrentUser {
   bot_count?: number;
   is_verified?: boolean;
   onboarding_complete?: boolean;
+  /** True when the client has an active affiliate row (gates the Affiliate area). */
+  is_affiliate?: boolean;
+  /** True when the client is ONLY an affiliate (no customer subscription). */
   is_affiliate_only?: boolean;
   is_superadmin?: boolean;
 }

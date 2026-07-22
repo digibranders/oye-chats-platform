@@ -1,6 +1,7 @@
-import { type ReactElement } from 'react';
+import { type ReactElement, useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../../design-system';
+import { getCurrentUser } from '../../services/api';
 
 interface WorkspaceSection {
   /** URL segment under `/workspace/`. */
@@ -13,6 +14,9 @@ interface WorkspaceSection {
  * The workspace-level sections, in mandate order. Each links to
  * `/workspace/<path>`; the router mounts a child route per section. These are
  * workspace-wide settings only — never agent configuration.
+ *
+ * Affiliate is inserted only for enrolled affiliates (see below) — the program
+ * is invite-only, so the tab would be a dead end for everyone else.
  */
 const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
   { path: 'members', label: 'Members' },
@@ -23,6 +27,8 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
   { path: 'integrations', label: 'Integrations' },
   { path: 'settings', label: 'Settings' },
 ];
+
+const AFFILIATE_SECTION: WorkspaceSection = { path: 'affiliate', label: 'Affiliate' };
 
 /**
  * WorkspaceLayout — parent route element for `/workspace/*`. Adds the section
@@ -37,16 +43,38 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
  * the outer padding.
  */
 export function WorkspaceLayout(): ReactElement {
+  // The Affiliate section is invite-only, so it's shown only once /auth/me
+  // confirms the client is an enrolled affiliate. Inserted before Settings to
+  // keep Settings last. A failed lookup simply omits it (fail-closed).
+  const [isAffiliate, setIsAffiliate] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setIsAffiliate(user?.is_affiliate === true);
+      })
+      .catch(() => {
+        /* keep the section hidden on failure */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const sections: readonly WorkspaceSection[] = isAffiliate
+    ? [...WORKSPACE_SECTIONS.slice(0, -1), AFFILIATE_SECTION, WORKSPACE_SECTIONS[WORKSPACE_SECTIONS.length - 1]]
+    : WORKSPACE_SECTIONS;
+
   return (
     <div className="flex min-h-full flex-col">
       {/* Section nav — real nav semantics; NavLink stamps aria-current on the
-          active section. Horizontally scrollable so all seven fit on mobile. */}
+          active section. Horizontally scrollable so all fit on mobile. */}
       <nav
         aria-label="Workspace sections"
         className="mx-auto w-full max-w-7xl overflow-x-auto border-b border-[var(--ds-border)]"
       >
         <ul className="-mb-px flex min-w-max items-center gap-1">
-          {WORKSPACE_SECTIONS.map((section) => (
+          {sections.map((section) => (
             <li key={section.path}>
               <NavLink
                 to={section.path}

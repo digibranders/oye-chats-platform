@@ -28,6 +28,7 @@ import { UsagePage } from '../features/workspace/UsagePage';
 import { SecurityPage } from '../features/workspace/SecurityPage';
 import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
+import { AffiliatePage } from '../features/affiliate/AffiliatePage';
 import { SettingsPage } from '../features/workspace/SettingsPage';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
@@ -102,6 +103,7 @@ export const router = createBrowserRouter([
               { path: 'security', handle: { crumb: 'Security' }, element: <SecurityPage /> },
               { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
               { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
+              { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
               { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
             ],
           },

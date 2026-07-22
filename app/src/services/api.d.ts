@@ -205,6 +205,33 @@ export function applyReferralCode(
   code: string,
 ): Promise<{ code: string | null; message: string; discount_pct?: number }>;
 
+// ── Affiliate self-service (reused verbatim; see api/app/api/affiliate_routes.py) ──
+/** The affiliate's own program terms. Throws (403) when the client is not an affiliate. */
+export function getAffiliateMe(): Promise<Record<string, unknown>>;
+/** List the affiliate's codes with lifetime click + signup counters. */
+export function getAffiliateCodes(): Promise<Array<Record<string, unknown>>>;
+/** Per-customer referral breakdown + monthly distribution for one code (emails masked). */
+export function getAffiliateCodeReferrals(codeId: number): Promise<Record<string, unknown>>;
+/** Create a referral code. The split percents must fit the affiliate's pool. */
+export function createAffiliateCode(
+  code: string,
+  label?: string | null,
+  split?: { affiliateCommissionPct?: number; customerDiscountPct?: number },
+): Promise<Record<string, unknown>>;
+/** Patch a referral code (rename / label / active toggle / split). Every field optional. */
+export function updateAffiliateCode(
+  codeId: number,
+  patch?: {
+    code?: string;
+    label?: string;
+    active?: boolean;
+    affiliateCommissionPct?: number;
+    customerDiscountPct?: number;
+  },
+): Promise<Record<string, unknown>>;
+/** Aggregate counters for the affiliate dashboard header. */
+export function getAffiliateStats(): Promise<Record<string, unknown>>;
+
 // ── Credits / top-ups ────────────────────────────────────────────────────────
 export function getCreditBalance(): Promise<Record<string, unknown>>;
 export function getCreditHistory(params?: { page?: number; limit?: number }): Promise<Record<string, unknown>>;
