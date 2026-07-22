@@ -29,6 +29,7 @@ import { SecurityPage } from '../features/workspace/SecurityPage';
 import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { AffiliatePage } from '../features/affiliate/AffiliatePage';
+import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
 import { SettingsPage } from '../features/workspace/SettingsPage';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
   { path: '/verify-email', element: <VerifyEmail /> },
   { path: '/forgot-password', element: <ForgotPassword /> },
   { path: '/auth/callback', element: <OAuthCallback /> },
+  { path: '/affiliate-invite', element: <AffiliateInvite /> },
 
   // ── Authenticated area — token guard + reused Workspace/Bot/Crawl providers ──
   {

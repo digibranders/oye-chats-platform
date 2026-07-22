@@ -231,6 +231,12 @@ export function updateAffiliateCode(
 ): Promise<Record<string, unknown>>;
 /** Aggregate counters for the affiliate dashboard header. */
 export function getAffiliateStats(): Promise<Record<string, unknown>>;
+/** Look up a magic-link affiliate invite by token. Throws 404 (invalid) / 410 (expired/revoked). */
+export function lookupAffiliateInvite(token: string): Promise<{ email: string; expires_at: string }>;
+/** Accept an affiliate invite as the signed-in client. Throws 403 (email mismatch) / 409 (already an affiliate). */
+export function acceptAffiliateInviteExisting(
+  token: string,
+): Promise<{ is_affiliate: boolean; message: string }>;
 
 // ── Credits / top-ups ────────────────────────────────────────────────────────
 export function getCreditBalance(): Promise<Record<string, unknown>>;
