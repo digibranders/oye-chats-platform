@@ -1,40 +1,32 @@
-import { type ReactElement } from 'react';
+import { type ReactElement, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  Clock,
+  ArrowUpRight,
   FileText,
   Globe,
   ListOrdered,
   Mail,
   MessageSquare,
-  RefreshCw,
   Wallet,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
-import {
-  Button,
-  EmptyState,
-  PageContainer,
-  Progress,
-  SectionHeader,
-  Skeleton,
-  cn,
-} from '../../design-system';
+import { Button, EmptyState, PageContainer, Skeleton, cn } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { InsightCard } from '../../design-system/components/InsightCard';
-import { DataTable, type Column } from '../../design-system/components/DataTable';
 import {
   formatCredits,
   formatDate,
-  formatDateTime,
-  type CreditBalance,
+  formatTime,
   type LedgerRow,
   type LedgerTone,
 } from './usage-model';
 import { useUsageData } from './useUsageData';
-
-// ── Ledger tone → color ──────────────────────────────────────────────────────
+import { TopupModal } from './billing/TopupModal';
+import { UsageHero } from './usage/UsageHero';
+import { CreditBreakdown } from './usage/CreditBreakdown';
+import { ConsumptionTrend } from './usage/ConsumptionTrend';
 
 const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
   credit: 'text-[var(--ds-success)]',
@@ -42,111 +34,23 @@ const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
   debit: 'text-[var(--ds-text-muted)]',
 };
 
-// ── Credit balance summary ───────────────────────────────────────────────────
-
-interface BalanceSummaryProps {
-  readonly balance: CreditBalance;
-}
-
-/**
- * The headline credit position: total spendable credits, how much of the
- * monthly plan allowance is gone, and the plan/top-up split with their renewal
- * and expiry dates. Answers the first half of "what am I consuming?" — the
- * pool it's being consumed from.
- */
-function BalanceSummary({ balance }: BalanceSummaryProps): ReactElement {
-  return (
-    <section
-      aria-label="Credit balance"
-      className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-6 shadow-[var(--ds-shadow-sm)]"
-    >
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        {/* Total spendable — the number that matters when the AI stops. */}
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--ds-text-muted)]">
-            <Wallet size={16} aria-hidden="true" />
-            Credits remaining
-          </div>
-          <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-[var(--ds-text)]">
-            {formatCredits(balance.totalRemaining)}
-          </p>
-          <p className="mt-1 text-[13px] text-[var(--ds-text-subtle)]">
-            {formatCredits(balance.planRemaining)} from your plan
-            {balance.topupRemaining > 0
-              ? ` · ${formatCredits(balance.topupRemaining)} from top-ups`
-              : ''}
-          </p>
-        </div>
-
-        {/* Renewal / expiry facts. */}
-        <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-[13px]">
-          <div>
-            <dt className="text-[var(--ds-text-subtle)]">Monthly allowance</dt>
-            <dd className="mt-0.5 font-semibold tabular-nums text-[var(--ds-text)]">
-              {formatCredits(balance.monthlyGrant)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[var(--ds-text-subtle)]">Plan renews</dt>
-            <dd className="mt-0.5 flex items-center gap-1.5 font-semibold text-[var(--ds-text)]">
-              <RefreshCw size={13} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              {formatDate(balance.resetsAt)}
-            </dd>
-          </div>
-          {balance.topupRemaining > 0 && (
-            <div>
-              <dt className="text-[var(--ds-text-subtle)]">Top-ups expire</dt>
-              <dd className="mt-0.5 flex items-center gap-1.5 font-semibold text-[var(--ds-text)]">
-                <Clock size={13} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-                {formatDate(balance.soonestExpiry)}
-              </dd>
-            </div>
-          )}
-        </dl>
-      </div>
-
-      {/* Plan allowance consumption. */}
-      {balance.monthlyGrant > 0 && (
-        <div className="mt-6">
-          <div className="mb-2 flex items-center justify-between text-[13px]">
-            <span className="font-medium text-[var(--ds-text-muted)]">Plan allowance used</span>
-            <span className="tabular-nums font-semibold text-[var(--ds-text)]">
-              {balance.planUsedPct}%
-            </span>
-          </div>
-          <Progress value={balance.planUsedPct} label="Plan allowance used this period" />
-        </div>
-      )}
-    </section>
-  );
-}
-
 // ── Metered activity tile ─────────────────────────────────────────────────────
 
 interface ActivityCardProps {
   readonly label: string;
   readonly icon: LucideIcon;
-  /** How many times the activity happened this period. */
   readonly eventCount: number;
-  /** Credits it consumed this period. */
   readonly creditsUsed: number;
 }
 
 /**
  * A single metered-activity tile: the event count as the headline with the
- * credits it burned as a neutral caption. Mirrors MetricCard's shell but shows
- * the credits via a plain sub-label instead of the trend/delta slot — a static
- * secondary figure must not render behind a ▲/▼/– glyph, which reads as a
- * period-over-period change rather than a neutral value.
+ * credits it burned as a neutral caption. A subtle hover lift signals it's a
+ * living metric without implying it's clickable.
  */
-function ActivityCard({
-  label,
-  icon: Icon,
-  eventCount,
-  creditsUsed,
-}: ActivityCardProps): ReactElement {
+function ActivityCard({ label, icon: Icon, eventCount, creditsUsed }: ActivityCardProps): ReactElement {
   return (
-    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
+    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)] transition-colors hover:border-[var(--ds-border-strong)]">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
@@ -154,7 +58,7 @@ function ActivityCard({
         </span>
       </div>
       <div className="mt-3">
-        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
+        <span className="text-2xl font-bold tracking-tight tabular-nums text-[var(--ds-text)]">
           {formatCredits(eventCount)}
         </span>
         <p className="mt-1 text-[13px] font-medium tabular-nums text-[var(--ds-text-subtle)]">
@@ -165,61 +69,104 @@ function ActivityCard({
   );
 }
 
-// ── Consumption ledger ───────────────────────────────────────────────────────
+// ── Consumption history (grouped by day) ─────────────────────────────────────
 
-const LEDGER_COLUMNS: Column<LedgerRow>[] = [
-  {
-    key: 'createdAt',
-    header: 'When',
-    width: '11rem',
-    render: (row) => (
-      <span className="whitespace-nowrap tabular-nums text-[var(--ds-text-muted)]">
-        {formatDateTime(row.createdAt)}
-      </span>
-    ),
-  },
-  {
-    key: 'label',
-    header: 'Activity',
-    render: (row) => <span className="font-medium text-[var(--ds-text)]">{row.label}</span>,
-  },
-  {
-    key: 'note',
-    header: 'Details',
-    render: (row) => (
-      <span className="text-[var(--ds-text-subtle)]">{row.note ?? '—'}</span>
-    ),
-  },
-  {
-    key: 'delta',
-    header: 'Credits',
-    align: 'right',
-    width: '8rem',
-    render: (row) => (
-      <span className={cn('tabular-nums font-semibold', LEDGER_TONE_CLASS[row.tone])}>
-        {row.delta > 0 ? '+' : ''}
-        {formatCredits(row.delta)}
-      </span>
-    ),
-  },
-];
+interface DayGroup {
+  readonly label: string;
+  readonly rows: LedgerRow[];
+}
+
+/** Relative day label ("Today" / "Yesterday" / a date) for a ledger timestamp. */
+function dayLabel(iso: string | null): string {
+  if (!iso) return 'Earlier';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return 'Earlier';
+  const startOfDay = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(new Date()) - startOfDay(then)) / 86_400_000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return formatDate(iso);
+}
+
+/** Group already-descending ledger rows into contiguous day buckets. */
+function groupByDay(rows: LedgerRow[]): DayGroup[] {
+  const groups: DayGroup[] = [];
+  for (const row of rows) {
+    const label = dayLabel(row.createdAt);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.rows.push(row);
+    else groups.push({ label, rows: [row] });
+  }
+  return groups;
+}
+
+function ConsumptionHistory({ rows }: { rows: LedgerRow[] }): ReactElement {
+  const groups = useMemo(() => groupByDay(rows), [rows]);
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
+      {groups.map((group) => (
+        <div key={group.label} className="border-b border-[var(--ds-border)] last:border-b-0">
+          <div className="bg-[var(--ds-bg-subtle)] px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
+            {group.label}
+          </div>
+          <ul>
+            {group.rows.map((row) => (
+              <li
+                key={row.id}
+                className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-[var(--ds-bg-hover)]"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">{row.label}</p>
+                  {row.note && (
+                    <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">{row.note}</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-4">
+                  <span className="tabular-nums text-[12px] text-[var(--ds-text-subtle)]">
+                    {formatTime(row.createdAt)}
+                  </span>
+                  <span className={cn('w-16 text-right tabular-nums text-[13px] font-semibold', LEDGER_TONE_CLASS[row.tone])}>
+                    {row.delta > 0 ? '+' : ''}
+                    {formatCredits(row.delta)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 /**
- * UsagePage — the Workspace ▸ Usage surface. One job: answer
- * "What am I consuming?". Shows the credit balance and how much of the plan
- * allowance is spent, a metered breakdown of this period's activity (AI chats,
- * documents, crawled pages, customer emails, total credits), and the itemized
- * consumption ledger. Read-only — buying credits and the plan live on Billing.
+ * UsagePage — the Workspace ▸ Usage analytics surface. One job: answer "how
+ * much have I used?". A hero credit position leads; metered activity, a
+ * where-credits-go breakdown, and a 30-day trend give the shape of consumption;
+ * a grouped ledger gives the detail. Buying credits happens inline; upgrading
+ * routes to Billing.
  */
 export function UsagePage(): ReactElement {
   const { phase, retry } = useUsageData();
+  const navigate = useNavigate();
+  const [topupOpen, setTopupOpen] = useState(false);
+
+  const goToBilling = (): void => {
+    void navigate('/workspace/billing');
+  };
 
   return (
     <PageContainer
       title="Usage"
       description="Everything your workspace is consuming this period — credits, AI chats, documents, crawled pages, and customer emails."
+      actions={
+        <Button variant="outline" onClick={() => setTopupOpen(true)}>
+          <Wallet size={16} aria-hidden="true" />
+          Buy credits
+        </Button>
+      }
     >
       {phase.status === 'loading' && <LoadingState />}
 
@@ -234,7 +181,6 @@ export function UsagePage(): ReactElement {
 
       {phase.status === 'ready' && (
         <>
-          {/* Running-low nudge — watches the combined bucket, not the plan alone. */}
           {phase.balance.lowBalance && (
             <InsightCard
               tone="warning"
@@ -243,61 +189,65 @@ export function UsagePage(): ReactElement {
               body={
                 <>
                   Only {formatCredits(phase.balance.totalRemaining)} credits remain of your{' '}
-                  {formatCredits(phase.balance.monthlyGrant)} monthly allowance. When they reach
-                  zero your AI stops replying to visitors. Top up or upgrade from Billing to stay
-                  online.
+                  {formatCredits(phase.balance.monthlyGrant)} monthly allowance. When they reach zero your AI
+                  stops replying to visitors.
                 </>
+              }
+              action={
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => setTopupOpen(true)}>
+                    <Wallet size={16} aria-hidden="true" />
+                    Buy credits
+                  </Button>
+                  <Button variant="ghost" onClick={goToBilling}>
+                    <ArrowUpRight size={16} aria-hidden="true" />
+                    Upgrade plan
+                  </Button>
+                </div>
               }
             />
           )}
 
-          <BalanceSummary balance={phase.balance} />
+          <UsageHero balance={phase.balance} onBuyCredits={() => setTopupOpen(true)} />
 
           {/* Metered consumption this period. */}
-          <section aria-label="Consumption this period" className="space-y-4">
-            <SectionHeader
-              title="This period"
-              description="What your workspace has spent credits on since the plan last renewed."
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+            <ActivityCard
+              label="AI chat replies"
+              icon={MessageSquare}
+              eventCount={phase.balance.aiChat.eventCount}
+              creditsUsed={phase.balance.aiChat.creditsUsed}
             />
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-              <ActivityCard
-                label="AI chat replies"
-                icon={MessageSquare}
-                eventCount={phase.balance.aiChat.eventCount}
-                creditsUsed={phase.balance.aiChat.creditsUsed}
-              />
-              <ActivityCard
-                label="Documents uploaded"
-                icon={FileText}
-                eventCount={phase.balance.documentUpload.eventCount}
-                creditsUsed={phase.balance.documentUpload.creditsUsed}
-              />
-              <ActivityCard
-                label="Pages crawled"
-                icon={Globe}
-                eventCount={phase.balance.urlScan.eventCount}
-                creditsUsed={phase.balance.urlScan.creditsUsed}
-              />
-              <ActivityCard
-                label="Customer emails"
-                icon={Mail}
-                eventCount={phase.balance.emailSend.eventCount}
-                creditsUsed={phase.balance.emailSend.creditsUsed}
-              />
-              <MetricCard
-                label="Credits used"
-                value={formatCredits(phase.balance.periodCreditsUsed)}
-                icon={Zap}
-              />
-            </div>
-          </section>
+            <ActivityCard
+              label="Documents uploaded"
+              icon={FileText}
+              eventCount={phase.balance.documentUpload.eventCount}
+              creditsUsed={phase.balance.documentUpload.creditsUsed}
+            />
+            <ActivityCard
+              label="Pages crawled"
+              icon={Globe}
+              eventCount={phase.balance.urlScan.eventCount}
+              creditsUsed={phase.balance.urlScan.creditsUsed}
+            />
+            <ActivityCard
+              label="Customer emails"
+              icon={Mail}
+              eventCount={phase.balance.emailSend.eventCount}
+              creditsUsed={phase.balance.emailSend.creditsUsed}
+            />
+            <MetricCard label="Credits used" value={formatCredits(phase.balance.periodCreditsUsed)} icon={Zap} />
+          </div>
 
-          {/* Itemized ledger. */}
-          <section aria-label="Consumption history" className="space-y-4">
-            <SectionHeader
-              title="Consumption history"
-              description="Your most recent credit movements — newest first."
-            />
+          {/* Breakdown + trend — the shape of consumption. */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <CreditBreakdown balance={phase.balance} />
+            {phase.trend.status === 'ready' && <ConsumptionTrend points={phase.trend.points} />}
+          </div>
+
+          {/* Itemized ledger, grouped by day. */}
+          <section aria-label="Consumption history" className="space-y-3">
+            <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">Consumption history</h2>
             {phase.ledger.status === 'error' ? (
               <EmptyState
                 icon={AlertTriangle}
@@ -306,12 +256,7 @@ export function UsagePage(): ReactElement {
                 action={<Button onClick={retry}>Try again</Button>}
               />
             ) : phase.ledger.rows.length > 0 ? (
-              <DataTable
-                caption="Credit consumption ledger"
-                columns={LEDGER_COLUMNS}
-                rows={phase.ledger.rows}
-                rowKey={(row) => row.id}
-              />
+              <ConsumptionHistory rows={phase.ledger.rows} />
             ) : (
               <EmptyState
                 icon={ListOrdered}
@@ -322,6 +267,15 @@ export function UsagePage(): ReactElement {
           </section>
         </>
       )}
+
+      <TopupModal
+        open={topupOpen}
+        onClose={() => setTopupOpen(false)}
+        onSuccess={() => {
+          setTopupOpen(false);
+          retry();
+        }}
+      />
     </PageContainer>
   );
 }
@@ -331,14 +285,16 @@ export function UsagePage(): ReactElement {
 function LoadingState(): ReactElement {
   return (
     <div className="space-y-6">
-      <Skeleton className="h-40 w-full rounded-xl" />
-      <Skeleton className="h-7 w-40 rounded-lg" />
+      <Skeleton className="h-44 w-full rounded-2xl" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {Array.from({ length: 5 }).map((_, index) => (
           <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>
-      <Skeleton className="h-7 w-48 rounded-lg" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Skeleton className="h-56 rounded-xl" />
+        <Skeleton className="h-56 rounded-xl" />
+      </div>
       <Skeleton className="h-64 w-full rounded-xl" />
     </div>
   );

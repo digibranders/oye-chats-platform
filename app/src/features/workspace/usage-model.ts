@@ -219,6 +219,32 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
   };
 }
 
+// ── Consumption trend ────────────────────────────────────────────────────────
+
+/** One day in the consumption trend series (from GET /credits/daily). */
+export interface TrendPoint {
+  /** Calendar day, ISO `YYYY-MM-DD` (UTC). */
+  readonly date: string;
+  /** Credits consumed that day (metered debits only). */
+  readonly creditsUsed: number;
+}
+
+/**
+ * Parse the daily-consumption payload into an ascending, zero-filled series.
+ * The backend already zero-fills and orders the window, so this is a thin,
+ * defensive mapping that drops any malformed row.
+ */
+export function parseTrend(raw: unknown): TrendPoint[] {
+  const record = asRecord(raw);
+  const series = Array.isArray(record.series) ? record.series : [];
+  return series
+    .map((point): TrendPoint => {
+      const row = asRecord(point);
+      return { date: toStringOrNull(row.date) ?? '', creditsUsed: toNumber(row.credits_used) };
+    })
+    .filter((point) => point.date !== '');
+}
+
 // ── Consumption ledger ───────────────────────────────────────────────────────
 
 /** A human-friendly semantic for how a ledger row should read. */
@@ -336,4 +362,12 @@ export function formatDateTime(iso: string | null): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/** HH:MM — the time-of-day, for rows already grouped under a day header. */
+export function formatTime(iso: string | null): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
 }

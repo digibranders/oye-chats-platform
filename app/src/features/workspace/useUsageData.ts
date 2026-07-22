@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { getCreditBalance, getCreditHistory } from '../../services/api';
+import { getCreditBalance, getCreditDaily, getCreditHistory } from '../../services/api';
 import {
   parseCreditBalance,
   parseLedger,
+  parseTrend,
   type CreditBalance,
   type LedgerRow,
+  type TrendPoint,
 } from './usage-model';
 
 /**
@@ -16,6 +18,11 @@ export type LedgerState =
   | { readonly status: 'ready'; readonly rows: LedgerRow[] }
   | { readonly status: 'error'; readonly message: string };
 
+/** The 30-day trend degrades independently too — a failure just hides the chart. */
+export type TrendState =
+  | { readonly status: 'ready'; readonly points: TrendPoint[] }
+  | { readonly status: 'error' };
+
 /**
  * Loading state machine for the Usage page. `loading` is a genuine derived
  * phase — the first `setState` in the effect always follows an `await`, so we
@@ -24,7 +31,12 @@ export type LedgerState =
 export type UsagePhase =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly message: string }
-  | { readonly status: 'ready'; readonly balance: CreditBalance; readonly ledger: LedgerState };
+  | {
+      readonly status: 'ready';
+      readonly balance: CreditBalance;
+      readonly ledger: LedgerState;
+      readonly trend: TrendState;
+    };
 
 export interface UsageData {
   readonly phase: UsagePhase;
@@ -51,9 +63,10 @@ export function useUsageData(): UsageData {
       // Settle both independently: the balance is the page's primary answer,
       // so a history-only failure degrades to an inline error on the ledger
       // section rather than blanking the whole page.
-      const [balanceResult, historyResult] = await Promise.allSettled([
+      const [balanceResult, historyResult, trendResult] = await Promise.allSettled([
         getCreditBalance(),
         getCreditHistory({ page: 1, limit: 50 }),
+        getCreditDaily({ days: 30 }),
       ]);
       if (!active) return;
 
@@ -79,10 +92,16 @@ export function useUsageData(): UsageData {
               ),
             };
 
+      const trend: TrendState =
+        trendResult.status === 'fulfilled'
+          ? { status: 'ready', points: parseTrend(trendResult.value) }
+          : { status: 'error' };
+
       setPhase({
         status: 'ready',
         balance: parseCreditBalance(balanceResult.value),
         ledger,
+        trend,
       });
     })();
     return () => {
