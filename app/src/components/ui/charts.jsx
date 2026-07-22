@@ -26,7 +26,7 @@ export const CHART_COLORS = {
   rose: '#f43f5e',
   grid: 'rgba(16,24,40,0.06)',
   axis: '#a79f8c',
-  series: ['#7C3AED', '#8B5CF6', '#A78BFA', '#C4B5FD', '#6D28D9'],
+  series: ['#7C3AED', '#10B981', '#F59E0B', '#F43F5E', '#0EA5E9'],
 };
 
 const AXIS_TICK = { fontSize: 11, fill: CHART_COLORS.axis, fontWeight: 500 };
