@@ -1971,6 +1971,30 @@ export const updateBillingDetails = async (patch) => {
     }
 };
 
+/**
+ * Honest pre-checkout quote — the single source of truth for what the pay
+ * button will charge, before any payment surface opens. Returns the resolved
+ * currency, amount (minor units + display string), payment methods, and
+ * whether checkout is supported at all (`checkout_supported: false` with a
+ * `reason` of `free_plan` / `intl_usd_pending` → render Contact Sales instead
+ * of a pay button). Proration is applied server-side at activation and is
+ * intentionally NOT part of this quote.
+ */
+export const getCheckoutQuote = async (planId, billingCycle = 'monthly', billingCountry = null) => {
+    try {
+        const response = await api.get('/subscriptions/checkout/quote', {
+            params: {
+                plan_id: planId,
+                billing_cycle: billingCycle,
+                ...(billingCountry ? { billing_country: billingCountry } : {}),
+            },
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to fetch checkout quote');
+    }
+};
+
 export const createCheckoutSession = async (planId, billingCycle = 'monthly', billingCountry = null) => {
     try {
         const response = await api.post('/subscriptions/checkout', {

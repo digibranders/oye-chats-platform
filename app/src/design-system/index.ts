@@ -59,3 +59,5 @@ export { Tabs } from './components/Tabs';
 export type { TabsProps, TabItem } from './components/Tabs';
 export { Modal } from './components/Modal';
 export type { ModalProps, ModalSize } from './components/Modal';
+export { Drawer } from './components/Drawer';
+export type { DrawerProps, DrawerWidth } from './components/Drawer';

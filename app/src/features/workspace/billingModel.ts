@@ -48,6 +48,8 @@ function toBool(value: unknown): boolean {
 // ── View-model shapes ────────────────────────────────────────────────────────
 
 export interface PlanView {
+  /** DB primary key — required by the checkout money-path (change-plan/checkout/quote). */
+  id: number;
   slug: string;
   name: string;
   /** Active-cycle price in INR minor units (paise), monthly column. */
@@ -59,6 +61,16 @@ export interface PlanView {
   /** Per-extra-seat monthly price in INR minor units. */
   extraSeatPriceMinor: number;
   isPaid: boolean;
+  /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
+  annualDiscountPercent: number;
+  /** Free-trial length in days; 0 for plans with no trial (Free). */
+  trialDays: number;
+  /** Catalog ordering from the backend (`sort_order`). */
+  sortOrder: number;
+  /** Raw `features` flags from the plan payload (bant, live_chat, webhooks, …). Read by the plan matrix. */
+  features: Record<string, unknown>;
+  /** Raw `limits` counters from the plan payload (max_crawl_pages, chat_history_days, …). `-1` = unlimited. */
+  limits: Record<string, number>;
 }
 
 export interface ScheduledChangeView {
@@ -118,11 +130,23 @@ export interface BillingDetailsView {
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
+/** Coerce a raw `limits` object to a flat number map (`-1` = unlimited passes through). */
+function toNumberMap(raw: unknown): Record<string, number> {
+  const record = asRecord(raw);
+  if (!record) return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
+
 export function buildPlan(raw: unknown): PlanView | null {
   const record = asRecord(raw);
   if (!record) return null;
   const monthlyPriceMinor = toNumber(record.monthly_price_cents);
   return {
+    id: toNumber(record.id),
     slug: toText(record.slug) || 'free',
     name: toText(record.name) || 'Free',
     monthlyPriceMinor,
@@ -133,6 +157,11 @@ export function buildPlan(raw: unknown): PlanView | null {
     // Currency-independent: INR is the canonical column and is always set for
     // a paid tier, so this stays correct regardless of display currency.
     isPaid: monthlyPriceMinor > 0,
+    annualDiscountPercent: toNumber(record.annual_discount_percent),
+    trialDays: toNumber(record.trial_days),
+    sortOrder: toNumber(record.sort_order),
+    features: asRecord(record.features) ?? {},
+    limits: toNumberMap(record.limits),
   };
 }
 
