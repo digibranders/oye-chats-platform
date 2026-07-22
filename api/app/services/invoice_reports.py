@@ -181,6 +181,11 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
       never emails, so unmailed documents are expected there, not anomalous.
     * ``broken_totals`` — tax components that no longer reconcile (impossible
       by construction; presence means manual DB tampering).
+    * ``unnumbered_charges`` — captured (``status='paid'``) INR charges still
+      without an ``invoice_number`` well past the sweep interval: finalize kept
+      returning False (usually the seller profile was never saved) so the
+      customer paid but has no tax document. The self-heal sweep re-numbers
+      these once the block clears; anything persisting here needs ops action.
     """
     note = aliased(Invoice)
     candidates = (
@@ -249,6 +254,31 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
             .all()
         )
 
+    # Un-numbered paid charges (finding H-B): a captured payment whose finalize
+    # returned False (seller profile not saved yet, a transient finalize error,
+    # or the flag was off) leaves a legacy row with no invoice_number and no tax
+    # document. The self-heal sweep (``backfill_unnumbered_invoices``) re-numbers
+    # these once the block clears, so anything still un-numbered well past the
+    # sweep interval means the customer was charged with no document — surface it
+    # so ops can act (usually: the seller profile still needs saving). Only
+    # meaningful when invoicing is on (shadow mode leaves everything legacy by
+    # design); non-INR rows are intentionally legacy until a currency-aware path
+    # exists, so they're excluded rather than flagged as anomalies.
+    unnumbered_charges: list[Invoice] = []
+    if config.INVOICING_V2_ENABLED:
+        unnumbered_charges = (
+            session.execute(
+                select(Invoice).where(
+                    Invoice.invoice_number.is_(None),
+                    Invoice.status == "paid",
+                    func.lower(func.coalesce(Invoice.currency, "")) == "inr",
+                    Invoice.paid_at < cutoff,
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     # Reconciliation identities pushed into SQL so this returns only the (near
     # always zero) offending rows instead of hydrating every document ever
     # issued — the check stays cheap as the table grows.
@@ -287,4 +317,5 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
         "pdfs_pending": [_brief(i) for i in pdfs_pending],
         "emails_pending": [_brief(i) for i in emails_pending],
         "broken_totals": [_brief(i) for i in broken],
+        "unnumbered_charges": [_brief(i) for i in unnumbered_charges],
     }
