@@ -44,7 +44,14 @@ function messageOf(error: unknown): string {
   return 'Something went wrong while loading your leads.';
 }
 
-export function useLeads(botId: number | undefined): LeadsData {
+/**
+ * @param botId The selected agent's id (or `undefined` while agents are still loading).
+ * @param enabled When `false`, the fetch never fires — used to keep Free-plan
+ *   workspaces from hitting the gated `/leads` endpoint (which 403s for Free)
+ *   when the page renders its upgrade teaser instead of the real list.
+ *   Defaults to `true` so existing callers are unaffected.
+ */
+export function useLeads(botId: number | undefined, enabled = true): LeadsData {
   const [status, setStatus] = useState<LoadStatus>('loading');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stats, setStats] = useState<LeadStatsSummary | null>(null);
@@ -70,6 +77,10 @@ export function useLeads(botId: number | undefined): LeadsData {
   }, []);
 
   useEffect(() => {
+    // Skip entirely rather than fetching and discarding the result — the
+    // caller (Free-plan gating) needs this to never issue the network call.
+    if (!enabled) return;
+
     let cancelled = false;
 
     async function load(): Promise<void> {
@@ -103,7 +114,7 @@ export function useLeads(botId: number | undefined): LeadsData {
     return () => {
       cancelled = true;
     };
-  }, [botId, reloadToken]);
+  }, [botId, reloadToken, enabled]);
 
   return {
     status,

@@ -21,13 +21,22 @@ import {
   Trophy,
   Users,
 } from 'lucide-react';
-import { Button, EmptyState, PageContainer, Skeleton, StatusBadge, cn } from '../../design-system';
+import {
+  Button,
+  EmptyState,
+  LockedFeatureCard,
+  PageContainer,
+  Skeleton,
+  StatusBadge,
+  cn,
+} from '../../design-system';
 // MetricCard + DataTable are Foundation-phase components not yet re-exported
 // from the design-system barrel (the orchestrator wires those exports), so we
 // import them from their module paths directly.
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { useBotContext } from '../../context/BotContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
 import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
 import { type Lead } from '../../types/domain';
 import { useLeads } from './useLeads';
@@ -162,9 +171,14 @@ function LeadsOverview({
 export function LeadsPage(): ReactElement {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
+  const { isFree } = useEntitlements();
 
+  // Free-plan workspaces never get the list — the backend's `/leads` route
+  // 403s for them. `useLeads` takes `enabled: false` so it never issues that
+  // doomed request; a Free user (including one who deep-links `/leads`) sees
+  // the upgrade teaser below instead of a broken fetch.
   const { status, leads, stats, funnel, error, reload, markViewedLocal, markAllReadLocal } =
-    useLeads(botId);
+    useLeads(botId, !isFree);
 
   const [tierFilter, setTierFilter] = useState<TierKey | null>(null);
   const [contactFilter, setContactFilter] = useState<ContactFilter>('all');
@@ -310,6 +324,23 @@ export function LeadsPage(): ReactElement {
   );
 
   // ── Guards ────────────────────────────────────────────────────────────────
+  // Free plan: never render the list (or its loading/error states) — show the
+  // upgrade teaser, full stop. Takes priority over every other guard below so
+  // a Free user who deep-links `/leads` always lands here, not on a skeleton
+  // or empty state for data that was never fetched.
+  if (isFree) {
+    return (
+      <PageContainer
+        title="Leads"
+        description="The people who talked to your AI — sorted by how ready they are to buy."
+      >
+        <div className="mx-auto w-full max-w-md py-12">
+          <LockedFeatureCard intent="view_leads" icon={Users} />
+        </div>
+      </PageContainer>
+    );
+  }
+
   if (botsLoading && bots.length === 0) {
     return (
       <PageContainer title="Leads">
