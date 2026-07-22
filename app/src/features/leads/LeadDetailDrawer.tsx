@@ -23,6 +23,7 @@ import {
 import { Button, EmptyState, Skeleton, StatusBadge, cn } from '../../design-system';
 import { type ChatMessage } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
+import { LeadInsights } from './LeadInsights';
 import {
   SCORE_TONE_VAR,
   TIER_META,
@@ -326,6 +327,9 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
               </section>
             )}
 
+            {/* Source attribution + behavioural signals (rendered only when present) */}
+            <LeadInsights detail={detail} />
+
             {/* Transcript */}
             <section className="space-y-3">
               <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
@@ -347,9 +351,6 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
 
             <footer className="border-t border-[var(--ds-border)] pt-4 text-[12px] text-[var(--ds-text-subtle)]">
               Last active {formatDateTime(detail.last_active_at)}
-              {/* TODO(leads): source attribution (UTM, referrer, page journey) is on
-                  `detail.source` for eligible plans — render once a typed reader
-                  and plan-entitlement gate land. */}
             </footer>
           </div>
         )}
