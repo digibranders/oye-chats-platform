@@ -498,6 +498,7 @@ export const crawlWebsite = async (
     orderedUrls = null,
     maxPages = null,
     mode = 'delta',
+    discoveredPages = null,
 ) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
@@ -509,6 +510,14 @@ export const crawlWebsite = async (
         // pipeline still enforces the real spend.
         if (replaceSource && Number.isFinite(expectedNewPages) && expectedNewPages >= 0) {
             body.expected_new_pages = expectedNewPages;
+        }
+        // Initial crawls send the discovered sitemap page count so the backend
+        // pre-flight reserves credits for the ACTUAL page count instead of the
+        // plan's full max-pages ceiling (fixes small sites being gated at
+        // plan_max × cost_per_page). Only for first-time crawls (no
+        // replaceSource); per-page atomic deduction stays the real safety net.
+        if (!replaceSource && Number.isFinite(discoveredPages) && discoveredPages > 0) {
+            body.discovered_pages = discoveredPages;
         }
         // Credit-aware partial crawl: an explicit, pre-ordered slice of the
         // discovered URLs plus the chosen page count. The backend validates

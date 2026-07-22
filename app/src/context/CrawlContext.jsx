@@ -318,6 +318,10 @@ export const CrawlProvider = ({ children }) => {
                     orderedUrls,
                     maxPages,
                     mode,
+                    // Forward the discovered sitemap count so the backend
+                    // pre-flight sizes the initial-crawl credit reservation to
+                    // the actual page count, not the plan's max-pages ceiling.
+                    discoveredTotal,
                 );
                 // Kick a poll immediately so the bar advances faster than the
                 // background tick.

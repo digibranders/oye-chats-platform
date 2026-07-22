@@ -1,16 +1,21 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
-import { ThemeProvider } from './context/ThemeContext.jsx'
 import { isSessionExpired, clearAuthStorage } from './utils/authStorage'
 import ErrorFallback from './components/ErrorFallback.jsx'
 import './index.css'
-import App from './App.jsx'
+import './design-system/tokens.css'
+// Admin Platform 2.0 foundation entry. The legacy root remains on disk at
+// ./App.jsx (with its pages) for the strangler-fig migration — surfaces are
+// ported into the new shell one at a time, then the legacy files are deleted.
+// The new root (./app/App) owns theming, so the old ThemeProvider wrapper is
+// gone from here.
+import App from './app/App'
 
 // Enforce the absolute session expiry once, before the app reads auth state.
 // Auth lives in localStorage (shared across tabs); "Remember me" controls how
-// long it lasts. An expired session is wiped here so ProtectedRoute treats the
-// user as logged out and routes to /login on this load.
+// long it lasts. An expired session is wiped here so ProtectedLayout treats the
+// user as logged out and redirects to /login on this load.
 if (isSessionExpired()) {
   clearAuthStorage();
 }
@@ -35,9 +40,7 @@ if (SENTRY_DSN) {
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
-      <ThemeProvider>
-        <App />
-      </ThemeProvider>
+      <App />
     </Sentry.ErrorBoundary>
   </StrictMode>,
 )

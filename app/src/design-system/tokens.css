@@ -1,0 +1,105 @@
+/**
+ * Design System — Semantic Tokens (Admin Platform 2.0)
+ * =====================================================
+ * A semantic layer on top of the existing Tailwind `@theme` palette in
+ * `index.css` (Voltage Paper). Per the rebuild mandate, volt-violet
+ * (#A21CAF) is used as an ACCENT only — surfaces, nav, and chrome are
+ * warm-neutral (paper / ink). Components read these vars via
+ * `bg-[var(--ds-*)]` / `text-[var(--ds-*)]` so the whole shell recolors
+ * from one place and light/dark stay in lockstep.
+ *
+ * The ThemeProvider toggles `.dark` on <html>; `index.css` already wires
+ * `@custom-variant dark (&:where(.dark, .dark *))`, so `.dark { … }` below
+ * is the single dark-mode override surface for the new foundation.
+ */
+
+:root {
+  /* Backgrounds — warm paper, ink on top */
+  --ds-bg-canvas: #fafaf7;   /* app background */
+  --ds-bg-surface: #ffffff;  /* cards / raised */
+  --ds-bg-sunken: #f4f3ef;   /* rails / insets */
+  --ds-bg-hover: #f4f3ef;    /* neutral hover */
+  --ds-sidebar-bg: #f7f6f2;  /* nav rail — NEUTRAL, never violet */
+
+  /* Borders */
+  --ds-border: #e7e5de;
+  --ds-border-strong: #d4d4d0;
+
+  /* Text */
+  --ds-text: #18181b;
+  --ds-text-muted: #52525b;
+  --ds-text-subtle: #a1a1aa;
+  --ds-text-invert: #fafafa;
+
+  /* Accent — volt violet, used sparingly (primary actions, active state) */
+  --ds-accent: #a21caf;
+  --ds-accent-hover: #86198f;
+  --ds-accent-fg: #ffffff;
+  --ds-accent-soft: rgba(162, 28, 175, 0.08);
+  --ds-accent-text: #86198f;
+
+  /* Semantic status — single source for success/warning/danger/info chrome */
+  --ds-success: #059669;
+  --ds-success-soft: #ecfdf5;
+  --ds-warning: #d97706;
+  --ds-warning-soft: #fffbeb;
+  --ds-danger: #e11d48;
+  --ds-danger-soft: #fff1f2;
+  --ds-info: #0284c7;
+  --ds-info-soft: #f0f9ff;
+  --ds-status-fg: #ffffff;
+
+  /* Focus ring */
+  --ds-ring: #a21caf;
+
+  /* Elevation */
+  --ds-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --ds-shadow-md: 0 4px 12px rgba(24, 24, 27, 0.08);
+  --ds-shadow-lg: 0 12px 32px rgba(24, 24, 27, 0.12);
+
+  /* Overlay scrim behind modals / dialogs */
+  --ds-overlay: rgba(24, 24, 27, 0.45);
+}
+
+.dark {
+  --ds-bg-canvas: #0a0a0a;
+  --ds-bg-surface: #18181b;
+  --ds-bg-sunken: #111113;
+  --ds-bg-hover: rgba(255, 255, 255, 0.05);
+  --ds-sidebar-bg: #0c0c0e;
+
+  --ds-border: #27272a;
+  --ds-border-strong: #3f3f46;
+
+  --ds-text: #fafafa;
+  --ds-text-muted: #a1a1aa;
+  --ds-text-subtle: #71717a;
+  --ds-text-invert: #18181b;
+
+  /* Filled-button accent stays dark enough for white text to clear WCAG AA
+     (white on #a21caf ≈ 6.5:1). The brighter volt hue lives in --ds-accent-text
+     / --ds-ring / --ds-accent-soft, which sit on dark surfaces, not under text. */
+  --ds-accent: #a21caf;
+  --ds-accent-hover: #b81fc6;
+  --ds-accent-fg: #ffffff;
+  --ds-accent-soft: rgba(217, 70, 239, 0.14);
+  --ds-accent-text: #e879f9;
+
+  --ds-success: #10b981;
+  --ds-success-soft: rgba(16, 185, 129, 0.14);
+  --ds-warning: #f59e0b;
+  --ds-warning-soft: rgba(245, 158, 11, 0.14);
+  --ds-danger: #f43f5e;
+  --ds-danger-soft: rgba(244, 63, 94, 0.14);
+  --ds-info: #38bdf8;
+  --ds-info-soft: rgba(56, 189, 248, 0.14);
+  --ds-status-fg: #ffffff;
+
+  --ds-ring: #d946ef;
+
+  --ds-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ds-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --ds-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  --ds-overlay: rgba(0, 0, 0, 0.6);
+}

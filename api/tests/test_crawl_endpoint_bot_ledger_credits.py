@@ -47,7 +47,7 @@ def _build_app():
     return app
 
 
-def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int]):
+def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int], plan_max_pages=UNLIMITED):
     """Wire up everything crawl_endpoint touches besides the credit gate.
 
     ``balances_by_bucket`` maps "client_pool" -> balance when bot_id is None
@@ -71,7 +71,7 @@ def _patch_common(monkeypatch, *, balances_by_bucket: dict[str, int]):
     monkeypatch.setattr(
         "app.services.plan_service.get_crawl_limits",
         lambda plan: {
-            "max_crawl_pages": UNLIMITED,
+            "max_crawl_pages": plan_max_pages,
             "max_crawl_depth": 3,
             "max_crawl_js_pages": 50,
             "max_crawl_concurrency": 5,
@@ -142,3 +142,97 @@ def test_crawl_blocked_when_bot_ledger_empty_even_if_client_pool_funded(monkeypa
     assert detail["error"] == "insufficient_credits"
     assert detail["required"] == 10
     assert detail["available"] == 0
+
+
+# ── discovered_pages: initial-crawl credit pre-flight right-sizing ────────────
+# The pre-flight used to reserve plan_max × cost_per_page for every initial
+# crawl, so a small site (e.g. 13 pages) was gated at the plan ceiling (20 × 5 =
+# 100 credits) and could be wrongly blocked. Supplying the discovered sitemap
+# count now sizes the reservation to the actual pages. cost_per_page = 1 here.
+
+
+def test_initial_crawl_gated_at_plan_max_without_discovered_pages(monkeypatch):
+    """Pre-fix worst case: a fixed-cap plan with no max_pages / no discovered_pages
+    reserves the full plan ceiling — a 5-credit balance can't clear the 20-page
+    reservation even though the real site may be far smaller."""
+    _patch_common(
+        monkeypatch,
+        balances_by_bucket={"client_pool": 0, "bot_ledger": 5},
+        plan_max_pages=20,
+    )
+
+    resp = TestClient(_build_app()).post(
+        "/crawl",
+        params={"bot_id": 7},
+        json={"url": "https://acme.test"},
+    )
+
+    assert resp.status_code == 402, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error"] == "insufficient_credits"
+    assert detail["required"] == 20  # plan_max (20) × cost_per_page (1)
+
+
+def test_initial_crawl_credit_gate_sized_to_discovered_pages(monkeypatch):
+    """Fix: an initial crawl that reports discovered_pages sizes the pre-flight to
+    min(plan_max, discovered) — a 3-page site reserves 3 credits, so a balance of
+    5 is enough and the crawl is ALLOWED."""
+    _patch_common(
+        monkeypatch,
+        balances_by_bucket={"client_pool": 0, "bot_ledger": 5},
+        plan_max_pages=20,
+    )
+
+    resp = TestClient(_build_app()).post(
+        "/crawl",
+        params={"bot_id": 7},
+        json={"url": "https://acme.test", "discovered_pages": 3},
+    )
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["status"] == "running"
+
+
+def test_discovered_pages_does_not_exceed_plan_cap(monkeypatch):
+    """discovered_pages only ever TIGHTENS the reservation — a discovered count
+    above the plan cap is clamped to the cap (never loosens it)."""
+    _patch_common(
+        monkeypatch,
+        balances_by_bucket={"client_pool": 0, "bot_ledger": 5},
+        plan_max_pages=20,
+    )
+
+    resp = TestClient(_build_app()).post(
+        "/crawl",
+        params={"bot_id": 7},
+        json={"url": "https://acme.test", "discovered_pages": 500},
+    )
+
+    # min(plan_max 20, discovered 500) = 20 -> 20 credits > 5 balance -> blocked.
+    assert resp.status_code == 402, resp.text
+    assert resp.json()["detail"]["required"] == 20
+
+
+def test_discovered_pages_ignored_on_recrawl(monkeypatch):
+    """discovered_pages is an INITIAL-crawl signal only: with replace_source set
+    (a recrawl) it must NOT loosen the pre-flight — the recrawl path
+    (expected_new_pages) governs instead, so here it falls back to the plan cap."""
+    _patch_common(
+        monkeypatch,
+        balances_by_bucket={"client_pool": 0, "bot_ledger": 5},
+        plan_max_pages=20,
+    )
+
+    resp = TestClient(_build_app()).post(
+        "/crawl",
+        params={"bot_id": 7},
+        json={
+            "url": "https://acme.test",
+            "discovered_pages": 3,
+            "replace_source": "acme.test",
+            "mode": "full",
+        },
+    )
+
+    assert resp.status_code == 402, resp.text
+    assert resp.json()["detail"]["required"] == 20
