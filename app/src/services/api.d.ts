@@ -214,6 +214,8 @@ export function applyReferralCode(
 // ── Credits / top-ups ────────────────────────────────────────────────────────
 export function getCreditBalance(): Promise<Record<string, unknown>>;
 export function getCreditHistory(params?: { page?: number; limit?: number }): Promise<Record<string, unknown>>;
+/** Daily consumption trend → `{ days, series: [{ date, credits_used }] }` (zero-filled, ascending). */
+export function getCreditDaily(params?: { days?: number }): Promise<Record<string, unknown>>;
 export function getTopupPacks(): Promise<Array<Record<string, unknown>>>;
 /** Start a top-up purchase → Razorpay order payload (`order_id`, `amount`, `key_id`, …). */
 export function initiateTopup(

@@ -2089,6 +2089,20 @@ export const getCreditHistory = async ({ page = 1, limit = 50 } = {}) => {
     }
 };
 
+/**
+ * Daily credit consumption for the Usage-page trend → `{ days, series: [{ date,
+ * credits_used }] }`. The series is zero-filled and ascending (one entry per
+ * day in the window), summing only metered consumption debits.
+ */
+export const getCreditDaily = async ({ days = 30 } = {}) => {
+    try {
+        const response = await api.get('/credits/daily', { params: { days } });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load consumption trend');
+    }
+};
+
 export const getTopupPacks = async () => {
     try {
         const response = await api.get('/credits/packs');

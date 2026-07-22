@@ -8,11 +8,11 @@ subscription cancellation. Razorpay webhook handling lives in
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import config as app_config
 from app.api.auth import get_current_client_or_operator, require_verified_email
@@ -1870,6 +1870,60 @@ def get_credit_history(
             }
             for r in rows
         ]
+
+
+# Reasons that represent actual metered consumption (always debit rows). Kept
+# in sync with the four usage buckets the balance breakdown reports, so the
+# trend and the breakdown agree on what "credits used" means. Deliberately
+# excludes plan_grant (grants + monthly resets), topup, refund, expiry, and
+# manual_adjust — none of which are consumption.
+_CONSUMPTION_REASONS = ("ai_chat", "url_scan", "email_send", "document_upload")
+
+
+@credits_router.get("/daily")
+def get_credit_daily(
+    client: Client = Depends(get_current_client),
+    days: int = 30,
+):
+    """Daily credit consumption for the last ``days`` days (zero-filled).
+
+    Sums the magnitude of consumption debits per calendar day (UTC) so the
+    Usage page can render a trend line. Returns a complete ascending series —
+    one entry per day in the window, ``credits_used = 0`` on quiet days — so
+    the client can render without gap-filling.
+    """
+    days = max(min(int(days or 30), 90), 1)
+    now = datetime.now(UTC)
+    window_start = now - timedelta(days=days)
+    first_day = (now - timedelta(days=days - 1)).date()
+
+    # Cast to a UTC calendar date so grouping is stable regardless of the DB
+    # session timezone (created_at is a timezone-aware UTC timestamp).
+    day_col = func.date(func.timezone("UTC", CreditLedger.created_at))
+
+    with get_session() as session:
+        rows = session.execute(
+            select(
+                day_col.label("day"),
+                func.coalesce(func.sum(-CreditLedger.delta), 0).label("used"),
+            )
+            .where(
+                CreditLedger.client_id == client.id,
+                CreditLedger.reason.in_(_CONSUMPTION_REASONS),
+                CreditLedger.created_at >= window_start,
+            )
+            .group_by(day_col)
+        ).all()
+
+        by_day = {str(r.day): int(r.used or 0) for r in rows}
+        series = [
+            {
+                "date": (day := (first_day + timedelta(days=offset)).isoformat()),
+                "credits_used": by_day.get(day, 0),
+            }
+            for offset in range(days)
+        ]
+        return {"days": days, "series": series}
 
 
 class TopupRequest(BaseModel):
