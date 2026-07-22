@@ -13,6 +13,7 @@ import {
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
 import { AccountSecuritySection } from './AccountSecuritySection';
+import { AccountSessionsSection } from './AccountSessionsSection';
 import { AppearanceSection } from './AppearanceSection';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -160,7 +161,7 @@ export function SettingsPage(): ReactElement {
   };
 
   return (
-    <PageContainer title="Settings" description="Your account and profile.">
+    <PageContainer title="Settings" description="Your account, profile and sign-in security.">
       {/* Live feedback for the name mutation. The region stays mounted (even
           when empty) so screen readers announce content as it appears. */}
       <div aria-live="polite">
@@ -277,6 +278,9 @@ export function SettingsPage(): ReactElement {
 
           {/* ── Account security ────────────────────────────────────────── */}
           <AccountSecuritySection user={user} onEmailChange={handleEmailChange} />
+
+          {/* ── Sessions + two-factor (moved here from Workspace ▸ Security) ── */}
+          <AccountSessionsSection email={user.email ?? ''} />
         </>
       )}
     </PageContainer>

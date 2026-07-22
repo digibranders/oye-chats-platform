@@ -26,7 +26,6 @@ import { GeneralPage } from '../features/workspace/GeneralPage';
 import { MembersPage } from '../features/workspace/MembersPage';
 import { BillingPage } from '../features/workspace/BillingPage';
 import { UsagePage } from '../features/workspace/UsagePage';
-import { SecurityPage } from '../features/workspace/SecurityPage';
 import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { AffiliatePage } from '../features/affiliate/AffiliatePage';
@@ -127,15 +126,15 @@ export const router = createBrowserRouter([
                       { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
                       { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
                       { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
-                      { path: 'security', handle: { crumb: 'Security' }, element: <SecurityPage /> },
                       { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
                       { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
                       { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },
                     ],
                   },
-                  // Old Workspace ▸ Settings tab moved out to a top-level page —
-                  // redirect so existing links/bookmarks keep working.
+                  // Old Workspace ▸ Settings and ▸ Security moved to the top-level
+                  // account pages — redirect so existing links/bookmarks keep working.
                   { path: 'workspace/settings', element: <Navigate to="/settings" replace /> },
+                  { path: 'workspace/security', element: <Navigate to="/settings" replace /> },
 
                   // ── Settings — bottom-anchored secondary nav, not an object tab ──
                   { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },

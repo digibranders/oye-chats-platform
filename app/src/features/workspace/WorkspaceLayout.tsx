@@ -31,7 +31,6 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
   { path: 'members', label: 'Members', lockIntent: 'view_team' },
   { path: 'billing', label: 'Billing' },
   { path: 'usage', label: 'Usage' },
-  { path: 'security', label: 'Security' },
   { path: 'api-keys', label: 'API Keys' },
   { path: 'integrations', label: 'Integrations', lockIntent: 'view_integrations' },
 ];
