@@ -30,6 +30,7 @@ import { SecurityPage } from '../features/workspace/SecurityPage';
 import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { SettingsPage } from '../features/settings';
+import { NotFoundPage } from '../features/system/NotFoundPage';
 
 // Launch Studio is a one-time onboarding flow on a separate route — lazy-load it
 // so its layout + steps stay out of the initial bundle.
@@ -112,6 +113,11 @@ export const router = createBrowserRouter([
 
           // ── Settings — bottom-anchored secondary nav, not an object tab ──
           { path: 'settings', handle: { crumb: 'Settings' }, element: <SettingsPage /> },
+
+          // Unknown routes get a real 404 — rendered inside the shell so
+          // sidebar/topbar navigation stays available — instead of a silent
+          // redirect to Home that hides broken links.
+          { path: '*', element: <NotFoundPage /> },
         ],
       },
 
@@ -132,7 +138,4 @@ export const router = createBrowserRouter([
       },
     ],
   },
-
-  // Unknown routes fall back to Home.
-  { path: '*', element: <Navigate to="/" replace /> },
 ]);
