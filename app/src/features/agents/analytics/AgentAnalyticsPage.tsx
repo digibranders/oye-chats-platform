@@ -20,14 +20,16 @@ import { EngagementChart } from './EngagementChart';
 import { TopQuestions } from './TopQuestions';
 import { LeadsBreakdown } from './LeadsBreakdown';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
+import { FeedbackPanel } from '../../feedback/FeedbackPanel';
 
-type PanelKey = 'engagement' | 'questions' | 'leads' | 'satisfaction';
+type PanelKey = 'engagement' | 'questions' | 'leads' | 'satisfaction' | 'feedback';
 
 const PANELS: readonly TabItem[] = [
   { key: 'engagement', label: 'Engagement' },
   { key: 'questions', label: 'Questions' },
   { key: 'leads', label: 'Leads' },
   { key: 'satisfaction', label: 'Satisfaction' },
+  { key: 'feedback', label: 'Feedback' },
 ];
 
 /** Narrow the Tabs `(key: string)` callback back to the panel union safely. */
@@ -96,7 +98,7 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
  * satisfaction without leaving the page.
  */
 export function AgentAnalyticsPage(): ReactElement {
-  const { agent, loading: agentLoading, error: agentError } = useAgent();
+  const { agent, agentId, loading: agentLoading, error: agentError } = useAgent();
   const state = useAgentAnalytics(agent?.id ?? null);
   const [panel, setPanel] = useState<PanelKey>('engagement');
 
@@ -235,6 +237,7 @@ export function AgentAnalyticsPage(): ReactElement {
               loading={loading}
             />
           )}
+          {panel === 'feedback' && <FeedbackPanel agentId={agentId ?? undefined} />}
         </div>
       </div>
     </PageContainer>

@@ -29,6 +29,7 @@ import type {
   WebhookDeliveriesResult,
   Workspace,
 } from '../types/domain';
+import type { FeedbackItem } from '../features/feedback/types';
 
 // ── Agents (bots) ────────────────────────────────────────────────────────────
 export function createBot(data: { name: string; website?: string; system_prompt?: string }): Promise<Bot>;
@@ -100,7 +101,7 @@ export function getActivityStats(botId?: number): Promise<ActivityPoint[]>;
 export function getTopQuestions(botId?: number): Promise<TopQuestion[]>;
 export function getRatingsSummary(botId?: number): Promise<Record<string, unknown>>;
 export function getResolutionSummary(botId?: number): Promise<Record<string, unknown>>;
-export function getFeedbackData(botId?: number): Promise<Array<Record<string, unknown>>>;
+export function getFeedbackData(botId?: number): Promise<FeedbackItem[]>;
 export function getVisitorsData(botId?: number): Promise<Array<Record<string, unknown>>>;
 export function getChatHistory(
   sessionId: string,
