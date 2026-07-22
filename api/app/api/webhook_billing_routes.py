@@ -107,6 +107,37 @@ async def razorpay_webhook(request: Request):
     event_type = event.get("event", "unknown")
     logger.info("Razorpay webhook received: %s | id=%s", event_type, event_id or "N/A")
 
+    # Headers worth keeping for replay/debug (not the whole set) — reused by both
+    # the missing-id and processing-error dead-letter paths below.
+    replay_headers = {
+        k: request.headers.get(k)
+        for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
+        if request.headers.get(k) is not None
+    }
+
+    # Finding #4: a delivery with no X-Razorpay-Event-Id cannot be idempotency-
+    # deduped, and the dispatcher would treat a null id as a "duplicate" and
+    # silently ACK-drop it — a revenue-affecting event (subscription.charged /
+    # payment.captured) would be lost forever behind a 200. Route it to the same
+    # dead-letter + retry path as a processing failure so it is never silently
+    # dropped. Modern Razorpay always sends the id, so this should be vanishingly
+    # rare; when it does happen the raw event is preserved for manual replay.
+    if not event_id:
+        exc = RuntimeError("razorpay webhook missing x-razorpay-event-id — cannot dedup")
+        logger.error("Razorpay webhook %s has no event id — dead-lettering instead of dropping", event_type)
+        _dead_letter(
+            provider="razorpay",
+            raw_payload=raw_payload,
+            signature=signature,
+            event_id=None,
+            event_type=event_type,
+            error=exc,
+            headers=replay_headers,
+        )
+        if WEBHOOK_RETRY_ON_ERROR:
+            raise HTTPException(status_code=500, detail="Webhook missing event id; will retry.")
+        return {"status": "error", "event": event_type, "message": str(exc)}
+
     try:
         with get_session() as session:
             result = razorpay_service.handle_webhook_event(session, event, event_id)
@@ -129,12 +160,7 @@ async def razorpay_webhook(request: Request):
             event_id=event_id,
             event_type=event_type,
             error=exc,
-            # Capture just the headers useful for replay/debug, not the whole set.
-            headers={
-                k: request.headers.get(k)
-                for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
-                if request.headers.get(k) is not None
-            },
+            headers=replay_headers,
         )
         if WEBHOOK_RETRY_ON_ERROR:
             raise HTTPException(
