@@ -428,7 +428,8 @@ export function FeedbackModal({
       });
       resetForm();
       setActiveTab('mine');
-    } catch {
+    } catch (err) {
+      console.error('Failed to submit feedback:', err);
       setFormError('Failed to submit feedback. Please try again.');
     } finally {
       setIsSubmitting(false);
