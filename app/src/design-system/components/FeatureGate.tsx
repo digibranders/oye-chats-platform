@@ -1,12 +1,11 @@
 import type { ReactElement, ReactNode } from 'react';
-import { Lock, Sparkles } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { Button } from '../primitives/Button';
 import { PlanBadge } from './PlanBadge';
-import { LockedFeatureCard as RichLockedFeatureCard } from './LockedFeatureCard';
+import { LockedFeatureCard as RichLockedFeatureCard, type TeaserIntentKey } from './LockedFeatureCard';
 import type { FeatureKey } from '../../types/domain';
-import type { UpgradeIntentKey } from '../../context/upgradeIntents';
 
 export interface FeatureGateProps {
   /** The flag on `entitlements.features` this gate checks, e.g. "live_chat". */
@@ -17,9 +16,10 @@ export interface FeatureGateProps {
    * `context/upgradeIntents.ts`). When set, the default locked fallback
    * renders the richer `LockedFeatureCard` (eyebrow, headline, highlights)
    * and the upgrade modal opens with this intent's specific copy instead of
-   * the generic `{ feature }` reason.
+   * the generic `{ feature }` reason. Excludes `add_bot` (an action-limit
+   * intent that needs live params) — a feature gate never gates on it.
    */
-  intent?: UpgradeIntentKey;
+  intent?: TeaserIntentKey;
   /**
    * Rendered when locked. Defaults to a built-in upgrade card. Pass `null`
    * to render nothing at all — good for sidebar items that should simply
@@ -58,9 +58,8 @@ interface DefaultLockedCardProps {
 function DefaultLockedCard({ feature, requiredPlan, planName, onUpgrade }: DefaultLockedCardProps): ReactElement {
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-[var(--ds-radius-xl)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-6 py-10 text-center">
-      <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
         <Lock size={20} aria-hidden="true" />
-        <Sparkles size={12} className="absolute -right-1 -top-1" aria-hidden="true" />
       </span>
 
       <div className="max-w-md space-y-1.5">

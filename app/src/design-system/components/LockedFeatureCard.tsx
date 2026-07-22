@@ -4,9 +4,16 @@ import { cn } from '../lib/cn';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { UPGRADE_INTENTS, type UpgradeIntentKey } from '../../context/upgradeIntents';
 
+/**
+ * Every teaser-safe intent. `add_bot` is excluded because its copy needs
+ * live `{ current, planName }` params this component can't supply — it's an
+ * action-gate intent, not a teaser one.
+ */
+export type TeaserIntentKey = Exclude<UpgradeIntentKey, 'add_bot'>;
+
 export interface LockedFeatureCardProps {
   /** Which `UPGRADE_INTENTS` registry entry supplies this card's copy. */
-  intent: UpgradeIntentKey;
+  intent: TeaserIntentKey;
   /** Icon for the accent tile. Defaults to a lock glyph. */
   icon?: LucideIcon;
   className?: string;
@@ -22,14 +29,17 @@ export interface LockedFeatureCardProps {
  * gradients, no glow, no crown — matches the DS upgrade modal's visual
  * language at teaser scale.
  *
- * `add_bot` is technically callable here but not a realistic caller — it
- * needs live `{ current, planName }` params this component doesn't collect.
- * Every other intent is param-less and renders correctly out of the box.
+ * The `intent` prop excludes `add_bot` at the type level — it needs live
+ * `{ current, planName }` params this component doesn't collect. Every other
+ * intent is param-less and renders correctly out of the box.
  */
 export function LockedFeatureCard({ intent, icon: Icon = Lock, className }: LockedFeatureCardProps): ReactElement {
   const { openUpgradeModal } = useUpgradeModal();
   const copy = UPGRADE_INTENTS[intent]();
-  const eyebrow = copy.recommendedPlan ? `${copy.recommendedPlan} feature` : 'Pro feature';
+  // Prefer the registry's own eyebrow so the teaser and the modal show the
+  // same kicker for a given intent; derive one from the plan only when the
+  // registry entry has no eyebrow.
+  const eyebrow = copy.eyebrow || (copy.recommendedPlan ? `${copy.recommendedPlan} feature` : 'Pro feature');
 
   return (
     <div

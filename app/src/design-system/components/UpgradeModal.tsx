@@ -30,7 +30,13 @@ function loadPlans(): Promise<PlanRow[]> {
   if (!plansPromise) {
     plansPromise = getSubscriptionPlans()
       .then((rows) => rows as unknown as PlanRow[])
-      .catch(() => []);
+      .catch(() => {
+        // Transient failure: clear the cache so a later modal open retries
+        // instead of being stuck name-only forever. This render still
+        // degrades gracefully to the plain plan name.
+        plansPromise = null;
+        return [];
+      });
   }
   return plansPromise;
 }
