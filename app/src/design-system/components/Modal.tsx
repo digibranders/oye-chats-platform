@@ -163,7 +163,7 @@ export function Modal({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={cn(
-          'relative my-auto w-full rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-lg)] focus-visible:outline-none',
+          'relative my-auto w-full rounded-[var(--ds-radius-2xl)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-lg)] focus-visible:outline-none',
           'flex max-h-[calc(100vh-2rem)] flex-col',
           SIZE_CLASS[size],
           className,
