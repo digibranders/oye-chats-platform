@@ -17,6 +17,7 @@ import { getBot, updateBot } from '../../../services/api';
 import { type Bot } from '../../../types/domain';
 import { ChannelCard } from './ChannelCard';
 import { WebsiteInstall } from './WebsiteInstall';
+import { DomainRestrictionsSection } from './DomainRestrictionsSection';
 import { COMING_SOON_CHANNELS } from './channels.data';
 
 /**
@@ -33,6 +34,8 @@ interface ChannelBot extends Bot {
   zcal_url?: string | null;
   calcom_url?: string | null;
   notification_emails?: { default?: string[] } | null;
+  allowed_domains?: string[] | null;
+  domain_check_enabled?: boolean | null;
 }
 
 const MEETING_PROVIDER_LABELS: Record<string, string> = {
@@ -225,7 +228,23 @@ export function ChannelsPage(): ReactElement {
             }
           >
             {botKey ? (
-              <WebsiteInstall botKey={botKey} />
+              <>
+                <WebsiteInstall botKey={botKey} />
+                {numericId != null && (
+                  <DomainRestrictionsSection
+                    key={numericId}
+                    botId={numericId}
+                    website={website}
+                    initialAllowedDomains={record.allowed_domains ?? []}
+                    initialDomainCheckEnabled={Boolean(record.domain_check_enabled)}
+                    onSaved={(next) =>
+                      setFetched((prev) =>
+                        prev && prev.token === token ? { token, bot: { ...prev.bot, ...next } } : prev,
+                      )
+                    }
+                  />
+                )}
+              </>
             ) : (
               <p className="text-[13px] text-[var(--ds-text-muted)]">
                 This agent doesn’t have an embed key yet. Finish creating the agent to get one.
