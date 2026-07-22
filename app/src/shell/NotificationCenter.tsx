@@ -42,7 +42,8 @@ const DEFAULT_META: TypeMeta = {
 };
 
 /** ISO timestamp → "3m ago" / "2h ago" / "Jul 16" for anything older than a week. */
-function formatRelativeTime(iso: string): string {
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return '';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   const diffSeconds = (Date.now() - date.getTime()) / 1000;
@@ -54,7 +55,8 @@ function formatRelativeTime(iso: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function isToday(iso: string): boolean {
+function isToday(iso: string | null): boolean {
+  if (!iso) return false;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return false;
   return date.toDateString() === new Date().toDateString();

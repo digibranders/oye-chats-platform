@@ -23,7 +23,8 @@ export interface NotificationItem {
   data?: Record<string, unknown> | null;
   is_read: boolean;
   read_at?: string | null;
-  created_at: string;
+  /** ISO timestamp; the backend `_serialize` can emit null for a row with no created_at. */
+  created_at: string | null;
 }
 
 export interface Bot {
