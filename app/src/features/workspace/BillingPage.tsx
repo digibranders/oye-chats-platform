@@ -36,7 +36,7 @@ import { SeatChangeDialog } from './billing/SeatChangeDialog';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingSummaryCards } from './billing/BillingSummaryCards';
 import { PlansPanel } from './billing/PlansPanel';
-import { PlanConfirmDrawer } from './billing/PlanConfirmDrawer';
+import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
 import {
   formatDate,
@@ -56,7 +56,7 @@ import {
  * disclosure at the bottom (users come here to manage, not to re-shop).
  *
  * Credit balance and consumption live on the separate Workspace ▸ Usage page.
- * Choosing a plan opens the slim {@link PlanConfirmDrawer}, which runs the
+ * Choosing a plan opens the slim {@link PlanConfirmModal}, which runs the
  * shared checkout money-path against the real Razorpay + subscription
  * endpoints. Every success reloads and surfaces a message in the aria-live
  * notice region.
@@ -251,8 +251,8 @@ export function BillingPage(): ReactElement {
         </>
       )}
 
-      {/* Slim confirm drawer — runs the shared checkout money-path. */}
-      <PlanConfirmDrawer
+      {/* Centered confirm modal — runs the shared checkout money-path. */}
+      <PlanConfirmModal
         open={confirmPlan !== null}
         onClose={() => setConfirmPlan(null)}
         plan={confirmPlan}

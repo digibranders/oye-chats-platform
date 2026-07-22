@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useState } from 'react';
-import { AlertCircle, Check, ExternalLink, Info, Loader2 } from 'lucide-react';
-import { Button, Drawer, Skeleton, cn } from '../../../design-system';
+import { AlertCircle, ArrowRight, Check, ExternalLink, Info, Loader2, Sparkles } from 'lucide-react';
+import { Button, Modal, Skeleton, cn } from '../../../design-system';
 import { getCheckoutQuote } from '../../../services/api';
 import { formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
@@ -15,10 +15,12 @@ function PlanHighlights({ plan }: { plan: PlanView }): ReactElement {
       : 'No operator seats',
   ];
   return (
-    <ul className="space-y-1.5 text-[13px] text-[var(--ds-text-muted)]">
+    <ul className="space-y-2 text-[13px] text-[var(--ds-text-muted)]">
       {items.map((item) => (
-        <li key={item} className="flex items-center gap-2">
-          <Check size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-success)]" />
+        <li key={item} className="flex items-center gap-2.5">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ds-success-soft)] text-[var(--ds-success)]">
+            <Check size={12} aria-hidden="true" />
+          </span>
           {item}
         </li>
       ))}
@@ -66,10 +68,10 @@ const INTENT_NOTE: Record<Intent, string> = {
     'Your subscription ends at the close of the current billing period. Existing top-up credits stay intact.',
 };
 
-export interface PlanConfirmDrawerProps {
+export interface PlanConfirmModalProps {
   open: boolean;
   onClose: () => void;
-  /** The plan being confirmed. Null keeps the drawer closed. */
+  /** The plan being confirmed. Null keeps the modal closed. */
   plan: PlanView | null;
   cycle: BillingCycle;
   currentPlanSlug: string;
@@ -81,13 +83,14 @@ export interface PlanConfirmDrawerProps {
 }
 
 /**
- * PlanConfirmDrawer — the slim, right-anchored confirmation that replaces the
- * old full-screen plan modal. It states exactly what will happen (the honest
- * price from `/checkout/quote`, the effect of the change, and any card charge)
- * and runs the shared {@link usePlanCheckout} money-path. It never invents a
- * proration figure — proration is applied server-side at activation.
+ * PlanConfirmModal — a focused, centered confirmation for a plan change. A
+ * single decision belongs in a centered modal (not a side drawer): it states
+ * exactly what will happen — the honest price from `/checkout/quote`, the
+ * effect of the change, and any card charge — and runs the shared
+ * {@link usePlanCheckout} money-path. It never invents a proration figure;
+ * proration is applied server-side at activation.
  */
-export function PlanConfirmDrawer({
+export function PlanConfirmModal({
   open,
   onClose,
   plan,
@@ -97,7 +100,7 @@ export function PlanConfirmDrawer({
   hasActiveSubscription,
   currentMonthlyPriceMinor,
   onSuccess,
-}: PlanConfirmDrawerProps): ReactElement | null {
+}: PlanConfirmModalProps): ReactElement | null {
   const checkout = usePlanCheckout({
     currentPlanSlug,
     currentSubscriptionStatus,
@@ -114,9 +117,9 @@ export function PlanConfirmDrawer({
     contactSales: null,
   });
 
-  // Fetch the honest quote whenever the drawer opens for a paid plan. The
-  // quote is informational for price + gating (intl USD pending); a failure
-  // degrades to the local PlanView price so the confirm still works.
+  // Fetch the honest quote whenever the modal opens for a paid plan. The quote
+  // is informational for price + gating (intl USD pending); a failure degrades
+  // to the local PlanView price so the confirm still works.
   useEffect(() => {
     if (!open || !plan) return undefined;
     reset();
@@ -175,11 +178,13 @@ export function PlanConfirmDrawer({
   const primaryActionKind = intent === 'trial' ? 'trial' : 'auto';
 
   return (
-    <Drawer
+    <Modal
       open={open}
       onClose={onClose}
       dismissible={!checkout.submitting}
+      size="sm"
       title={`Confirm ${plan.name}`}
+      description="Review the change before it takes effect."
       footer={
         blocked ? (
           <a
@@ -204,7 +209,11 @@ export function PlanConfirmDrawer({
               <span />
             )}
             <Button onClick={() => void checkout.submit(plan, cycle, primaryActionKind)} disabled={checkout.submitting}>
-              {checkout.submitting && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
+              {checkout.submitting ? (
+                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <ArrowRight size={16} aria-hidden="true" />
+              )}
               {primaryLabel}
             </Button>
           </div>
@@ -212,23 +221,27 @@ export function PlanConfirmDrawer({
       }
     >
       <div className="space-y-5">
-        {/* Price */}
-        <div>
-          <p className="text-[12px] font-medium text-[var(--ds-text-muted)]">
-            {cycle === 'annual' ? 'Billed annually' : 'Billed monthly'}
-          </p>
+        {/* Price hero — the plan name pill sits above a large, honest figure. */}
+        <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-subtle)] p-5">
+          <div className="flex items-center justify-between gap-3">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ds-accent-soft)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ds-accent-text)]">
+              <Sparkles size={12} aria-hidden="true" />
+              {plan.name}
+            </span>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
+              {cycle === 'annual' ? 'Billed annually' : 'Billed monthly'}
+            </span>
+          </div>
           {quote.loading ? (
-            <Skeleton className="mt-1 h-8 w-32 rounded" />
+            <Skeleton className="mt-3 h-9 w-32 rounded" />
           ) : (
-            <p className="mt-1 text-3xl font-bold tracking-tight text-[var(--ds-text)]">
+            <p className="mt-3 text-[34px] font-bold leading-none tracking-tight text-[var(--ds-text)]">
               {quote.amountDisplay ?? priceText(plan, cycle)}
             </p>
           )}
-        </div>
-
-        {/* What you get */}
-        <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-subtle)] p-4">
-          <PlanHighlights plan={plan} />
+          <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
+            <PlanHighlights plan={plan} />
+          </div>
         </div>
 
         {/* What will happen */}
@@ -258,6 +271,6 @@ export function PlanConfirmDrawer({
           </div>
         )}
       </div>
-    </Drawer>
+    </Modal>
   );
 }
