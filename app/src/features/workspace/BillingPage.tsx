@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Building2,
   CalendarClock,
+  CreditCard,
   Download,
   ExternalLink,
   FileText,
@@ -15,6 +16,7 @@ import {
   Users,
   Wallet,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   Button,
@@ -33,7 +35,7 @@ import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingSummaryCards } from './billing/BillingSummaryCards';
-import { ComparePlans } from './billing/ComparePlans';
+import { PlansPanel } from './billing/PlansPanel';
 import { PlanConfirmDrawer } from './billing/PlanConfirmDrawer';
 import type { BillingCycle } from './billing/planMath';
 import {
@@ -69,7 +71,7 @@ export function BillingPage(): ReactElement {
 
   // Comparison billing cycle — seeded to the customer's own cadence.
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
-  const [compareOpen, setCompareOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<BillingTab>('plans');
   const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
   const [topupOpen, setTopupOpen] = useState(false);
   const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
@@ -82,14 +84,6 @@ export function BillingPage(): ReactElement {
   const handleSuccess = (message: string): void => {
     setNotice(message);
     reload();
-  };
-
-  // "Change plan" reveals the comparison disclosure and scrolls it into view.
-  const openCompare = (): void => {
-    setCompareOpen(true);
-    requestAnimationFrame(() =>
-      document.getElementById('compare-plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
-    );
   };
 
   // Seat math mirrors legacy pages/Billing.jsx: a plan with zero included seats
@@ -184,7 +178,8 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
-          {/* Subscription-management overview — four focused cards. */}
+          {/* Persistent context — the state of the subscription at a glance,
+              never scrolls away as you move between tabs. */}
           <BillingSummaryCards
             planName={plan?.name ?? 'Free'}
             status={subscription.status}
@@ -196,52 +191,62 @@ export function BillingPage(): ReactElement {
             paymentLabel={paymentLabel}
             paymentSub={paymentSub}
             creditsPerMonth={plan?.creditsPerMonth ?? 0}
-            onChangePlan={openCompare}
+            onChangePlan={() => setActiveTab('plans')}
             onViewUsage={() => void navigate('/workspace/usage')}
           />
 
-          {/* Scheduled downgrade — applies account-wide. */}
-          {subscription.scheduledChange && (
-            <ScheduledChangeBanner
-              planName={subscription.scheduledChange.planName}
-              effectiveAt={subscription.scheduledChange.effectiveAt}
-              currentPlanName={plan?.name ?? 'your current plan'}
-            />
+          {/* Segmented sub-tabs — a pill control, distinct from the underline
+              Workspace tabs above, so the two nav levels read as a hierarchy. */}
+          <BillingTabs active={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'plans' && (
+            <div className="space-y-6">
+              {/* Scheduled downgrade — applies account-wide. */}
+              {subscription.scheduledChange && (
+                <ScheduledChangeBanner
+                  planName={subscription.scheduledChange.planName}
+                  effectiveAt={subscription.scheduledChange.effectiveAt}
+                  currentPlanName={plan?.name ?? 'your current plan'}
+                />
+              )}
+
+              {/* Pending full cancellation — the plan ends and won't renew. */}
+              {pendingCancel && (
+                <CancellationBanner
+                  endsAt={subscription.currentPeriodEnd}
+                  planName={plan?.name ?? 'your current plan'}
+                />
+              )}
+
+              {/* Operator seats — only meaningful once the plan includes them. */}
+              {includedSeats > 0 && (
+                <SeatManager
+                  totalSeats={totalSeats}
+                  includedSeats={includedSeats}
+                  seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
+                  onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
+                  onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
+                />
+              )}
+
+              {data.availablePlans.length > 0 && (
+                <PlansPanel
+                  plans={data.availablePlans}
+                  currentSlug={plan?.slug ?? 'free'}
+                  cycle={cycle}
+                  onCycleChange={setCycle}
+                  onSelect={(candidate) => setConfirmPlan(candidate)}
+                />
+              )}
+            </div>
           )}
 
-          {/* Pending full cancellation — the plan ends and won't renew. */}
-          {pendingCancel && (
-            <CancellationBanner
-              endsAt={subscription.currentPeriodEnd}
-              planName={plan?.name ?? 'your current plan'}
-            />
+          {activeTab === 'invoices' && (
+            <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
           )}
 
-          {/* Operator seats — only meaningful once the plan includes them. */}
-          {includedSeats > 0 && (
-            <SeatManager
-              totalSeats={totalSeats}
-              includedSeats={includedSeats}
-              seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
-              onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
-              onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
-            />
-          )}
-
-          <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
-
-          <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
-
-          {data.availablePlans.length > 0 && (
-            <ComparePlans
-              plans={data.availablePlans}
-              currentSlug={plan?.slug ?? 'free'}
-              cycle={cycle}
-              onCycleChange={setCycle}
-              onSelect={(candidate) => setConfirmPlan(candidate)}
-              open={compareOpen}
-              onOpenChange={setCompareOpen}
-            />
+          {activeTab === 'details' && (
+            <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
           )}
         </>
       )}
@@ -278,6 +283,60 @@ export function BillingPage(): ReactElement {
         onSuccess={handleSuccess}
       />
     </PageContainer>
+  );
+}
+
+// ── Sub-tabs ──────────────────────────────────────────────────────────────────
+
+type BillingTab = 'plans' | 'invoices' | 'details';
+
+const BILLING_TABS: readonly { readonly id: BillingTab; readonly label: string; readonly icon: LucideIcon }[] = [
+  { id: 'plans', label: 'Plans', icon: CreditCard },
+  { id: 'invoices', label: 'Invoices', icon: ReceiptText },
+  { id: 'details', label: 'Billing details', icon: Building2 },
+];
+
+/**
+ * BillingTabs — a segmented pill control switching the Billing sub-sections. A
+ * raised active segment on a sunken track (vs. the underline Workspace tabs)
+ * makes the two navigation levels read as a clear hierarchy.
+ */
+function BillingTabs({
+  active,
+  onChange,
+}: {
+  active: BillingTab;
+  onChange: (tab: BillingTab) => void;
+}): ReactElement {
+  return (
+    <div
+      role="tablist"
+      aria-label="Billing sections"
+      className="inline-flex items-center gap-1 self-start rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-1"
+    >
+      {BILLING_TABS.map(({ id, label, icon: Icon }) => {
+        const isActive = active === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(id)}
+            className={cn(
+              'inline-flex items-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-[13px] font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
+              isActive
+                ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
+            )}
+          >
+            <Icon size={15} aria-hidden="true" />
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
