@@ -1477,6 +1477,52 @@ def resume_subscription(
             raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
 
         billing_cycle = sub.billing_cycle or "monthly"
+
+        _reauth_message = (
+            "The previous mandate was cancelled at the payment provider and "
+            "cannot be un-cancelled. Re-authorise payment to keep your plan."
+        )
+
+        # Finding H1: in-flight idempotency. /resume mints a FRESH Razorpay
+        # subscription (Razorpay has no un-cancel), so a sequential double
+        # /resume — two open modals, or an emailed re-auth link clicked twice —
+        # would mint TWO mandates; if the customer authorises both, both first
+        # cycles charge and Razorpay does NOT refund the sibling the activation
+        # sweep retires. lock_client_for_billing only serialises CONCURRENT
+        # calls, not a sequential re-submit. Mirror the upgrade path (finding D):
+        # if a re-auth checkout for the SAME plan is already in flight, reuse it
+        # instead of minting again. The markers are cleared at activation by
+        # apply_pending_proration (matched via prev_razorpay_subscription_id).
+        if sub.upgrade_pending_subscription_id and sub.upgrade_pending_plan_id == plan.id:
+            reused = razorpay_service.rebuild_upgrade_checkout(
+                sub.upgrade_pending_subscription_id, client, plan, billing_cycle
+            )
+            if reused is not None:
+                reused.setdefault("provider", "razorpay")
+                logger.info(
+                    "Reusing pending resume checkout %s for client %s (sub %s)",
+                    sub.upgrade_pending_subscription_id,
+                    client.id,
+                    sub.id,
+                )
+                return {
+                    "status": "reauthorise_required",
+                    "mandate_action": "reauthorise_required",
+                    "message": _reauth_message,
+                    "checkout": reused,
+                }
+            # The pending checkout was abandoned / is no longer authorizable —
+            # clear the stale marker and fall through to mint a fresh one so the
+            # customer isn't stranded with a dead checkout.
+            logger.info(
+                "Pending resume checkout %s for client %s is dead; re-minting",
+                sub.upgrade_pending_subscription_id,
+                client.id,
+            )
+            sub.upgrade_pending_subscription_id = None
+            sub.upgrade_pending_plan_id = None
+            session.flush()
+
         extra_notes = (
             {"prev_razorpay_subscription_id": sub.razorpay_subscription_id} if sub.razorpay_subscription_id else None
         )
@@ -1493,6 +1539,12 @@ def resume_subscription(
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        # Record the in-flight checkout so a sequential re-submit reuses it
+        # (finding H1). Cleared at activation by apply_pending_proration.
+        sub.upgrade_pending_subscription_id = checkout.get("subscription_id")
+        sub.upgrade_pending_plan_id = plan.id
+        session.flush()
+
         session.commit()
         checkout.setdefault("provider", "razorpay")
         logger.info(
@@ -1504,10 +1556,7 @@ def resume_subscription(
         return {
             "status": "reauthorise_required",
             "mandate_action": "reauthorise_required",
-            "message": (
-                "The previous mandate was cancelled at the payment provider and "
-                "cannot be un-cancelled. Re-authorise payment to keep your plan."
-            ),
+            "message": _reauth_message,
             "checkout": checkout,
         }
 
