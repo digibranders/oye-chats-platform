@@ -5,13 +5,15 @@ import { FeatureGate } from '../../design-system/components/FeatureGate';
 import { useBotContext } from '../../context/BotContext';
 import { OfflineMessagesPanel } from './OfflineMessagesPanel';
 import { LiveChatPanel } from './LiveChatPanel';
+import { CannedResponsesPanel } from './CannedResponsesPanel';
 import { useOperatorStatus } from './useOperatorStatus';
 
-type InboxTab = 'messages' | 'live';
+type InboxTab = 'messages' | 'live' | 'replies';
 
 const TABS: TabItem[] = [
   { key: 'messages', label: 'Messages' },
   { key: 'live', label: 'Live chat' },
+  { key: 'replies', label: 'Quick replies' },
 ];
 
 /**
@@ -54,6 +56,14 @@ export function InboxPage(): ReactElement {
         {tab === 'live' && (
           <FeatureGate feature="live_chat" intent="live_chat">
             <LiveChatPanel operator={operator} />
+          </FeatureGate>
+        )}
+      </div>
+
+      <div role="tabpanel" id="tabpanel-replies" aria-labelledby="tab-replies" hidden={tab !== 'replies'}>
+        {tab === 'replies' && (
+          <FeatureGate feature="live_chat" intent="add_canned_response">
+            <CannedResponsesPanel />
           </FeatureGate>
         )}
       </div>
