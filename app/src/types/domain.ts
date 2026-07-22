@@ -7,6 +7,25 @@
  * new app reads — and widened as more surfaces are migrated.
  */
 
+/**
+ * A row from the in-app notification feed (`notifications` table, see
+ * `api/app/services/notification_service.py::_serialize`). `type` and `data`
+ * are schema-on-read on the backend (new notification types are added
+ * without a migration), so `type` stays a plain string rather than a union.
+ */
+export interface NotificationItem {
+  id: number;
+  type: string;
+  title: string;
+  body?: string | null;
+  /** Optional in-app route to navigate to on click. */
+  link?: string | null;
+  data?: Record<string, unknown> | null;
+  is_read: boolean;
+  read_at?: string | null;
+  created_at: string;
+}
+
 export interface Bot {
   id: number;
   name: string;
