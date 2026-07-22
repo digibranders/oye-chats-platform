@@ -257,3 +257,45 @@ export function updateWebhook(webhookId: number, data: Record<string, unknown>):
 export function deleteWebhook(webhookId: number): Promise<Record<string, unknown>>;
 export function getWebhookDeliveries(webhookId: number, page?: number): Promise<WebhookDeliveriesResult>;
 export function testWebhook(webhookId: number): Promise<Record<string, unknown>>;
+
+// ── Platform feedback (admin → OyeChats product feedback widget) ────────────
+// Distinct from `FeedbackItem` (`features/feedback/types`), which is the
+// visitor thumbs-up/down rating log on a bot's own conversations.
+
+/** A single feedback attachment as persisted/returned by the backend. */
+export interface PlatformFeedbackAttachment {
+  url: string;
+  name?: string;
+  content_type?: string;
+}
+
+/** One row from `GET /client/feedback` — the caller's own submitted feedback. */
+export interface PlatformFeedbackItem {
+  id: number;
+  message: string;
+  type: 'bug' | 'feature_request' | 'question' | 'other';
+  area: 'billing' | 'bots' | 'knowledge' | 'live_chat' | 'dashboard' | 'widget' | 'other' | null;
+  severity: 'low' | 'medium' | 'high' | 'critical' | null;
+  context: Record<string, unknown> | null;
+  attachments: PlatformFeedbackAttachment[] | null;
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  admin_response: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** POST /client/feedback — submit a classified feedback entry. */
+export function submitPlatformFeedback(payload: {
+  message: string;
+  type?: string;
+  area?: string | null;
+  severity?: string | null;
+  context?: Record<string, unknown> | null;
+  attachments?: PlatformFeedbackAttachment[] | null;
+}): Promise<{ ok: true }>;
+
+/** POST /client/feedback/upload (multipart) — upload one attachment, returns its hosted URL. */
+export function uploadFeedbackAttachment(file: File): Promise<{ url: string }>;
+
+/** GET /client/feedback — the caller's own feedback, newest first. */
+export function getMyFeedback(): Promise<PlatformFeedbackItem[]>;
