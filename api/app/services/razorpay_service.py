@@ -1743,7 +1743,22 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             # the Bot.subscription relationship to avoid the circular FK.
             new_bot.subscription_id = local.id
             session.flush()
-            credit_service.grant_for_subscription(session, local)
+            # Finding H-A: grant through the period-marker helper (not the raw
+            # ``grant_for_subscription``) so ``last_granted_period_end`` is set
+            # exactly like the account-level path below. A UPI ``activated`` can
+            # land BEFORE the first charge with no ``current_end``; without the
+            # marker the first ``subscription.charged`` re-runs
+            # reset + grant for the SAME period, wiping the customer's
+            # first-cycle consumption and handing out a second full allowance
+            # (up to 72,000 credits on an annual per-bot plan). Derive the first
+            # period end from current_start + the plan interval (which equals
+            # the current_end Razorpay sends on that first charge) so the marker
+            # advances now and the charged correctly no-ops.
+            grant_period_end = current_period_end
+            if grant_period_end is None and current_period_start is not None:
+                cycle = local.billing_cycle or notes.get("billing_cycle") or "monthly"
+                grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
+            _grant_subscription_period(session, local, grant_period_end)
             logger.info(
                 "Activated per-bot Razorpay subscription %s → local %s (client %s, bot %s)",
                 razorpay_sub_id,
