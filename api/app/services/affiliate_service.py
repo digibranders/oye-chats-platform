@@ -731,8 +731,8 @@ def list_code_referrals(
             select(
                 Subscription.client_id,
                 Subscription.billing_cycle,
-                Plan.monthly_price_usd_cents,
-                Plan.annual_price_usd_cents,
+                Plan.monthly_price_cents,
+                Plan.annual_price_cents,
                 Plan.slug,
             )
             .join(Plan, Plan.id == Subscription.plan_id)
@@ -742,21 +742,21 @@ def list_code_referrals(
             )
         ).all()
         for sub_row in sub_rows:
-            # Earnings are reported in USD everywhere in the product (the
-            # plan's fixed USD headline columns), never the INR columns —
-            # otherwise the affiliate modal would render ₹ for the default
-            # INR-currency plan rows. Annual subs are billed once a year for
-            # `annual_price_usd_cents`; we report the *monthly equivalent* on
-            # the per-customer card so the affiliate sees apples-to-apples
-            # earnings per referral.
+            # Report earnings in the currency the customer is ACTUALLY billed —
+            # INR (the platform's single Razorpay rail). The prior code sourced
+            # the plan's fixed USD headline columns while charging INR, so the
+            # affiliate modal showed $ figures that never matched a single real
+            # payout (finding #8). Annual subs are billed once a year for
+            # `annual_price_cents`; report the *monthly equivalent* on the
+            # per-customer card so earnings per referral are apples-to-apples.
             cycle = (sub_row.billing_cycle or "monthly").lower()
-            if cycle == "annual" and sub_row.annual_price_usd_cents:
-                monthly_equiv = int(sub_row.annual_price_usd_cents) // 12
+            if cycle == "annual" and sub_row.annual_price_cents:
+                monthly_equiv = int(sub_row.annual_price_cents) // 12
             else:
-                monthly_equiv = int(sub_row.monthly_price_usd_cents or 0)
+                monthly_equiv = int(sub_row.monthly_price_cents or 0)
             subs_by_client[int(sub_row.client_id)] = (
                 monthly_equiv,
-                "USD",
+                "INR",
                 str(sub_row.slug or ""),
             )
 
