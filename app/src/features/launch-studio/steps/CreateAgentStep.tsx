@@ -3,6 +3,8 @@ import { Bot } from 'lucide-react';
 import { Input, Card } from '../../../design-system';
 import { createBot, updateBot, recordActivationEvent } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
+import { requiresSubscription } from '../../../utils/apiErrors';
 import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
@@ -13,6 +15,7 @@ import type { StepProps } from '../steps.config';
  */
 export function CreateAgentStep(props: StepProps) {
   const { selectedBot, selectBot, refreshBots } = useBotContext();
+  const { openUpgradeModal } = useUpgradeModal();
   const [name, setName] = useState(selectedBot?.name ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,9 +41,21 @@ export function CreateAgentStep(props: StepProps) {
       }
       props.onContinue();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Could not save your agent. Please try again.',
-      );
+      if (requiresSubscription(err)) {
+        // Should only happen for a returning visitor who lands back on
+        // onboarding with an existing bot already on the account — route to
+        // the same upgrade modal every other paywall gate uses instead of a
+        // raw error.
+        openUpgradeModal({
+          title: 'Agent limit reached',
+          description:
+            'Your workspace has reached its agent limit on the current plan. Upgrade to add another agent.',
+        });
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Could not save your agent. Please try again.',
+        );
+      }
     } finally {
       setSubmitting(false);
     }

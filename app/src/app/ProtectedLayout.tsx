@@ -5,6 +5,8 @@ import { BotProvider } from '../context/BotContext';
 import { CrawlProvider } from '../context/CrawlContext';
 import { CurrencyProvider } from '../context/CurrencyContext';
 import { NotificationProvider } from '../context/NotificationContext';
+import { EntitlementsProvider } from '../context/EntitlementsContext';
+import { UpgradeModalProvider } from '../context/UpgradeModalContext';
 
 /**
  * Build a `/login?next=…` URL that round-trips the current deep link through
@@ -28,8 +30,11 @@ function loginUrlWithNext(pathname: string, search: string): string {
  * bell's data source) is nested innermost, after Workspace/Currency, since it
  * needs the authenticated + workspace-scoped context to be established first —
  * it listens for `oyechats:workspace-switched` to re-hydrate on workspace switch.
- * Other chrome-only providers (Toast/Push/…) are added per-surface as migrated
- * pages need them.
+ * `EntitlementsProvider` (plan/limit/feature gating) and `UpgradeModalProvider`
+ * (the upsell dialog it opens) are mounted innermost of all, after
+ * Workspace/Currency/Notification — entitlements are workspace-scoped and
+ * re-fetch on the same `oyechats:workspace-switched` signal. Other chrome-only
+ * providers (Toast/Push/…) are added per-surface as migrated pages need them.
  */
 export function ProtectedLayout() {
   const { pathname, search } = useLocation();
@@ -47,7 +52,11 @@ export function ProtectedLayout() {
               render prices in the account's charge currency (INR/USD). */}
           <CurrencyProvider>
             <NotificationProvider>
-              <Outlet />
+              <EntitlementsProvider>
+                <UpgradeModalProvider>
+                  <Outlet />
+                </UpgradeModalProvider>
+              </EntitlementsProvider>
             </NotificationProvider>
           </CurrencyProvider>
         </CrawlProvider>

@@ -20,6 +20,8 @@ import {
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { AgentCard } from '../../design-system/components/AgentCard';
 import { useBotContext } from '../../context/BotContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot } from '../../types/domain';
 import { getAgentMetrics, getAgentStatus, summarizeAgents } from './agent-status';
 import { CreateAgentDialog } from './CreateAgentDialog';
@@ -94,11 +96,37 @@ function AgentsLoading(): ReactElement {
  * IS a legacy Bot), so `loading`/`error` are read straight from the provider —
  * no local fetch state, no synchronous setState in an effect. Creating an agent
  * reuses the legacy `createBot` API via the CreateAgentDialog.
+ *
+ * Add-Agent is plan-gated on the `bots` limit: the per-bot billing model means
+ * only the first (free) agent is unconditional — a workspace already at its
+ * `bots` ceiling gets the upgrade modal instead of the create dialog. The
+ * backend enforces the same rule server-side (`can_client_add_new_bot`), so
+ * `CreateAgentDialog` also routes a 402 `must_subscribe` response from
+ * `createBot` to the identical modal rather than a raw error.
  */
 export function AgentsPage(): ReactElement {
   const { bots, loading, error, refreshBots } = useBotContext();
+  const { withinLimit } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
+
+  const openAgentLimitUpgrade = useCallback((): void => {
+    setCreateOpen(false);
+    openUpgradeModal({
+      title: 'Agent limit reached',
+      description:
+        'Your workspace has reached its agent limit on the current plan. Upgrade to add another agent.',
+    });
+  }, [openUpgradeModal]);
+
+  const handleAddAgent = useCallback((): void => {
+    if (!withinLimit('bots', bots.length)) {
+      openAgentLimitUpgrade();
+      return;
+    }
+    setCreateOpen(true);
+  }, [withinLimit, bots.length, openAgentLimitUpgrade]);
 
   const handleCreated = useCallback(
     async (bot: Bot): Promise<void> => {
@@ -122,7 +150,7 @@ export function AgentsPage(): ReactElement {
       title="AI Agents"
       description="Every AI agent in your workspace, and how healthy each one is."
       actions={
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button onClick={handleAddAgent}>
           <Plus size={16} aria-hidden="true" />
           New agent
         </Button>
@@ -157,7 +185,7 @@ export function AgentsPage(): ReactElement {
           title="Create your first AI agent"
           description="An AI agent answers your visitors from your own content. Name one to get started — training and customization come next."
           action={
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button onClick={handleAddAgent}>
               <Plus size={16} aria-hidden="true" />
               New agent
             </Button>
@@ -186,6 +214,7 @@ export function AgentsPage(): ReactElement {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreated}
+        onRequiresUpgrade={openAgentLimitUpgrade}
       />
     </PageContainer>
   );

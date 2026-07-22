@@ -2,7 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot as BotIcon, Calendar, LogOut, Mail, Settings } from 'lucide-react';
 import { cn, Popover, Skeleton, StatusBadge } from '../design-system';
-import { getCurrentUser, getEntitlements } from '../services/api';
+import { getCurrentUser } from '../services/api';
+import { useEntitlements } from '../hooks/useEntitlements';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import type { CurrentUser } from '../types/domain';
@@ -58,18 +59,21 @@ function AvatarCircle({ name, size, online = false }: AvatarCircleProps) {
 /**
  * ProfileMenu — the account dropdown anchored to the TopBar avatar. Built on
  * the `Popover` primitive so it portals past the header's `backdrop-blur-md`
- * clip. Profile + entitlements are fetched lazily on first interaction (not
- * re-fetched on every subsequent open) so opening the menu never blocks on a
- * loading spinner after the first time.
+ * clip. Profile is fetched lazily on first interaction (not re-fetched on
+ * every subsequent open) so opening the menu never blocks on a loading
+ * spinner after the first time. The plan chip reads `useEntitlements()`
+ * instead of its own fetch — `EntitlementsProvider` already loads it once at
+ * the app root, so the chip is available immediately with no extra request.
  */
 export function ProfileMenu() {
   const navigate = useNavigate();
   const fallbackName = getAuthItem('admin_name') ?? 'Admin';
+  const { entitlements, loading: entitlementsLoading } = useEntitlements();
+  const planName = entitlementsLoading ? null : entitlements.plan_name;
 
   const [profile, setProfile] = useState<CurrentUser | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
-  const [planName, setPlanName] = useState<string | null>(null);
   // Guards the profile fetch to "once ever" — reset to false only on failure,
   // so a transient network blip can still recover on the next open rather
   // than permanently freezing the menu on "Profile unavailable".
@@ -89,12 +93,6 @@ export function ProfileMenu() {
         hasFetchedRef.current = false;
       })
       .finally(() => setProfileLoading(false));
-
-    // Independent + self-contained: entitlements failing never blocks the
-    // rest of the menu — the plan chip simply stays hidden.
-    void getEntitlements()
-      .then((data) => setPlanName(data.plan_name ?? null))
-      .catch(() => setPlanName(null));
   }, []);
 
   const handleSettings = useCallback(
