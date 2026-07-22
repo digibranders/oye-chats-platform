@@ -637,3 +637,57 @@ class TestListCodeReferralsCurrency:
         row = result["referrals"][0]
         assert row["pricing"]["currency"] == "INR"
         assert row["pricing"]["full_price_cents"] == 94900
+
+
+class TestReferralConversionSnapshot:
+    """Finding MED-2: a referral conversion must be recorded for ANY active
+    attributed code — including commission-only codes with no customer
+    discount — so the super-admin referral-conversions view isn't undercounting."""
+
+    def test_commission_only_code_still_yields_a_snapshot(self, db):
+        from app.services import discount_service
+
+        aff = make_affiliate(db, commission_bps=2500)
+        code = ReferralCode(
+            affiliate_id=aff.id,
+            code="commonly",
+            active=True,
+            affiliate_commission_bps=1500,  # affiliate earns
+            customer_discount_bps=0,  # NO customer discount → resolve_customer_discount_bps returns None
+        )
+        db.add(code)
+        db.commit()
+
+        client = make_client(db, email="commref@example.com")
+        client.referral_code_id = code.id
+        db.commit()
+
+        # The discount resolver skips it (no customer discount)…
+        discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(db, client)
+        assert discount_bps == 0 and disc_meta is None
+
+        # …but the conversion snapshot still records the affiliate's cut.
+        snap = discount_service.resolve_referral_conversion_snapshot(db, client)
+        assert snap is not None
+        assert snap["referral_code_id"] == str(code.id)
+        assert snap["affiliate_id"] == str(aff.id)
+        assert snap["affiliate_commission_bps"] == "1500"
+        assert snap["discount_bps"] == "0"
+
+    def test_no_attribution_yields_none(self, db):
+        from app.services import discount_service
+
+        client = make_client(db, email="noref@example.com")
+        assert discount_service.resolve_referral_conversion_snapshot(db, client) is None
+
+    def test_deactivated_code_yields_none(self, db):
+        from app.services import discount_service
+
+        aff = make_affiliate(db, commission_bps=2500)
+        code = ReferralCode(affiliate_id=aff.id, code="offcode", active=False, affiliate_commission_bps=1500)
+        db.add(code)
+        db.commit()
+        client = make_client(db, email="offref@example.com")
+        client.referral_code_id = code.id
+        db.commit()
+        assert discount_service.resolve_referral_conversion_snapshot(db, client) is None

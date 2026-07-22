@@ -1011,9 +1011,9 @@ def create_checkout(
         # not resolved until the provider can honour it.
         provider = _resolve_provider()
         if provider == "razorpay":
-            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+            discount_bps, _ = discount_service.resolve_customer_discount_bps(session, client)
         else:
-            discount_bps, disc_meta = 0, None
+            discount_bps = 0
         try:
             result = razorpay_service.create_subscription(
                 session, client, plan, request.billing_cycle, discount_bps=discount_bps
@@ -1022,16 +1022,22 @@ def create_checkout(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        if disc_meta:
+        # Record the referral conversion for ANY attributed code, not just
+        # discount-bearing ones (finding MED-2): a commission-only code earns the
+        # affiliate a pool cut with no customer discount, and is a real
+        # conversion the super-admin view must not miss. ``disc_meta`` is None for
+        # those, so resolve the snapshot independently of the discount.
+        conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
+        if conv_meta:
             session.add(
                 ReferralConversion(
                     client_id=client.id,
-                    referral_code_id=int(disc_meta["referral_code_id"]),
+                    referral_code_id=int(conv_meta["referral_code_id"]),
                     # Snapshot the affiliate so payout reconciliation can attribute
                     # the conversion without re-joining the mutable code row (N6).
-                    affiliate_id=int(disc_meta["affiliate_id"]),
-                    commission_bps=int(disc_meta["affiliate_commission_bps"]),
-                    customer_discount_bps=int(disc_meta["discount_bps"]),
+                    affiliate_id=int(conv_meta["affiliate_id"]),
+                    commission_bps=int(conv_meta["affiliate_commission_bps"]),
+                    customer_discount_bps=int(conv_meta["discount_bps"]),
                 )
             )
         session.commit()
