@@ -33,6 +33,26 @@ export interface CurrentUser {
   onboarding_complete?: boolean;
   is_affiliate_only?: boolean;
   is_superadmin?: boolean;
+  /** ISO timestamp the account was created — rendered as "Joined {date}" in the profile menu. */
+  created_at?: string;
+  /** True when the caller is currently marked online (operators only). */
+  is_online?: boolean;
+  /** 'client' | 'operator' — clients have `role: null`. */
+  kind?: string;
+  /** Operator role (owner | admin | operator) when `kind === 'operator'`. */
+  role?: string | null;
+}
+
+/**
+ * Resolved plan entitlements returned by GET /auth/me/entitlements. Kept
+ * minimal — only the field the profile menu's plan chip reads; widen as more
+ * surfaces consume this (see `hooks/useEntitlements.js` for the fuller
+ * legacy shape: limits/features/usage).
+ */
+export interface Entitlements {
+  plan_slug?: string;
+  plan_name?: string;
+  subscription_status?: string;
 }
 
 export interface Workspace {

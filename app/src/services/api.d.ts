@@ -12,6 +12,7 @@ import type {
   CrawlDiscovery,
   CurrentUser,
   Department,
+  Entitlements,
   KnowledgeSource,
   Lead,
   LeadsQuery,
@@ -82,6 +83,8 @@ export function recordActivationEvent(
 
 // ── Identity / workspace ─────────────────────────────────────────────────────
 export function getCurrentUser(): Promise<CurrentUser>;
+/** GET /auth/me/entitlements. Throws on failure — callers fall back / hide gracefully. */
+export function getEntitlements(): Promise<Entitlements>;
 export function getMyWorkspaces(): Promise<{ workspaces: Workspace[] }>;
 /**
  * Update the authenticated client's display name. Email changes go through the

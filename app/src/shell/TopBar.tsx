@@ -1,8 +1,9 @@
-import { Menu, PanelLeft, Search, User } from 'lucide-react';
-import { Breadcrumbs, cn } from '../design-system';
+import { Menu, PanelLeft, Search } from 'lucide-react';
+import { Breadcrumbs } from '../design-system';
 import { useBreadcrumbs } from './useBreadcrumbs';
 import { NotificationCenter } from './NotificationCenter';
 import { ThemeToggle } from './ThemeToggle';
+import { ProfileMenu } from './ProfileMenu';
 
 export interface TopBarProps {
   isMobile: boolean;
@@ -52,21 +53,11 @@ export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps)
         {/* Theme toggle */}
         <ThemeToggle />
 
-        {/* Notifications (placeholder) */}
+        {/* Notifications */}
         <NotificationCenter />
 
-        {/* Account menu (placeholder) */}
-        <button
-          type="button"
-          aria-label="Account"
-          title="Account — coming soon"
-          className={cn(
-            'ml-1 flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]',
-            'transition-colors hover:text-[var(--ds-text)]',
-          )}
-        >
-          <User size={16} />
-        </button>
+        {/* Account menu */}
+        <ProfileMenu />
       </div>
     </header>
   );
