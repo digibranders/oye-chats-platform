@@ -21,12 +21,14 @@ import {
   Input,
   LockedFeatureCard,
   MetricCard,
+  Modal,
   PageContainer,
   QuotaMeter,
   SectionHeader,
   Skeleton,
   StatusBadge,
   Tabs,
+  Textarea,
   cn,
   type Column,
 } from '../../design-system';
@@ -42,8 +44,10 @@ import {
   listOperatorInvites,
   resendOperatorInvite,
   revokeOperatorInvite,
+  updateDepartment,
   updateOperator,
 } from '../../services/api';
+import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
@@ -222,6 +226,14 @@ export function MembersPage(): ReactElement {
   const [deptBusy, setDeptBusy] = useState(false);
   const [deptRemovingId, setDeptRemovingId] = useState<number | null>(null);
   const [deptRowBusyId, setDeptRowBusyId] = useState<number | null>(null);
+
+  // Department edit (name + description + per-department business hours)
+  const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [editDeptName, setEditDeptName] = useState('');
+  const [editDeptDesc, setEditDeptDesc] = useState('');
+  const [editDeptHours, setEditDeptHours] = useState<BusinessHours | null>(null);
+  const [editDeptBusy, setEditDeptBusy] = useState(false);
+  const [editDeptError, setEditDeptError] = useState('');
 
   // Load / reload. No synchronous setState in the effect body — the first
   // setState always follows an await, so `loading` is a genuine derived phase.
@@ -473,6 +485,43 @@ export function MembersPage(): ReactElement {
       setFeedback({ tone: 'error', message: toMessage(error, 'Failed to create the department.') });
     } finally {
       setDeptBusy(false);
+    }
+  };
+
+  const openEditDept = (department: Department): void => {
+    setFeedback(null);
+    setEditingDept(department);
+    setEditDeptName(department.name);
+    setEditDeptDesc(department.description ?? '');
+    setEditDeptHours((department.business_hours as BusinessHours | null) ?? null);
+    setEditDeptError('');
+  };
+
+  const handleUpdateDept = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!editingDept) return;
+    const name = editDeptName.trim();
+    if (!name) {
+      setEditDeptError('A department name is required.');
+      return;
+    }
+    setEditDeptBusy(true);
+    setEditDeptError('');
+    try {
+      await updateDepartment(editingDept.id, {
+        name,
+        description: editDeptDesc.trim() || null,
+        // Persist hours only when the master toggle is on; otherwise clear to
+        // null ("always open") so the resolver short-circuits.
+        business_hours: editDeptHours && editDeptHours.enabled ? editDeptHours : null,
+      });
+      setEditingDept(null);
+      setFeedback({ tone: 'success', message: `Department “${name}” updated.` });
+      reload();
+    } catch (error) {
+      setEditDeptError(toMessage(error, 'Failed to update the department.'));
+    } finally {
+      setEditDeptBusy(false);
     }
   };
 
@@ -1062,18 +1111,32 @@ export function MembersPage(): ReactElement {
                             {memberCount} member{memberCount === 1 ? '' : 's'}
                           </span>
                           {canManage && !confirming && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Delete ${department.name}`}
-                              onClick={() => setDeptRemovingId(department.id)}
-                            >
-                              <Trash2
-                                size={15}
-                                aria-hidden="true"
-                                className="text-[var(--ds-danger)]"
-                              />
-                            </Button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Edit ${department.name}`}
+                                onClick={() => openEditDept(department)}
+                              >
+                                <Pencil
+                                  size={15}
+                                  aria-hidden="true"
+                                  className="text-[var(--ds-text-subtle)]"
+                                />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Delete ${department.name}`}
+                                onClick={() => setDeptRemovingId(department.id)}
+                              >
+                                <Trash2
+                                  size={15}
+                                  aria-hidden="true"
+                                  className="text-[var(--ds-danger)]"
+                                />
+                              </Button>
+                            </div>
                           )}
                         </div>
                         {confirming && canManage && (
@@ -1100,6 +1163,67 @@ export function MembersPage(): ReactElement {
                   })}
                 </ul>
               )}
+
+              {/* Edit department — name, description, and per-department hours. */}
+              <Modal
+                open={editingDept !== null}
+                onClose={() => setEditingDept(null)}
+                dismissible={!editDeptBusy}
+                size="lg"
+                title="Edit department"
+                description="Rename the team, update its description, and set when it’s available."
+                footer={
+                  <>
+                    <Button variant="ghost" onClick={() => setEditingDept(null)} disabled={editDeptBusy}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" form="edit-dept-form" disabled={editDeptBusy || !editDeptName.trim()}>
+                      {editDeptBusy ? 'Saving…' : 'Save changes'}
+                    </Button>
+                  </>
+                }
+              >
+                <form id="edit-dept-form" onSubmit={(e) => void handleUpdateDept(e)} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="edit-dept-name" className={labelClass}>
+                        Name
+                      </label>
+                      <Input
+                        id="edit-dept-name"
+                        value={editDeptName}
+                        onChange={(e) => setEditDeptName(e.target.value)}
+                        placeholder="e.g. Sales"
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="edit-dept-desc" className={labelClass}>
+                        Description <span className="text-[var(--ds-text-subtle)]">(optional)</span>
+                      </label>
+                      <Textarea
+                        id="edit-dept-desc"
+                        value={editDeptDesc}
+                        onChange={(e) => setEditDeptDesc(e.target.value)}
+                        placeholder="What this team handles"
+                        rows={2}
+                      />
+                    </div>
+                  </div>
+                  <div className="border-t border-[var(--ds-border)] pt-4">
+                    <BusinessHoursEditor
+                      value={editDeptHours}
+                      onChange={setEditDeptHours}
+                      disabled={editDeptBusy}
+                    />
+                  </div>
+                  {editDeptError && (
+                    <p role="alert" className="text-[12px] text-[var(--ds-danger)]">
+                      {editDeptError}
+                    </p>
+                  )}
+                </form>
+              </Modal>
             </div>
           )}
         </>
