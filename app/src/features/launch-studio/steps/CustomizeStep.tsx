@@ -16,7 +16,7 @@ const DEFAULTS = {
   launcher_name: 'Have Questions?',
 };
 
-const PRESETS = ['#a21caf', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
+const PRESETS = ['#7C3AED', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
 
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;

@@ -36,7 +36,7 @@ function isSectionKey(key: string): key is SectionKey {
 }
 
 /** Brand-neutral fallback swatches, appended after any website-extracted colours. */
-const PRESET_SWATCHES = ['#a21caf', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
+const PRESET_SWATCHES = ['#7C3AED', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
 
 /**
  * ExperiencePage — the agent's "Experience" tab. One job: let the user control

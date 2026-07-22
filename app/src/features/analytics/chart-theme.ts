@@ -18,8 +18,8 @@ export interface ChartPalette {
 }
 
 const LIGHT: ChartPalette = {
-  accent: '#a21caf',
-  accentFill: 'rgba(162, 28, 175, 0.14)',
+  accent: '#7C3AED',
+  accentFill: 'rgba(124, 58, 237, 0.14)',
   grid: '#e7e5de',
   axis: '#a1a1aa',
   surface: '#ffffff',
@@ -29,8 +29,8 @@ const LIGHT: ChartPalette = {
 };
 
 const DARK: ChartPalette = {
-  accent: '#d946ef',
-  accentFill: 'rgba(217, 70, 239, 0.20)',
+  accent: '#8B5CF6',
+  accentFill: 'rgba(139, 92, 246, 0.20)',
   grid: '#27272a',
   axis: '#71717a',
   surface: '#18181b',

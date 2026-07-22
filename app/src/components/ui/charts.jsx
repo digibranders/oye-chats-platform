@@ -20,14 +20,14 @@ import { cn } from '../../lib/utils';
 
 // Brand palette for data-viz. Primary = violet; series scale for multi-line.
 export const CHART_COLORS = {
-  primary: '#a21caf',
+  primary: '#7C3AED',
   primarySoft: '#f0abfc',
   emerald: '#10b981',
   amber: '#f59e0b',
   rose: '#f43f5e',
   grid: 'rgba(16,24,40,0.06)',
   axis: '#a79f8c',
-  series: ['#a21caf', '#10b981', '#f59e0b', '#f0abfc', '#f43f5e'],
+  series: ['#7C3AED', '#8B5CF6', '#A78BFA', '#C4B5FD', '#6D28D9'],
 };
 
 const AXIS_TICK = { fontSize: 11, fill: CHART_COLORS.axis, fontWeight: 500 };

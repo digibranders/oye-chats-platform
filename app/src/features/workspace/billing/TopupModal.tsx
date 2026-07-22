@@ -99,7 +99,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
         name: (result.name as string) || 'OyeChats credits',
         description: result.description as string | undefined,
         prefill: (result.prefill as Record<string, unknown>) || {},
-        theme: (result.theme as Record<string, unknown>) || { color: '#a21caf' },
+        theme: (result.theme as Record<string, unknown>) || { color: '#7C3AED' },
       });
       try {
         await verifyTopupPayment({
