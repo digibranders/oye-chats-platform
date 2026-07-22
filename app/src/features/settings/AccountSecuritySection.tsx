@@ -102,7 +102,11 @@ function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): ReactEleme
 
   const confirmMismatch = form.confirm.length > 0 && form.confirm !== form.next;
   const canSubmit =
-    !saving && form.current.length > 0 && form.next.length > 0 && form.confirm.length > 0;
+    !saving &&
+    form.current.length > 0 &&
+    form.confirm.length > 0 &&
+    form.confirm === form.next &&
+    isStrongPassword(form.next);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();

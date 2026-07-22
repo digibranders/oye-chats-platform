@@ -94,7 +94,7 @@ export function SettingsPage(): ReactElement {
         if (!active) return;
         setPhase({
           status: 'error',
-          message: toMessage(error, 'We couldn’t load your workspace settings. Please try again.'),
+          message: toMessage(error, 'We couldn’t load your account settings. Please try again.'),
         });
       }
     })();
