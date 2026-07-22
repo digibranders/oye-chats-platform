@@ -245,6 +245,17 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   // (closed / transferred away), `selectedChat` becomes undefined and the centre
   // pane falls back to its empty state — no effect / setState needed.
 
+  // Drop the history-loaded marker for any session that has left the board so a
+  // future chat reusing the id re-fetches its transcript (the socket hook has
+  // already pruned that session's messages). Ref-only mutation — no setState.
+  useEffect(() => {
+    const loaded = loadedHistoryRef.current;
+    if (loaded.size === 0) return;
+    for (const sid of loaded) {
+      if (!(sid in activeChats)) loaded.delete(sid);
+    }
+  }, [activeChats]);
+
   // ── Auto read-receipt + unread clear for the open conversation as messages land ──
   // `sendReadReceipt` / `clearUnread` are socket-hook callbacks (not local state
   // setters), so this stays clear of react-hooks/set-state-in-effect.

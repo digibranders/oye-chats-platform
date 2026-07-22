@@ -19,7 +19,7 @@ import {
   type RosterOperator,
   type VisitorPresence,
 } from './liveChatProtocol';
-import { parseHistoryMessage } from './liveChatHelpers';
+import { mergeHistoryWithLive, parseHistoryMessage } from './liveChatHelpers';
 
 /** Resolution of a proactive connect-request, surfaced to the panel. */
 export interface ConnectResolution {
@@ -103,6 +103,10 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   const operatorIdRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const manualCloseRef = useRef(false);
+  // Set when the socket closes on a terminal code (4001 duplicate-tab / 4003
+  // auth-failed) that must NOT auto-reconnect. Guards wake() so a visibility/
+  // online event can't restart a reconnect war or hammer a rejected auth.
+  const terminalCloseRef = useRef(false);
   // Bumped by the backoff timer to re-run the connect effect.
   const [reconnectNonce, setReconnectNonce] = useState(0);
 
@@ -214,18 +218,29 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       case 'chat_transferred':
       case 'chat_closed': {
         const sid = msg.session_id;
-        setActiveChats((prev) => {
+        // Prune the session from EVERY per-session map so a closed conversation
+        // leaves no transcript/metadata behind for the tab's lifetime.
+        const dropKey = <T,>(prev: Record<string, T>): Record<string, T> => {
           if (!(sid in prev)) return prev;
           const next = { ...prev };
           delete next[sid];
           return next;
-        });
-        setPresenceBySession((prev) => {
-          if (!(sid in prev)) return prev;
-          const next = { ...prev };
-          delete next[sid];
-          return next;
-        });
+        };
+        setActiveChats(dropKey);
+        setPresenceBySession(dropKey);
+        setMessagesBySession(dropKey);
+        setUnreadBySession(dropKey);
+        setTypingBySession(dropKey);
+        setVisitorReadAtBySession(dropKey);
+        setConnectResolutions(dropKey);
+        // Refs are not React state — clear them imperatively.
+        delete typingSentAtRef.current[sid];
+        delete sentReadIdRef.current[sid];
+        const pendingTyping = typingTimeoutsRef.current[sid];
+        if (pendingTyping) {
+          clearTimeout(pendingTyping);
+          delete typingTimeoutsRef.current[sid];
+        }
         break;
       }
 
@@ -324,6 +339,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     }
 
     manualCloseRef.current = false;
+    terminalCloseRef.current = false;
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
 
     const wsUrl = `${deriveWsUrl(API_BASE_URL)}/ws/operator`;
@@ -389,10 +405,12 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       if (manualCloseRef.current) return;
 
       if (event.code === DUPLICATE_TAB_CLOSE_CODE) {
+        terminalCloseRef.current = true;
         if (mountedRef.current) setStatus('duplicate');
         return; // another tab owns the channel — do not reconnect
       }
       if (event.code === AUTH_FAILED_CLOSE_CODE) {
+        terminalCloseRef.current = true;
         if (mountedRef.current) {
           setStatus('idle');
           setLastError(event.reason || 'Live chat authentication failed.');
@@ -400,8 +418,10 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         return;
       }
 
+      // Reflect not-OPEN immediately — even on the first drop — so the composer
+      // disables and the badge stops claiming "Live" before the backoff elapses.
       const delay = reconnectDelay(reconnectAttemptsRef.current);
-      if (mountedRef.current && reconnectAttemptsRef.current >= 1) setStatus('reconnecting');
+      if (mountedRef.current) setStatus('reconnecting');
       reconnectAttemptsRef.current += 1;
       reconnectTimerRef.current = setTimeout(() => {
         if (mountedRef.current) setReconnectNonce((n) => n + 1);
@@ -430,6 +450,10 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   useEffect(() => {
     if (!enabled) return;
     const wake = (): void => {
+      // Never revive a socket closed on a terminal code (4001 duplicate-tab /
+      // 4003 auth-failed) — those deliberately do not reconnect. Reconnecting
+      // here would start a duplicate-tab war or re-hammer a rejected auth.
+      if (terminalCloseRef.current) return;
       const socket = socketRef.current;
       if (!socket || socket.readyState !== WebSocket.OPEN) {
         reconnectAttemptsRef.current = 0;
@@ -504,7 +528,9 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       const history = await getChatHistory(sessionId, { limit: 50 });
       if (!mountedRef.current) return;
       const parsed = history.map(parseHistoryMessage);
-      setMessagesBySession((prev) => ({ ...prev, [sessionId]: parsed }));
+      // Merge (don't replace) so live WS messages that landed between accept and
+      // this GET returning aren't discarded.
+      setMessagesBySession((prev) => ({ ...prev, [sessionId]: mergeHistoryWithLive(parsed, prev[sessionId]) }));
     } catch {
       if (!mountedRef.current) return;
       setMessagesBySession((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: [] }));

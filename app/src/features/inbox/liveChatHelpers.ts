@@ -80,6 +80,26 @@ export function parseHistoryMessage(m: ChatMessage): OperatorMessage {
   return base;
 }
 
+/**
+ * Merge freshly-fetched REST history with any live WS messages already present
+ * for a session. History (all DB-persisted) is the authoritative, ordered base;
+ * live messages that arrived between accept and the history GET returning are
+ * appended if not already represented. Persisted duplicates are deduped by
+ * `dbId`; optimistic echoes (no `dbId`, e.g. the operator's own sends) are kept.
+ */
+export function mergeHistoryWithLive(
+  history: OperatorMessage[],
+  live: OperatorMessage[] | undefined,
+): OperatorMessage[] {
+  if (!live || live.length === 0) return history;
+  const knownDbIds = new Set<number>();
+  for (const m of history) {
+    if (m.dbId != null) knownDbIds.add(m.dbId);
+  }
+  const extras = live.filter((m) => m.dbId == null || !knownDbIds.has(m.dbId));
+  return extras.length === 0 ? history : [...history, ...extras];
+}
+
 /** Highest DB id among the visitor's messages — the read-receipt high-water mark. */
 export function maxVisitorDbId(messages: OperatorMessage[]): number {
   let max = 0;
