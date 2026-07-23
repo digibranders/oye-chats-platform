@@ -6,7 +6,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Button, Input, SectionHeader, cn } from '../../../design-system';
-import { type ExperienceDraft, type SuggestionsLayout } from './types';
+import { type ExperienceDraft, type SuggestionsLayout, FIELD_LIMITS } from './types';
 
 export interface MessagesSectionProps {
   draft: ExperienceDraft;
@@ -25,12 +25,14 @@ function Field({
   value,
   onChange,
   placeholder,
+  maxLength,
 }: {
   label: string;
   hint: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
+  maxLength?: number;
 }): ReactElement {
   const id = useId();
   const hintId = useId();
@@ -43,6 +45,7 @@ function Field({
         id={id}
         value={value}
         placeholder={placeholder}
+        maxLength={maxLength}
         aria-describedby={hintId}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -75,6 +78,29 @@ export function MessagesSection({ draft, onChange }: MessagesSectionProps): Reac
   return (
     <div className="space-y-8">
       <section className="space-y-5">
+        <SectionHeader
+          title="Widget identity"
+          description="The name shown in the widget header and the tooltip beside the launcher button."
+        />
+        <Field
+          label="Display name"
+          hint="Shown in the widget header — also your agent's name across the dashboard."
+          value={draft.displayName}
+          maxLength={FIELD_LIMITS.displayName}
+          placeholder="e.g. Acme Assistant"
+          onChange={(v) => onChange({ displayName: v })}
+        />
+        <Field
+          label="Launcher text"
+          hint="The tooltip shown next to the launcher button before the chat opens."
+          value={draft.launcherName}
+          maxLength={FIELD_LIMITS.launcherName}
+          placeholder="Have Questions?"
+          onChange={(v) => onChange({ launcherName: v })}
+        />
+      </section>
+
+      <section className="space-y-5 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title="Welcome screen"
           description="The greeting visitors see the moment the chat opens."

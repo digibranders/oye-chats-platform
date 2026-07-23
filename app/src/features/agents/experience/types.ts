@@ -29,9 +29,20 @@ export interface ExperienceDraft {
   suggestionsLayout: SuggestionsLayout;
   inputPlaceholder: string;
 
+  // ── Widget identity (bot.*) ─────────────────────────────────────────────────
+  /** `bot.name` — the display name shown in the widget header. The shipped
+   * widget reads its header/launcher name straight from `bot.name` (see the
+   * `/bots/{id}/config` response in `bot_routes.py`, which returns
+   * `"bot_name": bot.name`), so this doubles as the agent name. */
+  displayName: string;
+  /** `bot.launcher_name` — the "Have Questions?" tooltip beside the launcher. */
+  launcherName: string;
+
   // ── Personality (bot.*) ─────────────────────────────────────────────────────
   systemPrompt: string;
   brandTone: string;
+  /** `bot.brand_tone_preset` — the active tone-preset key, `'custom'`, or null. */
+  brandTonePreset: string | null;
   companyName: string;
   companyDescription: string;
 
@@ -41,8 +52,15 @@ export interface ExperienceDraft {
 
 export type SuggestionsLayout = 'horizontal' | 'vertical';
 
-/** Backend field-length caps, mirrored so the UI blocks over-long input pre-save. */
+/**
+ * Field-length caps. `systemPrompt`/`brandTone`/`companyName`/`companyDescription`
+ * mirror the backend `UpdateBotRequest` caps exactly; `displayName`/`launcherName`
+ * have no server-side cap, so these are sensible UI guides that keep the header
+ * and launcher tooltip readable.
+ */
 export const FIELD_LIMITS = {
+  displayName: 60,
+  launcherName: 40,
   systemPrompt: 2000,
   brandTone: 500,
   companyName: 100,
@@ -53,6 +71,7 @@ const DEFAULTS = {
   primaryColor: '#ba68c8',
   userBubbleColor: '#DBE9FF',
   orbColor: '',
+  launcherName: 'Have Questions?',
   welcomeGreeting: 'Hi there, how can I help you today?',
   welcomeSubtitle: 'Ask me anything — I answer from your knowledge base.',
   inputPlaceholder: 'Write a message…',
@@ -142,8 +161,12 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
     suggestionsLayout: asLayout(widgetMessages.welcome_suggestions_layout),
     inputPlaceholder: asNonEmptyString(widgetMessages.input_placeholder, DEFAULTS.inputPlaceholder),
 
+    displayName: asString(raw.name),
+    launcherName: asNonEmptyString(raw.launcher_name, DEFAULTS.launcherName),
+
     systemPrompt: asString(raw.system_prompt),
     brandTone: asString(raw.brand_tone),
+    brandTonePreset: typeof raw.brand_tone_preset === 'string' ? raw.brand_tone_preset : null,
     companyName: asString(raw.company_name),
     companyDescription: asString(raw.company_description),
 
@@ -158,8 +181,16 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
  */
 export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknown> {
   const welcomeSuggestions = draft.quickActions.map((s) => s.trim()).filter((s) => s.length > 0);
+  const displayName = draft.displayName.trim();
 
   return {
+    // The widget header/launcher name is `bot.name`; persist it here. Guarded so
+    // a momentarily-empty field can never blank the agent name server-side — the
+    // editor also enforces non-empty, but this is the durable safeguard.
+    ...(displayName.length > 0 ? { name: displayName } : {}),
+    launcher_name: draft.launcherName,
+    brand_tone_preset: draft.brandTonePreset,
+
     primary_color: draft.primaryColor,
     user_bubble_color: draft.userBubbleColor,
     avatar_type: draft.avatarType,
