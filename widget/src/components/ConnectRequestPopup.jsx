@@ -30,7 +30,7 @@ const ConnectRequestPopup = ({
     primaryColor: rawPrimary,
 }) => {
     const primaryColor = sanitizeColor(rawPrimary, '#3A0CA3');
-    const displayName = operatorName || 'A team member';
+    const displayName = operatorName || 'Our team';
 
     // Countdown — drives the small timer chip in the corner. We only render
     // the chip if ``expiresAt`` is supplied so the popup remains useful for
@@ -100,7 +100,7 @@ const ConnectRequestPopup = ({
                                 {displayName} wants to connect
                             </h3>
                             <p className="text-[12px] text-gray-500 leading-tight mt-0.5">
-                                Switch to a live chat with a real person?
+                                Switch to a live chat with our team?
                             </p>
                         </div>
                     </div>

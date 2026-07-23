@@ -105,7 +105,7 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
                 </div>
                 <div className="flex flex-col leading-tight">
                     <span className="text-[12px] font-semibold text-[#16202C]">
-                        {name || 'Support'}
+                        {name || 'Our team'}
                         {department ? (
                             <span className="font-normal text-gray-500"> · {department}</span>
                         ) : null}
@@ -704,7 +704,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         if (operatorName && !prevOperatorNameRef.current) {
             setMessages(prev => [
-                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with the support team...')),
+                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with our team...')),
                 {
                     id: `sys-joined-${Date.now()}`,
                     type: 'operator_joined',
@@ -724,9 +724,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         if (chatMode !== 'unavailable') return;
         setMessages(prev => prev.some(
-            m => m.type === 'system' && m.text === 'Connecting you with the support team...'
+            m => m.type === 'system' && m.text === 'Connecting you with our team...'
         )
-            ? prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with the support team...'))
+            ? prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with our team...'))
             : prev);
     }, [chatMode]);
 
@@ -1288,7 +1288,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // `incomingOperator` is set when the resolver flips from "no operator
     // available" to AVAILABLE while the visitor is on the offline form. It
     // drives the OperatorJoinedToast — null = no toast, string = operator
-    // display name (or generic "An agent") to render. Cleared on dismiss
+    // display name (or generic "Someone from our team") to render. Cleared on dismiss
     // or when the visitor switches to chat.
     const [incomingOperator, setIncomingOperator] = useState(null);
 
@@ -1349,7 +1349,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     {
                         id: `sys-connecting-${Date.now()}`,
                         type: 'system',
-                        text: 'Connecting you with the support team...',
+                        text: 'Connecting you with our team...',
                         timestamp: new Date().toISOString(),
                     },
                 ]);
@@ -1389,7 +1389,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-connecting-${Date.now()}`,
                     type: 'system',
-                    text: 'Connecting you with the support team...',
+                    text: 'Connecting you with our team...',
                     timestamp: new Date().toISOString(),
                 }
             ]);
@@ -1402,7 +1402,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-handoff-err-${Date.now()}`,
                     type: 'system',
-                    text: 'Unable to connect with the support team right now. Please try again.',
+                    text: 'Unable to connect with our team right now. Please try again.',
                     timestamp: new Date().toISOString(),
                 },
             ]);
@@ -1477,7 +1477,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         try {
             const res = await respondToConnectRequest(sessionId, true, connectRequest.request_id);
             if (res?.ok && res.result === 'accepted') {
-                const opName = res.operator_name || connectRequest.operator_name || 'An agent';
+                const opName = res.operator_name || connectRequest.operator_name || 'Our team';
                 setOperatorName(opName);
                 setLiveChatState({
                     suggestedAction: 'accepted',
@@ -1583,7 +1583,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 if (cancelled) return;
                 const action = res?.suggested_action;
                 if (action === 'route' || action === 'wait') {
-                    const opName = res?.online_operator_name || res?.operator_name || 'An agent';
+                    const opName = res?.online_operator_name || res?.operator_name || 'Someone from our team';
                     setIncomingOperator(opName);
                     setLiveChatState(prev => ({
                         ...(prev || {}),
@@ -1616,7 +1616,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             {
                 id: `sys-connecting-${Date.now()}`,
                 type: 'system',
-                text: 'Connecting you with the support team...',
+                text: 'Connecting you with our team...',
                 timestamp: new Date().toISOString(),
             },
         ]);
@@ -2501,7 +2501,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     <>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
-                                            <p className="text-[13px] font-semibold text-[#16202C]">Leave us a message</p>
+                                            <p className="text-[13px] font-semibold text-[#16202C]">Leave a message</p>
                                         </div>
                                         <p className="text-[12px] text-gray-500 mb-3">
                                             We&apos;ll reply to <strong className="text-gray-700">{externalEmail}</strong> as soon as we can.
@@ -2526,7 +2526,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             >
                                                 {offlineSubmitting
                                                     ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    : 'Send Message'}
+                                                    : 'Send message'}
                                             </button>
                                             <button
                                                 type="button"
@@ -2565,7 +2565,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
-                                    <p className="text-[13px] font-semibold text-[#16202C]">Send us a message</p>
+                                    <p className="text-[13px] font-semibold text-[#16202C]">Send message</p>
                                 </div>
                                 <p className="text-[12px] text-gray-500 mb-3">We&apos;ll get back to you as soon as we can.</p>
                                 <form onSubmit={handleOfflineSubmit} className="space-y-2">
@@ -2598,7 +2598,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         style={{ backgroundColor: primary }}>
                                         {offlineSubmitting
                                             ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                            : 'Send Message'}
+                                            : 'Send message'}
                                     </button>
                                     <button
                                         type="button"

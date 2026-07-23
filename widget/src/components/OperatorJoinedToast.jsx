@@ -60,7 +60,7 @@ const OperatorJoinedToast = ({
                 </div>
                 <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-semibold text-emerald-900 leading-tight">
-                        {operatorName || 'An agent'} is available!
+                        {operatorName || 'Someone from our team'} is available!
                     </p>
                     <p className="text-[11px] text-emerald-700 leading-tight mt-0.5">
                         Switch to live chat instead?
