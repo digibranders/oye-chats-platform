@@ -42,6 +42,8 @@ export function getFrameworkPresets(botId: number): Promise<Record<string, unkno
 
 /** Absolute URL of the hosted demo page for a bot. */
 export function getBotDemoUrl(botKey: string): string;
+/** Backend endpoint configured for this dashboard build. */
+export function getApiBaseUrl(): string;
 /** Absolute URL of the demo page with an optional overlay website + edit mode. */
 export function getBotPreviewUrl(
   botKey: string,

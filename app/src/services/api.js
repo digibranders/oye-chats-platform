@@ -4,6 +4,9 @@ import { clearTrialBannerDismissals } from '../utils/trialBanner';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
+/** Returns the backend endpoint configured for this dashboard build. */
+export const getApiBaseUrl = () => API_BASE_URL;
+
 // Public / auth routes where a background 401 (e.g. a stale token left in
 // storage) must NOT force-redirect the visitor to /login. Otherwise landing
 // on /register from the marketing "Start free" CTA with a lapsed token would

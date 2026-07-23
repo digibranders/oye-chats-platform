@@ -794,7 +794,7 @@ export function MembersPage(): ReactElement {
                         options={[
                           { value: '', label: 'Any department' },
                           ...departments.map((department) => ({
-                            value: department.id,
+                            value: String(department.id),
                             label: department.name,
                           })),
                         ]}
@@ -897,7 +897,7 @@ export function MembersPage(): ReactElement {
                         options={[
                           { value: '', label: 'No department' },
                           ...departments.map((department) => ({
-                            value: department.id,
+                            value: String(department.id),
                             label: department.name,
                           })),
                         ]}

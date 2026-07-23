@@ -14,16 +14,10 @@ import {
   platforms,
   categoryLabels,
   categoryOrder,
-  type PlatformEnv,
 } from '../../../data/platformIntegrations';
-import { getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
+import { getApiBaseUrl, getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
 import { cn } from '../../../design-system';
-
-/** The two install targets: the live CDN widget vs. the local preview build. */
-const ENV_OPTIONS: ReadonlyArray<{ value: PlatformEnv; label: string }> = [
-  { value: 'production', label: 'Production' },
-  { value: 'development', label: 'Development' },
-];
+import { getEmbedEnvironment } from './embedEnvironment';
 
 /** A copyable code block. Clipboard write is best-effort; the code is always selectable. */
 function CopyableCode({ code, label }: { code: string; label: string }) {
@@ -80,10 +74,10 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const [keyCopied, setKeyCopied] = useState(false);
   const [demoCopied, setDemoCopied] = useState(false);
   const [platformId, setPlatformId] = useState<string | null>(null);
-  const [env, setEnv] = useState<PlatformEnv>('production');
 
   const platform = platforms.find((p) => p.id === platformId) ?? null;
   const demoUrl = getBotDemoUrl(botKey);
+  const env = getEmbedEnvironment(getApiBaseUrl());
 
   const copyKey = async (): Promise<void> => {
     try {
@@ -190,49 +184,11 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
 
       {/* Platform-specific install steps */}
       <div>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
             Install steps
           </span>
-          {/* Production loads the CDN widget; Development points snippets at the
-              local preview build (see `platformIntegrations`). */}
-          <div
-            role="radiogroup"
-            aria-label="Install environment"
-            className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
-          >
-            {ENV_OPTIONS.map((option) => {
-              const selected = env === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => setEnv(option.value)}
-                  className={cn(
-                    'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                    selected
-                      ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
-                      : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-                  )}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
         </div>
-
-        {env === 'development' && (
-          <p className="mb-3 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
-            Development snippets point at your local widget preview
-            (<code className="font-mono">localhost:4173</code>). Run{' '}
-            <code className="font-mono">npm run build</code> then{' '}
-            <code className="font-mono">npx vite preview --port 4173</code> in the widget project
-            before embedding these.
-          </p>
-        )}
 
         {platform ? (
           <div className="space-y-4">
