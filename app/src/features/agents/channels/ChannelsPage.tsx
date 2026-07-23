@@ -227,9 +227,9 @@ export function ChannelsPage(): ReactElement {
               )
             }
           >
-            {botKey ? (
+            {botKey && numericId != null ? (
               <>
-                <WebsiteInstall botKey={botKey} />
+                <WebsiteInstall botKey={botKey} botId={numericId} />
                 {numericId != null && (
                   <DomainRestrictionsSection
                     key={numericId}

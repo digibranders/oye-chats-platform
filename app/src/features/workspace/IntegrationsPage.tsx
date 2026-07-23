@@ -63,6 +63,10 @@ interface NotificationEmails {
   offline_message?: string[];
 }
 
+interface BotFeatureFlags {
+  email_transcript?: boolean;
+}
+
 interface BotIntegrationSettings {
   meeting_booking_enabled?: boolean;
   meeting_provider?: string | null;
@@ -75,6 +79,7 @@ interface BotIntegrationSettings {
   email_on_handoff?: boolean;
   email_on_offline?: boolean;
   email_visitor_confirmation?: boolean;
+  feature_flags?: BotFeatureFlags | null;
 }
 
 type BotWithIntegrations = Bot & BotIntegrationSettings;
@@ -130,6 +135,60 @@ const MEETING_PROVIDERS: ReadonlyArray<{
 const DEFAULT_EVENTS = ['tier_transition', 'lead_captured'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// ── CRM integration reference ──────────────────────────────────────────────────
+// The exact JSON shape delivered to a webhook endpoint, so customers can map
+// contact fields onto a CRM "Create Contact / Create Lead" step. Ported from the
+// legacy Webhooks page.
+const PAYLOAD_SCHEMA = `{
+  "event": "tier_transition",
+  "bot_id": 1,
+  "timestamp": "2026-04-06T12:00:00Z",
+  "data": {
+    "session_id": "session_abc123",
+    "old_tier": "mql",
+    "new_tier": "sql",
+    "score": 80,
+    "behavioral_score": 15,
+    "contact": { "name": "Jane", "email": "jane@acme.com", "phone": "+1234", "company": "Acme" },
+    "dimensions": { "need": 25, "budget": 20, "authority": 15, "timeline": 20 }
+  }
+}`;
+
+interface CrmTemplate {
+  readonly id: 'hubspot' | 'salesforce' | 'custom';
+  readonly title: string;
+  readonly description: string;
+  readonly buttonLabel: string;
+  readonly guide: string;
+}
+
+const CRM_TEMPLATES: ReadonlyArray<CrmTemplate> = [
+  {
+    id: 'hubspot',
+    title: 'HubSpot via Zapier',
+    description: 'Automatically create HubSpot contacts when leads qualify.',
+    buttonLabel: 'Copy Zapier setup guide',
+    guide:
+      "1. Create a Zap in Zapier. 2. Trigger: Webhooks by Zapier > Catch Hook. 3. Copy the Zapier webhook URL. 4. Create a webhook in OyeChats with event 'tier_transition'. 5. Action: HubSpot > Create Contact. 6. Map fields: email → data.contact.email, etc.",
+  },
+  {
+    id: 'salesforce',
+    title: 'Salesforce via Make',
+    description: 'Push qualified leads to Salesforce as new leads.',
+    buttonLabel: 'Copy Make setup guide',
+    guide:
+      "1. Create a scenario in Make.com. 2. Trigger: Webhooks > Custom webhook. 3. Copy the Make webhook URL. 4. Create a webhook in OyeChats with event 'tier_transition'. 5. Add Salesforce module: Create a Lead. 6. Map fields from payload: data.contact.email, data.contact.name, score, and dimensions.",
+  },
+  {
+    id: 'custom',
+    title: 'Custom webhook',
+    description: 'Send webhook events to any URL.',
+    buttonLabel: 'Add a webhook',
+    guide:
+      'Send OyeChats events to your own endpoint and transform payloads in your backend, Zapier, or Make before writing to your CRM.',
+  },
+];
+
 const labelClass = 'mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -156,7 +215,7 @@ function truncateUrl(url: string, max = 72): string {
 }
 
 type Feedback = { readonly tone: 'success' | 'error'; readonly message: string };
-type TabKey = 'webhooks' | 'meetings' | 'email';
+type TabKey = 'webhooks' | 'crm' | 'meetings' | 'email';
 
 // ── Local Switch (accessible toggle) ──────────────────────────────────────────
 
@@ -816,6 +875,132 @@ function WebhooksPanel({
   );
 }
 
+// ── CRM panel ─────────────────────────────────────────────────────────────────
+
+/** A collapsible reference block (setup guide / payload schema) inside a CRM card. */
+interface DisclosureProps {
+  id: string;
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}
+
+function Disclosure({ id, label, open, onToggle, children }: DisclosureProps): ReactElement {
+  return (
+    <div className="overflow-hidden rounded-lg border border-[var(--ds-border)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex w-full items-center justify-between gap-2 bg-[var(--ds-bg-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+      >
+        {label}
+        {open ? (
+          <ChevronDown size={14} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={14} aria-hidden="true" />
+        )}
+      </button>
+      {open && <div id={id}>{children}</div>}
+    </div>
+  );
+}
+
+interface CrmPanelProps {
+  onFeedback: (feedback: Feedback) => void;
+  onAddWebhook: () => void;
+}
+
+function CrmPanel({ onFeedback, onAddWebhook }: CrmPanelProps): ReactElement {
+  const [openSchema, setOpenSchema] = useState<Record<string, boolean>>({});
+  const [openGuide, setOpenGuide] = useState<Record<string, boolean>>({});
+
+  const copyGuide = async (template: CrmTemplate): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(template.guide);
+      onFeedback({ tone: 'success', message: `${template.title} setup guide copied.` });
+    } catch {
+      onFeedback({ tone: 'error', message: 'Couldn’t copy the setup guide to the clipboard.' });
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader
+        title="Connect your CRM"
+        description="Use webhooks to push qualified leads into HubSpot, Salesforce, or any CRM via Zapier or Make. Map the delivered payload’s contact fields onto a “Create Contact / Create Lead” step."
+      />
+
+      <div className="grid items-start gap-4 lg:grid-cols-3">
+        {CRM_TEMPLATES.map((template) => (
+          <div
+            key={template.id}
+            className="flex flex-col gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]"
+          >
+            <div>
+              <h3 className="text-[14px] font-semibold text-[var(--ds-text)]">{template.title}</h3>
+              <p className="mt-1 min-h-[2.5rem] text-[13px] text-[var(--ds-text-muted)]">
+                {template.description}
+              </p>
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() =>
+                template.id === 'custom' ? onAddWebhook() : void copyGuide(template)
+              }
+            >
+              {template.id === 'custom' ? (
+                <Plus size={14} aria-hidden="true" />
+              ) : (
+                <Copy size={14} aria-hidden="true" />
+              )}
+              {template.buttonLabel}
+            </Button>
+
+            <Disclosure
+              id={`crm-guide-${template.id}`}
+              label="Setup guide"
+              open={!!openGuide[template.id]}
+              onToggle={() =>
+                setOpenGuide((prev) => ({ ...prev, [template.id]: !prev[template.id] }))
+              }
+            >
+              <p className="px-3 py-2.5 text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
+                {template.guide}
+              </p>
+            </Disclosure>
+
+            <Disclosure
+              id={`crm-schema-${template.id}`}
+              label="Payload schema"
+              open={!!openSchema[template.id]}
+              onToggle={() =>
+                setOpenSchema((prev) => ({ ...prev, [template.id]: !prev[template.id] }))
+              }
+            >
+              <pre className="overflow-x-auto bg-[var(--ds-bg-sunken)] px-3 py-2.5 font-mono text-[11px] leading-relaxed text-[var(--ds-text)]">
+                {PAYLOAD_SCHEMA}
+              </pre>
+            </Disclosure>
+          </div>
+        ))}
+      </div>
+
+      <InsightCard
+        icon={WebhookIcon}
+        tone="info"
+        title="How field mapping works"
+        body="Every webhook delivery is a signed JSON POST shaped like the payload schema above. In your CRM automation, read data.contact.email, data.contact.name, and the score / dimensions fields, then map them onto your CRM’s contact or lead record."
+      />
+    </div>
+  );
+}
+
 // ── Meetings panel ────────────────────────────────────────────────────────────
 
 interface BotPanelProps {
@@ -981,6 +1166,25 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
     initial.reply_to_email ? [initial.reply_to_email] : [],
   );
   const [recipients, setRecipients] = useState<string[]>(notify?.default ?? []);
+  const [qualifiedLeadRecipients, setQualifiedLeadRecipients] = useState<string[]>(
+    notify?.qualified_lead ?? [],
+  );
+  const [handoffRecipients, setHandoffRecipients] = useState<string[]>(
+    notify?.handoff_request ?? [],
+  );
+  const [offlineRecipients, setOfflineRecipients] = useState<string[]>(
+    notify?.offline_message ?? [],
+  );
+  // Open the per-event section by default only when overrides already exist, so
+  // the common case (default recipients only) stays uncluttered.
+  const [showPerEvent, setShowPerEvent] = useState(
+    (notify?.qualified_lead?.length ?? 0) > 0 ||
+      (notify?.handoff_request?.length ?? 0) > 0 ||
+      (notify?.offline_message?.length ?? 0) > 0,
+  );
+  const [emailTranscript, setEmailTranscript] = useState(
+    initial.feature_flags?.email_transcript ?? false,
+  );
   const [toggles, setToggles] = useState<Record<EmailToggle['key'], boolean>>({
     email_on_qualified: initial.email_on_qualified ?? true,
     email_on_handoff: initial.email_on_handoff ?? true,
@@ -993,9 +1197,18 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
     event.preventDefault();
     setSaving(true);
     try {
-      // Preserve any per-event overrides the legacy Email screen may have set;
-      // this page only manages the default recipient list.
-      const notificationEmails: NotificationEmails = { ...(notify ?? {}), default: recipients };
+      // The default list always persists; per-event overrides persist only when
+      // set, so clearing an override cleanly falls back to the default list.
+      const notificationEmails: NotificationEmails = { default: recipients };
+      if (qualifiedLeadRecipients.length) {
+        notificationEmails.qualified_lead = qualifiedLeadRecipients;
+      }
+      if (handoffRecipients.length) {
+        notificationEmails.handoff_request = handoffRecipients;
+      }
+      if (offlineRecipients.length) {
+        notificationEmails.offline_message = offlineRecipients;
+      }
       await updateBot(bot.id, {
         reply_to_email: replyTo[0] ?? null,
         notification_emails: notificationEmails,
@@ -1003,6 +1216,7 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
         email_on_handoff: toggles.email_on_handoff,
         email_on_offline: toggles.email_on_offline,
         email_visitor_confirmation: toggles.email_visitor_confirmation,
+        feature_flags: { email_transcript: emailTranscript },
       });
       await onSaved();
       onFeedback({ tone: 'success', message: 'Email routing saved.' });
@@ -1039,7 +1253,7 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
 
           <div>
             <label htmlFor="recipients" className={labelClass}>
-              Team recipients
+              Default recipients
             </label>
             <EmailChips
               id="recipients"
@@ -1048,8 +1262,66 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
               placeholder="team@yourdomain.com"
             />
             <p className="mt-1 text-[12px] text-[var(--ds-text-subtle)]">
-              Press Enter or comma to add. These addresses receive the notifications enabled below.
+              Press Enter or comma to add. Used for every event unless overridden below.
             </p>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowPerEvent((current) => !current)}
+              aria-expanded={showPerEvent}
+              aria-controls="per-event-overrides"
+              className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              {showPerEvent ? (
+                <ChevronDown size={15} aria-hidden="true" />
+              ) : (
+                <ChevronRight size={15} aria-hidden="true" />
+              )}
+              Per-event recipient overrides
+            </button>
+
+            {showPerEvent && (
+              <div
+                id="per-event-overrides"
+                className="mt-3 space-y-4 border-l-2 border-[var(--ds-border)] pl-4"
+              >
+                <div>
+                  <label htmlFor="recipients-qualified" className={labelClass}>
+                    Qualified leads
+                  </label>
+                  <EmailChips
+                    id="recipients-qualified"
+                    emails={qualifiedLeadRecipients}
+                    onChange={setQualifiedLeadRecipients}
+                    placeholder="Using default recipients"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="recipients-handoff" className={labelClass}>
+                    Handoff requests
+                  </label>
+                  <EmailChips
+                    id="recipients-handoff"
+                    emails={handoffRecipients}
+                    onChange={setHandoffRecipients}
+                    placeholder="Using default recipients"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="recipients-offline" className={labelClass}>
+                    Offline messages
+                  </label>
+                  <EmailChips
+                    id="recipients-offline"
+                    emails={offlineRecipients}
+                    onChange={setOfflineRecipients}
+                    placeholder="Using default recipients"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1068,6 +1340,23 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
             />
           </div>
         ))}
+
+        <div className="flex items-center justify-between gap-4 p-5">
+          <div className="min-w-0">
+            <p className="text-[14px] font-medium text-[var(--ds-text)]">
+              Allow visitors to email themselves a transcript
+            </p>
+            <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
+              Show a “Send transcript” option in the widget menu so visitors can email themselves the
+              conversation.
+            </p>
+          </div>
+          <Switch
+            checked={emailTranscript}
+            onChange={setEmailTranscript}
+            label="Allow visitors to email themselves a transcript"
+          />
+        </div>
       </div>
 
       <div className="flex justify-end">
@@ -1289,6 +1578,7 @@ export function IntegrationsPage(): ReactElement {
         onChange={(key) => setTab(key as TabKey)}
         tabs={[
           { key: 'webhooks', label: 'Webhooks' },
+          { key: 'crm', label: 'CRM' },
           { key: 'meetings', label: 'Meetings' },
           { key: 'email', label: 'Email' },
         ]}
@@ -1314,6 +1604,17 @@ export function IntegrationsPage(): ReactElement {
           onFeedback={setFeedback}
           botId={selectedBotId}
         />
+      </div>
+
+      <div
+        role="tabpanel"
+        id="tabpanel-crm"
+        aria-labelledby="tab-crm"
+        tabIndex={0}
+        hidden={tab !== 'crm'}
+        className="focus-visible:outline-none"
+      >
+        <CrmPanel onFeedback={setFeedback} onAddWebhook={() => setTab('webhooks')} />
       </div>
 
       {selectedBot && (
