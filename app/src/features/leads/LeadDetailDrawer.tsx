@@ -123,7 +123,7 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
         )}
       >
         <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-          {isVisitor ? 'Visitor' : message.role === 'operator' ? 'Teammate' : 'AI agent'}
+          {isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'AI Agent'}
         </p>
         {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>}
       </div>

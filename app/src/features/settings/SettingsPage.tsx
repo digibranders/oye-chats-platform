@@ -206,7 +206,7 @@ export function SettingsPage(): ReactElement {
           <section aria-labelledby="profile-heading" className="space-y-4">
             <SectionHeader
               title={<span id="profile-heading">Your profile</span>}
-              description="How you appear to teammates in this workspace."
+              description="How you appear to operators in this workspace."
               actions={
                 !nameEditing ? (
                   <Button variant="outline" size="sm" onClick={startNameEditing}>

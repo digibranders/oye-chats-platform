@@ -95,7 +95,7 @@ export function SeatChangeDialog({
       title={isAdd ? 'Add an operator seat' : 'Remove an operator seat'}
       description={
         isAdd
-          ? 'An extra seat lets one more teammate handle live chats.'
+          ? 'An extra seat lets one more operator handle live chats.'
           : 'Freeing a seat reduces your next invoice.'
       }
       footer={

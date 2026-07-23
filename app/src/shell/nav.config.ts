@@ -19,7 +19,7 @@ export interface NavItem {
 export const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: Home, end: true, hint: 'Daily overview' },
   { to: '/agents', label: 'AI Agents', icon: Bot, hint: 'Create, train and manage agents' },
-  { to: '/inbox', label: 'Inbox', icon: Inbox, hint: 'Live chat and messages' },
+  { to: '/inbox', label: 'Support', icon: Inbox, hint: 'Live chat and messages' },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification' },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across agents' },
   { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and usage' },

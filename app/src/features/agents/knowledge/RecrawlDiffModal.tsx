@@ -106,19 +106,19 @@ export function RecrawlDiffModal({
   const confirmLabel = fullBlocked
     ? 'Get more credits'
     : isDelta
-      ? 'Re-crawl changed pages'
-      : 'Re-crawl all pages';
+      ? 'Re-train changed pages'
+      : 'Re-train all pages';
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       size="lg"
-      title={isDelta ? 'Re-crawl only updated pages?' : 'Re-crawl the entire website?'}
+      title={isDelta ? 'Re-train only updated pages?' : 'Re-train the entire website?'}
       description={
         isDelta
-          ? "Unchanged pages are free — you'll only be billed for pages whose content changed since the last crawl."
-          : 'Every discovered page will be re-scraped and re-embedded, and every page will be charged.'
+          ? "Unchanged pages are free — you'll only be billed for pages whose content changed since the last training run."
+          : 'Every discovered page will be re-trained, and every page will be charged.'
       }
       footer={
         <div className="flex items-center justify-end gap-2">
@@ -163,10 +163,10 @@ export function RecrawlDiffModal({
             <p className="flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
-                We couldn&apos;t preview the page changes. You can still proceed — the crawl will{' '}
+                We couldn&apos;t preview the page changes. You can still proceed — training will{' '}
                 {isDelta
                   ? 'skip unchanged pages during ingestion.'
-                  : 're-scrape and re-bill every page.'}
+                  : 're-train and re-bill every page.'}
               </span>
             </p>
             <p className="break-words pl-6 font-mono text-[11px] opacity-80">{error}</p>
@@ -177,8 +177,8 @@ export function RecrawlDiffModal({
               <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
                 No pages discovered — the site&apos;s sitemap may be temporarily unavailable. Try
-                again shortly. We won&apos;t start a full re-crawl until we can confirm the pages to
-                scrape, so you&apos;re never charged for a set we can&apos;t verify.
+                again shortly. We won&apos;t start a full re-train until we can confirm the pages to
+                train, so you&apos;re never charged for a set we can&apos;t verify.
               </span>
             </p>
           </div>

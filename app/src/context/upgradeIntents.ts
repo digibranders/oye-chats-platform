@@ -79,15 +79,15 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     // modal narrative is uniform regardless of current plan — "subscribe
     // again to add another bot".
     return {
-      eyebrow: `You already have ${current} chatbot${current === 1 ? '' : 's'} on ${plan}`,
-      title: 'Subscribe again to add another bot',
+      eyebrow: `You already have ${current} AI Agent${current === 1 ? '' : 's'} on ${plan}`,
+      title: 'Subscribe again to add another AI Agent',
       description:
-        'Each chatbot is its own subscription with its own credits, knowledge base, and branding. ' +
-        'Pick a plan for this new bot to spin it up.',
+        'Each AI Agent is its own subscription with its own credits, knowledge base, and branding. ' +
+        'Pick a plan for this new AI Agent to spin it up.',
       highlights: [
-        'Isolated credits per bot — a busy bot never drains a quieter one',
-        'Per-bot knowledge base, branding, and embed key',
-        'Separate analytics and billing for every chatbot',
+        'Isolated credits per AI Agent — a busy agent never drains a quieter one',
+        'Per-agent knowledge base, branding, and embed key',
+        'Separate analytics and billing for every AI Agent',
       ],
       recommendedPlan: 'Starter',
     };
@@ -227,7 +227,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Advanced widget tuning is a paid feature',
     title: 'Fine-tune your widget',
     description:
-      'Greeting delays, frustration thresholds, reconnect behavior, typing timeouts — the knobs that take a good chatbot from "works" to "feels right" on your site.',
+      'Greeting delays, frustration thresholds, reconnect behavior, typing timeouts — the knobs that take a good AI Agent from "works" to "feels right" on your site.',
     highlights: [
       'Custom greeting + handoff timing',
       'Reconnect & heartbeat strategy',
@@ -251,7 +251,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Removing branding is a Standard feature',
     title: 'Remove the "Powered by" footer',
     description:
-      'Free and Starter bots always show the OyeChats branding footer in the widget. Upgrade to Standard to hide it and give the widget your own look.',
+      'Free and Starter AI Agents always show the OyeChats branding footer in the widget. Upgrade to Standard to hide it and give the widget your own look.',
     highlights: [
       'Fully white-labeled chat widget',
       'No "Powered by OyeChats" link on your site',
@@ -260,13 +260,13 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     recommendedPlan: 'Standard',
   }),
   auto_recrawl: () => ({
-    eyebrow: 'Auto-recrawl is a Standard feature',
+    eyebrow: 'Auto-retrain is a Standard feature',
     title: 'Keep your knowledge base fresh, automatically',
     description:
-      'Free and Starter bots crawl once and stop. Upgrade to Standard and OyeChats refreshes every crawled URL for you on a weekly cycle, re-embedding only the pages whose content actually changed.',
+      'Free and Starter AI Agents train once and stop. Upgrade to Standard and OyeChats refreshes every trained URL for you on a weekly cycle, re-training only the pages whose content actually changed.',
     highlights: [
-      'Weekly auto-refresh of every crawled URL',
-      'Content-diff so unchanged pages skip re-embedding',
+      'Weekly auto-refresh of every trained URL',
+      'Content-diff so unchanged pages skip re-training',
       'Per-bot toggle with a clean run history',
     ],
     recommendedPlan: 'Standard',
@@ -275,7 +275,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Live chat is a paid feature',
     title: 'Configure live chat handoff',
     description:
-      'Customize when and how the bot offers a real human, route to the right team, and set wait-time copy — the full visitor request flow.',
+      'Customize when and how the AI Agent offers a real human, route to the right team, and set wait-time copy — the full visitor request flow.',
     highlights: [
       'Inline "Talk to a human" CTA',
       'Per-bot handoff timing',

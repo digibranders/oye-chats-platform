@@ -62,7 +62,7 @@ import {
 import type { FunnelStageView, LeadStatsSummary } from './leadModel';
 
 const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
-  { value: 'named', label: 'Named contacts' },
+  { value: 'named', label: 'Named leads' },
   { value: 'anonymous', label: 'Anonymous only' },
   { value: 'all', label: 'Everyone' },
 ];
@@ -410,7 +410,7 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'contact',
-        header: 'Contact',
+        header: 'Lead',
         render: (lead) => {
           const tags = annotations.tagsFor(lead.session_id);
           return (
@@ -672,7 +672,7 @@ export function LeadsPage(): ReactElement {
                 className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] sm:max-w-xs"
               />
               <label htmlFor="lead-contact-filter" className="sr-only">
-                Filter by contact type
+                Filter by lead type
               </label>
               <Select
                 id="lead-contact-filter"

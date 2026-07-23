@@ -344,7 +344,7 @@ export function MembersPage(): ReactElement {
   if (isFree) {
     return (
       <PageContainer
-        title="Members"
+        title="Operators"
         description="Everyone who can see conversations and answer visitors in this workspace."
       >
         <div className="mx-auto w-full max-w-md py-12">
@@ -432,7 +432,7 @@ export function MembersPage(): ReactElement {
       setEditing(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to update this member.') });
+      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to update this operator.') });
     } finally {
       setEditBusy(false);
     }
@@ -448,7 +448,7 @@ export function MembersPage(): ReactElement {
       if (editing?.id === operator.id) setEditing(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to remove this member.') });
+      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to remove this operator.') });
     } finally {
       setRowBusyId(null);
     }
@@ -544,7 +544,7 @@ export function MembersPage(): ReactElement {
   const columns: Column<Operator>[] = [
     {
       key: 'name',
-      header: 'Member',
+      header: 'Operator',
       render: (operator) => (
         <div className="flex items-center gap-3">
           <Avatar name={operator.name} />
@@ -639,13 +639,13 @@ export function MembersPage(): ReactElement {
   const pageActions = canInvite ? (
     <Button onClick={handleInviteClick}>
       <UserPlus size={16} aria-hidden="true" />
-      Invite member
+      Invite operator
     </Button>
   ) : undefined;
 
   return (
     <PageContainer
-      title="Members"
+      title="Operators"
       description="Everyone who can see conversations and answer visitors in this workspace."
       actions={pageActions}
     >
@@ -695,14 +695,14 @@ export function MembersPage(): ReactElement {
         <>
           {/* Metrics — a quick read on team size and availability. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard label="Members" value={botOperators.length} icon={Users} />
+            <MetricCard label="Operators" value={botOperators.length} icon={Users} />
             <MetricCard label="Online now" value={onlineCount} icon={Headphones} />
             <MetricCard label="Pending invites" value={botInvites.length} icon={Mail} />
             <MetricCard label="Departments" value={departments.length} icon={Building2} />
           </div>
 
           <Tabs
-            ariaLabel="Members sections"
+            ariaLabel="Operators sections"
             value={tab}
             onChange={(key) => {
               setFeedback(null);
@@ -750,7 +750,7 @@ export function MembersPage(): ReactElement {
                   className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]"
                 >
                   <SectionHeader
-                    title="Invite a member"
+                    title="Invite an operator"
                     description="They’ll get an email with a link to join and set up their account."
                   />
                   <div className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -763,7 +763,7 @@ export function MembersPage(): ReactElement {
                         type="email"
                         required
                         autoFocus
-                        placeholder="teammate@company.com"
+                        placeholder="operator@company.com"
                         value={inviteEmail}
                         onChange={(event) => setInviteEmail(event.target.value)}
                       />
@@ -964,7 +964,7 @@ export function MembersPage(): ReactElement {
                         disabled={rowBusyId === target.id}
                         onClick={() => handleRemove(target)}
                       >
-                        {rowBusyId === target.id ? 'Removing…' : 'Remove member'}
+                        {rowBusyId === target.id ? 'Removing…' : 'Remove operator'}
                       </Button>
                     </div>
                   </div>
@@ -988,13 +988,13 @@ export function MembersPage(): ReactElement {
                     <EmptyState
                       className="border-0 py-6"
                       icon={UserRound}
-                      title={`No members on ${selectedBot?.name ?? 'this agent'} yet`}
-                      description="Invite a teammate to help answer conversations."
+                      title={`No operators on ${selectedBot?.name ?? 'this agent'} yet`}
+                      description="Invite an operator to help answer conversations."
                       action={
                         canInvite ? (
                           <Button onClick={handleInviteClick}>
                             <UserPlus size={16} aria-hidden="true" />
-                            Invite member
+                            Invite operator
                           </Button>
                         ) : undefined
                       }
@@ -1015,7 +1015,7 @@ export function MembersPage(): ReactElement {
             >
               <SectionHeader
                 title="Departments"
-                description="Group members so conversations reach the right team."
+                description="Group operators so conversations reach the right team."
                 actions={
                   canManage ? (
                     <Button variant="outline" onClick={() => setDeptOpen((open) => !open)}>
@@ -1072,7 +1072,7 @@ export function MembersPage(): ReactElement {
                 <EmptyState
                   icon={Building2}
                   title="No departments yet"
-                  description="Create departments to organize members by team, like Sales or Support."
+                  description="Create departments to organize operators by team, like Sales or Support."
                 />
               ) : (
                 <ul className="grid gap-3">
@@ -1101,7 +1101,7 @@ export function MembersPage(): ReactElement {
                             )}
                           </div>
                           <span className="shrink-0 text-[12px] text-[var(--ds-text-muted)]">
-                            {memberCount} member{memberCount === 1 ? '' : 's'}
+                            {memberCount} operator{memberCount === 1 ? '' : 's'}
                           </span>
                           {canManage && !confirming && (
                             <div className="flex shrink-0 items-center gap-1">
@@ -1135,7 +1135,7 @@ export function MembersPage(): ReactElement {
                         {confirming && canManage && (
                           <div className="mt-3 flex flex-col gap-3 border-t border-[var(--ds-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-[13px] text-[var(--ds-text-muted)]">
-                              Delete “{department.name}”? Members in it will be unassigned.
+                              Delete “{department.name}”? Operators in it will be unassigned.
                             </p>
                             <div className="flex shrink-0 items-center gap-2">
                               <Button variant="ghost" onClick={() => setDeptRemovingId(null)}>

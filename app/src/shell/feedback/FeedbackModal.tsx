@@ -83,7 +83,7 @@ const TYPES: ReadonlyArray<{ id: FeedbackTypeId; label: string; icon: LucideIcon
 
 const AREAS: ReadonlyArray<{ id: FeedbackAreaId; label: string }> = [
   { id: 'billing', label: 'Billing' },
-  { id: 'bots', label: 'Bots' },
+  { id: 'bots', label: 'AI Agents' },
   { id: 'knowledge', label: 'Knowledge' },
   { id: 'live_chat', label: 'Live chat' },
   { id: 'dashboard', label: 'Dashboard' },

@@ -1,4 +1,5 @@
 import { useState, type ReactElement } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PageContainer } from '../../design-system';
 import { Tabs, type TabItem } from '../../design-system/components/Tabs';
 import { FeatureGate } from '../../design-system/components/FeatureGate';
@@ -25,22 +26,30 @@ const TABS: TabItem[] = [
  * chat tab (where it’s relevant), not the shared header; the inbox is scoped to
  * the active agent.
  */
+const TAB_KEYS: readonly InboxTab[] = ['messages', 'live', 'replies'];
+
 export function InboxPage(): ReactElement {
   const { selectedBot } = useBotContext();
   const botId = selectedBot?.id;
-  const [tab, setTab] = useState<InboxTab>('messages');
+  const [searchParams] = useSearchParams();
+  // Honour a deep link (e.g. the incoming-chat banner routes to
+  // `/inbox?tab=live`) as the initial tab; falls back to Messages.
+  const requestedTab = searchParams.get('tab') as InboxTab | null;
+  const [tab, setTab] = useState<InboxTab>(
+    requestedTab && TAB_KEYS.includes(requestedTab) ? requestedTab : 'messages',
+  );
   const operator = useOperatorStatus(botId);
 
   return (
     <PageContainer
-      title="Inbox"
+      title="Support"
       description="See what your visitors are saying and respond fast."
     >
       <Tabs
         tabs={TABS}
         value={tab}
         onChange={(key) => setTab(key as InboxTab)}
-        ariaLabel="Inbox sections"
+        ariaLabel="Support sections"
       />
 
       <div

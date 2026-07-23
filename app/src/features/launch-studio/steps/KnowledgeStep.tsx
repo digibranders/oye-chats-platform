@@ -158,7 +158,7 @@ export function KnowledgeStep(props: StepProps) {
       setSiteUrl('');
       setSiteEstimate(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start crawl. Please try again.");
+      setError(err instanceof Error ? err.message : "Couldn't start training. Please try again.");
     } finally {
       setSiteBusy(false);
     }
@@ -415,7 +415,7 @@ export function KnowledgeStep(props: StepProps) {
                       : "We'll follow links from the homepage."}
                   </p>
                   <Button size="sm" onClick={handleAddSite} disabled={siteBusy}>
-                    {siteBusy ? 'Starting…' : 'Crawl'}
+                    {siteBusy ? 'Starting…' : 'Train'}
                   </Button>
                 </div>
               ) : (
@@ -441,7 +441,7 @@ export function KnowledgeStep(props: StepProps) {
               <div className="min-w-0">
                 <p className="text-[13px] font-medium text-[var(--ds-text)]">Add a website</p>
                 <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                  Crawl another site or subdomain.
+                  Train on another site or subdomain.
                 </p>
               </div>
             </button>

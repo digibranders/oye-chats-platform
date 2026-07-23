@@ -89,7 +89,7 @@ export function TransferDialog({
       open
       onClose={onClose}
       title="Transfer conversation"
-      description={`Hand ${visitorName} to a teammate or department.`}
+      description={`Hand ${visitorName} to an operator or department.`}
       size="sm"
       footer={
         <div className="flex items-center justify-end gap-2">

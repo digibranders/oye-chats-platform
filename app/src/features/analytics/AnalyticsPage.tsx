@@ -99,7 +99,7 @@ function deriveInsight(
   if (leads.sql > 0) {
     return {
       tone: 'accent',
-      title: `${leads.sql.toLocaleString()} sales-qualified ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
+      title: `${leads.sql.toLocaleString()} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
       body: 'Your agents are turning conversations into qualified pipeline. Review them in Leads to follow up.',
     };
   }
@@ -417,9 +417,9 @@ export function AnalyticsPage(): ReactElement {
             >
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                 <MetricCard label="Total leads" value={data.leads.total.toLocaleString()} icon={Users} />
-                <MetricCard label="Marketing-qualified" value={data.leads.mql.toLocaleString()} icon={Sparkles} />
-                <MetricCard label="Sales-accepted" value={data.leads.sal.toLocaleString()} icon={Activity} />
-                <MetricCard label="Sales-qualified" value={data.leads.sql.toLocaleString()} icon={Zap} />
+                <MetricCard label="Warm lead" value={data.leads.mql.toLocaleString()} icon={Sparkles} />
+                <MetricCard label="Strong interest" value={data.leads.sal.toLocaleString()} icon={Activity} />
+                <MetricCard label="Ready to buy" value={data.leads.sql.toLocaleString()} icon={Zap} />
               </div>
               <Card>
                 <CardHeader>

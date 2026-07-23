@@ -191,15 +191,15 @@ export function KnowledgePage(): ReactElement {
           detail?.feature === 'delta_recrawl'
         ) {
           openUpgradeModal({
-            title: 'Updated-pages-only re-crawl',
+            title: 'Updated-pages-only re-train',
             description:
-              'Re-crawling only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
+              'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
           });
           return;
         }
         if (apiErr.status === 429) {
           setActionError(
-            'Too many scan requests — please wait a few minutes before scanning again.',
+            'Too many training requests — please wait a few minutes before training again.',
           );
           return;
         }
@@ -289,7 +289,7 @@ export function KnowledgePage(): ReactElement {
       closeRecrawlModal();
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : "We couldn't start the re-crawl. Please try again.",
+        err instanceof Error ? err.message : "We couldn't start the re-train. Please try again.",
       );
     } finally {
       setRecrawlStarting(false);
@@ -300,7 +300,7 @@ export function KnowledgePage(): ReactElement {
     closeRecrawlModal();
     openUpgradeModal({
       title: 'Not enough credits',
-      description: 'Upgrade your plan or buy a top-up to run this full re-crawl.',
+      description: 'Upgrade your plan or buy a top-up to run this full re-train.',
     });
   }, [closeRecrawlModal, openUpgradeModal]);
 
@@ -460,9 +460,9 @@ export function KnowledgePage(): ReactElement {
                     onDeltaRecrawl={() => void requestRecrawl(row.name, 'delta')}
                     onUpgrade={() =>
                       openUpgradeModal({
-                        title: 'Updated-pages-only re-crawl',
+                        title: 'Updated-pages-only re-train',
                         description:
-                          'Re-crawling only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
+                          'Re-training only the pages that changed is available on the Standard plan. Upgrade to unlock it.',
                       })
                     }
                   />
@@ -619,9 +619,9 @@ export function KnowledgePage(): ReactElement {
             reloadToken={recrawlReloadToken}
             onUpgrade={() =>
               openUpgradeModal({
-                title: 'Weekly auto-recrawl',
+                title: 'Weekly auto-retrain',
                 description:
-                  'Automatically refresh your crawled websites every week on the Standard plan. Upgrade to enable it.',
+                  'Automatically refresh your trained websites every week on the Standard plan. Upgrade to enable it.',
               })
             }
           />

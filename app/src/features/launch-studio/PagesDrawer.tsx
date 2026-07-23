@@ -45,7 +45,7 @@ export function PagesDrawer({ source, pages, onClose }: PagesDrawerProps) {
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold text-[var(--ds-text)]">{source}</p>
               <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                {pages.length} page{pages.length === 1 ? '' : 's'} crawled
+                {pages.length} page{pages.length === 1 ? '' : 's'} trained
               </p>
             </div>
           </div>

@@ -158,7 +158,7 @@ export function AddKnowledgePanel({
       await startCrawl(opts);
     } catch (err) {
       setWebsiteError(
-        err instanceof Error ? err.message : "We couldn't start the crawl. Please try again.",
+        err instanceof Error ? err.message : "We couldn't start training. Please try again.",
       );
     }
   }
@@ -170,7 +170,7 @@ export function AddKnowledgePanel({
       await cancelCrawl();
     } catch (err) {
       setCancelError(
-        err instanceof Error ? err.message : "We couldn't stop the crawl. Please try again.",
+        err instanceof Error ? err.message : "We couldn't stop training. Please try again.",
       );
     }
   }
@@ -245,12 +245,12 @@ export function AddKnowledgePanel({
             <LockedAddCard
               icon={Globe}
               title="Page limit reached"
-              description="You've used all the website pages included on your plan. Upgrade to crawl more pages."
+              description="You've used all the website pages included on your plan. Upgrade to train more pages."
               onUpgrade={() =>
                 openUpgradeModal({
                   title: 'Page limit reached',
                   description:
-                    "You've used all the website pages included on your plan. Upgrade to crawl more pages.",
+                    "You've used all the website pages included on your plan. Upgrade to train more pages.",
                 })
               }
             />
@@ -380,14 +380,14 @@ export function AddKnowledgePanel({
                 {cancelConfirm ? (
                   <div
                     role="group"
-                    aria-label="Confirm stopping the crawl"
+                    aria-label="Confirm stopping training"
                     className="space-y-3 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-3"
                   >
                     <div className="text-[13px] text-[var(--ds-text)]">
-                      <p className="font-medium">Stop this crawl?</p>
+                      <p className="font-medium">Stop training?</p>
                       <p className="mt-0.5 text-[var(--ds-text-muted)]">
                         Pages already discovered are discarded, and you won&apos;t be charged for a
-                        crawl that didn&apos;t finish.
+                        training run that didn&apos;t finish.
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -397,10 +397,10 @@ export function AddKnowledgePanel({
                         onClick={() => void handleCancel()}
                         disabled={crawl.status === 'cancelling' || crawl.cancelInFlight}
                       >
-                        <StopCircle size={14} aria-hidden="true" /> Stop crawl
+                        <StopCircle size={14} aria-hidden="true" /> Stop training
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setCancelConfirm(false)}>
-                        Keep crawling
+                        Keep training
                       </Button>
                     </div>
                   </div>
@@ -417,7 +417,7 @@ export function AddKnowledgePanel({
                       </>
                     ) : (
                       <>
-                        <StopCircle size={14} aria-hidden="true" /> Cancel crawl
+                        <StopCircle size={14} aria-hidden="true" /> Cancel training
                       </>
                     )}
                   </Button>
@@ -635,7 +635,7 @@ function CrawlProgress({
           </span>
         ) : null}
       </div>
-      <Progress value={percent} label="Crawl progress" />
+      <Progress value={percent} label="Training progress" />
       {pages.length > 0 && (
         <p className="mt-3 truncate text-[12px] text-[var(--ds-text-subtle)]">
           Latest: {pages[pages.length - 1]}

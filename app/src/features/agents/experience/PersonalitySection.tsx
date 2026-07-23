@@ -250,8 +250,8 @@ export function PersonalitySection({
               disabled={detectDisabled}
               title={
                 canDetect
-                  ? 'Infer a brand tone from your crawled website'
-                  : 'Crawl your website first to detect a tone'
+                  ? 'Infer a brand tone from your trained website'
+                  : 'Train on your website first to detect a tone'
               }
             >
               {detecting ? (

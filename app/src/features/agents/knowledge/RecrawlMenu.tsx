@@ -51,7 +51,7 @@ export function RecrawlMenu({
             onClick();
           }}
           disabled={disabled || loading}
-          aria-label="Re-crawl options"
+          aria-label="Re-train options"
           className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50"
           {...aria}
         >
@@ -78,9 +78,9 @@ export function RecrawlMenu({
               <RotateCw size={15} aria-hidden="true" />
             </span>
             <span className="min-w-0">
-              <span className="block text-[13px] font-medium text-[var(--ds-text)]">Full re-crawl</span>
+              <span className="block text-[13px] font-medium text-[var(--ds-text)]">Full re-train</span>
               <span className="mt-0.5 block text-[11px] text-[var(--ds-text-muted)]">
-                Re-scrape every page. Charged for all pages.
+                Re-train every page. Charged for all pages.
               </span>
             </span>
           </button>
@@ -134,8 +134,8 @@ export function RecrawlMenu({
               </span>
               <span className="mt-0.5 block text-[11px] text-[var(--ds-text-muted)]">
                 {canUseDelta
-                  ? 'Only re-scrape pages whose content changed since the last crawl.'
-                  : 'Upgrade to Standard to re-crawl only pages that changed.'}
+                  ? 'Only re-train pages whose content changed since the last training run.'
+                  : 'Upgrade to Standard to re-train only pages that changed.'}
               </span>
             </span>
           </button>

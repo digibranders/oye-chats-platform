@@ -166,7 +166,7 @@ export function ConnectStep(props: StepProps) {
           starting
             ? 'Starting…'
             : pages > 0
-              ? `Crawl ${(chosen || pages).toLocaleString()} page${(chosen || pages) === 1 ? '' : 's'}`
+              ? `Train ${(chosen || pages).toLocaleString()} page${(chosen || pages) === 1 ? '' : 's'}`
               : 'Start training'
         }
       >
@@ -180,7 +180,7 @@ export function ConnectStep(props: StepProps) {
                 <p className="text-[15px] font-semibold text-[var(--ds-text)]">
                   {pages > 0
                     ? `${pages.toLocaleString()}${estimate.capped ? '+' : ''} page${pages === 1 ? '' : 's'} found`
-                    : 'Ready to crawl your site'}
+                    : 'Ready to train your AI'}
                 </p>
                 <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
                   {pages > 0
@@ -194,7 +194,7 @@ export function ConnectStep(props: StepProps) {
               <div className="mt-4 rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
                 <p className="text-[12px] text-[var(--ds-text)]">
                   This site needs {(estimate.credits_required_full ?? 0).toLocaleString()} credits, but
-                  you have {(estimate.balance ?? 0).toLocaleString()}. Choose how many pages to crawl:
+                  you have {(estimate.balance ?? 0).toLocaleString()}. Choose how many pages to train:
                 </p>
                 <div className="mt-3 flex items-center gap-3">
                   <input
@@ -204,7 +204,7 @@ export function ConnectStep(props: StepProps) {
                     value={crawlCount}
                     onChange={(e) => setCrawlCount(Number(e.target.value))}
                     className="flex-1 accent-[var(--ds-accent)]"
-                    aria-label="Pages to crawl"
+                    aria-label="Pages to train"
                   />
                   <span className="w-24 text-right text-[12px] font-medium text-[var(--ds-text)]">
                     {crawlCount} × {costPerPage} = {(crawlCount * costPerPage).toLocaleString()}
@@ -229,7 +229,7 @@ export function ConnectStep(props: StepProps) {
             {noBalance && (
               <div className="mt-4 rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
                 <p className="text-[12px] text-[var(--ds-text)]">
-                  You need credits to crawl this site. Top up to continue.
+                  You need credits to train on this site. Top up to continue.
                 </p>
                 <Link to="/workspace/billing" className="mt-2 inline-block">
                   <Button variant="outline" size="sm">

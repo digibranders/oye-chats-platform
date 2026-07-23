@@ -48,7 +48,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         if (!cancelled && activeBotRef.current === botId) setStatus(data);
       } catch (err) {
         if (!cancelled && activeBotRef.current === botId) {
-          setLoadError(err instanceof Error ? err.message : "We couldn't load auto-recrawl.");
+          setLoadError(err instanceof Error ? err.message : "We couldn't load auto-retrain.");
         }
       }
     };
@@ -76,11 +76,11 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         setStatus(updated);
         setFlash(
           next
-            ? 'Auto-recrawl on. We’ll check for changes every week.'
-            : 'Auto-recrawl off. Turn it back on any time to resume the weekly refresh.',
+            ? 'Auto-retrain on. We’ll check for changes every week.'
+            : 'Auto-retrain off. Turn it back on any time to resume the weekly refresh.',
         );
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : "We couldn't update auto-recrawl.");
+        setActionError(err instanceof Error ? err.message : "We couldn't update auto-retrain.");
       } finally {
         setSaving(false);
       }
@@ -139,9 +139,9 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
               <RefreshCw size={18} aria-hidden="true" />
             </span>
             <div>
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Auto-recrawl</h3>
+              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Auto-retrain</h3>
               <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                Refresh every crawled website once a week. We only re-learn pages whose content
+                Refresh every trained website once a week. We only re-learn pages whose content
                 actually changed.
               </p>
             </div>
@@ -152,8 +152,8 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
             disabled={saving}
             label={
               locked
-                ? 'Upgrade to Standard to enable weekly auto-recrawl'
-                : 'Toggle weekly auto-recrawl'
+                ? 'Upgrade to Standard to enable weekly auto-retrain'
+                : 'Toggle weekly auto-retrain'
             }
             onToggle={handleToggle}
           />
@@ -162,7 +162,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
         {locked && (
           <div className="flex items-center gap-2 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-2.5 text-[12px] text-[var(--ds-warning)]">
             <Lock size={14} aria-hidden="true" />
-            Weekly auto-recrawl is a Standard plan feature.
+            Weekly auto-retrain is a Standard plan feature.
           </div>
         )}
 
@@ -188,18 +188,18 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
 
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
           {data.sourcesCount === 0
-            ? 'No crawled websites yet. Add a website above to build the recrawl set.'
-            : `${data.sourcesCount} website${data.sourcesCount === 1 ? '' : 's'} in the recrawl set.`}
+            ? 'No trained websites yet. Add a website above to build the retrain set.'
+            : `${data.sourcesCount} website${data.sourcesCount === 1 ? '' : 's'} in the retrain set.`}
         </p>
 
         {confirmingDisable && (
           <div
             role="group"
-            aria-label="Confirm turning off auto-recrawl"
+            aria-label="Confirm turning off auto-retrain"
             className="space-y-3 rounded-lg border border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] px-4 py-3"
           >
             <div className="text-[13px] text-[var(--ds-text)]">
-              <p className="font-medium">Turn off auto-recrawl?</p>
+              <p className="font-medium">Turn off auto-retrain?</p>
               <p className="mt-0.5 text-[var(--ds-text-muted)]">
                 Your agent stops refreshing crawled pages automatically. Turning it back on later
                 starts a fresh 7-day countdown.
@@ -240,7 +240,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
           <div className="space-y-2 border-t border-[var(--ds-border)] pt-4">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
               <History size={13} aria-hidden="true" />
-              Recent re-crawls
+              Recent retrains
             </div>
             <ul className="space-y-1">
               {data.history.map((entry, i) => (
