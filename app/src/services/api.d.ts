@@ -90,12 +90,20 @@ export function getCurrentUser(): Promise<CurrentUser>;
 export function getEntitlements(): Promise<Entitlements>;
 export function getMyWorkspaces(): Promise<{ workspaces: Workspace[] }>;
 /**
- * Update the authenticated client's display name. Email changes go through the
- * separate password-confirmed flow (requestClientEmailChange / confirm…).
+ * Update the authenticated client's display name, company name, or website.
  */
 export function updateClientProfile(patch: {
   name?: string;
-}): Promise<{ id: number; name: string; email: string; pending_email: string | null }>;
+  company_name?: string;
+  website?: string;
+}): Promise<{
+  id: number;
+  name: string;
+  email: string;
+  company_name?: string | null;
+  website?: string | null;
+  pending_email: string | null;
+}>;
 
 // ── Dashboard / analytics ────────────────────────────────────────────────────
 export function getDashboardStats(botId?: number, days?: number | null): Promise<Record<string, unknown>>;

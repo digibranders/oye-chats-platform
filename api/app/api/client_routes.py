@@ -287,6 +287,8 @@ async def upload_logo_endpoint(
 
 class ClientProfilePatch(BaseModel):
     name: str | None = None
+    company_name: str | None = None
+    website: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -298,13 +300,21 @@ class ClientProfilePatch(BaseModel):
             raise ValueError("Name cannot be empty.")
         return v
 
+    @field_validator("company_name", "website")
+    @classmethod
+    def clean_optional_str(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        return v or None
+
 
 @router.patch("/profile")
 def update_client_profile(
     body: ClientProfilePatch,
     client: Client = Depends(get_current_client_strict),
 ):
-    """Update the authenticated client's display name.
+    """Update the authenticated client's display name, company name, and website.
 
     Email changes go through /client/change-email/* instead — that flow
     requires the current password and confirms ownership of the new inbox
@@ -315,12 +325,25 @@ def update_client_profile(
         if not row:
             raise HTTPException(status_code=404, detail="Account not found.")
 
-        if body.name:
+        fields_set = body.dict(exclude_unset=True)
+
+        if "name" in fields_set and body.name:
             row.name = body.name
+        if "company_name" in fields_set:
+            row.company_name = body.company_name
+        if "website" in fields_set:
+            row.website = body.website
 
         session.commit()
         session.refresh(row)
-        return {"id": row.id, "name": row.name, "email": row.email, "pending_email": row.pending_email}
+        return {
+            "id": row.id,
+            "name": row.name,
+            "email": row.email,
+            "company_name": row.company_name,
+            "website": row.website,
+            "pending_email": row.pending_email,
+        }
 
 
 class ChangePasswordRequest(BaseModel):

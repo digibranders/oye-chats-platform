@@ -42,6 +42,8 @@ export interface Bot {
   indexed_chunk_count?: number;
   created_at?: string | null;
   brand_tone?: string | null;
+  business_hours?: Record<string, unknown> | null;
+  show_branding?: boolean;
 }
 
 export interface CurrentUser {
@@ -50,8 +52,8 @@ export interface CurrentUser {
   email?: string;
   /** Set only for clients with an unconfirmed change-email request in flight; null/undefined otherwise. Always unset for operators. */
   pending_email?: string | null;
-  company_name?: string;
-  website?: string;
+  company_name?: string | null;
+  website?: string | null;
   bot_count?: number;
   is_verified?: boolean;
   onboarding_complete?: boolean;
