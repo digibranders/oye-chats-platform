@@ -12,13 +12,6 @@ import { AgentCard as AgentCardBase } from '../../design-system';
 import { type Bot } from '../../types/domain';
 import { getAgentMetrics, getAgentStatus } from './agent-status';
 
-/**
- * The reused legacy Bot row carries a `created_at` the shared `Bot` type doesn't
- * yet declare. Read it through a narrow local extension so we stay type-safe
- * without an `any` or a change to the shared domain types.
- */
-type BotWithCreatedAt = Bot & { created_at?: string | null };
-
 /** Mask a bot key to first-6 + last-4, e.g. `bot-6a••••29b9`. */
 function maskBotKey(botKey: string): string {
   if (botKey.length <= 10) return botKey;
@@ -44,7 +37,7 @@ export interface AgentCardProps {
 export function AgentCard({ bot }: AgentCardProps): ReactElement {
   const { status } = getAgentStatus(bot);
   const maskedKey = bot.bot_key ? maskBotKey(bot.bot_key) : null;
-  const created = formatCreatedDate((bot as BotWithCreatedAt).created_at);
+  const created = formatCreatedDate(bot.created_at);
 
   return (
     <div className="space-y-1.5">

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { oyechatsPwaPlugin } from './plugins/vite-plugin-oyechats-pwa.js'
@@ -10,6 +10,11 @@ export default defineConfig({
     tailwindcss(),
     oyechatsPwaPlugin(),
   ],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+  },
   build: {
     rolldownOptions: {
       output: {

@@ -40,6 +40,8 @@ export interface Bot {
   crawl_completed_at?: string | null;
   last_crawl_status?: string | null;
   indexed_chunk_count?: number;
+  created_at?: string | null;
+  brand_tone?: string | null;
 }
 
 export interface CurrentUser {
