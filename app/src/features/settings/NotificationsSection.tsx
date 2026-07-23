@@ -10,7 +10,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Button, Card, SectionHeader, StatusBadge } from '../../design-system';
-import { subscribePush, unsubscribePush } from '../../services/api';
+import { getVapidPublicKey, subscribePush, unsubscribePush } from '../../services/api';
 
 // ── Capability detection ─────────────────────────────────────────────────────
 
@@ -51,7 +51,36 @@ type PushPhase =
   | { readonly status: 'subscribed' }
   | { readonly status: 'default' }
   | { readonly status: 'incomplete' }
+  | { readonly status: 'disabled' }
   | { readonly status: 'error'; readonly message: string };
+
+/** Decode a URL-safe base64 VAPID key into the byte array `pushManager.subscribe` wants.
+ *  Backed by an explicit ArrayBuffer so the result is a `BufferSource` (not the
+ *  wider `Uint8Array<ArrayBufferLike>` TS infers from `new Uint8Array(length)`). */
+function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const normalized = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(normalized);
+  const output = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i += 1) output[i] = raw.charCodeAt(i);
+  return output;
+}
+
+/**
+ * Mint a fresh push subscription using the server's VAPID key and persist it.
+ * Returns `disabled` when the server has push turned off (no key), so the UI
+ * stays honest rather than looping on a subscribe that can't succeed.
+ */
+async function mintSubscription(registration: ServiceWorkerRegistration): Promise<PushPhase> {
+  const { public_key, enabled } = await getVapidPublicKey();
+  if (!enabled || !public_key) return { status: 'disabled' };
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(public_key),
+  });
+  await subscribePush(subscription);
+  return { status: 'subscribed' };
+}
 
 /** Pure, synchronous read of the starting phase — no side effects, so it's a safe lazy initializer. */
 function initialPushPhase(): PushPhase {
@@ -100,9 +129,15 @@ function NotificationsCard(): ReactElement {
           setPhase({ status: 'subscribed' });
           return;
         }
-        // No subscription on the device. We can't mint one without the VAPID
-        // key, so reflect permission truthfully instead of a fake toggle.
-        setPhase({ status: Notification.permission === 'granted' ? 'incomplete' : 'default' });
+        // No subscription on the device yet. If permission is already granted,
+        // mint one with the server VAPID key; otherwise wait for the user to
+        // enable. `mintSubscription` returns `disabled` when server push is off.
+        if (Notification.permission === 'granted') {
+          const next = await mintSubscription(registration);
+          if (active) setPhase(next);
+        } else {
+          setPhase({ status: 'default' });
+        }
       } catch (error) {
         if (!active) return;
         setPhase({
@@ -136,8 +171,8 @@ function NotificationsCard(): ReactElement {
         // Dismissed — permission stays 'default'; nothing changed.
         return;
       }
-      // Granted. We can only complete a subscription if the browser already
-      // holds one (we have no VAPID key to create a fresh one).
+      // Granted — reuse an existing device subscription, else mint one with the
+      // server VAPID key.
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
       if (existing) {
@@ -145,7 +180,7 @@ function NotificationsCard(): ReactElement {
         setPhase({ status: 'subscribed' });
         return;
       }
-      setPhase({ status: 'incomplete' });
+      setPhase(await mintSubscription(registration));
     } catch (error) {
       setActionError(toMessage(error, 'Couldn’t enable notifications. Please try again.'));
     } finally {
@@ -308,6 +343,24 @@ function NotificationsCard(): ReactElement {
                   But web push isn’t fully set up for this dashboard yet — delivering alerts needs the
                   push service key enabled on the server, which isn’t available to the app here. There’s
                   nothing more to do on this device until that’s switched on.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {phase.status === 'disabled' && (
+            <div className="flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3">
+              <Info
+                size={16}
+                aria-hidden="true"
+                className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]"
+              />
+              <div className="text-[13px] text-[var(--ds-text-muted)]">
+                <p className="font-medium text-[var(--ds-text)]">Push notifications aren’t enabled yet</p>
+                <p className="mt-1 leading-relaxed">
+                  Your browser is ready, but web push is currently turned off on the server, so alerts can’t
+                  be delivered. It’ll start working here automatically once it’s switched on — nothing more to
+                  do on this device.
                 </p>
               </div>
             </div>

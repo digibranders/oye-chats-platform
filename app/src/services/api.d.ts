@@ -377,6 +377,8 @@ export function diffRecrawl(
 export function getRecrawlStatus(botId: number): Promise<Record<string, unknown>>;
 
 // ── Notifications: web push (settings) ───────────────────────────────────────
+/** GET /operators/push/vapid-public-key — server VAPID key + whether push is enabled. */
+export function getVapidPublicKey(): Promise<{ public_key: string; enabled: boolean }>;
 /** POST /operators/push/subscribe — persist a PushSubscription for this operator. */
 export function subscribePush(subscription: unknown): Promise<Record<string, unknown>>;
 /** DELETE /operators/push/subscribe — remove a stored push subscription. */
