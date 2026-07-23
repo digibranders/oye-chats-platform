@@ -15,6 +15,7 @@ import {
   Plus,
   ReceiptText,
   RefreshCw,
+  Sparkles,
   Users,
   Wallet,
   X,
@@ -83,6 +84,7 @@ export function BillingPage(): ReactElement {
     delta: 1,
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [trialNudgeDismissed, setTrialNudgeDismissed] = useState(false);
 
   // Every successful mutation lands here: surface the message, refetch billing.
   const handleSuccess = (message: string): void => {
@@ -217,6 +219,17 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
+          {/* Active-trial conversion nudge — a growth prompt to authorise a
+              payment method before the trial ends, so the bot/credits/history
+              survive. Shown across all tabs during the trial window. */}
+          {subscription.status === 'trialing' && subscription.trialEnd && !trialNudgeDismissed && (
+            <TrialNudgeBanner
+              trialEnd={subscription.trialEnd}
+              onPickPlan={() => setActiveTab('plans')}
+              onDismiss={() => setTrialNudgeDismissed(true)}
+            />
+          )}
+
           {/* Data-retention purge warning — trial/subscription lapsed and the
               account's data is scheduled for deletion. Shown across all tabs
               because it's the most urgent thing on the page. */}
@@ -891,6 +904,53 @@ function CancellationBanner({
       busy={busy}
       error={error}
     />
+  );
+}
+
+/**
+ * TrialNudgeBanner — an active free trial is running. A calm, accent-toned
+ * growth prompt to authorise a payment method (via Pick a plan) before the
+ * trial ends so the bot, credits, and chat history are kept. Dismissible for
+ * the session; reappears on reload while the trial is still active.
+ */
+function TrialNudgeBanner({
+  trialEnd,
+  onPickPlan,
+  onDismiss,
+}: {
+  trialEnd: string;
+  onPickPlan: () => void;
+  onDismiss: () => void;
+}): ReactElement {
+  return (
+    <div
+      role="status"
+      className="mb-6 flex flex-col gap-3 rounded-xl border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)] sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex items-start gap-3">
+        <Sparkles size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-accent-text)]" />
+        <p>
+          <span className="font-semibold">Your free trial ends {formatDate(trialEnd)}.</span>{' '}
+          <span className="text-[var(--ds-text-muted)]">
+            Authorise a payment method to keep your bot, credits, and chat history when it ends — you won’t be
+            charged until the trial is over.
+          </span>
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+        <Button size="sm" onClick={onPickPlan}>
+          Pick a plan
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Dismiss trial reminder"
+          onClick={onDismiss}
+        >
+          <X size={15} aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
   );
 }
 

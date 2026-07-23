@@ -1,7 +1,7 @@
 import { type ReactElement, useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Check, ExternalLink, Info, Loader2, Sparkles } from 'lucide-react';
-import { Button, Modal, Skeleton, cn } from '../../../design-system';
-import { getCheckoutQuote } from '../../../services/api';
+import { AlertCircle, ArrowRight, Check, ExternalLink, Gift, Info, Loader2, Sparkles } from 'lucide-react';
+import { Button, Input, Modal, Skeleton, cn } from '../../../design-system';
+import { applyReferralCode, getCheckoutQuote, getReferralStatus } from '../../../services/api';
 import { formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
@@ -38,6 +38,15 @@ interface QuoteState {
   /** Non-null only when checkout is blocked (e.g. international USD-pending). */
   blockedReason: string | null;
   contactSales: string | null;
+}
+
+interface ReferralState {
+  input: string;
+  /** idle (empty/typing) · applying · applied (attached) · invalid (rejected). */
+  status: 'idle' | 'applying' | 'applied' | 'invalid';
+  message: string;
+  code: string | null;
+  discountPct: number;
 }
 
 function resolveIntent(
@@ -117,9 +126,81 @@ export function PlanConfirmModal({
     contactSales: null,
   });
 
-  // Fetch the honest quote whenever the modal opens for a paid plan. The quote
-  // is informational for price + gating (intl USD pending); a failure degrades
-  // to the local PlanView price so the confirm still works.
+  // Referral / coupon state. Applying a code attaches standing attribution to
+  // the account server-side, so the checkout quote below picks up the discount —
+  // we re-fetch it after a successful apply via `quoteToken`.
+  const [referral, setReferral] = useState<ReferralState>({
+    input: '',
+    status: 'idle',
+    message: '',
+    code: null,
+    discountPct: 0,
+  });
+  const [quoteToken, setQuoteToken] = useState(0);
+
+  // Seed any standing referral attribution when the modal opens (an account can
+  // already carry a code from signup — its discount applies at checkout even if
+  // the field looks empty). Reset per open so a prior code can't flash.
+  useEffect(() => {
+    if (!open || !plan?.isPaid) return undefined;
+    let cancelled = false;
+    setReferral({ input: '', status: 'idle', message: '', code: null, discountPct: 0 });
+    void (async () => {
+      try {
+        const status = await getReferralStatus();
+        if (!cancelled && status?.attributed && status.code) {
+          setReferral({
+            input: status.code,
+            status: 'applied',
+            message: '',
+            code: status.code,
+            discountPct: Number(status.discount_pct) || 0,
+          });
+        }
+      } catch {
+        /* no standing attribution — leave idle */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, plan?.isPaid]);
+
+  async function handleApplyReferral(): Promise<void> {
+    const code = referral.input.trim().toUpperCase();
+    if (!code || referral.status === 'applying') return;
+    setReferral((prev) => ({ ...prev, status: 'applying', message: '' }));
+    try {
+      const result = await applyReferralCode(code);
+      if (result.code) {
+        setReferral({
+          input: result.code,
+          status: 'applied',
+          message: '',
+          code: result.code,
+          discountPct: Number(result.discount_pct) || 0,
+        });
+        // Re-fetch the quote so the discounted price shows immediately.
+        setQuoteToken((token) => token + 1);
+      } else {
+        setReferral((prev) => ({
+          ...prev,
+          status: 'invalid',
+          message: result.message || 'That code isn’t valid.',
+        }));
+      }
+    } catch (error) {
+      setReferral((prev) => ({
+        ...prev,
+        status: 'invalid',
+        message: error instanceof Error ? error.message : 'Couldn’t apply that code.',
+      }));
+    }
+  }
+
+  // Fetch the honest quote whenever the modal opens for a paid plan (and after a
+  // referral is applied). The quote is informational for price + gating (intl
+  // USD pending); a failure degrades to the local PlanView price.
   useEffect(() => {
     if (!open || !plan) return undefined;
     reset();
@@ -156,7 +237,7 @@ export function PlanConfirmModal({
     return () => {
       cancelled = true;
     };
-  }, [open, plan, cycle, reset]);
+  }, [open, plan, cycle, reset, quoteToken]);
 
   if (!open || !plan) return null;
 
@@ -243,6 +324,70 @@ export function PlanConfirmModal({
             <PlanHighlights plan={plan} />
           </div>
         </div>
+
+        {/* Referral / coupon code — only where a discount can apply (paid, not a
+            downgrade, not blocked). Applying attaches the code server-side; the
+            quote above re-fetches to show the discounted price. */}
+        {plan.isPaid && !blocked && intent !== 'downgrade' && intent !== 'downgrade_free' && (
+          <div className="rounded-xl border border-[var(--ds-border)] p-4">
+            {referral.status === 'applied' ? (
+              <div className="flex items-center gap-2 text-[13px]">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-success-soft)] text-[var(--ds-success)]">
+                  <Check size={13} aria-hidden="true" />
+                </span>
+                <span className="text-[var(--ds-text)]">
+                  Code <span className="font-semibold">{referral.code}</span> applied
+                  {referral.discountPct > 0 ? ` — ${referral.discountPct}% off` : ''}.
+                </span>
+              </div>
+            ) : (
+              <>
+                <label
+                  htmlFor="referral-code"
+                  className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-muted)]"
+                >
+                  <Gift size={13} aria-hidden="true" />
+                  Have a referral code?
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="referral-code"
+                    value={referral.input}
+                    onChange={(e) =>
+                      setReferral((prev) => ({
+                        ...prev,
+                        input: e.target.value,
+                        status: prev.status === 'invalid' ? 'idle' : prev.status,
+                        message: '',
+                      }))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleApplyReferral();
+                      }
+                    }}
+                    placeholder="e.g. FRIEND20"
+                    className="font-mono uppercase"
+                    aria-invalid={referral.status === 'invalid' ? true : undefined}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleApplyReferral()}
+                    disabled={referral.status === 'applying' || !referral.input.trim()}
+                  >
+                    {referral.status === 'applying' ? 'Applying…' : 'Apply'}
+                  </Button>
+                </div>
+                {referral.status === 'invalid' && referral.message && (
+                  <p role="alert" className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
+                    {referral.message}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {/* What will happen */}
         {blocked ? (
