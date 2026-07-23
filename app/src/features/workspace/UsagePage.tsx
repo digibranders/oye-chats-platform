@@ -144,6 +144,83 @@ function ActivityCard({ label, icon: Icon, eventCount, creditsUsed }: ActivityCa
   );
 }
 
+// ── How credits work (per-action cost reference) ─────────────────────────────
+
+interface CreditCostRow {
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly detail: string;
+  readonly cost: number;
+}
+
+/**
+ * Per-action credit costs. Ported as static values from the legacy Billing.jsx
+ * `COST_ROWS` defaults (`ai_chat: 1, document_upload: 3, url_scan: 5` —
+ * Billing.jsx:408): there is no typed pricing endpoint in `services/api.d.ts`
+ * to read these from, and the credit-balance payload this page consumes doesn't
+ * carry the per-action costs. Super-admins can override them via PricingConfig,
+ * but these match the shipped backend defaults. Keep in sync if the defaults
+ * change. `email_send` is intentionally omitted — the legacy COST_ROWS kept it
+ * commented out as a not-yet-surfaced activity.
+ */
+const CREDIT_COSTS: readonly CreditCostRow[] = [
+  {
+    icon: MessageSquare,
+    label: 'AI chat reply',
+    detail: 'Each completed answer your AI streams to a visitor.',
+    cost: 1,
+  },
+  {
+    icon: FileText,
+    label: 'Document upload',
+    detail: 'Charged per file added to your knowledge base. Refunded if a file fails to save.',
+    cost: 3,
+  },
+  {
+    icon: Globe,
+    label: 'URL crawl',
+    detail: 'Charged per page actually ingested into your knowledge base.',
+    cost: 5,
+  },
+];
+
+/**
+ * CreditCostReference — a compact "what each action costs" card. Lives on the
+ * Usage page because it's about consumption, giving the metered activity tiles
+ * above their price context.
+ */
+function CreditCostReference(): ReactElement {
+  return (
+    <section aria-label="How credits work" className="space-y-4">
+      <SectionHeader
+        title="How credits work"
+        description="What each action costs from your credit balance."
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {CREDIT_COSTS.map(({ icon: Icon, label, detail, cost }) => (
+          <div
+            key={label}
+            className="flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+              <Icon size={16} aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-[13px] font-semibold text-[var(--ds-text)]">{label}</p>
+                <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
+                  {cost === 1 ? '1 credit' : `${cost} credits`}
+                </span>
+              </div>
+              <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── Consumption history (grouped by day) ─────────────────────────────────────
 
 interface DayGroup {
@@ -319,6 +396,9 @@ export function UsagePage(): ReactElement {
             <CreditBreakdown balance={phase.balance} />
             {phase.trend.status === 'ready' && <ConsumptionTrend points={phase.trend.points} />}
           </div>
+
+          {/* Per-action credit costs — price context for the metered tiles above. */}
+          <CreditCostReference />
 
           {/* Plan limits — entitlement-driven quota meters (grafted from design). */}
           <PlanLimitsSection />

@@ -1,4 +1,4 @@
-import { type ReactElement, useMemo, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FileText,
   Info,
+  Loader2,
   Minus,
   Plus,
   ReceiptText,
@@ -30,7 +31,7 @@ import {
   cn,
 } from '../../design-system';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { cancelScheduledChange, resumeSubscription } from '../../services/api';
+import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../services/api';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
@@ -40,6 +41,7 @@ import { PlansPanel } from './billing/PlansPanel';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
 import {
+  buildInvoice,
   formatDate,
   formatMoneyMinor,
   INVOICE_KIND_LABEL,
@@ -151,11 +153,15 @@ export function BillingPage(): ReactElement {
   // subscription's default provider value.
   const provider = plan?.isPaid ? subscription?.paymentProvider ?? null : null;
   const paymentLabel = provider ? capitalize(provider) : 'None';
+  // Honest copy: OyeChats never stores or manages the card itself — Razorpay
+  // hosts every card/UPI detail at checkout (there is no in-app "update card"
+  // endpoint), so both the active and empty states point the customer there
+  // rather than implying a management surface we don't have.
   const paymentSub = provider
     ? provider.toLowerCase() === 'razorpay'
-      ? 'UPI, card, or NetBanking via Razorpay.'
+      ? 'UPI, card, or NetBanking — managed securely by Razorpay at checkout.'
       : 'Billed manually by our team.'
-    : 'Added when you start a paid plan.';
+    : 'Added securely via Razorpay when you start a paid plan.';
 
   return (
     <PageContainer
@@ -445,6 +451,28 @@ function SeatManager({
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
 
+// A freshly-issued invoice's `pdf_url` is null until the ARQ worker renders it
+// (seconds after payment; 5-min sweep as a backstop — see root CLAUDE.md and
+// the legacy InvoicesCard). We poll `getInvoices` in place so the Download link
+// appears without a manual refresh, and — crucially — WITHOUT the page-blanking
+// parent reload (which resets billing to a full-page skeleton every tick).
+const INVOICE_POLL_INTERVAL_MS = 5_000;
+const MAX_INVOICE_POLLS = 12; // ≈1 min of polling, then stop (manual Refresh stays)
+const PDF_PENDING_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * A numbered invoice whose PDF is still rendering: it has an invoice number but
+ * no downloadable/viewable link yet, and was issued recently enough that the
+ * worker is plausibly still on it. The recency window stops us from polling
+ * forever on an old invoice that's stuck for some other reason.
+ */
+function isInvoicePreparing(invoice: InvoiceView): boolean {
+  if (!invoice.number || invoice.pdfUrl || invoice.invoiceUrl || !invoice.date) return false;
+  const issuedMs = new Date(invoice.date).getTime();
+  if (Number.isNaN(issuedMs)) return false;
+  return Date.now() - issuedMs < PDF_PENDING_WINDOW_MS;
+}
+
 function InvoicesTab({
   invoices,
   hasError,
@@ -454,6 +482,57 @@ function InvoicesTab({
   hasError: boolean;
   onRetry: () => void;
 }): ReactElement {
+  // Locally-polled overlay over the server-provided invoices. `null` means
+  // "render the parent's list as-is"; a poll swaps in fresh rows so a pending
+  // PDF's Download link can appear without blanking the whole page.
+  const [polled, setPolled] = useState<InvoiceView[] | null>(null);
+  const [pollAttempts, setPollAttempts] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // When the parent refetches billing (new `invoices` reference — e.g. after a
+  // payment), drop our overlay and reset the poll budget so we track the fresh
+  // server data. Adjusting state during render on a prop change is React's
+  // supported pattern and keeps this out of an effect (no set-state-in-effect).
+  const [seenInvoices, setSeenInvoices] = useState(invoices);
+  if (invoices !== seenInvoices) {
+    setSeenInvoices(invoices);
+    setPolled(null);
+    setPollAttempts(0);
+  }
+
+  const rows = polled ?? invoices;
+  const preparingCount = useMemo(() => rows.filter(isInvoicePreparing).length, [rows]);
+
+  // Silent, in-place refetch of just the invoices list — never the parent's
+  // page-blanking reload.
+  const refetchInvoices = useCallback(async (): Promise<void> => {
+    const raw = await getInvoices();
+    const next = (Array.isArray(raw) ? raw : []).map((row, index) => buildInvoice(row, index));
+    setPolled(next);
+  }, []);
+
+  // Auto-poll while any invoice's PDF is still rendering. The timer re-arms via
+  // the `pollAttempts` dependency for a bounded ~5s cadence; the effect stops
+  // the moment nothing is preparing or the budget is spent, and cleanup clears
+  // the pending timer on unmount. setState only ever runs inside async
+  // callbacks here — never synchronously in the effect body.
+  useEffect(() => {
+    if (preparingCount === 0 || pollAttempts >= MAX_INVOICE_POLLS) return undefined;
+    const timer = setTimeout(() => {
+      void refetchInvoices()
+        .catch(() => undefined)
+        .finally(() => setPollAttempts((attempts) => attempts + 1));
+    }, INVOICE_POLL_INTERVAL_MS);
+    return () => clearTimeout(timer);
+  }, [preparingCount, pollAttempts, refetchInvoices]);
+
+  const handleManualRefresh = useCallback((): void => {
+    setRefreshing(true);
+    void refetchInvoices()
+      .catch(() => undefined)
+      .finally(() => setRefreshing(false));
+  }, [refetchInvoices]);
+
   if (hasError) {
     return (
       <EmptyState
@@ -530,11 +609,33 @@ function InvoicesTab({
       <SectionHeader
         title="Invoices & receipts"
         description="Every payment produces a numbered tax document you can download for your records."
+        actions={
+          <Button variant="outline" size="sm" onClick={handleManualRefresh} disabled={refreshing}>
+            <RefreshCw
+              size={15}
+              aria-hidden="true"
+              className={refreshing ? 'animate-spin' : undefined}
+            />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        }
       />
+      {/* Aria-live so the "still preparing" progress is announced as the worker
+          renders the PDF. Kept mounted so screen readers see the region early. */}
+      <div aria-live="polite">
+        {preparingCount > 0 && (
+          <p className="mb-3 flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
+            <Loader2 size={13} aria-hidden="true" className="animate-spin text-[var(--ds-text-subtle)]" />
+            {preparingCount === 1
+              ? 'Preparing your latest invoice for download…'
+              : `Preparing ${preparingCount} invoices for download…`}
+          </p>
+        )}
+      </div>
       <DataTable
         caption="Invoices"
         columns={columns}
-        rows={invoices}
+        rows={rows}
         rowKey={(invoice) => invoice.id}
         empty={
           <EmptyState
