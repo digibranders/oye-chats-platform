@@ -51,6 +51,22 @@ function pricePerKCredits(amount: number, credits: number): string | null {
   return ((amount / credits) * 1000).toFixed(2);
 }
 
+/** The single pack to promote: the first badged one, else the highest-bonus one, else none. */
+function featuredPackIndex(packs: TopupPack[]): number {
+  const badged = packs.findIndex((p) => p.badge);
+  if (badged !== -1) return badged;
+  let best = -1;
+  let bestBonus = 0;
+  packs.forEach((p, i) => {
+    const bonus = p.bonus_pct ?? 0;
+    if (bonus > bestBonus) {
+      bestBonus = bonus;
+      best = i;
+    }
+  });
+  return best;
+}
+
 /**
  * TopupModal — the redesigned one-off credit purchase dialog. Flat-pack only,
  * no referral discount (those track recurring revenue on the plan flow). The
@@ -137,6 +153,8 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
 
   if (!open) return null;
 
+  const featuredIndex = featuredPackIndex(packs);
+
   return (
     <Modal
       open={open}
@@ -172,6 +190,10 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {packs.map((pack, idx) => {
+            // One accent per view: only ONE pack is featured — the first badged
+            // pack, else the highest-bonus pack. Matches the Plans grid rule so
+            // a second badge can't create competing highlights.
+            const isFeatured = idx === featuredIndex;
             const amount = chargeInr(pack);
             // INR buyers see the INR charge; non-INR buyers see the USD display
             // price (the Razorpay rail still charges INR — that gate lives on
@@ -180,7 +202,6 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
             const shownCurrency = isInr
               ? 'INR'
               : (pack.display_currency || pack.currency || 'USD').toUpperCase();
-            const featured = Boolean(pack.badge);
             const submitting = submittingPack === amount;
             const perK = pricePerKCredits(shownAmount, pack.credits);
             return (
@@ -193,8 +214,8 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
                   'relative rounded-2xl border p-5 text-left transition-colors',
                   'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                   'disabled:cursor-not-allowed disabled:opacity-60',
-                  featured
-                    ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] hover:border-[var(--ds-accent-hover)]'
+                  isFeatured
+                    ? 'border-[var(--ds-accent)] bg-[var(--ds-bg-surface)] shadow-[0_0_0_1px_var(--ds-accent),0_8px_24px_-12px_var(--ds-accent)] hover:border-[var(--ds-accent-hover)]'
                     : 'border-[var(--ds-border)] bg-[var(--ds-bg-surface)] hover:bg-[var(--ds-bg-hover)]',
                 )}
               >
