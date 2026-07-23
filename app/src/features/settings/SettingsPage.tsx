@@ -15,6 +15,8 @@ import { type CurrentUser } from '../../types/domain';
 import { AccountSecuritySection } from './AccountSecuritySection';
 import { AccountSessionsSection } from './AccountSessionsSection';
 import { AppearanceSection } from './AppearanceSection';
+import { ContactSection } from './ContactSection';
+import { NotificationsSection } from './NotificationsSection';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -276,11 +278,17 @@ export function SettingsPage(): ReactElement {
           {/* ── Appearance ──────────────────────────────────────────────── */}
           <AppearanceSection />
 
+          {/* ── Notifications (browser web-push + install-as-app) ─────────── */}
+          <NotificationsSection />
+
           {/* ── Account security ────────────────────────────────────────── */}
           <AccountSecuritySection user={user} onEmailChange={handleEmailChange} />
 
           {/* ── Sessions + two-factor (moved here from Workspace ▸ Security) ── */}
           <AccountSessionsSection email={user.email ?? ''} />
+
+          {/* ── Need something custom? ───────────────────────────────────── */}
+          <ContactSection />
         </>
       )}
     </PageContainer>

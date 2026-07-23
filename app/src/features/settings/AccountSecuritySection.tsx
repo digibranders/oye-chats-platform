@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactElement, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Check, Eye, EyeOff, KeyRound, Mail, ShieldAlert, X } from 'lucide-react';
 import { Button, Card, Input, SectionHeader, StatusBadge, cn } from '../../design-system';
 import {
@@ -146,7 +147,34 @@ function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): ReactEleme
         <SectionHeader
           title="Password"
           description="Update your sign-in password. Use at least 8 characters with a letter and a number."
+          actions={
+            // Recovery for a password you can't remember. The public
+            // /forgot-password page already owns the full email-OTP reset flow;
+            // its `requestPasswordReset` / `resetPassword` api.js functions are
+            // not present in api.d.ts, so we can't safely inline that OTP flow
+            // here under strict types — we route to that page instead of
+            // reaching for untyped imports. Clients only: operators reset via
+            // their workspace owner (same as the standalone page).
+            !isOperator ? (
+              <Link
+                to="/forgot-password"
+                className="text-[12px] font-medium text-[var(--ds-accent-text)] transition-colors hover:underline"
+              >
+                Forgot your password?
+              </Link>
+            ) : undefined
+          }
         />
+
+        {!isOperator && (
+          <p className="mt-2 text-[12px] text-[var(--ds-text-subtle)]">
+            Don’t remember your current password? Use{' '}
+            <Link to="/forgot-password" className="font-medium text-[var(--ds-accent-text)] hover:underline">
+              Forgot your password?
+            </Link>{' '}
+            to reset it with a code sent to your email.
+          </p>
+        )}
 
         <div aria-live="polite" className="mt-4 empty:hidden">
           {error && <InlineAlert tone="error">{error}</InlineAlert>}
