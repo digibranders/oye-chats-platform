@@ -480,7 +480,7 @@ def accept_invite_public(
         if acting_client is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Client not found.",
+                detail="Account not found.",
             )
         try:
             operator = invite_service.accept_invite(session, invite, acting_client)

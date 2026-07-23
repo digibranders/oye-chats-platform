@@ -309,11 +309,14 @@ def send_qualified_lead_email(
     reply_to: str | None = None,
 ):
     """Send email when a lead reaches a BANT qualification tier."""
-    tier_upper = (tier or "sql").upper()
-    tier_label = {"MQL": "Marketing Qualified Lead", "SQL": "Sales Qualified Lead"}.get(
-        tier_upper, f"{tier_upper} Lead"
-    )
-    chip_kind = "success" if tier_upper == "SQL" else "warning"
+    tier_key = (tier or "sql").lower()
+    tier_label = {
+        "mql": "Marketing Qualified Lead",
+        "sal": "Sales Accepted Lead",
+        "sql": "Sales Qualified Lead",
+        "unqualified": "New Lead",
+    }.get(tier_key, "New Lead")
+    chip_kind = "success" if tier_key == "sql" else "warning"
     safe_bot = esc(bot_name)
     contact = contact or {}
 
@@ -321,7 +324,7 @@ def send_qualified_lead_email(
         h1("New qualified lead")
         + p(
             f"A visitor on {strong(safe_bot)} has reached {esc(tier_label)} status. They match your "
-            f"qualification criteria. &nbsp;{ed.chip(tier_upper, chip_kind)}"
+            f"qualification criteria. &nbsp;{ed.chip(tier_label, chip_kind)}"
         )
         + ed.section_label("Qualification (BANT)")
         + info_table(
@@ -344,13 +347,13 @@ def send_qualified_lead_email(
         + button("View lead in dashboard", f"{APP_URL}/leads")
     )
     html_body = shell(
-        subject=f"New {tier_upper} lead from {bot_name}",
-        preheader=f"New {tier_upper} lead from {bot_name}.",
+        subject=f"New {tier_label} from {bot_name}",
+        preheader=f"New {tier_label} from {bot_name}.",
         inner=inner,
     )
     send_email_async(
         notification_email,
-        f"New {tier_upper} lead from {bot_name}",
+        f"New {tier_label} from {bot_name}",
         html_body,
         reply_to=reply_to,
         sender_name=_branded_sender_name(bot_name),
@@ -371,7 +374,7 @@ def send_handoff_request_email(
     inner = (
         h1("A visitor wants to chat")
         + p(
-            f"A visitor on {strong(safe_bot)} is requesting to speak with a live team member. "
+            f"A visitor on {strong(safe_bot)} is requesting to speak with an operator. "
             f"They&rsquo;re waiting in the queue right now."
         )
         + ed.section_label("Visitor")
@@ -411,7 +414,7 @@ def send_unavailable_callback_email(
     inner = (
         h1("Follow up with a visitor")
         + p(
-            f"{strong('No agent was available')} when a visitor on {strong(safe_bot)} requested live support. "
+            f"{strong('No operator was available')} when a visitor on {strong(safe_bot)} requested live support. "
             f"They left their contact details so you can follow up."
         )
         + ed.alert(
@@ -431,7 +434,7 @@ def send_unavailable_callback_email(
     )
     html_body = shell(
         subject=f"Missed live-chat request from {bot_name}",
-        preheader=f"A visitor requested support on {bot_name} while no agent was available.",
+        preheader=f"A visitor requested support on {bot_name} while no operator was available.",
         inner=inner,
     )
     send_email_async(
@@ -456,7 +459,7 @@ def send_offline_message_email(
     safe_bot = esc(bot_name)
     inner = (
         h1("New offline message")
-        + p(f"A visitor on {strong(safe_bot)} left a message while no agent was available.")
+        + p(f"A visitor on {strong(safe_bot)} left a message while no operator was available.")
         + ed.section_label("From")
         + info_table(
             [
@@ -594,7 +597,7 @@ def send_email_change_requested_notice(to_email: str, name: str, new_email: str)
 def send_transcript_email(to_email: str, bot_name: str, messages: list[dict], *, reply_to: str | None = None):
     """Send a formatted chat transcript to the visitor's email."""
     safe_bot = esc(bot_name)
-    role_labels = {"user": "You", "bot": safe_bot, "operator": "Support Agent", "system": "System"}
+    role_labels = {"user": "You", "bot": safe_bot, "operator": "Operator", "system": "System"}
     # Distinct light tints per role (flatten to neutral in dark via oc-fill).
     tints = {
         "user": (ed.FILL, ed.INK700),
@@ -723,7 +726,7 @@ def send_affiliate_invite_email(to_email: str, accept_url: str, *, expires_in_da
         h1(f"You&rsquo;ve been invited to {esc(BRAND_NAME)} Partners")
         + p(
             f"{esc(BRAND_NAME)} Partners is a hand-picked group earning recurring commission on every "
-            f"customer they bring to the platform. We&rsquo;d like you to join."
+            f"account they bring to the platform. We&rsquo;d like you to join."
         )
         + p(
             f"Click below to accept. If you already have an account you&rsquo;ll sign in and the Affiliate "
@@ -807,7 +810,7 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         h1(f"Welcome to {esc(BRAND_NAME)}, {_first_name(name)}")
         + p(
             f"Your {strong(f'{duration_days}-day free trial')} is live. You&rsquo;ve got "
-            f"{strong(f'{credits:,} credits')} to spend however you like — chats, URL crawls, document "
+            f"{strong(f'{credits:,} credits')} to spend however you like — chats, website training, document "
             f"uploads. Your trial runs until {strong(esc(end_human))}. No card on file, no auto-charge."
         )
         + button("Open my dashboard", APP_URL)
@@ -815,7 +818,7 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
         + ed.section_label("A 3-step path to your first chat")
         + ed.steps(
             [
-                f"{link('Upload your knowledge base', APP_URL + '/knowledge')} — PDFs, docs, or paste your website URL and we crawl it.",
+                f"{link('Upload your knowledge base', APP_URL + '/knowledge')} — PDFs, docs, or paste your website URL and we train on it.",
                 f"{link('Style the widget', APP_URL + '/chatbot')} — colors, logo, welcome message.",
                 f"{link('Drop the script tag', APP_URL + '/chatbot')} on your site — one line of HTML and you&rsquo;re live.",
             ]

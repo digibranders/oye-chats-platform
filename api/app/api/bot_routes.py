@@ -1486,7 +1486,7 @@ def create_bot_checkout(
 
         client = session.get(Client, auth["client_id"])
         if client is None:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         # Resolve the bot's domain whitelist now (deterministic — derived
         # the same way ``POST /bots`` does) so the webhook handler doesn't
@@ -1567,7 +1567,7 @@ def verify_bot_checkout(body: BotCheckoutVerifyRequest, auth=Depends(get_current
 
     paid_client_id = razorpay_service._client_id_from_notes(notes)
     if not paid_client_id or paid_client_id != auth["client_id"]:
-        raise HTTPException(status_code=403, detail="Subscription belongs to a different client.")
+        raise HTTPException(status_code=403, detail="Subscription belongs to a different account.")
 
     # Razorpay's real webhook envelope nests entities under
     # ``payload.subscription.entity``, but ``_extract_subscription_entity``
@@ -1646,7 +1646,7 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
         sample = get_content_sample_for_bot(session, bot_id=bot.id)
         if not sample.strip():
-            raise HTTPException(status_code=400, detail="Crawl your website first to detect its tone.")
+            raise HTTPException(status_code=400, detail="Train on your website first to detect its tone.")
 
         # Bound the interactive wait: the user is watching a spinner, so cap the
         # LLM budget (~20s × 1 retry) instead of the default ~180s worst case

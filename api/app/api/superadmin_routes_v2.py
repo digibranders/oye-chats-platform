@@ -110,7 +110,7 @@ def client_detail(client_id: int, _admin: Client = Depends(get_superadmin)):
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         bots = session.execute(select(Bot).where(Bot.client_id == client_id)).scalars().all()
         sub = (
@@ -186,7 +186,7 @@ def patch_client(
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         # Privilege writes (is_superadmin / superadmin_role) are a separate,
         # stricter gate than ordinary field edits: only an owner-tier actor
@@ -247,7 +247,7 @@ def grant_credits(
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         entry = CreditLedger(
             client_id=client_id,
@@ -287,7 +287,7 @@ def impersonate(
     with get_session() as session:
         target = session.get(Client, client_id)
         if not target:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         raw = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -372,7 +372,7 @@ def reset_password(
     with get_session() as session:
         target = session.get(Client, client_id)
         if not target:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         # Issue a real password-reset: generate a 6-digit OTP (15-min TTL) and
         # email it to the customer, reusing the same mechanism as the customer

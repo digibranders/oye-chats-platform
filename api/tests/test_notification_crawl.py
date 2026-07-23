@@ -11,7 +11,7 @@ def test_notify_crawl_completed_formats(monkeypatch):
         object(), client_id=1, source="https://a.com", pages=507, chunks=10087, duration_seconds=122, bot_id=5
     )
     assert captured["type_"] == ns.TYPE_CRAWL_COMPLETED
-    assert captured["title"] == "Website crawl complete"
+    assert captured["title"] == "Website training complete"
     assert "507 pages" in captured["body"]
     assert "10087 chunks" in captured["body"]
     assert "2m 2s" in captured["body"]  # 122s → "2m 2s"

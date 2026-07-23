@@ -313,7 +313,7 @@ def update_client_profile(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         if body.name:
             row.name = body.name
@@ -344,7 +344,7 @@ def change_client_password(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
         if not verify_password(body.current_password, row.hashed_password or ""):
             raise HTTPException(status_code=400, detail="Current password is incorrect.")
         row.hashed_password = get_password_hash(body.new_password)
@@ -390,7 +390,7 @@ def request_client_email_change(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         if not verify_password(body.current_password, row.hashed_password or ""):
             raise HTTPException(status_code=400, detail="Current password is incorrect.")
@@ -402,7 +402,10 @@ def request_client_email_change(
             session.execute(select(Client).where(Client.email == body.new_email, Client.id != row.id)).scalars().first()
         )
         if existing:
-            raise HTTPException(status_code=400, detail="A client with this email already exists.")
+            raise HTTPException(
+                status_code=400,
+                detail="An account with this email already exists. Please sign in instead.",
+            )
 
         otp = str(secrets.randbelow(900000) + 100000)
         row.pending_email = body.new_email
@@ -430,7 +433,7 @@ def confirm_client_email_change(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         if not row.pending_email or not row.email_change_otp or not row.email_change_otp_expires_at:
             raise HTTPException(status_code=400, detail="No email change is pending.")
@@ -464,7 +467,7 @@ def cancel_client_email_change(client: Client = Depends(get_current_client_stric
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
         row.pending_email = None
         row.email_change_otp = None
         row.email_change_otp_expires_at = None
@@ -488,7 +491,7 @@ def regenerate_client_api_key(client: Client = Depends(get_current_client_strict
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
         new_key = uuid.uuid4().hex
         row.api_key = new_key
         session.commit()

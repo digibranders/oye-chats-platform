@@ -254,7 +254,7 @@ def notify_crawl_completed(
         session,
         client_id=client_id,
         type_=TYPE_CRAWL_COMPLETED,
-        title="Website crawl complete",
+        title="Website training complete",
         body=f"{source} — {pages} page{'' if pages == 1 else 's'}, {chunks} chunks ingested{dur}.",
         link="/knowledge?tab=list",
         data={

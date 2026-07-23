@@ -87,7 +87,7 @@ def _check_memory():
     if mem.percent > threshold:
         raise HTTPException(
             status_code=503,
-            detail="Server memory too high for crawling. Please try again later.",
+            detail="Server memory too high for training. Please try again later.",
             headers={"Retry-After": "60"},
         )
 
@@ -1154,7 +1154,7 @@ async def crawl_endpoint(
     # (bounded wait); a lock held by another interactive crawl still 429s.
     lock_token = await _acquire_crawl_lock_or_preempt(client_id)
     if lock_token is None:
-        raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
+        raise HTTPException(status_code=429, detail="A training job is already running for your account. Please wait.")
 
     # Clear any leftover cancel flag from a PREVIOUS crawl before this one runs.
     # Without this a stale flag (TTL ~27min) makes every new crawl instantly
@@ -1244,7 +1244,7 @@ async def crawl_endpoint(
         release_crawl_lock(client_id, lock_token)
         set_crawl_progress(client_id, status="failed", error="Failed to start crawl.")
         logger.exception("Failed to enqueue crawl for client %s: %s", client_id, exc)
-        raise HTTPException(status_code=503, detail="Could not start crawl. Please try again.") from exc
+        raise HTTPException(status_code=503, detail="Could not start training. Please try again.") from exc
 
     response: dict = {
         "message": "Crawl started",

@@ -1004,7 +1004,7 @@ def rotate_client_api_key(
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         old_masked = _mask_api_key(client.api_key)
         new_key = str(uuid.uuid4().hex)

@@ -953,7 +953,7 @@ def accept_invite_existing(
             # detached row from the auth check.
             db_client = session.get(Client, client.id)
             if db_client is None:
-                raise HTTPException(status_code=404, detail="Client not found.")
+                raise HTTPException(status_code=404, detail="Account not found.")
             affiliate_service.accept_invite_for_existing_client(session, body.token, db_client)
             session.commit()
         except AffiliateProgramError as e:
