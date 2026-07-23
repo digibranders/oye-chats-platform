@@ -133,7 +133,7 @@ export function WorkspaceLayout(): ReactElement {
 
       {/* Active section — the gap below the tab row keeps the page title from
           crowding the divider. Page content supplies its own max-width. */}
-      <div className="pt-8">
+      <div className="pt-4">
         <Outlet />
       </div>
     </div>
