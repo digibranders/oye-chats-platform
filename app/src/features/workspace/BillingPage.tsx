@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FileText,
   Info,
+  LayoutDashboard,
   Loader2,
   Minus,
   Plus,
@@ -36,7 +37,7 @@ import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
-import { BillingSummaryCards } from './billing/BillingSummaryCards';
+import { BillingOverview } from './billing/BillingOverview';
 import { PlansPanel } from './billing/PlansPanel';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
@@ -74,7 +75,7 @@ export function BillingPage(): ReactElement {
 
   // Comparison billing cycle — seeded to the customer's own cadence.
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
-  const [activeTab, setActiveTab] = useState<BillingTab>('plans');
+  const [activeTab, setActiveTab] = useState<BillingTab>('overview');
   const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
   const [topupOpen, setTopupOpen] = useState(false);
   const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
@@ -216,25 +217,6 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
-          {/* Persistent context — the state of the subscription at a glance,
-              never scrolls away as you move between tabs. */}
-          <BillingSummaryCards
-            planName={plan?.name ?? 'Free'}
-            status={subscription.status}
-            priceLabel={priceLabel}
-            isPaid={Boolean(plan?.isPaid)}
-            renewalCaption={renewalCaption}
-            renewalLabel={renewalLabel}
-            autoRenew={autoRenew}
-            paymentLabel={paymentLabel}
-            paymentSub={paymentSub}
-            creditsPerMonth={plan?.creditsPerMonth ?? 0}
-            onChangePlan={() => setActiveTab('plans')}
-            onViewUsage={() => void navigate('/workspace/usage')}
-          />
-
-          {/* Segmented sub-tabs — a pill control, distinct from the underline
-              Workspace tabs above, so the two nav levels read as a hierarchy. */}
           {/* Data-retention purge warning — trial/subscription lapsed and the
               account's data is scheduled for deletion. Shown across all tabs
               because it's the most urgent thing on the page. */}
@@ -245,11 +227,15 @@ export function BillingPage(): ReactElement {
             />
           )}
 
+          {/* Segmented sub-tabs — a pill control, distinct from the underline
+              Workspace tabs above, so the two nav levels read as a hierarchy. */}
           <BillingTabs active={activeTab} onChange={setActiveTab} />
 
-          {activeTab === 'plans' && (
+          {/* Overview — the management surface: current subscription + credits.
+              Subscription-state banners and seat management live here because
+              they're about the plan you're ON, not the ones you might switch to. */}
+          {activeTab === 'overview' && (
             <div className="space-y-6">
-              {/* Scheduled downgrade — applies account-wide. Reversible. */}
               {subscription.scheduledChange && (
                 <ScheduledChangeBanner
                   planName={subscription.scheduledChange.planName}
@@ -260,8 +246,6 @@ export function BillingPage(): ReactElement {
                   error={lifecycleBusy === null ? lifecycleError : null}
                 />
               )}
-
-              {/* Pending full cancellation — the plan ends and won't renew. Reversible. */}
               {pendingCancel && (
                 <CancellationBanner
                   endsAt={subscription.currentPeriodEnd}
@@ -271,6 +255,22 @@ export function BillingPage(): ReactElement {
                   error={lifecycleBusy === null ? lifecycleError : null}
                 />
               )}
+
+              <BillingOverview
+                planName={plan?.name ?? 'Free'}
+                status={subscription.status}
+                priceLabel={priceLabel}
+                isPaid={Boolean(plan?.isPaid)}
+                renewalCaption={renewalCaption}
+                renewalLabel={renewalLabel}
+                autoRenew={autoRenew}
+                paymentLabel={paymentLabel}
+                paymentSub={paymentSub}
+                creditsPerMonth={plan?.creditsPerMonth ?? 0}
+                onChangePlan={() => setActiveTab('plans')}
+                onBuyCredits={() => setTopupOpen(true)}
+                onViewUsage={() => void navigate('/workspace/usage')}
+              />
 
               {/* Operator seats — only meaningful once the plan includes them. */}
               {includedSeats > 0 && (
@@ -282,17 +282,18 @@ export function BillingPage(): ReactElement {
                   onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
                 />
               )}
-
-              {data.availablePlans.length > 0 && (
-                <PlansPanel
-                  plans={data.availablePlans}
-                  currentSlug={plan?.slug ?? 'free'}
-                  cycle={cycle}
-                  onCycleChange={setCycle}
-                  onSelect={(candidate) => setConfirmPlan(candidate)}
-                />
-              )}
             </div>
+          )}
+
+          {/* Plans — switch surface only: the grid + cycle toggle. */}
+          {activeTab === 'plans' && data.availablePlans.length > 0 && (
+            <PlansPanel
+              plans={data.availablePlans}
+              currentSlug={plan?.slug ?? 'free'}
+              cycle={cycle}
+              onCycleChange={setCycle}
+              onSelect={(candidate) => setConfirmPlan(candidate)}
+            />
           )}
 
           {activeTab === 'invoices' && (
@@ -342,9 +343,10 @@ export function BillingPage(): ReactElement {
 
 // ── Sub-tabs ──────────────────────────────────────────────────────────────────
 
-type BillingTab = 'plans' | 'invoices' | 'details';
+type BillingTab = 'overview' | 'plans' | 'invoices' | 'details';
 
 const BILLING_TABS: readonly { readonly id: BillingTab; readonly label: string; readonly icon: LucideIcon }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'plans', label: 'Plans', icon: CreditCard },
   { id: 'invoices', label: 'Invoices', icon: ReceiptText },
   { id: 'details', label: 'Billing details', icon: Building2 },
