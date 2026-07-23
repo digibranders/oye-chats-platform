@@ -2282,9 +2282,7 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     # client's other (per-bot) subscriptions can't mask an unpaid first charge.
     has_paid_charge = (
         session.execute(
-            select(Invoice.id)
-            .where(Invoice.subscription_id == local.id, Invoice.status == "paid")
-            .limit(1)
+            select(Invoice.id).where(Invoice.subscription_id == local.id, Invoice.status == "paid").limit(1)
         )
         .scalars()
         .first()

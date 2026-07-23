@@ -1619,6 +1619,22 @@ export const closeOperatorChat = async (sessionId) => {
     }
 };
 
+/**
+ * Resolve and hard-close a live chat (marks the conversation `closed` for
+ * reporting), as opposed to `closeOperatorChat` which returns the visitor to
+ * the bot (`status='bot'`). Visitor-facing teardown is identical.
+ * @param {string} sessionId
+ */
+export const resolveOperatorChat = async (sessionId) => {
+    try {
+        const response = await api.post(`/operators/resolve/${sessionId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error resolving chat:', error);
+        throw buildApiError(error, 'Failed to resolve chat');
+    }
+};
+
 export const transferChat = async (sessionId, data) => {
     try {
         const response = await api.post(`/operators/transfer/${sessionId}`, data);

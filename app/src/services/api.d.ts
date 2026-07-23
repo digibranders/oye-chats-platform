@@ -140,6 +140,12 @@ export function updateCannedResponse(
 ): Promise<Record<string, unknown>>;
 export function deleteCannedResponse(responseId: number): Promise<{ success: boolean }>;
 
+// ── Operator live-chat file upload ───────────────────────────────────────────
+export function uploadOperatorChatFile(
+  file: File,
+  sessionId: string,
+): Promise<{ file_url: string; filename: string; content_type: string; size: number }>;
+
 // ── Operator self-status ─────────────────────────────────────────────────────
 export function getMyOperatorStatus(opts?: { botId?: number }): Promise<OperatorStatus | null>;
 export function toggleOperatorStatus(opts?: { isOnline?: boolean; botId?: number }): Promise<Record<string, unknown>>;
@@ -353,6 +359,7 @@ export function getQualifiedBotSessions(limit?: number): Promise<Record<string, 
 export function acceptChat(sessionId: string, operatorId?: number | null): Promise<Record<string, unknown>>;
 /** POST /operators/close/{sessionId} — end an active chat (live→bot). */
 export function closeOperatorChat(sessionId: string): Promise<Record<string, unknown>>;
+export function resolveOperatorChat(sessionId: string): Promise<Record<string, unknown>>;
 /** POST /operators/transfer/{sessionId} — hand a chat to another operator/department. */
 export function transferChat(sessionId: string, data: Record<string, unknown>): Promise<Record<string, unknown>>;
 /** GET /operators/session/{sessionId} — visitor identity/geo/device + history. */
@@ -362,6 +369,8 @@ export function sendConnectRequest(
   sessionId: string,
   operatorId?: number | null,
 ): Promise<Record<string, unknown>>;
+/** POST /operators/connect-request/{sessionId}/cancel — withdraw a pending connect invite. */
+export function cancelConnectRequest(sessionId: string): Promise<Record<string, unknown>>;
 
 // ── Knowledge: recrawl lifecycle ─────────────────────────────────────────────
 /** POST /bots/{id}/crawl/cancel — stop an in-progress crawl. */

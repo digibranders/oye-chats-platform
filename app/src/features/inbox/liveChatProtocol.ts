@@ -109,6 +109,12 @@ export interface SessionDetails {
   department_name: string | null;
   operator_name: string | null;
   visitor_metadata: Record<string, unknown> | null;
+  /** The page the visitor was on when the session started. */
+  page_url: string | null;
+  /** Where the visitor arrived from. */
+  referrer: string | null;
+  /** Post-chat satisfaction rating (1–5), or null when not rated. */
+  visitor_rating: number | null;
   bant: { need: string | null; timeline: string | null; authority: string | null; budget: string | null } | null;
   lead_info: {
     name: string | null;
@@ -268,6 +274,14 @@ export type OutboundMessage =
   | { type: 'ping' }
   | { type: 'heartbeat' }
   | { type: 'message'; session_id: string; content: string }
+  | {
+      type: 'file';
+      session_id: string;
+      role: 'operator';
+      file_url: string;
+      filename: string;
+      content_type: string;
+    }
   | { type: 'typing'; session_id: string }
   | { type: 'read_receipt'; session_id: string; last_read_id: number }
   | { type: 'close_chat'; session_id: string };

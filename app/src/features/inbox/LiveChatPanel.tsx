@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 import {
   AlertCircle,
   Inbox,
+  Loader2,
   MessageSquare,
   Radio,
   Sparkles,
@@ -9,16 +10,29 @@ import {
   Users,
   Wifi,
   WifiOff,
+  X,
 } from 'lucide-react';
 import { Button, EmptyState, InsightCard, Skeleton, StatusBadge, cn } from '../../design-system';
-import { acceptChat, closeOperatorChat, getQualifiedBotSessions, sendConnectRequest } from '../../services/api';
+import {
+  acceptChat,
+  addSelfAsOperator,
+  cancelConnectRequest,
+  closeOperatorChat,
+  getCannedResponses,
+  getChatHistory,
+  getQualifiedBotSessions,
+  resolveOperatorChat,
+  sendConnectRequest,
+  uploadOperatorChatFile,
+} from '../../services/api';
+import { type CannedResponse } from '../../types/domain';
 import { type OperatorStatusState } from './useOperatorStatus';
 import { useOperatorSocket } from './useOperatorSocket';
 import { ConversationView } from './ConversationView';
 import { SessionDetailsPanel } from './SessionDetailsPanel';
 import { TransferDialog } from './TransferDialog';
-import type { ConnectionStatus, QualifiedSession, RosterOperator } from './liveChatProtocol';
-import { initials, maxVisitorDbId, relativeTime } from './liveChatHelpers';
+import type { ConnectionStatus, OperatorMessage, QualifiedSession, RosterOperator } from './liveChatProtocol';
+import { clockTime, initials, maxVisitorDbId, parseHistoryMessage, relativeTime } from './liveChatHelpers';
 
 export interface LiveChatPanelProps {
   operator: OperatorStatusState;
@@ -156,6 +170,20 @@ function parseQualifiedSessions(raw: Record<string, unknown>): QualifiedSession[
   }));
 }
 
+/** Human-facing role label for the read-only AI transcript preview. */
+function previewRoleLabel(role: OperatorMessage['role']): string {
+  switch (role) {
+    case 'user':
+      return 'Visitor';
+    case 'bot':
+      return 'AI';
+    case 'operator':
+      return 'Operator';
+    default:
+      return 'System';
+  }
+}
+
 /**
  * LiveChatPanel — the real-time operator console.
  *
@@ -183,11 +211,14 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
     roster,
     qualifiedVersion,
     connectResolutions,
+    hasMoreBySession,
     lastError,
     sendMessage,
+    sendFile,
     sendTyping,
     sendReadReceipt,
     loadHistory,
+    loadOlder,
     clearUnread,
   } = socket;
 
@@ -196,12 +227,36 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [qualified, setQualified] = useState<QualifiedSession[]>([]);
   const [qualifiedLoaded, setQualifiedLoaded] = useState(false);
   const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [awaitingConnect, setAwaitingConnect] = useState<Record<string, boolean>>({});
   const [actionError, setActionError] = useState<string | null>(null);
+  const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([]);
+  const [previewSession, setPreviewSession] = useState<QualifiedSession | null>(null);
+  const [previewMessages, setPreviewMessages] = useState<OperatorMessage[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [addingSelf, setAddingSelf] = useState(false);
+  const [addSelfError, setAddSelfError] = useState<string | null>(null);
   const loadedHistoryRef = useRef<Set<string>>(new Set());
+
+  // ── Canned responses (loaded once for the composer slash menu) ──
+  useEffect(() => {
+    let cancelled = false;
+    getCannedResponses()
+      .then((res) => {
+        if (!cancelled) setCannedResponses(res.responses);
+      })
+      .catch(() => {
+        if (!cancelled) setCannedResponses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Bot scoping ──
   const matchesBot = useCallback(
@@ -270,6 +325,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
     (sessionId: string): void => {
       setSelectedId(sessionId);
       setActionError(null);
+      setPreviewSession(null);
       if (!loadedHistoryRef.current.has(sessionId)) {
         loadedHistoryRef.current.add(sessionId);
         void loadHistory(sessionId);
@@ -306,18 +362,34 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   );
 
   const handleClose = useCallback(async (): Promise<void> => {
-    if (!selectedId || closingId) return;
+    if (!selectedId || closingId || resolvingId) return;
     setClosingId(selectedId);
     setActionError(null);
     try {
       await closeOperatorChat(selectedId);
       // WS `chat_closed` removes it from the board + clears selection.
     } catch (err) {
-      setActionError(err instanceof Error ? `Couldn’t end chat: ${err.message}` : 'Couldn’t end chat.');
+      setActionError(
+        err instanceof Error ? `Couldn’t return chat to AI: ${err.message}` : 'Couldn’t return chat to AI.',
+      );
     } finally {
       setClosingId(null);
     }
-  }, [selectedId, closingId]);
+  }, [selectedId, closingId, resolvingId]);
+
+  const handleResolve = useCallback(async (): Promise<void> => {
+    if (!selectedId || closingId || resolvingId) return;
+    setResolvingId(selectedId);
+    setActionError(null);
+    try {
+      await resolveOperatorChat(selectedId);
+      // WS `chat_closed` removes it from the board + clears selection.
+    } catch (err) {
+      setActionError(err instanceof Error ? `Couldn’t resolve chat: ${err.message}` : 'Couldn’t resolve chat.');
+    } finally {
+      setResolvingId(null);
+    }
+  }, [selectedId, closingId, resolvingId]);
 
   const handleConnectRequest = useCallback(
     async (sessionId: string): Promise<void> => {
@@ -326,6 +398,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       setActionError(null);
       try {
         await sendConnectRequest(sessionId, operatorId);
+        setAwaitingConnect((prev) => ({ ...prev, [sessionId]: true }));
       } catch (err) {
         setActionError(
           err instanceof Error ? `Couldn’t send invite: ${err.message}` : 'Couldn’t send connect invite.',
@@ -336,6 +409,106 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
     },
     [connectingId, operatorId],
   );
+
+  const handleCancelConnect = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (cancellingId) return;
+      setCancellingId(sessionId);
+      setActionError(null);
+      try {
+        await cancelConnectRequest(sessionId);
+        setAwaitingConnect((prev) => {
+          if (!(sessionId in prev)) return prev;
+          const next = { ...prev };
+          delete next[sessionId];
+          return next;
+        });
+      } catch (err) {
+        setActionError(
+          err instanceof Error ? `Couldn’t cancel invite: ${err.message}` : 'Couldn’t cancel connect invite.',
+        );
+      } finally {
+        setCancellingId(null);
+      }
+    },
+    [cancellingId],
+  );
+
+  const handleAddSelf = useCallback(async (): Promise<void> => {
+    if (addingSelf || botId == null) return;
+    setAddingSelf(true);
+    setAddSelfError(null);
+    try {
+      await addSelfAsOperator(botId);
+      await operator.refresh();
+    } catch (err) {
+      setAddSelfError(
+        err instanceof Error ? `Couldn’t add you as an operator: ${err.message}` : 'Couldn’t add you as an operator.',
+      );
+    } finally {
+      setAddingSelf(false);
+    }
+  }, [addingSelf, botId, operator]);
+
+  const openPreview = useCallback((session: QualifiedSession): void => {
+    setPreviewSession(session);
+    setPreviewMessages([]);
+    setPreviewLoading(true);
+  }, []);
+
+  const closePreview = useCallback((): void => {
+    setPreviewSession(null);
+  }, []);
+
+  // ── Ctrl/Cmd+1..9 jumps to the Nth active conversation ──
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key.length !== 1 || e.key < '1' || e.key > '9') return;
+      if (transferOpen || previewSession) return;
+      const target = visibleActive[Number(e.key) - 1];
+      if (!target) return;
+      e.preventDefault();
+      openChat(target.session_id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visibleActive, openChat, transferOpen, previewSession]);
+
+  // ── Read-only AI transcript preview: initial fetch + 4s poll while open ──
+  useEffect(() => {
+    if (!previewSession) return;
+    const sid = previewSession.session_id;
+    let active = true;
+    const fetchTranscript = async (): Promise<void> => {
+      try {
+        const history = await getChatHistory(sid, { limit: 50 });
+        if (active) setPreviewMessages(history.map(parseHistoryMessage));
+      } catch {
+        // Keep the last-known transcript on a transient poll failure.
+      } finally {
+        if (active) setPreviewLoading(false);
+      }
+    };
+    void fetchTranscript();
+    const interval = window.setInterval(() => {
+      void fetchTranscript();
+    }, 4000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [previewSession]);
+
+  // ── Escape closes the preview while it is open ──
+  useEffect(() => {
+    if (!previewSession) return;
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') setPreviewSession(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [previewSession]);
 
   // ── Availability bar (always shown) ──
   const availabilityBar = (
@@ -363,7 +536,27 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       {loading ? (
         <Skeleton className="h-8 w-40 rounded-lg" />
       ) : unavailable ? (
-        <StatusBadge tone="neutral">Not an operator</StatusBadge>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-3">
+            <StatusBadge tone="neutral">Not an operator</StatusBadge>
+            {botId != null && (
+              <Button size="sm" onClick={() => void handleAddSelf()} disabled={addingSelf}>
+                {addingSelf ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                    Adding…
+                  </>
+                ) : (
+                  <>
+                    <UserPlus size={14} aria-hidden="true" />
+                    Add me as an operator
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+          {addSelfError && <p className="text-[12px] text-[var(--ds-danger)]">{addSelfError}</p>}
+        </div>
       ) : (
         <div className="flex items-center gap-3">
           {enabled && <ConnectionPill status={status} />}
@@ -400,12 +593,20 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           description={
             unavailable
               ? 'Ask a workspace admin to add you as an operator, then you’ll be able to take real-time conversations here.'
-              : 'Flip your availability to online and waiting visitors, your active conversations, and qualified bot chats will appear here in real time.'
+              : 'Flip your availability to online and waiting visitors, your active conversations, and qualified AI Agent chats will appear here in real time.'
           }
         />
       </div>
     );
   }
+
+  // ── Read-only preview action state (derived) ──
+  const previewResolution = previewSession ? connectResolutions[previewSession.session_id] : undefined;
+  const previewPending = previewSession ? connectingId === previewSession.session_id : false;
+  const previewCancelling = previewSession ? cancellingId === previewSession.session_id : false;
+  const previewAwaiting = previewSession
+    ? (awaitingConnect[previewSession.session_id] ?? false) && !previewResolution
+    : false;
 
   return (
     <div className="space-y-4">
@@ -477,33 +678,59 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                 <Skeleton className="h-10 w-full rounded-lg" />
               </div>
             ) : visibleQualified.length === 0 ? (
-              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">No qualified bot chats right now.</p>
+              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">No qualified AI Agent chats right now.</p>
             ) : (
               visibleQualified.map((q) => {
                 const resolution = connectResolutions[q.session_id];
                 const pending = connectingId === q.session_id;
+                const cancelling = cancellingId === q.session_id;
+                const awaiting = (awaitingConnect[q.session_id] ?? false) && !resolution;
+                const previewing = previewSession?.session_id === q.session_id;
                 return (
                   <div
                     key={q.session_id}
-                    className="rounded-[var(--ds-radius-lg)] border border-transparent px-3 py-2.5 hover:bg-[var(--ds-bg-hover)]"
+                    className={cn(
+                      'rounded-[var(--ds-radius-lg)] border px-3 py-2.5',
+                      previewing
+                        ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
+                        : 'border-transparent hover:bg-[var(--ds-bg-hover)]',
+                    )}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => openPreview(q)}
+                        className="min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+                        aria-label={`Preview conversation with ${q.name}`}
+                      >
                         <span className="block truncate text-[13px] font-medium text-[var(--ds-text)]">{q.name}</span>
                         <span className="block truncate text-[12px] text-[var(--ds-text-muted)]">
                           {q.last_message_preview || `${q.bant_tier} · ${q.bant_dimensions_count}/4 signals`}
                         </span>
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleConnectRequest(q.session_id)}
-                        disabled={pending || resolution?.outcome === 'accepted'}
-                      >
-                        <UserPlus size={13} aria-hidden="true" />
-                        {pending ? 'Inviting…' : 'Invite'}
-                      </Button>
+                      </button>
+                      {awaiting ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleCancelConnect(q.session_id)}
+                          disabled={cancelling}
+                        >
+                          <X size={13} aria-hidden="true" />
+                          {cancelling ? 'Cancelling…' : 'Cancel'}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleConnectRequest(q.session_id)}
+                          disabled={pending || resolution?.outcome === 'accepted'}
+                        >
+                          <UserPlus size={13} aria-hidden="true" />
+                          {pending ? 'Inviting…' : 'Invite'}
+                        </Button>
+                      )}
                     </div>
+                    {awaiting && <p className="mt-1 text-[11px] text-[var(--ds-text-muted)]">Awaiting reply…</p>}
                     {resolution && resolution.outcome !== 'accepted' && (
                       <p className="mt-1 text-[11px] capitalize text-[var(--ds-warning)]">
                         Invite {resolution.outcome}
@@ -534,10 +761,19 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
               visitorReadAt={visitorReadAtBySession[selectedChat.session_id]}
               connected={connected}
               closing={closingId === selectedChat.session_id}
+              resolving={resolvingId === selectedChat.session_id}
+              hasMore={hasMoreBySession[selectedChat.session_id] ?? false}
+              onLoadOlder={() => loadOlder(selectedChat.session_id)}
+              cannedResponses={cannedResponses}
               onSend={(content) => sendMessage(selectedChat.session_id, content)}
               onTyping={() => sendTyping(selectedChat.session_id)}
               onClose={() => void handleClose()}
+              onResolve={() => void handleResolve()}
               onTransfer={() => setTransferOpen(true)}
+              onUploadFile={async (file) => {
+                const res = await uploadOperatorChatFile(file, selectedChat.session_id);
+                sendFile(selectedChat.session_id, res);
+              }}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-6">
@@ -573,6 +809,101 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
             // WS `chat_transferred` clears the chat from the board.
           }}
         />
+      )}
+
+      {/* Read-only AI transcript preview */}
+      {previewSession && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ds-overlay)] p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Conversation preview — ${previewSession.name}`}
+        >
+          <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-lg">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--ds-border)] px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-semibold text-[var(--ds-text)]">{previewSession.name}</p>
+                {previewSession.company && (
+                  <p className="truncate text-[12px] text-[var(--ds-text-muted)]">{previewSession.company}</p>
+                )}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <StatusBadge tone="accent">{previewSession.bant_tier}</StatusBadge>
+                  <span className="text-[11px] text-[var(--ds-text-muted)]">
+                    Score {previewSession.bant_score} · {previewSession.bant_dimensions_count}/4 signals
+                  </span>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={closePreview} aria-label="Close preview">
+                <X size={15} aria-hidden="true" />
+              </Button>
+            </div>
+
+            {/* Read-only transcript */}
+            <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
+              {previewLoading && previewMessages.length === 0 ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-10 w-3/4 rounded-lg" />
+                  <Skeleton className="h-10 w-2/3 rounded-lg" />
+                  <Skeleton className="h-10 w-3/5 rounded-lg" />
+                </div>
+              ) : previewMessages.length === 0 ? (
+                <p className="py-6 text-center text-[13px] text-[var(--ds-text-subtle)]">No messages yet.</p>
+              ) : (
+                previewMessages.map((m) => {
+                  const isVisitor = m.role === 'user';
+                  return (
+                    <div
+                      key={m.key}
+                      className={cn('flex flex-col gap-0.5', isVisitor ? 'items-start' : 'items-end')}
+                    >
+                      <span className="px-1 text-[11px] font-medium text-[var(--ds-text-subtle)]">
+                        {previewRoleLabel(m.role)}
+                      </span>
+                      <div
+                        className={cn(
+                          'max-w-[80%] rounded-[var(--ds-radius-lg)] px-3.5 py-2 text-[14px] leading-relaxed',
+                          isVisitor
+                            ? 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text)]'
+                            : 'bg-[var(--ds-accent-soft)] text-[var(--ds-text)]',
+                        )}
+                      >
+                        <span className="whitespace-pre-wrap break-words">{m.content}</span>
+                      </div>
+                      {m.timestamp && (
+                        <span className="px-1 text-[11px] text-[var(--ds-text-subtle)]">{clockTime(m.timestamp)}</span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Actions — mirror the qualified-row Connect/Cancel controls */}
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--ds-border)] px-4 py-3">
+              {previewAwaiting ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleCancelConnect(previewSession.session_id)}
+                  disabled={previewCancelling}
+                >
+                  <X size={14} aria-hidden="true" />
+                  {previewCancelling ? 'Cancelling…' : 'Cancel invite'}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={() => void handleConnectRequest(previewSession.session_id)}
+                  disabled={previewPending || previewResolution?.outcome === 'accepted'}
+                >
+                  <UserPlus size={14} aria-hidden="true" />
+                  {previewPending ? 'Inviting…' : 'Invite to chat'}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

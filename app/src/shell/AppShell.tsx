@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { FeedbackLauncher } from './FeedbackLauncher';
+import { IncomingChatBanner } from './IncomingChatBanner';
 import { cn } from '../design-system';
 
 const MOBILE_BREAKPOINT = 768;
@@ -92,6 +93,7 @@ export function AppShell() {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <FeedbackLauncher />
+      <IncomingChatBanner />
     </div>
   );
 }

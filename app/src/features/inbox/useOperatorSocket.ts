@@ -20,6 +20,7 @@ import {
   type VisitorPresence,
 } from './liveChatProtocol';
 import { mergeHistoryWithLive, parseHistoryMessage } from './liveChatHelpers';
+import { alertOperator, ensureNotificationPermission } from './notifications';
 
 /** Resolution of a proactive connect-request, surfaced to the panel. */
 export interface ConnectResolution {
@@ -39,6 +40,8 @@ export interface OperatorSocketState {
   presenceBySession: Record<string, VisitorPresence>;
   unreadBySession: Record<string, number>;
   visitorReadAtBySession: Record<string, number>;
+  /** Whether an older page of history may exist for a session (drives "Load earlier"). */
+  hasMoreBySession: Record<string, boolean>;
   roster: RosterOperator[];
   /** Bumped whenever the backend signals the qualified-session list may have changed. */
   qualifiedVersion: number;
@@ -47,16 +50,27 @@ export interface OperatorSocketState {
   lastError: string | null;
 }
 
+/** An uploaded attachment ready to be broadcast to the visitor. */
+export interface OutboundFile {
+  file_url: string;
+  filename: string;
+  content_type: string;
+}
+
 export interface OperatorSocketApi extends OperatorSocketState {
   sendMessage: (sessionId: string, content: string) => boolean;
+  sendFile: (sessionId: string, file: OutboundFile) => boolean;
   sendTyping: (sessionId: string) => void;
   sendReadReceipt: (sessionId: string, lastReadId: number) => void;
   loadHistory: (sessionId: string) => Promise<void>;
+  /** Fetch and prepend the previous page of history for a session. */
+  loadOlder: (sessionId: string) => Promise<void>;
   clearUnread: (sessionId: string) => void;
   clearConnectResolution: (sessionId: string) => void;
 }
 
 const TYPING_THROTTLE_MS = 2000;
+const HISTORY_PAGE_SIZE = 50;
 const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'https://api.oyechats.com';
 
 interface UseOperatorSocketOptions {
@@ -87,6 +101,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   const [presenceBySession, setPresenceBySession] = useState<Record<string, VisitorPresence>>({});
   const [unreadBySession, setUnreadBySession] = useState<Record<string, number>>({});
   const [visitorReadAtBySession, setVisitorReadAtBySession] = useState<Record<string, number>>({});
+  const [hasMoreBySession, setHasMoreBySession] = useState<Record<string, boolean>>({});
   const [roster, setRoster] = useState<RosterOperator[]>([]);
   const [qualifiedVersion, setQualifiedVersion] = useState(0);
   const [connectResolutions, setConnectResolutions] = useState<Record<string, ConnectResolution>>({});
@@ -101,6 +116,13 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   const sentReadIdRef = useRef<Record<string, number>>({});
   const typingTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const operatorIdRef = useRef<number | null>(null);
+  // Mirror of messagesBySession so `loadOlder` can read the current oldest DB id
+  // (before its fetch) without depending on state in its callback. Synced in an
+  // effect — `loadOlder` only runs on a user click, well after commit.
+  const messagesBySessionRef = useRef<Record<string, OperatorMessage[]>>({});
+  // Last-known waiting-queue size, so a `queue_update` only alerts when the
+  // queue actually grew (not on every roster/state refresh that reships it).
+  const prevQueueCountRef = useRef(0);
   const mountedRef = useRef(true);
   const manualCloseRef = useRef(false);
   // Set when the socket closes on a terminal code (4001 duplicate-tab / 4003
@@ -134,7 +156,12 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       }
 
       case 'queue_update': {
-        setQueue(Array.isArray(msg.waiting) ? msg.waiting : []);
+        const waiting = Array.isArray(msg.waiting) ? msg.waiting : [];
+        if (waiting.length > prevQueueCountRef.current) {
+          alertOperator('New chat waiting', 'A visitor is waiting for a live agent.');
+        }
+        prevQueueCountRef.current = waiting.length;
+        setQueue(waiting);
         break;
       }
 
@@ -175,6 +202,13 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         if (msg.role === 'user') {
           setUnreadBySession((prev) => ({ ...prev, [sid]: (prev[sid] ?? 0) + 1 }));
           setTypingBySession((prev) => (prev[sid] ? { ...prev, [sid]: false } : prev));
+          const preview =
+            msg.type === 'file'
+              ? msg.filename || 'Sent a file'
+              : typeof msg.content === 'string' && msg.content.trim()
+                ? msg.content.slice(0, 120)
+                : 'New message';
+          alertOperator('New message from a visitor', preview);
         }
         break;
       }
@@ -232,6 +266,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         setUnreadBySession(dropKey);
         setTypingBySession(dropKey);
         setVisitorReadAtBySession(dropKey);
+        setHasMoreBySession(dropKey);
         setConnectResolutions(dropKey);
         // Refs are not React state — clear them imperatively.
         delete typingSentAtRef.current[sid];
@@ -447,6 +482,17 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   }, [enabled, reconnectNonce, applyInbound]);
 
   // Immediate reconnect when the operator returns to the tab / network restored.
+  // Keep the messages ref in step with state for `loadOlder`.
+  useEffect(() => {
+    messagesBySessionRef.current = messagesBySession;
+  }, [messagesBySession]);
+
+  // Ask for native-notification permission once the operator goes online, so a
+  // hidden tab can still surface new-chat alerts.
+  useEffect(() => {
+    if (enabled) ensureNotificationPermission();
+  }, [enabled]);
+
   useEffect(() => {
     if (!enabled) return;
     const wake = (): void => {
@@ -502,6 +548,35 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     [send],
   );
 
+  const sendFile = useCallback(
+    (sessionId: string, file: OutboundFile): boolean => {
+      const ok = send({
+        type: 'file',
+        session_id: sessionId,
+        role: 'operator',
+        file_url: file.file_url,
+        filename: file.filename,
+        content_type: file.content_type,
+      });
+      if (!ok) return false;
+      // Echo optimistically, mirroring sendMessage — the file is delivered to
+      // the visitor only, so the server does not bounce it back to us.
+      const entry: OperatorMessage = {
+        key: `local-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        dbId: null,
+        role: 'operator',
+        content: file.file_url,
+        timestamp: new Date().toISOString(),
+        fileUrl: file.file_url,
+        filename: file.filename,
+        contentType: file.content_type,
+      };
+      setMessagesBySession((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), entry] }));
+      return true;
+    },
+    [send],
+  );
+
   const sendTyping = useCallback(
     (sessionId: string): void => {
       const now = Date.now();
@@ -525,15 +600,42 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
 
   const loadHistory = useCallback(async (sessionId: string): Promise<void> => {
     try {
-      const history = await getChatHistory(sessionId, { limit: 50 });
+      const history = await getChatHistory(sessionId, { limit: HISTORY_PAGE_SIZE });
       if (!mountedRef.current) return;
       const parsed = history.map(parseHistoryMessage);
       // Merge (don't replace) so live WS messages that landed between accept and
       // this GET returning aren't discarded.
       setMessagesBySession((prev) => ({ ...prev, [sessionId]: mergeHistoryWithLive(parsed, prev[sessionId]) }));
+      // A full page back implies there may be an earlier page to page into.
+      setHasMoreBySession((prev) => ({ ...prev, [sessionId]: history.length >= HISTORY_PAGE_SIZE }));
     } catch {
       if (!mountedRef.current) return;
       setMessagesBySession((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: [] }));
+    }
+  }, []);
+
+  // Prepend the previous page, anchored before the oldest DB message we hold.
+  const loadOlder = useCallback(async (sessionId: string): Promise<void> => {
+    const current = messagesBySessionRef.current[sessionId] ?? [];
+    let oldestDbId = 0;
+    for (const m of current) {
+      if (typeof m.dbId === 'number' && (oldestDbId === 0 || m.dbId < oldestDbId)) oldestDbId = m.dbId;
+    }
+    if (!oldestDbId) return;
+    try {
+      const older = await getChatHistory(sessionId, { beforeId: oldestDbId, limit: HISTORY_PAGE_SIZE });
+      if (!mountedRef.current) return;
+      const parsed = older.map(parseHistoryMessage);
+      setMessagesBySession((prev) => {
+        const existing = prev[sessionId] ?? [];
+        const knownDbIds = new Set<number>();
+        for (const m of existing) if (m.dbId != null) knownDbIds.add(m.dbId);
+        const fresh = parsed.filter((m) => m.dbId == null || !knownDbIds.has(m.dbId));
+        return fresh.length === 0 ? prev : { ...prev, [sessionId]: [...fresh, ...existing] };
+      });
+      setHasMoreBySession((prev) => ({ ...prev, [sessionId]: older.length >= HISTORY_PAGE_SIZE }));
+    } catch {
+      /* leave hasMore as-is so the operator can retry */
     }
   }, []);
 
@@ -561,14 +663,17 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     presenceBySession,
     unreadBySession,
     visitorReadAtBySession,
+    hasMoreBySession,
     roster,
     qualifiedVersion,
     connectResolutions,
     lastError,
     sendMessage,
+    sendFile,
     sendTyping,
     sendReadReceipt,
     loadHistory,
+    loadOlder,
     clearUnread,
     clearConnectResolution,
   };

@@ -102,9 +102,7 @@ def get_default_plan(session: Session) -> Plan | None:
     for a deterministic pick if more than one active default somehow exists.
     """
     return (
-        session.execute(
-            select(Plan).where(Plan.is_default.is_(True), Plan.is_active.is_(True)).order_by(Plan.id)
-        )
+        session.execute(select(Plan).where(Plan.is_default.is_(True), Plan.is_active.is_(True)).order_by(Plan.id))
         .scalars()
         .first()
     )
