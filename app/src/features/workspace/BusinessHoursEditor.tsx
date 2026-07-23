@@ -13,7 +13,7 @@
  */
 import { type ReactElement } from 'react';
 import { Clock } from 'lucide-react';
-import { cn } from '../../design-system';
+import { cn, Select } from '../../design-system';
 
 export interface DayHours {
   enabled: boolean;
@@ -159,19 +159,16 @@ export function BusinessHoursEditor({ value, onChange, disabled = false }: Busin
         <>
           <div className="flex items-center justify-between gap-4">
             <span className="shrink-0 text-[13px] text-[var(--ds-text-muted)]">Timezone</span>
-            <select
-              value={hours.timezone}
-              disabled={disabled}
-              onChange={(e) => update((h) => ({ ...h, timezone: e.target.value }))}
-              aria-label="Timezone"
-              className="h-9 max-w-[16rem] rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-            >
-              {timezoneOptions(hours.timezone).map((tz) => (
-                <option key={tz} value={tz}>
-                  {tz}
-                </option>
-              ))}
-            </select>
+            <div className="w-full max-w-[16rem]">
+              <Select
+                value={hours.timezone}
+                disabled={disabled}
+                searchable
+                onChange={(timezone) => update((h) => ({ ...h, timezone }))}
+                aria-label="Timezone"
+                options={timezoneOptions(hours.timezone).map((tz) => ({ value: tz, label: tz }))}
+              />
+            </div>
           </div>
 
           <div className="divide-y divide-[var(--ds-border)] overflow-hidden rounded-xl border border-[var(--ds-border)]">

@@ -25,6 +25,8 @@ export { Input } from './primitives/Input';
 export type { InputProps } from './primitives/Input';
 export { Textarea } from './primitives/Textarea';
 export type { TextareaProps } from './primitives/Textarea';
+export { Select } from './primitives/Select';
+export type { SelectProps, SelectOption } from './primitives/Select';
 export { Progress } from './primitives/Progress';
 export type { ProgressProps } from './primitives/Progress';
 

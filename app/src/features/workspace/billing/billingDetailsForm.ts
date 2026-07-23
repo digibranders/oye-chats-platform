@@ -34,6 +34,9 @@ export interface BillingDetailsRaw {
     state?: string | null;
     postal_code?: string | null;
   } | null;
+  /** Account fields the backend returns read-only, used to prefill the form. */
+  company_name?: string | null;
+  account_email?: string | null;
 }
 
 /** A 2-letter country that isn't India makes GSTIN/GST-state meaningless. */
@@ -42,14 +45,20 @@ export function isForeignCountry(raw: string | null | undefined): boolean {
   return country.length === 2 && country !== 'IN';
 }
 
-/** Seed the edit form from the stored record (country falls back to account/IN). */
+/**
+ * Seed the edit form from the stored record. Since every account already has a
+ * single billing identity, we prefill from the data we already hold: the legal
+ * name falls back to the account company name, the billing email to the account
+ * login email, and the country to the account country (set at signup) or IN.
+ * These prefilled-but-unsaved values persist on the first save via `formToPatch`.
+ */
 export function detailsToForm(
   details: BillingDetailsRaw | null,
   fallbackCountry?: string | null,
 ): BillingDetailsForm {
   const address = details?.billing_address || {};
   return {
-    legal_name: details?.legal_name || '',
+    legal_name: details?.legal_name || details?.company_name || '',
     gstin: details?.gstin || '',
     line1: address.line1 || '',
     line2: address.line2 || '',
@@ -58,7 +67,7 @@ export function detailsToForm(
     postal_code: address.postal_code || '',
     billing_state_code: details?.billing_state_code || '',
     billing_country: details?.billing_country || fallbackCountry || 'IN',
-    billing_email: details?.billing_email || '',
+    billing_email: details?.billing_email || details?.account_email || '',
   };
 }
 

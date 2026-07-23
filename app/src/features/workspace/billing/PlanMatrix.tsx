@@ -49,11 +49,24 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
 
 const GROUP_ORDER: readonly string[] = ['Usage', 'Features'];
 
-function priceLabel(plan: PlanView, cycle: BillingCycle): { amount: string; suffix: string | null } {
-  if (!plan.isPaid) return { amount: 'Free', suffix: null };
+// On the annual cycle, lead with the monthly-EQUIVALENT (annual ÷ 12) and
+// caption the annual total billed — mirroring the public pricing page so the
+// headline stays comparable across cycles.
+function priceLabel(
+  plan: PlanView,
+  cycle: BillingCycle,
+): { amount: string; suffix: string | null; billed: string | null } {
+  if (plan.isEnterprise) return { amount: 'Custom', suffix: null, billed: null };
+  if (!plan.isPaid) return { amount: 'Free', suffix: null, billed: null };
   const useAnnual = cycle === 'annual' && plan.annualPriceMinor > 0;
-  const minor = useAnnual ? plan.annualPriceMinor : plan.monthlyPriceMinor;
-  return { amount: formatMoneyMinor(minor), suffix: useAnnual ? '/yr' : '/mo' };
+  if (useAnnual) {
+    return {
+      amount: formatMoneyMinor(Math.round(plan.annualPriceMinor / 12)),
+      suffix: '/mo',
+      billed: `Billed ${formatMoneyMinor(plan.annualPriceMinor)}/yr`,
+    };
+  }
+  return { amount: formatMoneyMinor(plan.monthlyPriceMinor), suffix: '/mo', billed: null };
 }
 
 function CellValue({ row, plan }: { row: FeatureRow; plan: PlanView }): ReactElement {
@@ -75,6 +88,8 @@ export interface PlanMatrixProps {
   onSelect: (plan: PlanView) => void;
   /** Suppress the built-in cycle toggle when a parent already renders one. */
   hideToggle?: boolean;
+  /** Current subscription status — a trialing current column offers activation. */
+  currentStatus?: string | null;
 }
 
 /**
@@ -91,9 +106,12 @@ export function PlanMatrix({
   onCycleChange,
   onSelect,
   hideToggle = false,
+  currentStatus = null,
 }: PlanMatrixProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
   const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
+  // A trialing/post-trial current column can convert to paid from its own CTA.
+  const trialing = currentStatus === 'trialing' || currentStatus === 'trial_expired';
 
   const colClass = (plan: PlanView): string =>
     cn('px-4', plan.slug === currentSlug && 'bg-[var(--ds-accent-soft)]');
@@ -117,6 +135,7 @@ export function PlanMatrix({
               {ordered.map((plan) => {
                 const price = priceLabel(plan, cycle);
                 const isCurrent = plan.slug === currentSlug;
+                const isTrialingCurrent = isCurrent && trialing;
                 const popular = plan.slug === MOST_POPULAR_SLUG;
                 return (
                   <th
@@ -136,15 +155,28 @@ export function PlanMatrix({
                       <span className="text-xl font-bold tracking-tight text-[var(--ds-text)]">{price.amount}</span>
                       {price.suffix && <span className="text-[12px] text-[var(--ds-text-muted)]">{price.suffix}</span>}
                     </div>
+                    {price.billed && (
+                      <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
+                        {price.billed}
+                      </div>
+                    )}
                     <div className="mt-3">
                       <Button
-                        variant={isCurrent ? 'outline' : popular ? 'primary' : 'outline'}
+                        variant={
+                          isTrialingCurrent ? 'primary' : isCurrent ? 'outline' : popular ? 'primary' : 'outline'
+                        }
                         size="sm"
                         className="w-full"
-                        disabled={isCurrent}
+                        disabled={isCurrent && !isTrialingCurrent}
                         onClick={() => onSelect(plan)}
                       >
-                        {isCurrent ? 'Current' : 'Select'}
+                        {isTrialingCurrent
+                          ? 'Subscribe'
+                          : isCurrent
+                            ? 'Current'
+                            : plan.isEnterprise
+                              ? 'Contact'
+                              : 'Select'}
                       </Button>
                     </div>
                   </th>

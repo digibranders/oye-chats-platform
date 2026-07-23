@@ -37,6 +37,7 @@ import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../se
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
+import { CancelSubscriptionModal } from './billing/CancelSubscriptionModal';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingOverview } from './billing/BillingOverview';
 import { PlansPanel } from './billing/PlansPanel';
@@ -84,6 +85,7 @@ export function BillingPage(): ReactElement {
     delta: 1,
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [trialNudgeDismissed, setTrialNudgeDismissed] = useState(false);
 
   // Every successful mutation lands here: surface the message, refetch billing.
@@ -295,6 +297,19 @@ export function BillingPage(): ReactElement {
                   onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
                 />
               )}
+
+              {/* Cancel — a live paid subscription that isn't already ending. A
+                  quiet, understated row (not an alarming red card): cancellation
+                  is cancel-at-period-end and fully reversible. Hidden once
+                  cancel_at_period_end is set (the Reactivate banner takes over). */}
+              {Boolean(plan?.isPaid) &&
+                subscription.status === 'active' &&
+                !subscription.cancelAtPeriodEnd && (
+                  <CancelSubscriptionRow
+                    periodEnd={subscription.currentPeriodEnd}
+                    onCancel={() => setCancelOpen(true)}
+                  />
+                )}
             </div>
           )}
 
@@ -306,6 +321,8 @@ export function BillingPage(): ReactElement {
               cycle={cycle}
               onCycleChange={setCycle}
               onSelect={(candidate) => setConfirmPlan(candidate)}
+              currentStatus={subscription.status}
+              trialEnd={subscription.trialEnd}
             />
           )}
 
@@ -350,7 +367,52 @@ export function BillingPage(): ReactElement {
         onClose={() => setDetailsOpen(false)}
         onSuccess={handleSuccess}
       />
+
+      <CancelSubscriptionModal
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        planName={plan?.name ?? 'your plan'}
+        periodEnd={subscription?.currentPeriodEnd ?? null}
+        onSuccess={handleSuccess}
+      />
     </PageContainer>
+  );
+}
+
+// ── Cancel subscription ───────────────────────────────────────────────────────
+
+/**
+ * CancelSubscriptionRow — the understated entry point to cancellation. Framed as
+ * a calm management action, not a red alarm: it states the honest cancel-at-
+ * period-end outcome inline and hands off to {@link CancelSubscriptionModal} for
+ * the reversible confirm. Placed at the foot of the Overview tab, below the plan
+ * it governs.
+ */
+function CancelSubscriptionRow({
+  periodEnd,
+  onCancel,
+}: {
+  periodEnd: string | null;
+  onCancel: () => void;
+}): ReactElement {
+  return (
+    <div className="flex flex-col gap-3 border-t border-[var(--ds-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-[14px] font-medium text-[var(--ds-text)]">Cancel subscription</p>
+        <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
+          {periodEnd
+            ? `You’ll keep full access until ${formatDate(periodEnd)}, then billing stops.`
+            : 'You’ll keep full access until the end of your billing period, then billing stops.'}
+        </p>
+      </div>
+      <Button
+        variant="ghost"
+        onClick={onCancel}
+        className="self-start text-[var(--ds-danger)] hover:bg-[var(--ds-danger-soft)] hover:text-[var(--ds-danger)] sm:self-auto"
+      >
+        Cancel subscription
+      </Button>
+    </div>
   );
 }
 
@@ -710,21 +772,12 @@ function BillingDetailsTab({
   details: BillingDetailsView;
   onEdit: () => void;
 }): ReactElement {
-  if (details.isEmpty) {
-    return (
-      <EmptyState
-        icon={Building2}
-        title="No billing details yet"
-        description="Add your legal name and tax identity so your invoices carry the right business information."
-        action={
-          <Button onClick={onEdit}>
-            <Plus size={16} aria-hidden="true" />
-            Add billing details
-          </Button>
-        }
-      />
-    );
-  }
+  // A workspace always has exactly one billing identity, so there is no "add"
+  // flow — we always show the details, prefilled from the account data we
+  // already hold (company name → legal name, login email → billing email,
+  // signup country → country) until the customer refines them via Edit.
+  const legalName = details.legalName ?? details.companyName;
+  const billingEmail = details.email ?? details.accountEmail;
 
   const addressLines = details.address
     ? [
@@ -751,8 +804,8 @@ function BillingDetailsTab({
       <Card>
         <CardContent className="pt-5">
           <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
-            <DetailBlock label="Legal name" value={details.legalName} />
-            <DetailBlock label="Billing email" value={details.email} />
+            <DetailBlock label="Legal name" value={legalName} />
+            <DetailBlock label="Billing email" value={billingEmail} />
             <DetailBlock label="GSTIN" value={details.gstin} mono />
             <DetailBlock label="Country" value={details.country} />
             {details.stateCode && <DetailBlock label="GST state code" value={details.stateCode} />}

@@ -21,6 +21,7 @@ import {
   Input,
   Modal,
   SectionHeader,
+  Select,
   Skeleton,
   Textarea,
   cn,
@@ -213,19 +214,17 @@ export function CannedResponsesPanel(): ReactElement {
           />
         </div>
         {categories.length > 0 && (
-          <select
+          <Select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={setCategoryFilter}
             aria-label="Filter by category"
-            className="h-10 rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-          >
-            <option value="">All categories</option>
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
+            placeholder="All categories"
+            className="sm:w-48"
+            options={[
+              { value: '', label: 'All categories' },
+              ...categories.map((cat) => ({ value: cat, label: cat })),
+            ]}
+          />
         )}
       </div>
 

@@ -14,7 +14,6 @@ import {
   ArrowRight,
   Bug,
   CheckCircle2,
-  ChevronDown,
   Clock,
   HelpCircle,
   ImagePlus,
@@ -33,6 +32,7 @@ import {
   cn,
   EmptyState,
   Modal,
+  Select,
   Skeleton,
   StatusBadge,
   Tabs,
@@ -562,29 +562,16 @@ export function FeedbackModal({
               <label htmlFor="fb-area" className="block text-[13px] font-semibold text-[var(--ds-text)]">
                 Area <span className="font-normal text-[var(--ds-text-subtle)]">(optional)</span>
               </label>
-              <div className="relative">
-                <select
-                  id="fb-area"
-                  value={area}
-                  onChange={(event) => setArea(event.target.value as FeedbackAreaId | '')}
-                  className={cn(
-                    'h-10 w-full appearance-none rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] pl-3 pr-9 text-sm text-[var(--ds-text)] outline-none transition-colors',
-                    'focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                  )}
-                >
-                  <option value="">Not sure / unspecified</option>
-                  {AREAS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  size={16}
-                  aria-hidden="true"
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ds-text-subtle)]"
-                />
-              </div>
+              <Select
+                id="fb-area"
+                value={area}
+                onChange={(next) => setArea(next as FeedbackAreaId | '')}
+                placeholder="Not sure / unspecified"
+                options={[
+                  { value: '', label: 'Not sure / unspecified' },
+                  ...AREAS.map((option) => ({ value: option.id, label: option.label })),
+                ]}
+              />
             </div>
 
             {/* Severity (bug-only) */}

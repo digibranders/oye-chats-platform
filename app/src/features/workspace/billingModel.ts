@@ -61,6 +61,13 @@ export interface PlanView {
   /** Per-extra-seat monthly price in INR minor units. */
   extraSeatPriceMinor: number;
   isPaid: boolean;
+  /**
+   * True for a "contact sales" tier — priced on request, not self-serve
+   * checkout. Derived from `slug === 'enterprise'` or a `contact_sales` /
+   * `enterprise` feature flag, so a seeded enterprise plan routes to sales
+   * instead of the Razorpay money-path.
+   */
+  isEnterprise: boolean;
   /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
   annualDiscountPercent: number;
   /** Free-trial length in days; 0 for plans with no trial (Free). */
@@ -124,6 +131,10 @@ export interface BillingDetailsView {
   stateCode: string | null;
   email: string | null;
   address: BillingAddress | null;
+  /** Account company name (from signup) — prefills the legal name when unset. */
+  companyName: string | null;
+  /** Account login email — where invoices go when billing email is unset. */
+  accountEmail: string | null;
   /** True when the customer has entered no tax identity at all. */
   isEmpty: boolean;
 }
@@ -145,9 +156,11 @@ export function buildPlan(raw: unknown): PlanView | null {
   const record = asRecord(raw);
   if (!record) return null;
   const monthlyPriceMinor = toNumber(record.monthly_price_cents);
+  const slug = toText(record.slug) || 'free';
+  const features = asRecord(record.features) ?? {};
   return {
     id: toNumber(record.id),
-    slug: toText(record.slug) || 'free',
+    slug,
     name: toText(record.name) || 'Free',
     monthlyPriceMinor,
     annualPriceMinor: toNumber(record.annual_price_cents),
@@ -157,10 +170,11 @@ export function buildPlan(raw: unknown): PlanView | null {
     // Currency-independent: INR is the canonical column and is always set for
     // a paid tier, so this stays correct regardless of display currency.
     isPaid: monthlyPriceMinor > 0,
+    isEnterprise: slug === 'enterprise' || features.contact_sales === true || features.enterprise === true,
     annualDiscountPercent: toNumber(record.annual_discount_percent),
     trialDays: toNumber(record.trial_days),
     sortOrder: toNumber(record.sort_order),
-    features: asRecord(record.features) ?? {},
+    features,
     limits: toNumberMap(record.limits),
   };
 }
@@ -243,6 +257,8 @@ export function buildBillingDetails(raw: unknown): BillingDetailsView {
     stateCode: record ? toOptionalText(record.billing_state_code) : null,
     email,
     address,
+    companyName: record ? toOptionalText(record.company_name) : null,
+    accountEmail: record ? toOptionalText(record.account_email) : null,
     isEmpty: !legalName && !gstin && !email && !address,
   };
 }

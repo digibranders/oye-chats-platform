@@ -227,6 +227,7 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                     "is_superadmin": c.is_superadmin,
                     "superadmin_role": c.superadmin_role,
                     "website": c.website,
+                    "country": c.billing_country,
                     "suspended_at": c.suspended_at.isoformat() if c.suspended_at else None,
                     "plan_name": plan.name if plan else None,
                     "plan_slug": plan.slug if plan else None,

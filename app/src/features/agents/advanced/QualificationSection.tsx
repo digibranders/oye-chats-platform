@@ -1,6 +1,6 @@
 import { type ReactElement, useState } from 'react';
-import { Target, ChevronDown, SlidersHorizontal } from 'lucide-react';
-import { Card, SectionHeader, StatusBadge, Button, cn } from '../../../design-system';
+import { Target, SlidersHorizontal } from 'lucide-react';
+import { Card, SectionHeader, StatusBadge, Button, Select } from '../../../design-system';
 import { FRAMEWORK_OPTIONS, readThresholds } from './advanced.config';
 import { QualificationEditor } from './QualificationEditor';
 
@@ -49,28 +49,15 @@ export function QualificationSection({
           >
             Scoring framework
           </label>
-          <div className="relative">
-            <select
-              id="qualification-framework"
-              value={framework}
-              onChange={(event) => onFrameworkChange(event.target.value)}
-              className={cn(
-                'h-10 w-full appearance-none rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] pl-3 pr-9 text-sm text-[var(--ds-text)] outline-none transition-colors',
-                'focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-              )}
-            >
-              {FRAMEWORK_OPTIONS.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size={16}
-              aria-hidden="true"
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ds-text-subtle)]"
-            />
-          </div>
+          <Select
+            id="qualification-framework"
+            value={framework}
+            onChange={onFrameworkChange}
+            options={FRAMEWORK_OPTIONS.map((option) => ({
+              value: option.key,
+              label: option.label,
+            }))}
+          />
           <p className="text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
             {isCustom
               ? 'Custom keeps your existing dimensions and lets you tailor scoring in the detailed editor.'

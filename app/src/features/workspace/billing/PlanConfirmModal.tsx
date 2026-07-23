@@ -54,8 +54,14 @@ function resolveIntent(
   hasActiveSubscription: boolean,
   currentMonthlyPriceMinor: number,
   trialEligible: boolean,
+  isCurrentPlan: boolean,
+  status: string | null,
 ): Intent {
   if (plan.slug === 'free') return 'downgrade_free';
+  // A trialing (or post-trial) customer selecting THEIR OWN plan is converting
+  // the trial to a paid subscription — not downgrading. Route to pay/activate
+  // (change-plan trialing→active, or checkout when the trial has expired).
+  if (isCurrentPlan && (status === 'trialing' || status === 'trial_expired')) return 'subscribe';
   if (!hasActiveSubscription) return trialEligible ? 'trial' : 'subscribe';
   return plan.monthlyPriceMinor > currentMonthlyPriceMinor ? 'upgrade' : 'downgrade';
 }
@@ -208,6 +214,14 @@ export function PlanConfirmModal({
     // All quote state is set inside this async closure (never synchronously in
     // the effect body) so a fast re-open can't cascade renders.
     void (async () => {
+      // An enterprise tier is priced on request — there is no checkout quote to
+      // fetch; it routes to sales instead.
+      if (plan.isEnterprise) {
+        if (!cancelled) {
+          setQuote({ loading: false, amountDisplay: 'Custom', blockedReason: null, contactSales: null });
+        }
+        return;
+      }
       if (!plan.isPaid) {
         if (!cancelled) {
           setQuote({ loading: false, amountDisplay: 'Free', blockedReason: null, contactSales: null });
@@ -241,9 +255,31 @@ export function PlanConfirmModal({
 
   if (!open || !plan) return null;
 
+  const isCurrentPlan = plan.slug === currentPlanSlug;
   const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus);
-  const intent = resolveIntent(plan, hasActiveSubscription, currentMonthlyPriceMinor, trialEligible);
+  const intent = resolveIntent(
+    plan,
+    hasActiveSubscription,
+    currentMonthlyPriceMinor,
+    trialEligible,
+    isCurrentPlan,
+    currentSubscriptionStatus,
+  );
   const blocked = quote.blockedReason !== null;
+  // A "contact sales" tier (enterprise) or a genuinely blocked checkout (intl
+  // USD pending) both route to the sales team rather than the pay button.
+  const contactOnly = blocked || plan.isEnterprise;
+
+  // Referral discount preview. The platform charges on the INR rail (a blocked
+  // intl checkout never reaches this UI), so the discounted headline from the
+  // server quote, the struck original, and the savings figure are all INR and
+  // stay coherent.
+  const annual = cycle === 'annual' && plan.annualPriceMinor > 0;
+  const originalMinor = annual ? plan.annualPriceMinor : plan.monthlyPriceMinor;
+  const cycleSuffix = annual ? '/yr' : '/mo';
+  const discountActive =
+    plan.isPaid && !contactOnly && referral.status === 'applied' && referral.discountPct > 0;
+  const savingsMinor = discountActive ? Math.round(originalMinor * (referral.discountPct / 100)) : 0;
 
   const primaryLabel =
     intent === 'trial'
@@ -267,7 +303,7 @@ export function PlanConfirmModal({
       title={`Confirm ${plan.name}`}
       description="Review the change before it takes effect."
       footer={
-        blocked ? (
+        contactOnly ? (
           <a
             href={`mailto:${quote.contactSales || SALES_EMAIL}?subject=${encodeURIComponent(`${plan.name} plan inquiry`)}`}
             className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--ds-accent)] px-4 py-2 text-[13px] font-medium text-[var(--ds-accent-fg)] transition-opacity hover:opacity-90"
@@ -316,19 +352,54 @@ export function PlanConfirmModal({
           {quote.loading ? (
             <Skeleton className="mt-3 h-9 w-32 rounded" />
           ) : (
-            <p className="mt-3 text-[34px] font-bold leading-none tracking-tight text-[var(--ds-text)]">
-              {quote.amountDisplay ?? priceText(plan, cycle)}
-            </p>
+            <div className="mt-3 space-y-1">
+              <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                <p className="text-[34px] font-bold leading-none tracking-tight text-[var(--ds-text)]">
+                  {quote.amountDisplay ?? priceText(plan, cycle)}
+                </p>
+                {discountActive && (
+                  <>
+                    <span className="text-[16px] font-medium text-[var(--ds-text-subtle)] line-through">
+                      {formatMoneyMinor(originalMinor)}
+                    </span>
+                    <span className="inline-flex items-center rounded-full bg-[var(--ds-success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ds-success)]">
+                      {referral.discountPct}% off
+                    </span>
+                  </>
+                )}
+              </div>
+              {discountActive && savingsMinor > 0 && (
+                <p className="text-[12px] font-medium text-[var(--ds-success)]">
+                  You save {formatMoneyMinor(savingsMinor)}
+                  {cycleSuffix} with code {referral.code}
+                </p>
+              )}
+            </div>
           )}
           <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
             <PlanHighlights plan={plan} />
           </div>
         </div>
 
+        {/* Trial context strip — a calm, delightful reassurance that the free
+            trial charges nothing today. Only when this change starts a trial. */}
+        {intent === 'trial' && (
+          <div className="flex items-center gap-2.5 rounded-xl border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-3.5 py-2.5 text-[13px] text-[var(--ds-text)]">
+            <Gift size={15} aria-hidden="true" className="shrink-0 text-[var(--ds-accent-text)]" />
+            <span>
+              <span className="font-semibold">{plan.trialDays || 7} days free</span>
+              <span className="text-[var(--ds-text-muted)]">
+                {' '}
+                — you won’t be charged today. Cancel anytime before it ends.
+              </span>
+            </span>
+          </div>
+        )}
+
         {/* Referral / coupon code — only where a discount can apply (paid, not a
             downgrade, not blocked). Applying attaches the code server-side; the
             quote above re-fetches to show the discounted price. */}
-        {plan.isPaid && !blocked && intent !== 'downgrade' && intent !== 'downgrade_free' && (
+        {plan.isPaid && !contactOnly && intent !== 'downgrade' && intent !== 'downgrade_free' && (
           <div className="rounded-xl border border-[var(--ds-border)] p-4">
             {referral.status === 'applied' ? (
               <div className="flex items-center gap-2 text-[13px]">
@@ -390,10 +461,12 @@ export function PlanConfirmModal({
         )}
 
         {/* What will happen */}
-        {blocked ? (
+        {contactOnly ? (
           <div className="flex items-start gap-2 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-text)]">
             <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
-            International USD billing is coming soon — our team will set you up directly.
+            {plan.isEnterprise
+              ? 'This plan is tailored to your needs — our team will set you up with custom pricing and onboarding.'
+              : 'International USD billing is coming soon — our team will set you up directly.'}
           </div>
         ) : (
           <p className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">

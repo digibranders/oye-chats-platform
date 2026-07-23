@@ -283,6 +283,23 @@ export const registerClient = async (
 };
 
 /**
+ * Resolve the visitor's country (ISO 3166-1 alpha-2) from the request edge
+ * headers, so the signup form can preselect it. Public endpoint, no auth.
+ * Returns `null` when no edge signal is present (e.g. local dev) — never throws.
+ * @returns {Promise<string|null>} 2-letter country code, or null.
+ */
+export const detectCountry = async () => {
+    try {
+        const response = await api.get('/auth/detect-country');
+        const country = response.data?.country;
+        return typeof country === 'string' && country.length === 2 ? country.toUpperCase() : null;
+    } catch (error) {
+        console.error('API Error during country detection:', error);
+        return null;
+    }
+};
+
+/**
  * Verify a client's email address with the 6-digit OTP.
  * @param {string} email
  * @param {string} otp

@@ -25,6 +25,7 @@ import {
   PageContainer,
   QuotaMeter,
   SectionHeader,
+  Select,
   Skeleton,
   StatusBadge,
   Tabs,
@@ -98,8 +99,6 @@ const EDITABLE_ROLES: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'owner', label: 'Owner' },
 ];
 
-const selectClass =
-  'h-10 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none transition-colors focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]';
 const labelClass = 'mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]';
 
 // ── Data loading state machine ───────────────────────────────────────────────
@@ -773,36 +772,33 @@ export function MembersPage(): ReactElement {
                       <label htmlFor="invite-role" className={labelClass}>
                         Role
                       </label>
-                      <select
+                      <Select
                         id="invite-role"
-                        className={selectClass}
                         value={inviteRole}
-                        onChange={(event) => setInviteRole(event.target.value)}
-                      >
-                        {INVITE_ROLES.map((role) => (
-                          <option key={role.value} value={role.value}>
-                            {role.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setInviteRole}
+                        options={INVITE_ROLES.map((role) => ({
+                          value: role.value,
+                          label: role.label,
+                        }))}
+                      />
                     </div>
                     <div>
                       <label htmlFor="invite-dept" className={labelClass}>
                         Department
                       </label>
-                      <select
+                      <Select
                         id="invite-dept"
-                        className={selectClass}
                         value={inviteDept}
-                        onChange={(event) => setInviteDept(event.target.value)}
-                      >
-                        <option value="">Any department</option>
-                        {departments.map((department) => (
-                          <option key={department.id} value={department.id}>
-                            {department.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setInviteDept}
+                        placeholder="Any department"
+                        options={[
+                          { value: '', label: 'Any department' },
+                          ...departments.map((department) => ({
+                            value: department.id,
+                            label: department.name,
+                          })),
+                        ]}
+                      />
                     </div>
                   </div>
                   <div className="mt-4 flex items-center justify-end gap-2">
@@ -879,36 +875,33 @@ export function MembersPage(): ReactElement {
                       <label htmlFor="edit-role" className={labelClass}>
                         Role
                       </label>
-                      <select
+                      <Select
                         id="edit-role"
-                        className={selectClass}
                         value={editRole}
-                        onChange={(event) => setEditRole(event.target.value)}
-                      >
-                        {EDITABLE_ROLES.map((role) => (
-                          <option key={role.value} value={role.value}>
-                            {role.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setEditRole}
+                        options={EDITABLE_ROLES.map((role) => ({
+                          value: role.value,
+                          label: role.label,
+                        }))}
+                      />
                     </div>
                     <div>
                       <label htmlFor="edit-dept" className={labelClass}>
                         Department
                       </label>
-                      <select
+                      <Select
                         id="edit-dept"
-                        className={selectClass}
                         value={editDept}
-                        onChange={(event) => setEditDept(event.target.value)}
-                      >
-                        <option value="">No department</option>
-                        {departments.map((department) => (
-                          <option key={department.id} value={department.id}>
-                            {department.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setEditDept}
+                        placeholder="No department"
+                        options={[
+                          { value: '', label: 'No department' },
+                          ...departments.map((department) => ({
+                            value: department.id,
+                            label: department.name,
+                          })),
+                        ]}
+                      />
                     </div>
                     <div>
                       <label htmlFor="edit-max" className={labelClass}>

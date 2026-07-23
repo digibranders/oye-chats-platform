@@ -739,6 +739,19 @@ def login(request: Request, body: LoginRequest):
         ) from e
 
 
+@router.get("/detect-country")
+@limiter.limit("30/minute")
+def detect_country(request: Request):
+    """Resolve the caller's country from edge headers, for the signup form.
+
+    Public (no auth) — the register page calls this on load to preselect the
+    visitor's country in the billing-country field. Returns the ISO 3166-1
+    alpha-2 code, or ``null`` when no edge signal is present (local dev, direct
+    origin hit) so the form can fall back to an unselected placeholder.
+    """
+    return {"country": resolve_country(request)}
+
+
 @router.post("/register", response_model=RegisterResponse)
 @limiter.limit("5/minute")
 def register(request: Request, body: RegisterRequest):

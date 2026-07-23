@@ -6,6 +6,7 @@ import {
   FeatureGate,
   Input,
   SectionHeader,
+  Select,
   Skeleton,
   Textarea,
   cn,
@@ -449,18 +450,15 @@ function LiveChatCard({
               <label htmlFor={delayId} className="block text-[13px] font-medium text-[var(--ds-text)]">
                 Handoff delay
               </label>
-              <select
+              <Select
                 id={delayId}
-                value={value.handoffDelaySeconds}
-                onChange={(e) => onChange((prev) => ({ ...prev, handoffDelaySeconds: parseInt10(e.target.value) }))}
-                className="h-10 w-full rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none transition-colors focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-              >
-                {HANDOFF_DELAY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                value={String(value.handoffDelaySeconds)}
+                onChange={(next) => onChange((prev) => ({ ...prev, handoffDelaySeconds: parseInt10(next) }))}
+                options={HANDOFF_DELAY_OPTIONS.map((option) => ({
+                  value: String(option.value),
+                  label: option.label,
+                }))}
+              />
               <p className="text-[11px] text-[var(--ds-text-subtle)]">
                 Time before the handoff form appears after the bot suggests live chat.
               </p>

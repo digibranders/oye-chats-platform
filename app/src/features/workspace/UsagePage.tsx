@@ -29,6 +29,7 @@ import { TopupModal } from './billing/TopupModal';
 import { UsageHero } from './usage/UsageHero';
 import { CreditBreakdown } from './usage/CreditBreakdown';
 import { ConsumptionTrend } from './usage/ConsumptionTrend';
+import { BotCreditsSection, type TopupTarget } from './usage/BotCreditsSection';
 
 // ── Plan limits (entitlement-driven quota meters) ────────────────────────────
 
@@ -291,6 +292,59 @@ function ConsumptionHistory({ rows }: { rows: LedgerRow[] }): ReactElement {
   );
 }
 
+// ── Recent top-ups ────────────────────────────────────────────────────────────
+
+/**
+ * A purchased top-up: a positive `topup` movement that isn't a plan-upgrade
+ * proration credit (which `resolveLabel` relabels). Mirrors the legacy
+ * Billing.jsx TopupsTab, which listed genuine credit purchases only.
+ */
+function isPurchasedTopup(row: LedgerRow): boolean {
+  return row.reason === 'topup' && row.delta > 0 && row.label !== 'Plan upgrade credit';
+}
+
+/**
+ * RecentTopups — a compact receipt of the last few credit purchases, restoring
+ * the legacy TopupsTab's at-a-glance list. Rendered only when the ledger holds
+ * genuine purchases; the full itemized ledger below carries everything else.
+ */
+function RecentTopups({ rows }: { rows: LedgerRow[] }): ReactElement | null {
+  const purchases = useMemo(() => rows.filter(isPurchasedTopup).slice(0, 5), [rows]);
+  if (purchases.length === 0) return null;
+
+  return (
+    <section aria-label="Recent top-ups" className="space-y-4">
+      <SectionHeader
+        title="Recent top-ups"
+        description="Your latest credit purchases. Top-up credits roll over for 12 months."
+      />
+      <ul className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
+        {purchases.map((row) => (
+          <li
+            key={row.id}
+            className="flex items-center justify-between gap-4 border-b border-[var(--ds-border)] px-4 py-3 last:border-b-0"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-success-soft)] text-[var(--ds-success)]">
+                <Wallet size={15} aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-medium text-[var(--ds-text)]">
+                  {row.note || 'Credit top-up'}
+                </p>
+                <p className="text-[12px] text-[var(--ds-text-subtle)]">{formatDate(row.createdAt)}</p>
+              </div>
+            </div>
+            <span className="shrink-0 tabular-nums text-[13px] font-semibold text-[var(--ds-success)]">
+              +{formatCredits(row.delta)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -303,7 +357,10 @@ function ConsumptionHistory({ rows }: { rows: LedgerRow[] }): ReactElement {
 export function UsagePage(): ReactElement {
   const { phase, retry } = useUsageData();
   const navigate = useNavigate();
-  const [topupOpen, setTopupOpen] = useState(false);
+  // `null` = closed. A target carries the pool the top-up is scoped to: the
+  // shared account balance (`botId: null`) or one agent's isolated balance.
+  const [topupTarget, setTopupTarget] = useState<TopupTarget | null>(null);
+  const openAccountTopup = (): void => setTopupTarget({ botId: null, botName: null });
 
   const goToBilling = (): void => {
     void navigate('/workspace/billing');
@@ -314,7 +371,7 @@ export function UsagePage(): ReactElement {
       title="Usage"
       description="Everything your workspace is consuming this period — credits, AI chats, documents, crawled pages, and customer emails."
       actions={
-        <Button variant="outline" onClick={() => setTopupOpen(true)}>
+        <Button variant="outline" onClick={openAccountTopup}>
           <Wallet size={16} aria-hidden="true" />
           Buy credits
         </Button>
@@ -347,7 +404,7 @@ export function UsagePage(): ReactElement {
               }
               action={
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => setTopupOpen(true)}>
+                  <Button onClick={openAccountTopup}>
                     <Wallet size={16} aria-hidden="true" />
                     Buy credits
                   </Button>
@@ -360,7 +417,21 @@ export function UsagePage(): ReactElement {
             />
           )}
 
-          <UsageHero balance={phase.balance} onBuyCredits={() => setTopupOpen(true)} />
+          <UsageHero balance={phase.balance} onBuyCredits={openAccountTopup} />
+
+          {/* Per-agent credit breakdown — only when the account runs more than
+              one pool (an agent on its own subscription keeps an isolated
+              balance). Lets a customer see and top up a single agent's credits,
+              which the aggregate hero above can't. */}
+          {phase.balance.botCredits.length > 0 && (
+            <BotCreditsSection
+              pools={[
+                ...(phase.balance.accountPool ? [phase.balance.accountPool] : []),
+                ...phase.balance.botCredits,
+              ]}
+              onTopup={setTopupTarget}
+            />
+          )}
 
           {/* Metered consumption this period. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
@@ -403,6 +474,9 @@ export function UsagePage(): ReactElement {
           {/* Plan limits — entitlement-driven quota meters (grafted from design). */}
           <PlanLimitsSection />
 
+          {/* Recent credit purchases — a quick receipt above the full ledger. */}
+          {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} />}
+
           {/* Itemized ledger, grouped by day. */}
           <section aria-label="Consumption history" className="space-y-3">
             <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">Consumption history</h2>
@@ -427,10 +501,12 @@ export function UsagePage(): ReactElement {
       )}
 
       <TopupModal
-        open={topupOpen}
-        onClose={() => setTopupOpen(false)}
+        open={topupTarget !== null}
+        botId={topupTarget?.botId ?? null}
+        botName={topupTarget?.botName ?? null}
+        onClose={() => setTopupTarget(null)}
         onSuccess={() => {
-          setTopupOpen(false);
+          setTopupTarget(null);
           retry();
         }}
       />
