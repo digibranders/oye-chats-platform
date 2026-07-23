@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import {
   MoreHorizontal,
   ExternalLink,
+  Link2,
   Pencil,
   Trash2,
   Loader2,
@@ -17,7 +18,7 @@ import {
   X,
   ArrowRight,
 } from 'lucide-react';
-import { updateBot, deleteBot, getBotDemoUrl } from '../../services/api';
+import { updateBot, deleteBot, getBotDemoUrl, trackDemoShareClick } from '../../services/api';
 import { type Bot } from '../../types/domain';
 import { cn } from '../../design-system';
 
@@ -47,6 +48,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
   const [renameValue, setRenameValue] = useState(bot.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -62,6 +64,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     setOpen(false);
     setRenaming(false);
     setConfirmDelete(false);
+    setCopied(false);
     setError('');
   }, []);
 
@@ -165,6 +168,22 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     'flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:bg-[var(--ds-bg-hover)] focus-visible:outline-none';
   const demoUrl = bot.bot_key ? getBotDemoUrl(bot.bot_key) : null;
 
+  // Copy the shareable demo link and record the share (fire-and-forget: a failed
+  // analytics ping must never block the copy). The menu stays open so the
+  // "Copied" confirmation is visible; it resets when the menu closes.
+  const handleCopyDemo = async (): Promise<void> => {
+    if (!demoUrl) return;
+    try {
+      await navigator.clipboard.writeText(demoUrl);
+    } catch {
+      setError('Could not copy — check clipboard permissions.');
+      return;
+    }
+    setCopied(true);
+    setError('');
+    void trackDemoShareClick(bot.id).catch(() => undefined);
+  };
+
   return (
     <div ref={containerRef} className="relative z-10">
       <button
@@ -219,6 +238,17 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
               <ExternalLink size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
               View demo
             </a>
+          )}
+
+          {demoUrl && (
+            <button role="menuitem" type="button" className={menuItemClass} onClick={() => void handleCopyDemo()}>
+              {copied ? (
+                <Check size={15} className="text-[var(--ds-success)]" aria-hidden="true" />
+              ) : (
+                <Link2 size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
+              )}
+              {copied ? 'Link copied' : 'Copy demo link'}
+            </button>
           )}
 
           <div className="my-1 border-t border-[var(--ds-border)]" />

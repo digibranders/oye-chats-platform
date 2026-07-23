@@ -18,12 +18,12 @@ import {
   Skeleton,
 } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
-import { AgentCard } from '../../design-system/components/AgentCard';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot } from '../../types/domain';
-import { getAgentMetrics, getAgentStatus, summarizeAgents } from './agent-status';
+import { summarizeAgents } from './agent-status';
+import { AgentCard } from './AgentCard';
 import { CreateAgentDialog } from './CreateAgentDialog';
 import { AgentActionsMenu } from './AgentActionsMenu';
 
@@ -34,16 +34,9 @@ import { AgentActionsMenu } from './AgentActionsMenu';
  * controls — clicking the tile opens the agent, the menu handles the rest.
  */
 function AgentGridCard({ bot, onChanged }: { bot: Bot; onChanged: () => void }): ReactElement {
-  const { status } = getAgentStatus(bot);
   return (
     <div className="relative">
-      <AgentCard
-        name={bot.name}
-        status={status}
-        metrics={getAgentMetrics(bot)}
-        avatar={bot.bot_logo ?? undefined}
-        to={`/agents/${bot.id}/overview`}
-      />
+      <AgentCard bot={bot} />
       <div className="absolute right-3 top-3">
         <AgentActionsMenu bot={bot} onChanged={onChanged} />
       </div>
