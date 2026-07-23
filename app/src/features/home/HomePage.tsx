@@ -165,7 +165,7 @@ function buildRecommendations(data: HomeData): Recommendation[] {
       key: 'new-agent',
       icon: Plus,
       title: 'Create another agent',
-      description: 'Spin up a new AI agent for a different site, product or audience.',
+      description: 'Spin up a new AI chatbot for a different site, product or audience.',
       to: '/agents',
       cta: 'New agent',
     });
@@ -279,8 +279,8 @@ function HomeEmpty(): ReactElement {
   return (
     <EmptyState
       icon={Sparkles}
-      title="Create your first AI agent"
-      description="Set up an agent, train it on your content and add it to your website. We’ll guide you through every step."
+      title="Create your first AI chatbot"
+      description="Set up a chatbot, train it on your content and add it to your website. We’ll guide you through every step."
       action={
         <Link
           to="/launch"
@@ -431,7 +431,7 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
           <section aria-label="Your agents" className="space-y-4">
             <SectionHeader
               title="Your agents"
-              description="Health and activity across every AI agent in this workspace."
+              description="Health and activity across every AI chatbot in this workspace."
               actions={
                 <Link
                   to="/agents"

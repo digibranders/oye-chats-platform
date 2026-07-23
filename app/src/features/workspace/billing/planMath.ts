@@ -193,7 +193,7 @@ export function buildFeatureList(plan: PlanRow, geo: Geo | null): string[] {
   if (features.webhooks) out.push('Webhooks (5 event types)');
 
   if (plan.slug === 'free') {
-    out.push('1 AI Agent');
+    out.push('1 AI Chatbot');
     out.push('Basic widget customization');
     out.push('Lead capture forms');
   } else if (plan.slug === 'starter') {
@@ -280,7 +280,7 @@ export function ctasFor({
           'Authorise your card or UPI now to keep ' +
           `${plan.name} once the trial ends. We won't charge you until the trial is over.`,
         trial_expired:
-          `Restore your ${plan.name} plan and bring your AI Agent back live. A secure ` +
+          `Restore your ${plan.name} plan and bring your AI Chatbot back live. A secure ` +
           'Razorpay checkout will open to authorise your payment method.',
       };
       return [
@@ -352,7 +352,7 @@ export function ctasFor({
       label: `Start your ${trialDays}-day trial`,
       note: isSwap
         ? `Switches your current trial to ${plan.name}. Your trial of ${currentPlanSlug ?? 'the previous plan'} ends immediately; the new ${trialDays} days start now. No card required.`
-        : `${trialDays}-day free trial, no card required. Your AI Agent goes live with the plan’s full credit allowance from day one.`,
+        : `${trialDays}-day free trial, no card required. Your AI Chatbot goes live with the plan’s full credit allowance from day one.`,
     };
     return [trial, { ...paid, variant: 'secondary' }];
   }

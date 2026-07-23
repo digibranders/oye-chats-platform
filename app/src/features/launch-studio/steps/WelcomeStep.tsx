@@ -15,8 +15,8 @@ const HIGHLIGHTS: { icon: LucideIcon; title: string; body: string }[] = [
 export function WelcomeStep(props: StepProps) {
   return (
     <StepShell
-      title="Let's launch your AI agent"
-      description="In a few guided steps you'll create an AI Agent trained on your content and put it live on your site."
+      title="Let's launch your AI chatbot"
+      description="In a few guided steps you'll create an AI Chatbot trained on your content and put it live on your site."
       continueLabel="Get started"
       {...props}
     >

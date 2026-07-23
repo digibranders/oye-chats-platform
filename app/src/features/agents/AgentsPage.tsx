@@ -136,8 +136,8 @@ export function AgentsPage(): ReactElement {
 
   return (
     <PageContainer
-      title="AI Agents"
-      description="Every AI agent in your workspace, and how healthy each one is."
+      title="AI Chatbots"
+      description="Every AI chatbot in your workspace, and how healthy each one is."
       actions={
         <Button onClick={handleAddAgent}>
           <Plus size={16} aria-hidden="true" />
@@ -171,8 +171,8 @@ export function AgentsPage(): ReactElement {
       ) : !hasAgents ? (
         <EmptyState
           icon={BotIcon}
-          title="Create your first AI agent"
-          description="An AI agent answers your visitors from your own content. Name one to get started — training and customization come next."
+          title="Create your first AI chatbot"
+          description="An AI chatbot answers your visitors from your own content. Name one to get started — training and customization come next."
           action={
             <Button onClick={handleAddAgent}>
               <Plus size={16} aria-hidden="true" />

@@ -545,7 +545,7 @@ export function LeadsPage(): ReactElement {
         <EmptyState
           icon={Users}
           title="No leads yet"
-          description="Create your first AI agent and add it to your site. Every visitor who chats becomes a lead here — ranked by how ready they are to buy."
+          description="Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here — ranked by how ready they are to buy."
         />
       </PageContainer>
     );
@@ -720,7 +720,7 @@ export function LeadsPage(): ReactElement {
             columns={columns}
             rows={filtered}
             rowKey={(lead) => lead.session_id}
-            caption="Leads captured by your AI agents"
+            caption="Leads captured by your AI chatbots"
             onRowClick={openLead}
             empty={
               leads.length === 0 ? (

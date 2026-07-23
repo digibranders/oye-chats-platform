@@ -95,7 +95,7 @@ export const router = createBrowserRouter([
                   // ── AI Agents ──────────────────────────────────────────────
                   {
                     path: 'agents',
-                    handle: { crumb: 'AI Agents' },
+                    handle: { crumb: 'AI Chatbots' },
                     children: [
                       { index: true, element: <AgentsPage /> },
                       {

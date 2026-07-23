@@ -265,19 +265,19 @@ export function AnalyticsPage(): ReactElement {
     return (
       <PageContainer
         title="Analytics"
-        description="How your whole workspace is performing across every AI agent."
+        description="How your whole workspace is performing across every AI chatbot."
       >
         <EmptyState
           icon={BarChart3}
           title="No performance data yet"
-          description="Create your first AI agent and deploy it to start tracking conversations, leads, and satisfaction here."
+          description="Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here."
           action={
             <Link
               to="/agents"
               className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <BotIcon size={16} aria-hidden="true" />
-              Create an AI agent
+              Create an AI chatbot
             </Link>
           }
         />
@@ -293,7 +293,7 @@ export function AnalyticsPage(): ReactElement {
   return (
     <PageContainer
       title="Analytics"
-      description="How your whole workspace is performing across every AI agent."
+      description="How your whole workspace is performing across every AI chatbot."
       actions={actions}
     >
       {showLoading ? (

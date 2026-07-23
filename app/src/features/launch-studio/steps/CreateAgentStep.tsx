@@ -62,7 +62,7 @@ export function CreateAgentStep(props: StepProps) {
   return (
     <StepShell
       title="Create your agent"
-      description="Give your AI agent a name. You can change it anytime."
+      description="Give your AI chatbot a name. You can change it anytime."
       onBack={props.onBack}
       onContinue={handleContinue}
       isFirst={props.isFirst}

@@ -146,7 +146,7 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
   return (
     <PageContainer
       title="Overview"
-      description="Mission Control dashboard for your AI agent health, knowledge, channels, and performance."
+      description="Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance."
       actions={
         <Button variant="outline" size="sm" onClick={refetch} disabled={isBusy}>
           <RefreshCw

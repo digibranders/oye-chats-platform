@@ -460,7 +460,7 @@ function LiveChatCard({
                 }))}
               />
               <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                Time before the handoff form appears after the AI Agent suggests live chat.
+                Time before the handoff form appears after the AI Chatbot suggests live chat.
               </p>
             </div>
 

@@ -192,7 +192,7 @@ export function ProfileMenu() {
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
                   <BotIcon size={13} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
                   <span>
-                    {profile?.bot_count ?? '—'} {profile?.bot_count === 1 ? 'AI Agent' : 'AI Agents'}
+                    {profile?.bot_count ?? '—'} {profile?.bot_count === 1 ? 'AI Chatbot' : 'AI Chatbots'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">

@@ -381,7 +381,7 @@ export function ChannelsPage(): ReactElement {
   return (
     <PageContainer
       title="Channels"
-      description="Where your AI agent is connected and talking to people."
+      description="Where your AI chatbot is connected and talking to people."
     >
       {body()}
     </PageContainer>

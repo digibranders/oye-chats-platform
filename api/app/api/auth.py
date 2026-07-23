@@ -786,7 +786,7 @@ def get_current_bot(
                 # No bot exists — client hasn't created one yet (expected for new accounts)
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No active bot found. Please create an AI Agent first.",
+                    detail="No active bot found. Please create an AI chatbot first.",
                 )
 
         raise HTTPException(

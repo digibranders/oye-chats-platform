@@ -593,7 +593,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           description={
             unavailable
               ? 'Ask a workspace admin to add you as an operator, then you’ll be able to take real-time conversations here.'
-              : 'Flip your availability to online and waiting visitors, your active conversations, and qualified AI Agent chats will appear here in real time.'
+              : 'Flip your availability to online and waiting visitors, your active conversations, and qualified AI Chatbot chats will appear here in real time.'
           }
         />
       </div>
@@ -678,7 +678,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
                 <Skeleton className="h-10 w-full rounded-lg" />
               </div>
             ) : visibleQualified.length === 0 ? (
-              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">No qualified AI Agent chats right now.</p>
+              <p className="px-1 py-2 text-[12px] text-[var(--ds-text-subtle)]">No qualified AI Chatbot chats right now.</p>
             ) : (
               visibleQualified.map((q) => {
                 const resolution = connectResolutions[q.session_id];
