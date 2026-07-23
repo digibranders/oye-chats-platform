@@ -375,3 +375,19 @@ export function diffRecrawl(
 ): Promise<Record<string, unknown>>;
 /** GET recrawl history/status for a bot's sources. */
 export function getRecrawlStatus(botId: number): Promise<Record<string, unknown>>;
+
+// ── Notifications: web push (settings) ───────────────────────────────────────
+/** POST /operators/push/subscribe — persist a PushSubscription for this operator. */
+export function subscribePush(subscription: unknown): Promise<Record<string, unknown>>;
+/** DELETE /operators/push/subscribe — remove a stored push subscription. */
+export function unsubscribePush(endpoint: string, keys?: unknown): Promise<boolean>;
+
+// ── Personality: brand-tone AI assist (experience) ───────────────────────────
+/** GET /bots/brand-tone-presets — the selectable brand-tone presets. */
+export function getBrandTonePresets(): Promise<Array<Record<string, unknown>>>;
+/** POST /bots/{id}/brand-tone/detect — infer a brand tone from the crawled site. */
+export function detectBrandTone(botId: number): Promise<Record<string, unknown>>;
+
+// ── Demo share tracking (channels) ───────────────────────────────────────────
+/** POST /bots/{id}/demo-share-click — record a shared demo-link click. */
+export function trackDemoShareClick(botId: number): Promise<Record<string, unknown>>;
