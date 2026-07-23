@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getActivityStats, getDashboardStats, getTopQuestions } from '../../../services/api';
-import { type ActivityPoint, type TopQuestion } from '../../../types/domain';
+import {
+  getActivityStats,
+  getBot,
+  getDashboardStats,
+  getRatingsSummary,
+  getResolutionSummary,
+  getTopQuestions,
+} from '../../../services/api';
+import { type ActivityPoint, type Bot, type TopQuestion } from '../../../types/domain';
+import { parseRatingsSummary, parseResolutionSummary } from '../../analytics/analytics-types';
 
 /**
- * The subset of the `/analytics/dashboard` payload the Overview reads. The
- * endpoint returns an untyped record (see api.d.ts), so we parse it defensively
- * here rather than trusting its shape.
+ * The subset of overview analytics and stats.
  */
 export interface AgentStats {
   readonly totalConversations: number;
@@ -13,6 +19,8 @@ export interface AgentStats {
   readonly activeUsers: number;
   /** Percentage of rated answers marked helpful, 0–100. */
   readonly successRate: number;
+  readonly resolutionRate: number | null;
+  readonly averageRating: number | null;
 }
 
 type LoadStatus = 'loading' | 'success' | 'error';
@@ -28,6 +36,7 @@ export interface OverviewData {
   readonly stats: AgentStats | null;
   readonly activity: readonly ActivityPoint[];
   readonly questions: readonly TopQuestion[];
+  readonly details: Bot | null;
   readonly error: string | null;
   /** Re-run every fetch (e.g. a manual "Refresh" action). */
   readonly refetch: () => void;
@@ -39,12 +48,28 @@ function toNumber(value: unknown): number {
 }
 
 /** Parses the raw dashboard record into a typed, safe {@link AgentStats}. */
-function parseStats(raw: Record<string, unknown>): AgentStats {
+function parseStats(
+  raw: Record<string, unknown>,
+  rawRatings: Record<string, unknown>,
+  rawResolution: Record<string, unknown>,
+): AgentStats {
+  const ratings = parseRatingsSummary(rawRatings);
+  const resolution = parseResolutionSummary(rawResolution);
+
+  const averageRating =
+    ratings.total > 0 && ratings.average > 0
+      ? ratings.average
+      : typeof rawRatings.avg === 'number' && Number.isFinite(rawRatings.avg)
+        ? rawRatings.avg
+        : null;
+
   return {
     totalConversations: toNumber(raw.total_conversations),
     totalMessages: toNumber(raw.total_messages),
     activeUsers: toNumber(raw.active_users),
     successRate: toNumber(raw.success_rate),
+    resolutionRate: resolution.rate,
+    averageRating,
   };
 }
 
@@ -55,10 +80,8 @@ function toMessage(error: unknown): string {
 }
 
 /**
- * Loads the three Overview data sources (stats, activity, top questions) for a
- * single agent. `botId` is stable for the hook's lifetime (the page remounts
- * this via `key={agent.id}`), so the fetch runs once per agent and only ever
- * calls `setState` from async callbacks — never synchronously inside an effect.
+ * Loads the overview data sources (stats, activity, top questions, bot details,
+ * ratings, resolution summary) for a single agent.
  */
 export function useOverviewData(botId: number): OverviewData {
   const [state, setState] = useState<Omit<OverviewData, 'refetch'>>({
@@ -67,15 +90,12 @@ export function useOverviewData(botId: number): OverviewData {
     stats: null,
     activity: [],
     questions: [],
+    details: null,
     error: null,
   });
-  // Bumped by refetch() to re-trigger the effect without a synchronous reset.
   const [reloadToken, setReloadToken] = useState(0);
 
   const refetch = useCallback(() => {
-    // Called from a user event (never an effect). Keep the resolved status and
-    // existing data so a refresh doesn't blank the page back to skeletons; the
-    // isRefetching flag drives the Refresh button's spinner instead.
     setState((current) => ({ ...current, isRefetching: true, error: null }));
     setReloadToken((token) => token + 1);
   }, []);
@@ -87,15 +107,19 @@ export function useOverviewData(botId: number): OverviewData {
       getDashboardStats(botId),
       getActivityStats(botId).catch((): ActivityPoint[] => []),
       getTopQuestions(botId).catch((): TopQuestion[] => []),
+      getBot(botId).catch((): Bot | null => null),
+      getRatingsSummary(botId).catch((): Record<string, unknown> => ({})),
+      getResolutionSummary(botId).catch((): Record<string, unknown> => ({})),
     ])
-      .then(([rawStats, activity, questions]) => {
+      .then(([rawStats, activity, questions, details, rawRatings, rawResolution]) => {
         if (cancelled) return;
         setState({
           status: 'success',
           isRefetching: false,
-          stats: parseStats(rawStats),
+          stats: parseStats(rawStats, rawRatings, rawResolution),
           activity,
           questions,
+          details,
           error: null,
         });
       })
@@ -107,6 +131,7 @@ export function useOverviewData(botId: number): OverviewData {
           stats: null,
           activity: [],
           questions: [],
+          details: null,
           error: toMessage(error),
         });
       });
