@@ -102,10 +102,11 @@ if SENTRY_ENABLED:
         # auto-derive from git if available) when running locally.
         release=os.getenv("SENTRY_RELEASE") or None,
         send_default_pii=False,
-        enable_logs=True,
+        # Errors + a thin slice of tracing only. Continuous profiling and
+        # structured logs are deliberately OFF: on the free plan profile hours
+        # ran out and Sentry paused ingestion for the whole project, which takes
+        # error reporting down with it. Do not re-enable without a paid plan.
         traces_sample_rate=0.1,
-        profile_session_sample_rate=0.1,
-        profile_lifecycle="trace",
     )
     # Tag every event with the service name so API and worker can be
     # filtered apart in the Sentry UI (the worker uses the same DSN

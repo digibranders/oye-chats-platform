@@ -88,10 +88,9 @@ def _init_sentry_for_worker() -> None:
         environment=APP_ENV,
         release=os.getenv("SENTRY_RELEASE") or None,
         send_default_pii=False,
-        enable_logs=True,
+        # Errors + light tracing only — profiling and logs stay off on the free
+        # plan. See the matching note in app/main.py.
         traces_sample_rate=0.1,
-        profile_session_sample_rate=0.1,
-        profile_lifecycle="trace",
     )
     sentry_sdk.set_tag("service", "worker")
     logger.info(f"Sentry error tracking enabled in worker | env={APP_ENV}")

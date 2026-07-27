@@ -32,28 +32,14 @@ if (SENTRY_DSN && import.meta.env.PROD && !isLocalHostname(window.location.hostn
   Sentry.init({
     dsn: SENTRY_DSN,
     environment: import.meta.env.MODE,
-    integrations: [
-      Sentry.browserTracingIntegration(),
-      // Session Replay. `maskAllText`/`blockAllMedia` are the SDK defaults but
-      // are set explicitly here: this dashboard renders customer lead data,
-      // billing details and conversation transcripts, none of which may leave
-      // the browser in a replay.
-      Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
-      Sentry.browserProfilingIntegration(),
-      // Structured logs. Only warn/error — console.log noise is not worth the
-      // quota and is what breadcrumbs already cover.
-      Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
-    ],
+    // Errors + light tracing only. Session Replay, Profiling and structured
+    // Logs are deliberately NOT enabled: we are on the Sentry free plan, where
+    // exhausting any one of those quotas pauses ingestion for the whole
+    // project — taking error reporting down with it. Do not add
+    // replayIntegration / browserProfilingIntegration / enableLogs without a
+    // paid plan behind them.
+    integrations: [Sentry.browserTracingIntegration()],
     tracesSampleRate: 0.3,
-    replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
-    // UI Profiling (v2): sample whole sessions, then profile for the duration
-    // of each sampled trace. Requires `tracesSampleRate` above AND the
-    // `Document-Policy: js-profiling` response header (set in vercel.json) —
-    // without that header the browser refuses to expose the JS profiler.
-    profileSessionSampleRate: 0.1,
-    profileLifecycle: 'trace',
-    enableLogs: true,
     sendDefaultPii: false,
   });
 }

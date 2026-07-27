@@ -33,24 +33,12 @@ const loadSentry = async () => {
     Sentry.init({
       dsn,
       environment: import.meta.env.MODE,
-      integrations: [
-        // Replay records the DOM of the CUSTOMER's page, not just our widget.
-        // Hence: everything masked, media blocked, and error-only capture — we
-        // never record a visitor session that completed without a crash.
-        Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
-        // Only activates when the host page serves `Document-Policy:
-        // js-profiling`; on every other site the browser withholds the JS
-        // profiler and the integration is inert. We cannot set that header on
-        // a customer's domain, so treat profiles here as best-effort.
-        Sentry.browserProfilingIntegration(),
-        Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
-      ],
+      // Errors + light tracing only — no Replay, Profiling or Logs. We are on
+      // the Sentry free plan, where blowing any one of those quotas pauses
+      // ingestion project-wide and we lose error reporting too. Replay is
+      // doubly unwanted here: this bundle runs on the CUSTOMER's page, so a
+      // replay would record their visitors, not just our widget.
       tracesSampleRate: 0.1,
-      replaysSessionSampleRate: 0,
-      replaysOnErrorSampleRate: 1.0,
-      profileSessionSampleRate: 0.1,
-      profileLifecycle: 'trace',
-      enableLogs: true,
       sendDefaultPii: false,
     })
   } catch (e) {
