@@ -11,7 +11,7 @@ export interface SeatChangeDialogProps {
   delta: number;
   /** Current total seat count, for the before/after summary. */
   currentSeats: number;
-  /** Formatted per-seat price, e.g. "₹499/mo". */
+  /** Formatted per-seat price, e.g. "₹449/mo". */
   seatPriceLabel: string;
   /** Fired after a successful change with a status message. */
   onSuccess: (message: string) => void;
@@ -95,7 +95,7 @@ export function SeatChangeDialog({
       title={isAdd ? 'Add an operator seat' : 'Remove an operator seat'}
       description={
         isAdd
-          ? 'An extra seat lets one more teammate handle live chats.'
+          ? 'An extra seat lets one more operator handle live chats.'
           : 'Freeing a seat reduces your next invoice.'
       }
       footer={

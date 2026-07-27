@@ -23,7 +23,7 @@ import { Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
  * is the security boundary. This component is a UX affordance only.
  *
  * @param {object} props
- * @param {string} props.planSlug — Entitlements plan slug ('free' | 'starter' | 'standard' | 'enterprise').
+ * @param {string} props.planSlug — Entitlements plan slug ('free' | 'starter' | 'standard' | 'professional').
  * @param {() => void} props.onFullRecrawl — Called when the user picks "Full recrawl".
  * @param {() => void} props.onDeltaRecrawl — Called when the user picks "Updated pages only" AND is entitled.
  * @param {() => void} [props.onUpgradeClick] — Called when a non-entitled user clicks the upgrade CTA.
@@ -52,7 +52,7 @@ export default function RecrawlMenu({
   const popoverRef = useRef(null);
 
   const canUseDelta =
-    planSlug === 'standard' || planSlug === 'enterprise';
+    planSlug === 'standard' || planSlug === 'professional';
 
   // Right-align the popover to the trigger's right edge, drop it below with
   // a small gap. Clamped to the viewport so it never renders offscreen on a
@@ -199,7 +199,7 @@ export default function RecrawlMenu({
                     Updated pages only
                   </div>
                   {/* The badge is a plan-tier hint for users who don't have
-                      the feature yet. Standard / Enterprise callers already
+                      the feature yet. Standard / Professional callers already
                       have delta — showing "STANDARD" to them is redundant
                       and reads as a "coming soon" badge on a feature they
                       can use right now. Hide it for entitled tiers. */}

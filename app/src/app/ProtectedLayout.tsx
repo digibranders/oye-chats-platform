@@ -4,6 +4,9 @@ import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { BotProvider } from '../context/BotContext';
 import { CrawlProvider } from '../context/CrawlContext';
 import { CurrencyProvider } from '../context/CurrencyContext';
+import { NotificationProvider } from '../context/NotificationContext';
+import { EntitlementsProvider } from '../context/EntitlementsContext';
+import { UpgradeModalProvider } from '../context/UpgradeModalContext';
 
 /**
  * Build a `/login?next=…` URL that round-trips the current deep link through
@@ -20,11 +23,18 @@ function loginUrlWithNext(pathname: string, search: string): string {
  * ProtectedLayout — the authenticated boundary for the new app.
  *
  * Gates on the presence of an auth token (reusing the legacy `authStorage`), and
- * mounts the reused data providers around everything below. The three providers
- * are mutually independent and self-contained (they read `authStorage` + the API
- * client and coordinate via window events), so this is the minimum correct tree
- * to reuse the backend layer. Chrome-only providers (Toast/Notification/Push/…)
- * are added per-surface as migrated pages need them.
+ * mounts the reused data providers around everything below. The three data
+ * providers are mutually independent and self-contained (they read `authStorage`
+ * + the API client and coordinate via window events), so this is the minimum
+ * correct tree to reuse the backend layer. `NotificationProvider` (the TopBar
+ * bell's data source) is nested innermost, after Workspace/Currency, since it
+ * needs the authenticated + workspace-scoped context to be established first —
+ * it listens for `oyechats:workspace-switched` to re-hydrate on workspace switch.
+ * `EntitlementsProvider` (plan/limit/feature gating) and `UpgradeModalProvider`
+ * (the upsell dialog it opens) are mounted innermost of all, after
+ * Workspace/Currency/Notification — entitlements are workspace-scoped and
+ * re-fetch on the same `oyechats:workspace-switched` signal. Other chrome-only
+ * providers (Toast/Push/…) are added per-surface as migrated pages need them.
  */
 export function ProtectedLayout() {
   const { pathname, search } = useLocation();
@@ -41,7 +51,13 @@ export function ProtectedLayout() {
           {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces
               render prices in the account's charge currency (INR/USD). */}
           <CurrencyProvider>
-            <Outlet />
+            <NotificationProvider>
+              <EntitlementsProvider>
+                <UpgradeModalProvider>
+                  <Outlet />
+                </UpgradeModalProvider>
+              </EntitlementsProvider>
+            </NotificationProvider>
           </CurrencyProvider>
         </CrawlProvider>
       </BotProvider>

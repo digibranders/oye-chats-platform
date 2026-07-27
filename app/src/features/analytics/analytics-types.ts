@@ -73,6 +73,22 @@ export function parseRatingsSummary(record: Record<string, unknown>): RatingsSum
   };
 }
 
+/** Conversation resolution metrics, from `getResolutionSummary`. */
+export interface ResolutionSummary {
+  /** Resolution rate 0-100 or null if unavailable. */
+  rate: number | null;
+  total: number;
+}
+
+export function parseResolutionSummary(record: Record<string, unknown>): ResolutionSummary {
+  const rawRate = record.rate ?? record.resolution_rate;
+  const rate = typeof rawRate === 'number' && Number.isFinite(rawRate) ? rawRate : null;
+  return {
+    rate,
+    total: readNumber(record, 'total'),
+  };
+}
+
 /** Lead qualification funnel, from `getLeadStats`. */
 export interface LeadFunnelStats {
   total: number;

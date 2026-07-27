@@ -412,7 +412,7 @@ class Bot(Base):
 
     # ── Auto-recrawl (weekly refresh of previously-crawled URLs) ──────────
     # Gated by the ``auto_recrawl`` feature flag on the client's plan
-    # (Standard + Enterprise). ``next_recrawl_at`` is stamped as
+    # (Standard + Professional). ``next_recrawl_at`` is stamped as
     # ``now + 7 days`` on toggle-on and cleared on toggle-off — see
     # ``recrawl_service`` and ``task_auto_recrawl_sweep``. The partial
     # index ``ix_bots_next_recrawl_due`` keeps the sweep query cheap.
@@ -508,7 +508,7 @@ class LeadInfo(Base):
     # lead row (not just the session) so attribution survives session
     # pruning by retention policies. Populated only when the owning
     # client is on a plan that includes the Lead Source Attribution
-    # feature (Standard / Enterprise). See ``chat_routes.lead_capture_endpoint``.
+    # feature (Standard / Professional). See ``chat_routes.lead_capture_endpoint``.
     utm_params = Column(JSONB, nullable=True)
     visitor_journey = Column(JSONB, nullable=True)
 
@@ -1055,8 +1055,8 @@ class Plan(Base):
     __tablename__ = "plans"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)  # "Free", "Starter", "Standard", "Enterprise"
-    slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "enterprise"
+    name = Column(String, nullable=False)  # "Free", "Starter", "Standard", "Professional"
+    slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "professional"
     description = Column(Text, nullable=True)
 
     # Pricing (stored in *minor units* of the configured currency — paise for
@@ -1349,6 +1349,11 @@ class Invoice(Base):
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String, default="inr", server_default="inr", nullable=False)
     status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
+    # Cumulative refunded amount (minor units) across ALL refund events for this
+    # charge. Accumulated per refund event (deduped on refund id) so the status
+    # flips to "refunded" once several PARTIAL refunds sum to the full charge,
+    # instead of staying "partially_refunded" forever (finding #5).
+    refunded_minor = Column(Integer, default=0, server_default="0", nullable=False)
 
     # Provider references
     razorpay_payment_id = Column(String, unique=True, index=True, nullable=True)
@@ -1416,7 +1421,9 @@ class Invoice(Base):
 # registration/payment status). The finalize transition itself — invoice_number
 # going NULL→value in the same UPDATE — is allowed.
 _INVOICE_FROZEN_EXEMPT = frozenset(
-    {"pdf_url", "invoice_url", "emailed_at", "status", "irn", "signed_qr", "razorpay_invoice_id"}
+    # refunded_minor accompanies the ``status`` transition (partially_refunded /
+    # refunded) — a post-issuance lifecycle field, not a frozen tax/amount column.
+    {"pdf_url", "invoice_url", "emailed_at", "status", "refunded_minor", "irn", "signed_qr", "razorpay_invoice_id"}
 )
 
 

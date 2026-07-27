@@ -2,12 +2,13 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
 import { isSessionExpired, clearAuthStorage } from './utils/authStorage'
+import { isLocalHostname } from './utils/isLocalHostname'
 import ErrorFallback from './components/ErrorFallback.jsx'
 import './index.css'
 import './design-system/tokens.css'
-// Admin Platform 2.0 foundation entry. The legacy root remains on disk at
-// ./App.jsx (with its pages) for the strangler-fig migration — surfaces are
-// ported into the new shell one at a time, then the legacy files are deleted.
+// Admin Platform 2.0 entry. The strangler-fig migration is complete for the
+// primary surfaces — the legacy root (./App.jsx) and its dead pages/layouts
+// have been removed; reused legacy modules (services, contexts, utils) remain.
 // The new root (./app/App) owns theming, so the old ThemeProvider wrapper is
 // gone from here.
 import App from './app/App'
@@ -20,19 +21,25 @@ if (isSessionExpired()) {
   clearAuthStorage();
 }
 
-// Initialize Sentry error tracking (opt-in via env var)
+// Initialize Sentry error tracking (opt-in via env var, production only).
+// Dev builds and anything served from localhost are excluded: the DSN lives in
+// developers' local .env too, and without this gate every hot-reload crash and
+// half-finished refactor raises a Sentry alert that buries real production
+// issues. `PROD` alone is not enough — `vite preview` serves a PROD build from
+// localhost.
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
-if (SENTRY_DSN) {
+if (SENTRY_DSN && import.meta.env.PROD && !isLocalHostname(window.location.hostname)) {
   Sentry.init({
     dsn: SENTRY_DSN,
     environment: import.meta.env.MODE,
-    integrations: [
-      Sentry.browserTracingIntegration(),
-      Sentry.replayIntegration(),
-    ],
+    // Errors + light tracing only. Session Replay, Profiling and structured
+    // Logs are deliberately NOT enabled: we are on the Sentry free plan, where
+    // exhausting any one of those quotas pauses ingestion for the whole
+    // project — taking error reporting down with it. Do not add
+    // replayIntegration / browserProfilingIntegration / enableLogs without a
+    // paid plan behind them.
+    integrations: [Sentry.browserTracingIntegration()],
     tracesSampleRate: 0.3,
-    replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
     sendDefaultPii: false,
   });
 }

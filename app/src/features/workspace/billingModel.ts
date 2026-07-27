@@ -48,6 +48,8 @@ function toBool(value: unknown): boolean {
 // ── View-model shapes ────────────────────────────────────────────────────────
 
 export interface PlanView {
+  /** DB primary key — required by the checkout money-path (change-plan/checkout/quote). */
+  id: number;
   slug: string;
   name: string;
   /** Active-cycle price in INR minor units (paise), monthly column. */
@@ -59,6 +61,23 @@ export interface PlanView {
   /** Per-extra-seat monthly price in INR minor units. */
   extraSeatPriceMinor: number;
   isPaid: boolean;
+  /**
+   * True for a "contact sales" tier — priced on request, not self-serve
+   * checkout. Derived from `slug === 'enterprise'` or a `contact_sales` /
+   * `enterprise` feature flag, so a seeded enterprise plan routes to sales
+   * instead of the Razorpay money-path.
+   */
+  isEnterprise: boolean;
+  /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
+  annualDiscountPercent: number;
+  /** Free-trial length in days; 0 for plans with no trial (Free). */
+  trialDays: number;
+  /** Catalog ordering from the backend (`sort_order`). */
+  sortOrder: number;
+  /** Raw `features` flags from the plan payload (bant, live_chat, webhooks, …). Read by the plan matrix. */
+  features: Record<string, unknown>;
+  /** Raw `limits` counters from the plan payload (max_crawl_pages, chat_history_days, …). `-1` = unlimited. */
+  limits: Record<string, number>;
 }
 
 export interface ScheduledChangeView {
@@ -112,18 +131,36 @@ export interface BillingDetailsView {
   stateCode: string | null;
   email: string | null;
   address: BillingAddress | null;
+  /** Account company name (from signup) — prefills the legal name when unset. */
+  companyName: string | null;
+  /** Account login email — where invoices go when billing email is unset. */
+  accountEmail: string | null;
   /** True when the customer has entered no tax identity at all. */
   isEmpty: boolean;
 }
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
+/** Coerce a raw `limits` object to a flat number map (`-1` = unlimited passes through). */
+function toNumberMap(raw: unknown): Record<string, number> {
+  const record = asRecord(raw);
+  if (!record) return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
+
 export function buildPlan(raw: unknown): PlanView | null {
   const record = asRecord(raw);
   if (!record) return null;
   const monthlyPriceMinor = toNumber(record.monthly_price_cents);
+  const slug = toText(record.slug) || 'free';
+  const features = asRecord(record.features) ?? {};
   return {
-    slug: toText(record.slug) || 'free',
+    id: toNumber(record.id),
+    slug,
     name: toText(record.name) || 'Free',
     monthlyPriceMinor,
     annualPriceMinor: toNumber(record.annual_price_cents),
@@ -133,6 +170,12 @@ export function buildPlan(raw: unknown): PlanView | null {
     // Currency-independent: INR is the canonical column and is always set for
     // a paid tier, so this stays correct regardless of display currency.
     isPaid: monthlyPriceMinor > 0,
+    isEnterprise: slug === 'enterprise' || features.contact_sales === true || features.enterprise === true,
+    annualDiscountPercent: toNumber(record.annual_discount_percent),
+    trialDays: toNumber(record.trial_days),
+    sortOrder: toNumber(record.sort_order),
+    features,
+    limits: toNumberMap(record.limits),
   };
 }
 
@@ -214,6 +257,8 @@ export function buildBillingDetails(raw: unknown): BillingDetailsView {
     stateCode: record ? toOptionalText(record.billing_state_code) : null,
     email,
     address,
+    companyName: record ? toOptionalText(record.company_name) : null,
+    accountEmail: record ? toOptionalText(record.account_email) : null,
     isEmpty: !legalName && !gstin && !email && !address,
   };
 }

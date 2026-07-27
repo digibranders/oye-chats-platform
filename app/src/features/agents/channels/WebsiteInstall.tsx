@@ -8,13 +8,16 @@ import {
   Eye,
   EyeOff,
   Key,
+  Link2,
 } from 'lucide-react';
-import { platforms, categoryLabels, categoryOrder } from '../../../data/platformIntegrations';
-import { getBotDemoUrl } from '../../../services/api';
+import {
+  platforms,
+  categoryLabels,
+  categoryOrder,
+} from '../../../data/platformIntegrations';
+import { getApiBaseUrl, getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
 import { cn } from '../../../design-system';
-
-/** The Channels tab always shows production install instructions. */
-const ENV = 'production' as const;
+import { getEmbedEnvironment } from './embedEnvironment';
 
 /** A copyable code block. Clipboard write is best-effort; the code is always selectable. */
 function CopyableCode({ code, label }: { code: string; label: string }) {
@@ -37,7 +40,7 @@ function CopyableCode({ code, label }: { code: string; label: string }) {
         type="button"
         onClick={copy}
         aria-label={copied ? `${label} copied` : `Copy ${label}`}
-        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       >
         {copied ? <Check size={14} className="text-[var(--ds-success)]" /> : <Copy size={14} />}
       </button>
@@ -55,6 +58,8 @@ function maskKey(key: string): string {
 export interface WebsiteInstallProps {
   /** The agent's public embed key (`data-bot-key`). */
   botKey: string;
+  /** The agent's numeric id — used to attribute demo-link shares. */
+  botId: number;
 }
 
 /**
@@ -64,13 +69,15 @@ export interface WebsiteInstallProps {
  * legacy `data/platformIntegrations` module (see `pages/my-bots/InstallDrawer.jsx`
  * for the original drawer); only the presentation is rebuilt on the design system.
  */
-export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
+export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const [showKey, setShowKey] = useState(false);
   const [keyCopied, setKeyCopied] = useState(false);
+  const [demoCopied, setDemoCopied] = useState(false);
   const [platformId, setPlatformId] = useState<string | null>(null);
 
   const platform = platforms.find((p) => p.id === platformId) ?? null;
   const demoUrl = getBotDemoUrl(botKey);
+  const env = getEmbedEnvironment(getApiBaseUrl());
 
   const copyKey = async (): Promise<void> => {
     try {
@@ -79,6 +86,22 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
       window.setTimeout(() => setKeyCopied(false), 2000);
     } catch {
       // Clipboard blocked — the key is visible when revealed.
+    }
+  };
+
+  const copyDemoLink = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(demoUrl);
+      setDemoCopied(true);
+      window.setTimeout(() => setDemoCopied(false), 2000);
+    } catch {
+      // Clipboard blocked — the demo link is still reachable via the button above.
+    }
+    // Attribution is best-effort: a failed track must not undo the copy.
+    try {
+      await trackDemoShareClick(botId);
+    } catch {
+      // Analytics failures are non-fatal.
     }
   };
 
@@ -96,14 +119,14 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
                 aria-label={showKey ? 'Hide embed key' : 'Show embed key'}
-                className="flex h-6 w-6 items-center justify-center rounded text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+                className="flex h-6 w-6 items-center justify-center rounded text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
               </button>
               <button
                 type="button"
                 onClick={copyKey}
-                className="flex items-center gap-1 rounded px-1 text-[11px] font-semibold uppercase text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+                className="flex items-center gap-1 rounded px-1 text-[11px] font-semibold uppercase text-[var(--ds-accent-text)] transition-colors hover:text-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
               >
                 {keyCopied ? <Check size={12} /> : <Copy size={12} />}
                 {keyCopied ? 'Copied' : 'Copy'}
@@ -124,41 +147,62 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
           <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
             Preview
           </span>
-          <a
-            href={demoUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="See your agent live (opens in a new tab)"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
-          >
-            <ExternalLink size={14} aria-hidden="true" />
-            See your agent live
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={demoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="See your agent live (opens in a new tab)"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              <ExternalLink size={14} aria-hidden="true" />
+              See your agent live
+            </a>
+            <button
+              type="button"
+              onClick={copyDemoLink}
+              aria-label={demoCopied ? 'Demo link copied' : 'Copy demo link'}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              {demoCopied ? (
+                <Check size={14} className="text-[var(--ds-success)]" aria-hidden="true" />
+              ) : (
+                <Link2 size={14} aria-hidden="true" />
+              )}
+              {demoCopied ? 'Copied' : 'Copy demo link'}
+            </button>
+            <span role="status" aria-live="polite" className="sr-only">
+              {demoCopied ? 'Demo link copied' : ''}
+            </span>
+          </div>
           <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-            Opens a hosted page with your agent — no install needed to try it.
+            Opens a hosted page with your agent — no install needed to try it. Share the link so
+            others can chat with it too.
           </p>
         </div>
       </div>
 
       {/* Platform-specific install steps */}
       <div>
-        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-          Install steps
-        </span>
+        <div className="mb-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
+            Install steps
+          </span>
+        </div>
 
         {platform ? (
           <div className="space-y-4">
             <button
               type="button"
               onClick={() => setPlatformId(null)}
-              className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <ChevronLeft size={14} aria-hidden="true" />
               Change platform
             </button>
 
             <ol className="space-y-4">
-              {platform.getSteps(botKey, ENV).map((step, index) => (
+              {platform.getSteps(botKey, env).map((step, index) => (
                 <li key={step.title} className="flex gap-3">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[11px] font-semibold text-[var(--ds-accent-text)]">
                     {index + 1}
@@ -194,7 +238,7 @@ export function WebsiteInstall({ botKey }: WebsiteInstallProps) {
                         onClick={() => setPlatformId(p.id)}
                         className={cn(
                           'flex items-center justify-between gap-2 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-3 text-left transition-colors',
-                          'hover:border-[var(--ds-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+                          'hover:border-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                         )}
                       >
                         <span className="min-w-0">

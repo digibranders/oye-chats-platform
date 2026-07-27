@@ -40,13 +40,15 @@ import { MessageTrendChart } from './MessageTrendChart';
 import { TopQuestionsList } from './TopQuestionsList';
 import { LeadFunnel } from './LeadFunnel';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
+import { FeedbackPanel } from '../feedback/FeedbackPanel';
 
-type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction';
+type AnalyticsTab = 'conversations' | 'leads' | 'satisfaction' | 'feedback';
 
 const TAB_ITEMS: ReadonlyArray<{ key: AnalyticsTab; label: string }> = [
   { key: 'conversations', label: 'Conversations' },
   { key: 'leads', label: 'Leads' },
   { key: 'satisfaction', label: 'Satisfaction' },
+  { key: 'feedback', label: 'Feedback' },
 ];
 
 /** Narrow the Tabs string key back to the AnalyticsTab union without casting. */
@@ -97,7 +99,7 @@ function deriveInsight(
   if (leads.sql > 0) {
     return {
       tone: 'accent',
-      title: `${leads.sql.toLocaleString()} sales-qualified ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
+      title: `${leads.sql.toLocaleString()} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
       body: 'Your agents are turning conversations into qualified pipeline. Review them in Leads to follow up.',
     };
   }
@@ -184,8 +186,8 @@ function RangeControl({
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={
               selected
-                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]'
-                : 'rounded-md px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]'
+                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]'
+                : 'rounded-md px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]'
             }
           >
             {range.label}
@@ -263,19 +265,19 @@ export function AnalyticsPage(): ReactElement {
     return (
       <PageContainer
         title="Analytics"
-        description="How your whole workspace is performing across every AI agent."
+        description="How your whole workspace is performing across every AI chatbot."
       >
         <EmptyState
           icon={BarChart3}
           title="No performance data yet"
-          description="Create your first AI agent and deploy it to start tracking conversations, leads, and satisfaction here."
+          description="Create your first AI chatbot and deploy it to start tracking conversations, leads, and satisfaction here."
           action={
             <Link
               to="/agents"
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]"
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <BotIcon size={16} aria-hidden="true" />
-              Create an AI agent
+              Create an AI chatbot
             </Link>
           }
         />
@@ -291,7 +293,7 @@ export function AnalyticsPage(): ReactElement {
   return (
     <PageContainer
       title="Analytics"
-      description="How your whole workspace is performing across every AI agent."
+      description="How your whole workspace is performing across every AI chatbot."
       actions={actions}
     >
       {showLoading ? (
@@ -344,7 +346,7 @@ export function AnalyticsPage(): ReactElement {
               id="tabpanel-conversations"
               aria-labelledby="tab-conversations"
               tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <Card>
                 <CardHeader>
@@ -411,13 +413,13 @@ export function AnalyticsPage(): ReactElement {
               id="tabpanel-leads"
               aria-labelledby="tab-leads"
               tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                 <MetricCard label="Total leads" value={data.leads.total.toLocaleString()} icon={Users} />
-                <MetricCard label="Marketing-qualified" value={data.leads.mql.toLocaleString()} icon={Sparkles} />
-                <MetricCard label="Sales-accepted" value={data.leads.sal.toLocaleString()} icon={Activity} />
-                <MetricCard label="Sales-qualified" value={data.leads.sql.toLocaleString()} icon={Zap} />
+                <MetricCard label="Warm lead" value={data.leads.mql.toLocaleString()} icon={Sparkles} />
+                <MetricCard label="Strong interest" value={data.leads.sal.toLocaleString()} icon={Activity} />
+                <MetricCard label="Ready to buy" value={data.leads.sql.toLocaleString()} icon={Zap} />
               </div>
               <Card>
                 <CardHeader>
@@ -440,7 +442,7 @@ export function AnalyticsPage(): ReactElement {
               id="tabpanel-satisfaction"
               aria-labelledby="tab-satisfaction"
               tabIndex={0}
-              className="space-y-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <Card>
                 <CardHeader>
@@ -453,6 +455,19 @@ export function AnalyticsPage(): ReactElement {
                   <SatisfactionBreakdown ratings={data.ratings} />
                 </CardContent>
               </Card>
+            </div>
+          )}
+
+          {/* Feedback */}
+          {tab === 'feedback' && (
+            <div
+              role="tabpanel"
+              id="tabpanel-feedback"
+              aria-labelledby="tab-feedback"
+              tabIndex={0}
+              className="focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              <FeedbackPanel />
             </div>
           )}
         </>

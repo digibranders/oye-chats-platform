@@ -1,4 +1,4 @@
-import { Home, Bot, Inbox, Users, BarChart3, Building2, type LucideIcon } from 'lucide-react';
+import { Home, Bot, Inbox, Users, BarChart3, Building2, Settings, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -18,9 +18,15 @@ export interface NavItem {
  */
 export const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: Home, end: true, hint: 'Daily overview' },
-  { to: '/agents', label: 'AI Agents', icon: Bot, hint: 'Create, train and manage agents' },
-  { to: '/inbox', label: 'Inbox', icon: Inbox, hint: 'Live chat and messages' },
+  { to: '/agents', label: 'Chatbots', icon: Bot, hint: 'Create, train and manage chatbots' },
+  { to: '/inbox', label: 'Support', icon: Inbox, hint: 'Live chat and messages' },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification' },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across agents' },
-  { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and settings' },
+  { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and usage' },
+];
+
+/** Secondary, bottom-anchored nav — preferences, separate from the primary
+ *  object-nav. Account/workspace switching stays in the TopBar menu. */
+export const SECONDARY_NAV: NavItem[] = [
+  { to: '/settings', label: 'Settings', icon: Settings, hint: 'Profile, workspace and preferences' },
 ];

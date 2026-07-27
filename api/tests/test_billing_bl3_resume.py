@@ -189,6 +189,47 @@ def test_resume_never_returns_false_resumed_successfully(db):
     assert sub.cancel_at_period_end is True
 
 
+def test_resume_double_submit_reuses_pending_checkout_no_second_mint(db):
+    """Finding H1: a sequential double /resume must NOT mint a second Razorpay
+    subscription (two authorized mandates → double charge). The second call
+    reuses the in-flight checkout via rebuild_upgrade_checkout."""
+    client = _make_client(db, email="bl3-idem@e.com")
+    plan = _make_plan(db, slug="std-bl3-idem")
+    sub = _make_sub(db, client, plan, razorpay_subscription_id="sub_old_idem")
+    db.commit()
+
+    app, subscription_routes = _app(client)
+    api = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+        patch(
+            "app.services.razorpay_service.create_subscription",
+            return_value={"provider": "razorpay", "subscription_id": "sub_new_idem", "short_url": "u1"},
+        ) as create_sub,
+        patch(
+            "app.services.razorpay_service.rebuild_upgrade_checkout",
+            return_value={"provider": "razorpay", "subscription_id": "sub_new_idem", "short_url": "u1-reused"},
+        ) as rebuild,
+    ):
+        first = api.post("/subscriptions/resume", json={})
+        # The first call must persist the pending marker for the guard to see.
+        db.refresh(sub)
+        assert sub.upgrade_pending_subscription_id == "sub_new_idem"
+        assert sub.upgrade_pending_plan_id == plan.id
+        second = api.post("/subscriptions/resume", json={})
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    # Exactly ONE fresh Razorpay subscription is ever minted across both calls.
+    create_sub.assert_called_once()
+    # The second call reused the in-flight checkout instead of minting again.
+    rebuild.assert_called_once()
+    assert second.json()["mandate_action"] == "reauthorise_required"
+    assert (second.json().get("checkout") or {}).get("short_url") == "u1-reused"
+
+
 def test_resume_rejects_when_not_scheduled_for_cancellation(db):
     """A sub with no pending cancellation → 400 (nothing to resume). No gateway
     subscription is minted."""

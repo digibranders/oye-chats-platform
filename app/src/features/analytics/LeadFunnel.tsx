@@ -33,7 +33,7 @@ export function LeadFunnel({ stats }: LeadFunnelProps): ReactElement {
       <EmptyState
         icon={Users}
         title="No leads captured yet"
-        description="When your agents qualify visitors, you’ll see how many became marketing- and sales-qualified leads here."
+        description="When your agents qualify visitors, you’ll see how many became warm leads and buyers ready to purchase here."
       />
     );
   }
@@ -51,21 +51,21 @@ export function LeadFunnel({ stats }: LeadFunnelProps): ReactElement {
     },
     {
       key: 'mql',
-      label: 'Marketing-qualified',
+      label: 'Warm lead',
       hint: 'Showed genuine interest',
       count: mqlPlus,
       color: 'var(--ds-info)',
     },
     {
       key: 'sal',
-      label: 'Sales-accepted',
+      label: 'Strong interest',
       hint: 'Worth a sales follow-up',
       count: salPlus,
       color: 'var(--ds-warning)',
     },
     {
       key: 'sql',
-      label: 'Sales-qualified',
+      label: 'Ready to buy',
       hint: 'Ready to buy',
       count: stats.sql,
       color: 'var(--ds-success)',

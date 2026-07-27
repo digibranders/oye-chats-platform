@@ -8,7 +8,7 @@ is still NULL. No database, no network — pure value logic.
 
 from __future__ import annotations
 
-from app.core.pricing import display_price, format_amount
+from app.core.pricing import display_price, format_amount, seat_price
 
 
 def test_indian_reads_inr_paise_directly():
@@ -65,3 +65,29 @@ def test_format_amount_large_paise_is_exact_no_float_error():
 def test_format_amount_handles_negative():
     assert format_amount(-1900, "USD") == "-$19"
     assert format_amount(-15050, "INR") == "-₹150.50"
+
+
+# ── seat_price — canonical extra-operator-seat price (₹449 / $5) ──────────────
+
+
+def test_seat_price_defaults_to_inr():
+    # No country and no currency → the live single INR rail.
+    assert seat_price(inr_cents=44900, usd_cents=500) == (44900, "INR")
+
+
+def test_seat_price_indian_country_is_inr():
+    assert seat_price(inr_cents=44900, usd_cents=500, country="IN") == (44900, "INR")
+
+
+def test_seat_price_non_indian_country_is_usd():
+    assert seat_price(inr_cents=44900, usd_cents=500, country="US") == (500, "USD")
+
+
+def test_seat_price_explicit_currency_wins_over_country():
+    # An explicit plan currency is authoritative even if country disagrees.
+    assert seat_price(inr_cents=44900, usd_cents=500, currency="usd", country="IN") == (500, "USD")
+    assert seat_price(inr_cents=44900, usd_cents=500, currency="inr", country="US") == (44900, "INR")
+
+
+def test_seat_price_currency_case_insensitive():
+    assert seat_price(inr_cents=44900, usd_cents=500, currency="USD") == (500, "USD")

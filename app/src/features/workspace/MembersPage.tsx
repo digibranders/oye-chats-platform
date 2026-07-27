@@ -19,12 +19,17 @@ import {
   DataTable,
   EmptyState,
   Input,
+  LockedFeatureCard,
   MetricCard,
+  Modal,
   PageContainer,
+  QuotaMeter,
   SectionHeader,
+  Select,
   Skeleton,
   StatusBadge,
   Tabs,
+  Textarea,
   cn,
   type Column,
 } from '../../design-system';
@@ -40,10 +45,14 @@ import {
   listOperatorInvites,
   resendOperatorInvite,
   revokeOperatorInvite,
+  updateDepartment,
   updateOperator,
 } from '../../services/api';
+import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Department, type Operator, type OperatorInvite } from '../../types/domain';
 
 // ── Local helpers ────────────────────────────────────────────────────────────
@@ -90,8 +99,6 @@ const EDITABLE_ROLES: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'owner', label: 'Owner' },
 ];
 
-const selectClass =
-  'h-10 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-sm text-[var(--ds-text)] outline-none transition-colors focus-visible:border-[var(--ds-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent-soft)]';
 const labelClass = 'mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]';
 
 // ── Data loading state machine ───────────────────────────────────────────────
@@ -149,6 +156,10 @@ export function MembersPage(): ReactElement {
   // (and the solo-owner case where role is still null) can.
   const canManage = currentRole !== 'operator';
   const selectedBotId = selectedBot?.id ?? null;
+
+  const { entitlements, isFree, limitFor, withinLimit } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const seatLimit = limitFor('operators');
 
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -215,9 +226,21 @@ export function MembersPage(): ReactElement {
   const [deptRemovingId, setDeptRemovingId] = useState<number | null>(null);
   const [deptRowBusyId, setDeptRowBusyId] = useState<number | null>(null);
 
+  // Department edit (name + description + per-department business hours)
+  const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [editDeptName, setEditDeptName] = useState('');
+  const [editDeptDesc, setEditDeptDesc] = useState('');
+  const [editDeptHours, setEditDeptHours] = useState<BusinessHours | null>(null);
+  const [editDeptBusy, setEditDeptBusy] = useState(false);
+  const [editDeptError, setEditDeptError] = useState('');
+
   // Load / reload. No synchronous setState in the effect body — the first
   // setState always follows an await, so `loading` is a genuine derived phase.
+  // Free-plan workspaces never issue this fetch — the page renders the
+  // upgrade teaser below instead, so there's no roster to load in the first
+  // place. Re-runs (and starts fetching) the moment `isFree` flips false.
   useEffect(() => {
+    if (isFree) return;
     let active = true;
     void (async () => {
       try {
@@ -264,7 +287,7 @@ export function MembersPage(): ReactElement {
     return () => {
       active = false;
     };
-  }, [refreshToken]);
+  }, [refreshToken, isFree]);
 
   const reload = (): void => setRefreshToken((token) => token + 1);
   const retry = (): void => {
@@ -273,6 +296,14 @@ export function MembersPage(): ReactElement {
   };
 
   const data = phase.status === 'ready' ? phase.data : null;
+
+  // Workspace-wide seat usage. `getOperators()` (above) already fetches every
+  // active operator for the client — not just this bot's roster — so its
+  // length matches what `entitlements.usage.operators` counts server-side.
+  // Prefer the entitlements value (authoritative, workspace-scoped); fall
+  // back to what the page already loaded only if it's ever absent.
+  const seatsUsed = entitlements.usage.operators ?? data?.operators.length ?? 0;
+  const atSeatLimit = !withinLimit('operators', seatsUsed);
 
   // Derived, bot-scoped rosters. Operators and invites are bound to a single
   // bot; departments are workspace-level and shown in full.
@@ -303,6 +334,25 @@ export function MembersPage(): ReactElement {
   const showSelfCta = canManage && !!selectedBotId && data?.currentUserId != null && !selfOperator;
 
   const onlineCount = botOperators.filter((operator) => operator.is_online).length;
+
+  // ── Free-plan gate ───────────────────────────────────────────────────────
+  // Placed after every hook call (rules-of-hooks requires hooks to run
+  // unconditionally) but before any mutation/render logic: a Free workspace
+  // only ever sees the upgrade teaser for Members, never the roster, loading
+  // skeleton, or error state. Pairs with the fetch guard above, which never
+  // issues the roster request in the first place.
+  if (isFree) {
+    return (
+      <PageContainer
+        title="Operators"
+        description="Everyone who can see conversations and answer visitors in this workspace."
+      >
+        <div className="mx-auto w-full max-w-md py-12">
+          <LockedFeatureCard intent="view_team" icon={Users} />
+        </div>
+      </PageContainer>
+    );
+  }
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
@@ -382,7 +432,7 @@ export function MembersPage(): ReactElement {
       setEditing(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to update this member.') });
+      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to update this operator.') });
     } finally {
       setEditBusy(false);
     }
@@ -398,7 +448,7 @@ export function MembersPage(): ReactElement {
       if (editing?.id === operator.id) setEditing(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to remove this member.') });
+      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to remove this operator.') });
     } finally {
       setRowBusyId(null);
     }
@@ -437,6 +487,43 @@ export function MembersPage(): ReactElement {
     }
   };
 
+  const openEditDept = (department: Department): void => {
+    setFeedback(null);
+    setEditingDept(department);
+    setEditDeptName(department.name);
+    setEditDeptDesc(department.description ?? '');
+    setEditDeptHours((department.business_hours as BusinessHours | null) ?? null);
+    setEditDeptError('');
+  };
+
+  const handleUpdateDept = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!editingDept) return;
+    const name = editDeptName.trim();
+    if (!name) {
+      setEditDeptError('A department name is required.');
+      return;
+    }
+    setEditDeptBusy(true);
+    setEditDeptError('');
+    try {
+      await updateDepartment(editingDept.id, {
+        name,
+        description: editDeptDesc.trim() || null,
+        // Persist hours only when the master toggle is on; otherwise clear to
+        // null ("always open") so the resolver short-circuits.
+        business_hours: editDeptHours && editDeptHours.enabled ? editDeptHours : null,
+      });
+      setEditingDept(null);
+      setFeedback({ tone: 'success', message: `Department “${name}” updated.` });
+      reload();
+    } catch (error) {
+      setEditDeptError(toMessage(error, 'Failed to update the department.'));
+    } finally {
+      setEditDeptBusy(false);
+    }
+  };
+
   const handleDeleteDept = async (department: Department): Promise<void> => {
     setFeedback(null);
     setDeptRowBusyId(department.id);
@@ -457,7 +544,7 @@ export function MembersPage(): ReactElement {
   const columns: Column<Operator>[] = [
     {
       key: 'name',
-      header: 'Member',
+      header: 'Operator',
       render: (operator) => (
         <div className="flex items-center gap-3">
           <Avatar name={operator.name} />
@@ -538,19 +625,37 @@ export function MembersPage(): ReactElement {
 
   const canInvite = canManage && !!selectedBotId;
 
+  const handleInviteClick = (): void => {
+    // `atSeatLimit` is only ever true for a finite limit — `withinLimit`
+    // returns true for the unlimited (-1) sentinel — so the copy can assume a
+    // real seat count here.
+    if (atSeatLimit) {
+      openUpgradeModal('add_operator');
+      return;
+    }
+    setInviteOpen((open) => !open);
+  };
+
   const pageActions = canInvite ? (
-    <Button onClick={() => setInviteOpen((open) => !open)}>
+    <Button onClick={handleInviteClick}>
       <UserPlus size={16} aria-hidden="true" />
-      Invite member
+      Invite operator
     </Button>
   ) : undefined;
 
   return (
     <PageContainer
-      title="Members"
+      title="Operators"
       description="Everyone who can see conversations and answer visitors in this workspace."
       actions={pageActions}
     >
+      {/* Seats used against the plan's operator limit — workspace-wide. */}
+      {phase.status === 'ready' && (
+        <div className="max-w-xs">
+          <QuotaMeter label="Seats" used={seatsUsed} limit={seatLimit} />
+        </div>
+      )}
+
       {/* Live feedback for every mutation. */}
       <div aria-live="polite" className="empty:hidden">
         {feedback && (
@@ -590,14 +695,14 @@ export function MembersPage(): ReactElement {
         <>
           {/* Metrics — a quick read on team size and availability. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard label="Members" value={botOperators.length} icon={Users} />
+            <MetricCard label="Operators" value={botOperators.length} icon={Users} />
             <MetricCard label="Online now" value={onlineCount} icon={Headphones} />
             <MetricCard label="Pending invites" value={botInvites.length} icon={Mail} />
             <MetricCard label="Departments" value={departments.length} icon={Building2} />
           </div>
 
           <Tabs
-            ariaLabel="Members sections"
+            ariaLabel="Operators sections"
             value={tab}
             onChange={(key) => {
               setFeedback(null);
@@ -645,7 +750,7 @@ export function MembersPage(): ReactElement {
                   className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]"
                 >
                   <SectionHeader
-                    title="Invite a member"
+                    title="Invite an operator"
                     description="They’ll get an email with a link to join and set up their account."
                   />
                   <div className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -658,7 +763,7 @@ export function MembersPage(): ReactElement {
                         type="email"
                         required
                         autoFocus
-                        placeholder="teammate@company.com"
+                        placeholder="operator@company.com"
                         value={inviteEmail}
                         onChange={(event) => setInviteEmail(event.target.value)}
                       />
@@ -667,36 +772,33 @@ export function MembersPage(): ReactElement {
                       <label htmlFor="invite-role" className={labelClass}>
                         Role
                       </label>
-                      <select
+                      <Select
                         id="invite-role"
-                        className={selectClass}
                         value={inviteRole}
-                        onChange={(event) => setInviteRole(event.target.value)}
-                      >
-                        {INVITE_ROLES.map((role) => (
-                          <option key={role.value} value={role.value}>
-                            {role.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setInviteRole}
+                        options={INVITE_ROLES.map((role) => ({
+                          value: role.value,
+                          label: role.label,
+                        }))}
+                      />
                     </div>
                     <div>
                       <label htmlFor="invite-dept" className={labelClass}>
                         Department
                       </label>
-                      <select
+                      <Select
                         id="invite-dept"
-                        className={selectClass}
                         value={inviteDept}
-                        onChange={(event) => setInviteDept(event.target.value)}
-                      >
-                        <option value="">Any department</option>
-                        {departments.map((department) => (
-                          <option key={department.id} value={department.id}>
-                            {department.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setInviteDept}
+                        placeholder="Any department"
+                        options={[
+                          { value: '', label: 'Any department' },
+                          ...departments.map((department) => ({
+                            value: String(department.id),
+                            label: department.name,
+                          })),
+                        ]}
+                      />
                     </div>
                   </div>
                   <div className="mt-4 flex items-center justify-end gap-2">
@@ -773,36 +875,33 @@ export function MembersPage(): ReactElement {
                       <label htmlFor="edit-role" className={labelClass}>
                         Role
                       </label>
-                      <select
+                      <Select
                         id="edit-role"
-                        className={selectClass}
                         value={editRole}
-                        onChange={(event) => setEditRole(event.target.value)}
-                      >
-                        {EDITABLE_ROLES.map((role) => (
-                          <option key={role.value} value={role.value}>
-                            {role.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setEditRole}
+                        options={EDITABLE_ROLES.map((role) => ({
+                          value: role.value,
+                          label: role.label,
+                        }))}
+                      />
                     </div>
                     <div>
                       <label htmlFor="edit-dept" className={labelClass}>
                         Department
                       </label>
-                      <select
+                      <Select
                         id="edit-dept"
-                        className={selectClass}
                         value={editDept}
-                        onChange={(event) => setEditDept(event.target.value)}
-                      >
-                        <option value="">No department</option>
-                        {departments.map((department) => (
-                          <option key={department.id} value={department.id}>
-                            {department.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setEditDept}
+                        placeholder="No department"
+                        options={[
+                          { value: '', label: 'No department' },
+                          ...departments.map((department) => ({
+                            value: String(department.id),
+                            label: department.name,
+                          })),
+                        ]}
+                      />
                     </div>
                     <div>
                       <label htmlFor="edit-max" className={labelClass}>
@@ -865,7 +964,7 @@ export function MembersPage(): ReactElement {
                         disabled={rowBusyId === target.id}
                         onClick={() => handleRemove(target)}
                       >
-                        {rowBusyId === target.id ? 'Removing…' : 'Remove member'}
+                        {rowBusyId === target.id ? 'Removing…' : 'Remove operator'}
                       </Button>
                     </div>
                   </div>
@@ -889,13 +988,13 @@ export function MembersPage(): ReactElement {
                     <EmptyState
                       className="border-0 py-6"
                       icon={UserRound}
-                      title={`No members on ${selectedBot?.name ?? 'this agent'} yet`}
-                      description="Invite a teammate to help answer conversations."
+                      title={`No operators on ${selectedBot?.name ?? 'this agent'} yet`}
+                      description="Invite an operator to help answer conversations."
                       action={
                         canInvite ? (
-                          <Button onClick={() => setInviteOpen(true)}>
+                          <Button onClick={handleInviteClick}>
                             <UserPlus size={16} aria-hidden="true" />
-                            Invite member
+                            Invite operator
                           </Button>
                         ) : undefined
                       }
@@ -916,7 +1015,7 @@ export function MembersPage(): ReactElement {
             >
               <SectionHeader
                 title="Departments"
-                description="Group members so conversations reach the right team."
+                description="Group operators so conversations reach the right team."
                 actions={
                   canManage ? (
                     <Button variant="outline" onClick={() => setDeptOpen((open) => !open)}>
@@ -973,7 +1072,7 @@ export function MembersPage(): ReactElement {
                 <EmptyState
                   icon={Building2}
                   title="No departments yet"
-                  description="Create departments to organize members by team, like Sales or Support."
+                  description="Create departments to organize operators by team, like Sales or Support."
                 />
               ) : (
                 <ul className="grid gap-3">
@@ -1002,27 +1101,41 @@ export function MembersPage(): ReactElement {
                             )}
                           </div>
                           <span className="shrink-0 text-[12px] text-[var(--ds-text-muted)]">
-                            {memberCount} member{memberCount === 1 ? '' : 's'}
+                            {memberCount} operator{memberCount === 1 ? '' : 's'}
                           </span>
                           {canManage && !confirming && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Delete ${department.name}`}
-                              onClick={() => setDeptRemovingId(department.id)}
-                            >
-                              <Trash2
-                                size={15}
-                                aria-hidden="true"
-                                className="text-[var(--ds-danger)]"
-                              />
-                            </Button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Edit ${department.name}`}
+                                onClick={() => openEditDept(department)}
+                              >
+                                <Pencil
+                                  size={15}
+                                  aria-hidden="true"
+                                  className="text-[var(--ds-text-subtle)]"
+                                />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Delete ${department.name}`}
+                                onClick={() => setDeptRemovingId(department.id)}
+                              >
+                                <Trash2
+                                  size={15}
+                                  aria-hidden="true"
+                                  className="text-[var(--ds-danger)]"
+                                />
+                              </Button>
+                            </div>
                           )}
                         </div>
                         {confirming && canManage && (
                           <div className="mt-3 flex flex-col gap-3 border-t border-[var(--ds-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-[13px] text-[var(--ds-text-muted)]">
-                              Delete “{department.name}”? Members in it will be unassigned.
+                              Delete “{department.name}”? Operators in it will be unassigned.
                             </p>
                             <div className="flex shrink-0 items-center gap-2">
                               <Button variant="ghost" onClick={() => setDeptRemovingId(null)}>
@@ -1043,6 +1156,67 @@ export function MembersPage(): ReactElement {
                   })}
                 </ul>
               )}
+
+              {/* Edit department — name, description, and per-department hours. */}
+              <Modal
+                open={editingDept !== null}
+                onClose={() => setEditingDept(null)}
+                dismissible={!editDeptBusy}
+                size="lg"
+                title="Edit department"
+                description="Rename the team, update its description, and set when it’s available."
+                footer={
+                  <>
+                    <Button variant="ghost" onClick={() => setEditingDept(null)} disabled={editDeptBusy}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" form="edit-dept-form" disabled={editDeptBusy || !editDeptName.trim()}>
+                      {editDeptBusy ? 'Saving…' : 'Save changes'}
+                    </Button>
+                  </>
+                }
+              >
+                <form id="edit-dept-form" onSubmit={(e) => void handleUpdateDept(e)} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="edit-dept-name" className={labelClass}>
+                        Name
+                      </label>
+                      <Input
+                        id="edit-dept-name"
+                        value={editDeptName}
+                        onChange={(e) => setEditDeptName(e.target.value)}
+                        placeholder="e.g. Sales"
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="edit-dept-desc" className={labelClass}>
+                        Description <span className="text-[var(--ds-text-subtle)]">(optional)</span>
+                      </label>
+                      <Textarea
+                        id="edit-dept-desc"
+                        value={editDeptDesc}
+                        onChange={(e) => setEditDeptDesc(e.target.value)}
+                        placeholder="What this team handles"
+                        rows={2}
+                      />
+                    </div>
+                  </div>
+                  <div className="border-t border-[var(--ds-border)] pt-4">
+                    <BusinessHoursEditor
+                      value={editDeptHours}
+                      onChange={setEditDeptHours}
+                      disabled={editDeptBusy}
+                    />
+                  </div>
+                  {editDeptError && (
+                    <p role="alert" className="text-[12px] text-[var(--ds-danger)]">
+                      {editDeptError}
+                    </p>
+                  )}
+                </form>
+              </Modal>
             </div>
           )}
         </>

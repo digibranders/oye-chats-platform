@@ -24,7 +24,7 @@ export function Toggle({ checked, onChange, label, disabled = false }: TogglePro
       onClick={() => onChange(!checked)}
       className={cn(
         'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-surface)]',
+        'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
         checked ? 'bg-[var(--ds-accent)]' : 'bg-[var(--ds-border)]',
         disabled && 'cursor-not-allowed opacity-50',
       )}

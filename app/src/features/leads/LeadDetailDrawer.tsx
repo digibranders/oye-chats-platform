@@ -8,21 +8,26 @@
  * `aria-modal`, an Escape-to-close handler, focus moved into the panel on open
  * and returned to the trigger on close, and a click-away scrim.
  */
-import { type ReactElement, useEffect, useRef } from 'react';
+import { type ReactElement, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Building2,
+  Check,
   Mail,
   MapPin,
   MessageSquare,
   Monitor,
   Phone,
+  StickyNote,
+  Tag,
   User,
   X,
 } from 'lucide-react';
-import { Button, EmptyState, Skeleton, StatusBadge, cn } from '../../design-system';
+import { Button, EmptyState, Skeleton, StatusBadge, Textarea, cn } from '../../design-system';
 import { type ChatMessage } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
+import { type LeadAnnotationController } from './useLeadAnnotations';
+import { LeadInsights } from './LeadInsights';
 import {
   SCORE_TONE_VAR,
   TIER_META,
@@ -35,6 +40,12 @@ import {
 export interface LeadDetailDrawerProps {
   data: LeadDetailData;
   onClose: () => void;
+  /**
+   * Operator-private notes & tags for this lead (localStorage-backed). Optional
+   * so the drawer still renders standalone; when present, a "Private notes"
+   * editor is shown. Owned by the page so list-row tag chips stay in sync.
+   */
+  annotations?: LeadAnnotationController | null;
 }
 
 /** A compact circular score gauge (0–100), tinted by tier tone. */
@@ -112,7 +123,7 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
         )}
       >
         <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-          {isVisitor ? 'Visitor' : message.role === 'operator' ? 'Teammate' : 'AI agent'}
+          {isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot'}
         </p>
         {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>}
       </div>
@@ -120,7 +131,149 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
   );
 }
 
-export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): ReactElement {
+/**
+ * The private notes + tags editor. Mounted with a `key` of the lead's session
+ * id by the caller, so switching leads remounts it and its local draft resets
+ * from the incoming controller — no synchronous setState in an effect.
+ */
+function LeadAnnotationsSection({
+  controller,
+}: {
+  controller: LeadAnnotationController;
+}): ReactElement {
+  const { note, tags, saveNote, saveTags } = controller;
+  const [noteDraft, setNoteDraft] = useState(note?.text ?? '');
+  const [tagDraft, setTagDraft] = useState(tags.join(', '));
+  const [noteJustSaved, setNoteJustSaved] = useState(false);
+  const [tagsJustSaved, setTagsJustSaved] = useState(false);
+
+  const noteChanged = noteDraft.trim() !== (note?.text ?? '');
+  // Cheap dirty check — the controller re-normalises on save, so the worst case
+  // is a redundant (idempotent) write, never lost input.
+  const tagsChanged = tagDraft.trim() !== tags.join(', ');
+
+  function handleSaveNote(): void {
+    saveNote(noteDraft);
+    setNoteJustSaved(true);
+  }
+
+  function handleSaveTags(): void {
+    saveTags(tagDraft);
+    setTagsJustSaved(true);
+  }
+
+  return (
+    <section className="space-y-3">
+      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+        <StickyNote size={13} aria-hidden="true" />
+        Private notes
+      </h3>
+      <div className="space-y-4 rounded-xl border border-[var(--ds-border)] p-4">
+        <p className="text-[12px] text-[var(--ds-text-subtle)]">
+          Only your team sees these — they stay in this browser and aren&rsquo;t sent to the visitor.
+        </p>
+
+        {/* Note editor */}
+        <div className="space-y-2">
+          <label
+            htmlFor="lead-note"
+            className="block text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]"
+          >
+            Note
+          </label>
+          <Textarea
+            id="lead-note"
+            rows={3}
+            value={noteDraft}
+            placeholder="Add context for your team — next steps, who to loop in…"
+            onChange={(event) => {
+              setNoteDraft(event.target.value);
+              setNoteJustSaved(false);
+            }}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-[var(--ds-text-subtle)]">
+              {noteJustSaved && !noteChanged ? (
+                <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
+                  <Check size={12} aria-hidden="true" />
+                  Saved
+                </span>
+              ) : note ? (
+                `Last edited ${formatDateTime(note.ts)}`
+              ) : (
+                'Not saved yet'
+              )}
+            </span>
+            <Button size="sm" variant="outline" onClick={handleSaveNote} disabled={!noteChanged}>
+              Save note
+            </Button>
+          </div>
+        </div>
+
+        {/* Tag editor */}
+        <div className="space-y-2 border-t border-[var(--ds-border)] pt-4">
+          <label
+            htmlFor="lead-tags"
+            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]"
+          >
+            <Tag size={12} aria-hidden="true" />
+            Tags
+          </label>
+          {tags.length > 0 && (
+            <ul className="flex flex-wrap gap-1.5" aria-label="Saved tags">
+              {tags.map((tag) => (
+                <li
+                  key={tag}
+                  className="inline-flex items-center rounded-full bg-[var(--ds-accent-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--ds-accent-text)]"
+                >
+                  {tag}
+                </li>
+              ))}
+            </ul>
+          )}
+          <input
+            id="lead-tags"
+            type="text"
+            value={tagDraft}
+            placeholder="e.g. enterprise, follow-up, demo-requested"
+            onChange={(event) => {
+              setTagDraft(event.target.value);
+              setTagsJustSaved(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                handleSaveTags();
+              }
+            }}
+            className="h-9 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 text-[13px] text-[var(--ds-text)] outline-none transition-colors placeholder:text-[var(--ds-text-subtle)] focus-visible:border-[var(--ds-accent)] focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+          />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-[var(--ds-text-subtle)]">
+              {tagsJustSaved && !tagsChanged ? (
+                <span className="inline-flex items-center gap-1 text-[var(--ds-success)]">
+                  <Check size={12} aria-hidden="true" />
+                  Saved
+                </span>
+              ) : (
+                'Separate tags with commas'
+              )}
+            </span>
+            <Button size="sm" variant="outline" onClick={handleSaveTags} disabled={!tagsChanged}>
+              Save tags
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function LeadDetailDrawer({
+  data,
+  onClose,
+  annotations,
+}: LeadDetailDrawerProps): ReactElement {
   const panelRef = useRef<HTMLDivElement>(null);
   const headingId = 'lead-detail-heading';
 
@@ -268,6 +421,11 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
               </div>
             </section>
 
+            {/* Operator-private notes & tags (remounts per lead via key). */}
+            {annotations && (
+              <LeadAnnotationsSection key={detail.session_id} controller={annotations} />
+            )}
+
             {/* Qualification breakdown */}
             {detail.bant && Object.keys(detail.bant).length > 0 && (
               <section className="space-y-3">
@@ -326,6 +484,9 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
               </section>
             )}
 
+            {/* Source attribution + behavioural signals (rendered only when present) */}
+            <LeadInsights detail={detail} />
+
             {/* Transcript */}
             <section className="space-y-3">
               <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
@@ -347,9 +508,6 @@ export function LeadDetailDrawer({ data, onClose }: LeadDetailDrawerProps): Reac
 
             <footer className="border-t border-[var(--ds-border)] pt-4 text-[12px] text-[var(--ds-text-subtle)]">
               Last active {formatDateTime(detail.last_active_at)}
-              {/* TODO(leads): source attribution (UTM, referrer, page journey) is on
-                  `detail.source` for eligible plans — render once a typed reader
-                  and plan-entitlement gate land. */}
             </footer>
           </div>
         )}

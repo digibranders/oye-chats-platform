@@ -1,10 +1,10 @@
 import { type ReactElement, type ReactNode } from 'react';
 import {
   AlertCircle,
-  BarChart3,
   CheckCircle2,
   MessagesSquare,
   RefreshCw,
+  Star,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -16,15 +16,14 @@ import {
   SectionHeader,
   Skeleton,
 } from '../../../design-system';
-// MetricCard is a Foundation composite; import it directly (the barrel export is
-// wired by the orchestrator) so this file compiles independently.
 import { MetricCard } from '../../../design-system/components/MetricCard';
 import { useAgent } from '../../../context/AgentContext';
 import { type Bot } from '../../../types/domain';
 import { deriveAgentHealth } from './agent-health';
 import { useOverviewData, type AgentStats } from './overview-data';
+import { AgentOverviewHero } from './AgentOverviewHero';
 import { HealthHero } from './HealthHero';
-import { ActivityTrend } from './ActivityTrend';
+import { AgentSnapshotCards } from './AgentSnapshotCards';
 import { TopQuestions } from './TopQuestions';
 
 interface MetricDef {
@@ -35,9 +34,8 @@ interface MetricDef {
 }
 
 /**
- * The four headline metrics. No trend deltas: the dashboard endpoint returns a
- * scalar snapshot (not a per-metric time series), so any arrow here would be
- * fabricated. Trend belongs on the Analytics tab where real history exists.
+ * The four headline Mission Control metrics.
+ * Replaces total messages with resolution rate and average rating for honest quality read.
  */
 const METRICS: readonly MetricDef[] = [
   {
@@ -53,16 +51,16 @@ const METRICS: readonly MetricDef[] = [
     format: (s) => s.totalConversations.toLocaleString(),
   },
   {
-    key: 'totalMessages',
-    label: 'Messages',
-    icon: BarChart3,
-    format: (s) => s.totalMessages.toLocaleString(),
+    key: 'resolutionRate',
+    label: 'Resolution rate',
+    icon: CheckCircle2,
+    format: (s) => (s.resolutionRate === null || s.resolutionRate === undefined ? '—' : `${s.resolutionRate}%`),
   },
   {
-    key: 'successRate',
-    label: 'Helpful answers',
-    icon: CheckCircle2,
-    format: (s) => `${s.successRate}%`,
+    key: 'averageRating',
+    label: 'Average rating',
+    icon: Star,
+    format: (s) => (s.averageRating === null || s.averageRating === undefined ? '—' : `${s.averageRating} / 5`),
   },
 ];
 
@@ -82,12 +80,7 @@ function MetricGrid({ stats }: { readonly stats: AgentStats }): ReactElement {
   );
 }
 
-/**
- * Placeholder tiles shown during the first metrics load. Kept separate from
- * {@link MetricGrid} so a block-level Skeleton is never injected into
- * MetricCard's value <span> — which would produce invalid `<span><div></span>`
- * DOM nesting and a React validateDOMNesting warning on every load.
- */
+/** Placeholder tiles shown during the first metrics load. */
 function MetricGridSkeleton(): ReactElement {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -126,11 +119,7 @@ function MetricsError({
   );
 }
 
-/**
- * Neutral placeholder for a section whose data failed to load. Shown instead of
- * the component's own empty state so a fetch failure isn't misread as "no data
- * yet" (zero traffic).
- */
+/** Neutral placeholder for a section whose data failed to load. */
 function SectionUnavailable(): ReactElement {
   return (
     <Card className="p-6">
@@ -144,32 +133,33 @@ function SectionUnavailable(): ReactElement {
 }
 
 /**
- * OverviewContent — the data-bound body, mounted only once we have a resolved
- * agent. Remounted per agent via `key={agent.id}` in the parent, so the data
- * hook sees a stable id and never resets state synchronously in an effect.
+ * OverviewContent — Mission Control layout for an agent.
  */
 function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
   const health = deriveAgentHealth(agent);
-  const { status, isRefetching, stats, activity, questions, error, refetch } = useOverviewData(
-    agent.id,
-  );
+  const { status, isRefetching, stats, activity, questions, details, error, refetch } =
+    useOverviewData(agent.id);
   const agentBasePath = `/agents/${agent.id}`;
-  // Only the first load blanks the page to skeletons; a manual refetch keeps the
-  // prior content in place and signals progress through the Refresh spinner.
   const isInitialLoading = status === 'loading';
   const isBusy = isInitialLoading || isRefetching;
 
   return (
     <PageContainer
       title="Overview"
-      description="A quick read on your AI’s health and how visitors are engaging with it."
+      description="Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance."
       actions={
         <Button variant="outline" size="sm" onClick={refetch} disabled={isBusy}>
-          <RefreshCw size={15} aria-hidden="true" className={isBusy ? 'animate-spin' : undefined} />
+          <RefreshCw
+            size={15}
+            aria-hidden="true"
+            className={isBusy ? 'animate-spin' : undefined}
+          />
           Refresh
         </Button>
       }
     >
+      <AgentOverviewHero agent={agent} health={health} agentBasePath={agentBasePath} />
+
       <HealthHero health={health} agentBasePath={agentBasePath} />
 
       {status === 'error' && error ? (
@@ -180,57 +170,52 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
         <MetricGridSkeleton />
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section className="space-y-4" aria-labelledby="overview-activity-heading">
-          <SectionHeader
-            title={<span id="overview-activity-heading">Message activity</span>}
-            description="Daily conversation volume."
-          />
-          {isInitialLoading ? (
-            <Card className="p-6">
-              <Skeleton className="h-40 w-full" />
-            </Card>
-          ) : status === 'error' ? (
-            <SectionUnavailable />
-          ) : (
-            <ActivityTrend points={activity} />
-          )}
-        </section>
+      <AgentSnapshotCards
+        agent={agent}
+        details={details}
+        stats={stats}
+        activity={activity}
+        agentBasePath={agentBasePath}
+      />
 
-        <section className="space-y-4" aria-labelledby="overview-questions-heading">
-          <SectionHeader
-            title={<span id="overview-questions-heading">Top questions</span>}
-            description="What visitors ask your AI most."
-          />
-          {isInitialLoading ? (
-            <Card className="space-y-4 p-6">
-              {[0, 1, 2, 3].map((row) => (
-                <Skeleton key={row} className="h-9 w-full" />
-              ))}
-            </Card>
-          ) : status === 'error' ? (
-            <SectionUnavailable />
-          ) : (
-            <TopQuestions questions={questions} />
-          )}
-        </section>
-      </div>
+      <section className="space-y-4" aria-labelledby="overview-questions-heading">
+        <SectionHeader
+          title={<span id="overview-questions-heading">Top questions</span>}
+          description="What visitors ask your AI most."
+        />
+        {isInitialLoading ? (
+          <Card className="space-y-4 p-6">
+            {[0, 1, 2, 3].map((row) => (
+              <Skeleton key={row} className="h-9 w-full" />
+            ))}
+          </Card>
+        ) : status === 'error' ? (
+          <SectionUnavailable />
+        ) : (
+          <TopQuestions questions={questions} />
+        )}
+      </section>
     </PageContainer>
   );
 }
 
-/** Skeleton shown while the agent itself is still resolving from context. */
+/** Skeleton shown while the agent itself is resolving from context. */
 function OverviewSkeleton(): ReactElement {
   return (
     <PageContainer title="Overview">
       <Card className="p-6">
         <div className="flex gap-5">
-          <Skeleton className="h-12 w-12 rounded-xl" />
+          <Skeleton className="h-14 w-14 rounded-2xl" />
           <div className="flex-1 space-y-3">
             <Skeleton className="h-6 w-52" />
             <Skeleton className="h-4 w-full max-w-md" />
-            <Skeleton className="h-4 w-2/3" />
           </div>
+        </div>
+      </Card>
+      <Card className="p-6">
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-4 w-full" />
         </div>
       </Card>
       <MetricGridSkeleton />
@@ -238,17 +223,10 @@ function OverviewSkeleton(): ReactElement {
   );
 }
 
-/**
- * OverviewPage — the AI Agent "Overview" tab. Answers "Is my AI healthy?" with
- * a status verdict up top, headline engagement metrics, and a read on what
- * visitors are doing. Mounted under `/agents/:agentId/overview` inside the
- * agent layout, so it reads the active agent from `useAgent()`.
- */
 export function OverviewPage(): ReactElement {
   const { agent, loading, error } = useAgent();
 
   if (agent) {
-    // key: give the data hook a stable, per-agent lifetime.
     return <OverviewContent key={agent.id} agent={agent} />;
   }
 

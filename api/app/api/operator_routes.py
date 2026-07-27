@@ -33,7 +33,7 @@ def _require_team_management_access(auth: dict) -> None:
     if getattr(auth["entity"], "role", "operator") not in {"owner", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to manage team members.",
+            detail="You do not have permission to manage operators.",
         )
 
 
@@ -1150,6 +1150,56 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
     return {"success": True, "status": "bot"}
 
 
+@router.post("/resolve/{session_id}")
+async def resolve_chat(session_id: str, auth=Depends(get_current_client_or_operator)):
+    """Operator resolves and hard-closes a live chat.
+
+    Unlike ``/close`` (which returns the visitor to bot mode, ``status='bot'``),
+    this marks the conversation ``status='closed'`` so it reads as *done* in
+    reporting rather than an open bot conversation. The visitor-facing teardown
+    is identical (the widget drops back to the bot via ``manager.close_chat``);
+    only the persisted status and the audit action differ.
+    """
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if not bot or bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+        bot_name = bot.name
+        operator_id = auth.get("operator_id") or chat_session.assigned_operator_id
+        session.add(
+            ChatAuditLog(
+                session_id=session_id,
+                operator_id=operator_id,
+                action="resolved",
+            )
+        )
+        chat_session.status = "closed"
+        chat_session.assigned_operator_id = None
+        bot_id = bot.id
+        session.commit()
+
+    from app.services.webhook_service import fire_webhook
+
+    fire_webhook(
+        bot_id,
+        "chat_closed",
+        {
+            "session_id": session_id,
+            "operator_id": operator_id,
+            "resolution": "resolved",
+        },
+    )
+
+    asyncio.create_task(manager.close_chat(session_id, bot_name))
+
+    return {"success": True, "status": "closed"}
+
+
 class TransferRequest(BaseModel):
     target_operator_id: int | None = None
     target_department_id: int | None = None
@@ -1475,6 +1525,9 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_oper
             "location": chat_session.location,
             "device": chat_session.device,
             "visitor_metadata": chat_session.visitor_metadata,
+            "page_url": chat_session.page_url,
+            "referrer": chat_session.referrer,
+            "visitor_rating": chat_session.visitor_rating,
             "handoff_reason": chat_session.handoff_reason,
             "created_at": chat_session.created_at.isoformat() if chat_session.created_at else None,
             "last_active_at": chat_session.last_active_at.isoformat() if chat_session.last_active_at else None,

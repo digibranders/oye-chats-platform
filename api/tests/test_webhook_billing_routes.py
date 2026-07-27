@@ -87,6 +87,38 @@ def test_processing_error_dead_letters_the_raw_event():
     assert dl.raw_payload == raw  # exact bytes preserved for replay
 
 
+# ── Missing event-id: never silently dropped ─────────────────────────────────
+
+
+def test_missing_event_id_is_dead_lettered_and_retried_not_dropped():
+    """Finding #4: a delivery with no X-Razorpay-Event-Id can't be deduped, and
+    the dispatcher used to treat a null id as a 'duplicate' → silent 200 ACK,
+    losing a revenue event forever. It must instead route to the dead-letter +
+    retry path (never reaching the handler)."""
+    from app.api import webhook_billing_routes
+    from app.db.models import FailedWebhook
+    from app.services import razorpay_service
+
+    mock_session = MagicMock()
+    with (
+        patch.object(webhook_billing_routes, "RAZORPAY_WEBHOOK_SECRET", "whsec"),
+        patch.object(webhook_billing_routes, "WEBHOOK_RETRY_ON_ERROR", True),
+        patch.object(webhook_billing_routes, "get_session", lambda: _fake_session_cm(mock_session)),
+        patch.object(razorpay_service, "verify_webhook_signature", lambda **_: None),
+        patch.object(razorpay_service, "handle_webhook_event", side_effect=AssertionError("must not dispatch")) as h,
+    ):
+        resp = _post(_make_client(), event_id="")
+
+    # Retried, not ACK-dropped; the handler was never invoked (no false dedup).
+    assert resp.status_code >= 500
+    h.assert_not_called()
+    # And the raw event is preserved for manual replay.
+    added = [c.args[0] for c in mock_session.add.call_args_list]
+    dead_letters = [o for o in added if isinstance(o, FailedWebhook)]
+    assert len(dead_letters) == 1
+    assert dead_letters[0].event_id is None
+
+
 # ── Flag OFF: legacy 200, but still dead-lettered ────────────────────────────
 
 

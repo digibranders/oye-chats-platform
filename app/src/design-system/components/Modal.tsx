@@ -163,7 +163,7 @@ export function Modal({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={cn(
-          'relative my-auto w-full rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-lg)] focus-visible:outline-none',
+          'relative my-auto w-full rounded-[var(--ds-radius-xl)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-lg)] focus-visible:outline-none',
           'flex max-h-[calc(100vh-2rem)] flex-col',
           SIZE_CLASS[size],
           className,
@@ -190,7 +190,7 @@ export function Modal({
               type="button"
               onClick={requestClose}
               aria-label="Close"
-              className="-mr-1.5 -mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+              className="-mr-1.5 -mt-0.5 shrink-0 rounded-[var(--ds-radius-md)] p-1.5 text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <X size={18} aria-hidden="true" />
             </button>

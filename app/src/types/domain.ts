@@ -7,6 +7,26 @@
  * new app reads — and widened as more surfaces are migrated.
  */
 
+/**
+ * A row from the in-app notification feed (`notifications` table, see
+ * `api/app/services/notification_service.py::_serialize`). `type` and `data`
+ * are schema-on-read on the backend (new notification types are added
+ * without a migration), so `type` stays a plain string rather than a union.
+ */
+export interface NotificationItem {
+  id: number;
+  type: string;
+  title: string;
+  body?: string | null;
+  /** Optional in-app route to navigate to on click. */
+  link?: string | null;
+  data?: Record<string, unknown> | null;
+  is_read: boolean;
+  read_at?: string | null;
+  /** ISO timestamp; the backend `_serialize` can emit null for a row with no created_at. */
+  created_at: string | null;
+}
+
 export interface Bot {
   id: number;
   name: string;
@@ -20,19 +40,110 @@ export interface Bot {
   crawl_completed_at?: string | null;
   last_crawl_status?: string | null;
   indexed_chunk_count?: number;
+  created_at?: string | null;
+  brand_tone?: string | null;
+  business_hours?: Record<string, unknown> | null;
+  show_branding?: boolean;
 }
 
 export interface CurrentUser {
   id: number;
   name?: string;
   email?: string;
-  company_name?: string;
-  website?: string;
+  /** Set only for clients with an unconfirmed change-email request in flight; null/undefined otherwise. Always unset for operators. */
+  pending_email?: string | null;
+  company_name?: string | null;
+  website?: string | null;
   bot_count?: number;
   is_verified?: boolean;
   onboarding_complete?: boolean;
+  /** True when the client has an active affiliate row (gates the Affiliate area). */
+  is_affiliate?: boolean;
+  /** True when the client is ONLY an affiliate (no customer subscription). */
   is_affiliate_only?: boolean;
   is_superadmin?: boolean;
+  /** ISO timestamp the account was created — rendered as "Joined {date}" in the profile menu. */
+  created_at?: string;
+  /** True when the caller is currently marked online (operators only). */
+  is_online?: boolean;
+  /** 'client' | 'operator' — clients have `role: null`. */
+  kind?: string;
+  /** Operator role (owner | admin | operator) when `kind === 'operator'`. */
+  role?: string | null;
+}
+
+/**
+ * Numeric plan ceilings. `-1` is the UNLIMITED sentinel (see
+ * `plan_entitlements_service.py::UNLIMITED`) — never a real count.
+ */
+export type LimitKey =
+  | 'credits'
+  | 'bots'
+  | 'operators'
+  | 'leads'
+  | 'page_scraping'
+  | 'documents'
+  | 'chat_history_days';
+
+/** Boolean/enum plan feature flags. */
+export type FeatureKey =
+  | 'live_chat'
+  | 'bant'
+  | 'branding_removable'
+  | 'webhooks'
+  | 'api_access'
+  | 'online_support'
+  | 'topup_allowed'
+  | 'integrations';
+
+export type EntitlementLimits = Record<LimitKey, number>;
+
+/**
+ * `integrations` is the one non-boolean feature flag: `"all"` grants full
+ * integration access, `"reply_to_only"` restricts to reply-to email delivery
+ * (see `PlanEntitlements.has_feature` in `plan_entitlements_service.py`).
+ */
+export interface EntitlementFeatures {
+  live_chat: boolean;
+  bant: boolean;
+  branding_removable: boolean;
+  webhooks: boolean;
+  api_access: boolean;
+  online_support: boolean;
+  topup_allowed: boolean;
+  integrations: 'all' | 'reply_to_only';
+}
+
+/**
+ * Current-period usage counters. The backend's `_build_usage` only populates
+ * `bots` / `operators` / `documents` / `leads` today — `credits`,
+ * `page_scraping`, and `chat_history_days` are reserved keys the service
+ * comments as "left to callers that need them" and are NOT currently sent.
+ * Typed as a partial map so callers can't assume every `LimitKey` is present.
+ */
+export type EntitlementUsage = Partial<Record<LimitKey, number>>;
+
+/**
+ * Resolved plan entitlements returned by GET /auth/me/entitlements.
+ *
+ * Verified field-by-field against the backend: `plan_slug` / `plan_name` /
+ * `subscription_status` / `limits` / `features` / `usage` come from
+ * `PlanEntitlements.to_json_dict()` (`plan_entitlements_service.py`);
+ * `is_free` / `is_enterprise` / `topup_allowed` are appended by the route
+ * handler (`auth_routes.py::get_my_entitlements`). `client_id` is present
+ * via `dataclasses.asdict` but is an internal identifier, not a UI field.
+ */
+export interface Entitlements {
+  client_id?: number;
+  plan_slug: string;
+  plan_name: string;
+  subscription_status: string;
+  limits: EntitlementLimits;
+  features: EntitlementFeatures;
+  usage: EntitlementUsage;
+  is_free: boolean;
+  is_enterprise: boolean;
+  topup_allowed: boolean;
 }
 
 export interface Workspace {

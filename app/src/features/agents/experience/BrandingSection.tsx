@@ -1,7 +1,11 @@
 import { type ReactElement } from 'react';
-import { SectionHeader } from '../../../design-system';
+import { Lock } from 'lucide-react';
+import { Button, Card, SectionHeader } from '../../../design-system';
+import { useEntitlements } from '../../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { ColorField } from '../../launch-studio/customize/ColorField';
 import { AvatarPicker } from '../../launch-studio/customize/AvatarPicker';
+import { Toggle } from '../advanced/controls';
 import { type ExperienceDraft } from './types';
 
 export interface BrandingSectionProps {
@@ -29,6 +33,10 @@ export function BrandingSection({
   uploadError,
   onUpload,
 }: BrandingSectionProps): ReactElement {
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const canRemoveBranding = hasFeature('branding_removable');
+
   return (
     <div className="space-y-8">
       <section className="space-y-5">
@@ -74,6 +82,49 @@ export function BrandingSection({
             {uploadError}
           </p>
         )}
+      </section>
+
+      <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
+        <SectionHeader
+          title="Powered by OyeChats"
+          description="Show or hide the OyeChats footer at the bottom of the chat widget."
+        />
+        <Card className="flex items-center justify-between gap-4 p-4">
+          <div className="flex min-w-0 items-start gap-3">
+            {!canRemoveBranding && (
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]"
+                aria-hidden="true"
+              >
+                <Lock size={15} />
+              </span>
+            )}
+            <div className="min-w-0">
+              <p className="text-[14px] font-medium text-[var(--ds-text)]">Remove branding</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
+                {canRemoveBranding
+                  ? 'Hide the “Powered by OyeChats” footer from the widget.'
+                  : 'Upgrade your plan to hide the “Powered by OyeChats” footer.'}
+              </p>
+            </div>
+          </div>
+          {canRemoveBranding ? (
+            <Toggle
+              checked={!draft.showBranding}
+              onChange={(hide) => onChange({ showBranding: !hide })}
+              label="Remove OyeChats branding from the widget"
+            />
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openUpgradeModal('branding_removable')}
+            >
+              <Lock size={13} aria-hidden="true" />
+              Upgrade to remove branding
+            </Button>
+          )}
+        </Card>
       </section>
     </div>
   );

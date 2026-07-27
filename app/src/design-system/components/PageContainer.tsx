@@ -35,7 +35,7 @@ export function PageContainer({
   return (
     <div className={cn('mx-auto w-full', widthMap[width], className)}>
       {(title || actions) && (
-        <header className="mb-6 flex items-start justify-between gap-4">
+        <header className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0">
             {title && (
               <h1 className="text-xl font-bold tracking-tight text-[var(--ds-text)]">{title}</h1>

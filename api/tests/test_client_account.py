@@ -131,6 +131,20 @@ class TestUpdateProfile:
 
         assert res.status_code == 422
 
+    def test_update_company_name_and_website(self, monkeypatch, mock_client, auth_override_client):
+        mock_client.name = "Old Workspace"
+        mock_client.company_name = None
+        mock_client.website = None
+        session = _FakeSession(mock_client)
+        tc = _build_client(monkeypatch, session, auth_override_client)
+
+        res = tc.patch("/client/profile", json={"company_name": "Acme Corp", "website": "https://acme.com"})
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["company_name"] == "Acme Corp"
+        assert body["website"] == "https://acme.com"
+
 
 # ── POST /client/change-password ──────────────────────────────────────────────
 

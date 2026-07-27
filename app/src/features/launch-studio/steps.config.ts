@@ -38,7 +38,7 @@ export interface LaunchStep {
  */
 export const LAUNCH_STEPS: LaunchStep[] = [
   { key: 'welcome', path: 'welcome', label: 'Welcome', hint: "Let's get you set up", icon: PartyPopper },
-  { key: 'create', path: 'create', label: 'Create Agent', hint: 'Name your assistant', icon: Bot },
+  { key: 'create', path: 'create', label: 'Create Agent', hint: 'Name your AI Chatbot', icon: Bot },
   { key: 'connect', path: 'connect', label: 'Connect Website', hint: 'Point us at your site', icon: Globe },
   { key: 'knowledge', path: 'knowledge', label: 'Knowledge', hint: 'Train & review', icon: BookOpenCheck },
   { key: 'test', path: 'test', label: 'Test Agent', hint: 'Try it yourself', icon: MessagesSquare },

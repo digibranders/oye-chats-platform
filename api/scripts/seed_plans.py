@@ -1,7 +1,7 @@
 """Seed the canonical plan matrix (idempotent).
 
 Single source of truth for the customer-facing plans on a fresh database:
-Free / Starter / Standard / Professional / Enterprise. Matches the pricing on
+Free / Starter / Standard / Professional. Matches the pricing on
 the marketing site (oyechats.com/pricing).
 
 Prices are stored in minor units: ``*_cents`` is INR paise (``currency='INR'``),
@@ -91,7 +91,7 @@ _PLANS: list[dict] = [
         "annual_discount_percent": 20,
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 1,
-        "extra_seat_price_cents": 49900,  # ₹499
+        "extra_seat_price_cents": 44900,  # ₹449
         "extra_seat_price_usd_cents": 500,  # $5
         "is_default": False,
         "sort_order": 2,
@@ -132,7 +132,7 @@ _PLANS: list[dict] = [
         "annual_discount_percent": 20,
         "trial_days": 7,  # the 7-day full-Standard trial
         "included_operator_seats": 2,
-        "extra_seat_price_cents": 49900,
+        "extra_seat_price_cents": 44900,  # ₹449
         "extra_seat_price_usd_cents": 500,
         "is_default": False,
         "sort_order": 3,
@@ -176,7 +176,7 @@ _PLANS: list[dict] = [
         "annual_discount_percent": 20,
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 3,
-        "extra_seat_price_cents": 49900,
+        "extra_seat_price_cents": 44900,  # ₹449
         "extra_seat_price_usd_cents": 500,
         "is_default": False,
         "sort_order": 4,
@@ -204,49 +204,6 @@ _PLANS: list[dict] = [
             "integrations": "all",
         },
         "marketing": {"tagline": "For teams scaling qualified pipeline with deeper frameworks."},
-    },
-    {
-        "slug": "enterprise",
-        "name": "Enterprise",
-        "description": "Custom volume, SSO, and a dedicated account manager.",
-        "credits_per_month": 0,  # custom — set per contract
-        "monthly_price_cents": 0,
-        "annual_price_cents": 0,
-        "monthly_price_usd_cents": 0,
-        "annual_price_usd_cents": 0,
-        "annual_discount_percent": 0,
-        "trial_days": 0,
-        "included_operator_seats": 5,
-        "extra_seat_price_cents": 0,
-        "extra_seat_price_usd_cents": 0,
-        "is_default": False,
-        "sort_order": 5,
-        "limits": {
-            "credits": -1,
-            "bots": -1,
-            "operators": -1,
-            "leads": -1,
-            "page_scraping": -1,
-            "documents": -1,
-            "chat_history_days": -1,
-            "max_crawl_depth": 6,
-            "max_crawl_pages": 10000,
-            "max_crawl_js_pages": 1000,
-            "max_crawl_concurrency": 8,
-        },
-        "features": {
-            "live_chat": True,
-            "bant": True,
-            "branding_removable": True,
-            "webhooks": True,
-            "api_access": True,
-            "online_support": True,
-            "custom_sla": True,
-            "dedicated_csm": True,
-            "topup_allowed": True,
-            "integrations": "all_plus_custom",
-        },
-        "marketing": {"tagline": "Custom volume, SSO, and a dedicated account manager."},
     },
 ]
 

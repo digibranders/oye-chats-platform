@@ -50,6 +50,7 @@ from app.db.models import (
     OperatorPushSubscription,
     PaymentMethod,
     Plan,
+    PlatformFeedback,
     ProcessedWebhook,
     ReferralCode,
     ReferralConversion,
@@ -553,6 +554,141 @@ def stats_timeseries(
     return [{"date": day, "value": buckets[day]} for day in sorted(buckets)]
 
 
+# ── Command Center summary ───────────────────────────────────────────────────
+
+# BANT tiers above "unqualified" (mql | sal | sql) count as qualified leads.
+_QUALIFIED_BANT_TIERS = ("mql", "sal", "sql")
+
+
+def _month_start(dt: datetime) -> datetime:
+    """First instant of ``dt``'s calendar month (UTC, midnight)."""
+    return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _add_month(dt: datetime) -> datetime:
+    """First instant of the month after ``dt``'s month (handles Dec → Jan)."""
+    return (
+        _month_start(dt).replace(year=dt.year + 1, month=1)
+        if dt.month == 12
+        else _month_start(dt).replace(month=dt.month + 1)
+    )
+
+
+def _year_start(dt: datetime) -> datetime:
+    """First instant of ``dt``'s calendar year (UTC, midnight)."""
+    return dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+@router.get("/command-center")
+def command_center(_admin: Client = Depends(get_superadmin)):
+    """Aggregate the Command Center's headline metrics in a single round trip.
+
+    Every figure is computed server-side against the DB so calendar bucketing
+    (month/year boundaries) and currency normalisation stay authoritative rather
+    than being re-derived from sampled time-series on the client:
+
+    * ``operator_transfers``     — chat sessions ever escalated to a human operator.
+    * ``bant_qualified_leads``   — sessions whose BANT tier reached mql/sal/sql.
+    * ``chats_total``            — all chat sessions on the platform.
+    * ``revenue_*_month_cents``  — paid-invoice value (USD cents) for the last and
+      current calendar month, bucketed by ``coalesce(paid_at, created_at)``.
+    * ``growth_*_year_cents``    — the same, aggregated over last vs current year.
+    * ``signups_*_month``        — client accounts created last vs current month.
+    * ``feature_requests``       — open+resolved platform feature requests.
+    * ``booked_meetings``        — confirmed meeting bookings.
+
+    ``next_month`` revenue is intentionally omitted here: it is a forward
+    projection equal to MRR, which the client already has from ``/revenue``.
+    """
+    now = datetime.now(UTC)
+    current_month_start = _month_start(now)
+    next_month_start = _add_month(now)
+    last_month_start = _month_start(current_month_start - timedelta(days=1))
+    current_year_start = _year_start(now)
+    last_year_start = current_year_start.replace(year=now.year - 1)
+
+    with get_session() as session:
+        operator_transfers = (
+            session.execute(
+                select(func.count(ChatSession.id)).where(ChatSession.assigned_operator_id.isnot(None))
+            ).scalar()
+            or 0
+        )
+        bant_qualified_leads = (
+            session.execute(
+                select(func.count(ChatSession.id)).where(ChatSession.bant_tier.in_(_QUALIFIED_BANT_TIERS))
+            ).scalar()
+            or 0
+        )
+        chats_total = session.execute(select(func.count(ChatSession.id))).scalar() or 0
+        booked_meetings = session.execute(select(func.count(MeetingBooking.id))).scalar() or 0
+        feature_requests = (
+            session.execute(
+                select(func.count(PlatformFeedback.id)).where(PlatformFeedback.type == "feature_request")
+            ).scalar()
+            or 0
+        )
+
+        # Signups per calendar window (client accounts by created_at).
+        signups_current_month = (
+            session.execute(select(func.count(Client.id)).where(Client.created_at >= current_month_start)).scalar() or 0
+        )
+        signups_last_month = (
+            session.execute(
+                select(func.count(Client.id)).where(
+                    Client.created_at >= last_month_start,
+                    Client.created_at < current_month_start,
+                )
+            ).scalar()
+            or 0
+        )
+
+        # Revenue is normalised to USD cents in Python (invoices may be INR or
+        # USD), so pull the raw rows for the widest window we need — last year to
+        # now — and bucket once. `paid_at` falls back to `created_at`.
+        revenue_rows = session.execute(
+            select(Invoice.amount_cents, Invoice.currency, Invoice.paid_at, Invoice.created_at).where(
+                Invoice.status == "paid",
+                func.coalesce(Invoice.paid_at, Invoice.created_at) >= last_year_start,
+            )
+        ).all()
+
+    revenue_last_month = revenue_current_month = 0
+    growth_last_year = growth_current_year = 0
+    for amount_cents, currency, paid_at, created_at in revenue_rows:
+        ts = paid_at or created_at
+        if ts is None:
+            continue
+        usd = _to_usd_cents(amount_cents, currency)
+        if last_month_start <= ts < current_month_start:
+            revenue_last_month += usd
+        elif current_month_start <= ts < next_month_start:
+            revenue_current_month += usd
+        if last_year_start <= ts < current_year_start:
+            growth_last_year += usd
+        elif ts >= current_year_start:
+            growth_current_year += usd
+
+    growth_pct = (
+        round((growth_current_year - growth_last_year) / growth_last_year * 100, 1) if growth_last_year > 0 else None
+    )
+
+    return {
+        "operator_transfers": operator_transfers,
+        "bant_qualified_leads": bant_qualified_leads,
+        "chats_total": chats_total,
+        "feature_requests": feature_requests,
+        "booked_meetings": booked_meetings,
+        "revenue_last_month_cents": revenue_last_month,
+        "revenue_current_month_cents": revenue_current_month,
+        "growth_last_year_cents": growth_last_year,
+        "growth_current_year_cents": growth_current_year,
+        "growth_pct": growth_pct,
+        "signups_last_month": signups_last_month,
+        "signups_current_month": signups_current_month,
+    }
+
+
 # ── Visitors (behavioral analytics) ──────────────────────────────────────────
 
 
@@ -868,7 +1004,7 @@ def rotate_client_api_key(
     with get_session() as session:
         client = session.get(Client, client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Account not found")
 
         old_masked = _mask_api_key(client.api_key)
         new_key = str(uuid.uuid4().hex)

@@ -93,8 +93,19 @@ def get_plan_by_id(session: Session, plan_id: int) -> Plan | None:
 
 
 def get_default_plan(session: Session) -> Plan | None:
-    """Return the plan marked as default (auto-assigned to new signups)."""
-    return session.execute(select(Plan).where(Plan.is_default.is_(True))).scalars().first()
+    """Return the ACTIVE plan marked as default (auto-assigned to new signups).
+
+    Filters on ``is_active`` so a deactivated/soft-deleted default is never
+    handed to a new signup — ``delete_plan`` soft-deletes (``is_active=False``)
+    and could leave ``is_default`` set, which would silently drive new-signup
+    entitlements and credit grants off a "deleted" plan (finding). Orders by id
+    for a deterministic pick if more than one active default somehow exists.
+    """
+    return (
+        session.execute(select(Plan).where(Plan.is_default.is_(True), Plan.is_active.is_(True)).order_by(Plan.id))
+        .scalars()
+        .first()
+    )
 
 
 def get_client_subscription(session: Session, client_id: int) -> Subscription | None:
@@ -248,7 +259,7 @@ def enforce_feature(session: Session, client_id: int, feature: str) -> None:
 # Plans that unlock the "updated pages only" (delta) recrawl mode. Free/Starter
 # get the option in the UI but see an upgrade CTA — the backend enforces the
 # same gate so a forged request from an older tier is still rejected.
-_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
+_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
 
 
 def can_use_delta_recrawl(plan: Plan) -> bool:
@@ -490,7 +501,7 @@ class TrialUnavailable(Exception):
     response without parsing English. Reasons:
 
     * ``plan_not_found``        — slug doesn't match an active plan.
-    * ``plan_not_trialable``    — ``trial_days <= 0`` (e.g. free or enterprise).
+    * ``plan_not_trialable``    — ``trial_days <= 0`` (e.g. the free plan).
     * ``already_trialed``       — client previously held a sub (active or
       expired) on this exact plan. One trial per plan, lifetime.
     * ``active_paid_subscription`` — client is on a paid plan already

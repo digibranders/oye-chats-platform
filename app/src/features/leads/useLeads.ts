@@ -20,11 +20,18 @@ import {
 
 export type LoadStatus = 'loading' | 'ready' | 'error';
 
+/** Reporting windows the funnel selector offers (mirrors the backend's params). */
+export type FunnelPeriod = '7d' | '30d' | '90d' | 'all';
+
 export interface LeadsData {
   status: LoadStatus;
   leads: Lead[];
   stats: LeadStatsSummary | null;
   funnel: FunnelStageView[];
+  /** The active funnel reporting window. */
+  funnelPeriod: FunnelPeriod;
+  /** Switch the funnel window; re-fetches only the funnel, not the whole page. */
+  setFunnelPeriod: (period: FunnelPeriod) => void;
   error: string | null;
   /** Re-fetch everything for the current agent. */
   reload: () => void;
@@ -34,8 +41,8 @@ export interface LeadsData {
   markAllReadLocal: () => void;
 }
 
-/** Fixed reporting window for the funnel summary; a selector is a later add. */
-const FUNNEL_PERIOD = '30d';
+/** Default reporting window for the funnel summary. */
+const DEFAULT_FUNNEL_PERIOD: FunnelPeriod = '30d';
 /** Pull a generous page so the client-side filters have real data to work on. */
 const LEADS_PAGE_LIMIT = 200;
 
@@ -44,11 +51,19 @@ function messageOf(error: unknown): string {
   return 'Something went wrong while loading your leads.';
 }
 
-export function useLeads(botId: number | undefined): LeadsData {
+/**
+ * @param botId The selected agent's id (or `undefined` while agents are still loading).
+ * @param enabled When `false`, the fetch never fires — used to keep Free-plan
+ *   workspaces from hitting the gated `/leads` endpoint (which 403s for Free)
+ *   when the page renders its upgrade teaser instead of the real list.
+ *   Defaults to `true` so existing callers are unaffected.
+ */
+export function useLeads(botId: number | undefined, enabled = true): LeadsData {
   const [status, setStatus] = useState<LoadStatus>('loading');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stats, setStats] = useState<LeadStatsSummary | null>(null);
   const [funnel, setFunnel] = useState<FunnelStageView[]>([]);
+  const [funnelPeriod, setFunnelPeriod] = useState<FunnelPeriod>(DEFAULT_FUNNEL_PERIOD);
   const [error, setError] = useState<string | null>(null);
   /** Bumped by reload() to re-trigger the effect without duplicating fetch logic. */
   const [reloadToken, setReloadToken] = useState(0);
@@ -70,27 +85,23 @@ export function useLeads(botId: number | undefined): LeadsData {
   }, []);
 
   useEffect(() => {
+    // Skip entirely rather than fetching and discarding the result — the
+    // caller (Free-plan gating) needs this to never issue the network call.
+    if (!enabled) return;
+
     let cancelled = false;
 
     async function load(): Promise<void> {
       setStatus('loading');
       setError(null);
       try {
-        // The funnel is an enrichment: if it fails we still want the list, so
-        // it's resolved independently and defaulted to empty on rejection.
-        const [leadsResult, statsRaw, funnelRaw] = await Promise.all([
+        const [leadsResult, statsRaw] = await Promise.all([
           getLeads(botId, { limit: LEADS_PAGE_LIMIT }),
           getLeadStats(botId),
-          botId !== undefined
-            ? getQualificationFunnel(botId, FUNNEL_PERIOD).catch(
-                () => ({}) as Record<string, unknown>,
-              )
-            : Promise.resolve<Record<string, unknown>>({}),
         ]);
         if (cancelled) return;
         setLeads(leadsResult.leads ?? []);
         setStats(readLeadStats(statsRaw));
-        setFunnel(readFunnel(funnelRaw));
         setStatus('ready');
       } catch (err) {
         if (cancelled) return;
@@ -103,13 +114,40 @@ export function useLeads(botId: number | undefined): LeadsData {
     return () => {
       cancelled = true;
     };
-  }, [botId, reloadToken]);
+  }, [botId, reloadToken, enabled]);
+
+  // The funnel is an enrichment fetched independently of the list so it can be
+  // re-queried on a period change without reloading (and re-skeletoning) the
+  // whole page. It defaults to empty on any failure — a missing funnel must
+  // never break the leads table.
+  useEffect(() => {
+    // Free plan / still-loading agent: never issue the request. The funnel
+    // stays at its initial empty value, so the page simply omits the section.
+    if (!enabled || botId === undefined) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const raw = await getQualificationFunnel(botId, funnelPeriod);
+        if (!cancelled) setFunnel(readFunnel(raw));
+      } catch {
+        if (!cancelled) setFunnel([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [botId, funnelPeriod, reloadToken, enabled]);
 
   return {
     status,
     leads,
     stats,
     funnel,
+    funnelPeriod,
+    setFunnelPeriod,
     error,
     reload,
     markViewedLocal,

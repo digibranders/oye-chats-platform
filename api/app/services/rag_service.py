@@ -4846,7 +4846,7 @@ def rag_pipeline(
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "nonstream")
 
-            # BANT is a plan-gated feature (Standard / Enterprise). Both
+            # BANT is a plan-gated feature (Standard / Professional). Both
             # gates must pass: the plan must include ``features.bant`` AND
             # the bot's own ``bant_enabled`` toggle must be on. A customer
             # who downgrades from Standard to Free/Starter keeps their
@@ -5656,7 +5656,7 @@ async def rag_pipeline_stream(
             history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "stream")
 
-            # BANT is plan-gated (Standard / Enterprise) — see the mirror
+            # BANT is plan-gated (Standard / Professional) — see the mirror
             # gate on the non-streaming path above for the full rationale.
             plan_allows_bant = plan_entitlements_service.is_bant_enabled_for_plan(cid, session) if cid else False
             is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))

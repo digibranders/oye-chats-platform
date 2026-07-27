@@ -441,7 +441,6 @@ const PLAN_CHIP_TINTS = {
     free:       'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400',
     starter:    'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400',
     standard:   'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300',
-    enterprise: 'bg-gradient-to-r from-primary-600 to-primary-500 text-white dark:from-primary-500 dark:to-primary-400',
 };
 
 function PlanChip({ slug }) {

@@ -400,7 +400,6 @@ def get_my_entitlements(auth: dict = Depends(get_current_client_or_operator)):
     payload = entitlements.to_json_dict()
     # Derived helpers — saves the frontend a handful of conditionals.
     payload["is_free"] = entitlements.plan_slug == "free"
-    payload["is_enterprise"] = entitlements.plan_slug == "enterprise"
     payload["topup_allowed"] = entitlements.has_feature("topup_allowed")
     return payload
 
@@ -738,6 +737,19 @@ def login(request: Request, body: LoginRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed. Please try again."
         ) from e
+
+
+@router.get("/detect-country")
+@limiter.limit("30/minute")
+def detect_country(request: Request):
+    """Resolve the caller's country from edge headers, for the signup form.
+
+    Public (no auth) — the register page calls this on load to preselect the
+    visitor's country in the billing-country field. Returns the ISO 3166-1
+    alpha-2 code, or ``null`` when no edge signal is present (local dev, direct
+    origin hit) so the form can fall back to an unselected placeholder.
+    """
+    return {"country": resolve_country(request)}
 
 
 @router.post("/register", response_model=RegisterResponse)

@@ -287,6 +287,8 @@ async def upload_logo_endpoint(
 
 class ClientProfilePatch(BaseModel):
     name: str | None = None
+    company_name: str | None = None
+    website: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -298,13 +300,21 @@ class ClientProfilePatch(BaseModel):
             raise ValueError("Name cannot be empty.")
         return v
 
+    @field_validator("company_name", "website")
+    @classmethod
+    def clean_optional_str(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        return v or None
+
 
 @router.patch("/profile")
 def update_client_profile(
     body: ClientProfilePatch,
     client: Client = Depends(get_current_client_strict),
 ):
-    """Update the authenticated client's display name.
+    """Update the authenticated client's display name, company name, and website.
 
     Email changes go through /client/change-email/* instead — that flow
     requires the current password and confirms ownership of the new inbox
@@ -313,14 +323,27 @@ def update_client_profile(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
-        if body.name:
+        fields_set = body.dict(exclude_unset=True)
+
+        if "name" in fields_set and body.name:
             row.name = body.name
+        if "company_name" in fields_set:
+            row.company_name = body.company_name
+        if "website" in fields_set:
+            row.website = body.website
 
         session.commit()
         session.refresh(row)
-        return {"id": row.id, "name": row.name, "email": row.email, "pending_email": row.pending_email}
+        return {
+            "id": row.id,
+            "name": row.name,
+            "email": row.email,
+            "company_name": row.company_name,
+            "website": row.website,
+            "pending_email": row.pending_email,
+        }
 
 
 class ChangePasswordRequest(BaseModel):
@@ -344,7 +367,7 @@ def change_client_password(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
         if not verify_password(body.current_password, row.hashed_password or ""):
             raise HTTPException(status_code=400, detail="Current password is incorrect.")
         row.hashed_password = get_password_hash(body.new_password)
@@ -390,7 +413,7 @@ def request_client_email_change(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         if not verify_password(body.current_password, row.hashed_password or ""):
             raise HTTPException(status_code=400, detail="Current password is incorrect.")
@@ -402,7 +425,10 @@ def request_client_email_change(
             session.execute(select(Client).where(Client.email == body.new_email, Client.id != row.id)).scalars().first()
         )
         if existing:
-            raise HTTPException(status_code=400, detail="A client with this email already exists.")
+            raise HTTPException(
+                status_code=400,
+                detail="An account with this email already exists. Please sign in instead.",
+            )
 
         otp = str(secrets.randbelow(900000) + 100000)
         row.pending_email = body.new_email
@@ -430,7 +456,7 @@ def confirm_client_email_change(
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         if not row.pending_email or not row.email_change_otp or not row.email_change_otp_expires_at:
             raise HTTPException(status_code=400, detail="No email change is pending.")
@@ -464,7 +490,7 @@ def cancel_client_email_change(client: Client = Depends(get_current_client_stric
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
         row.pending_email = None
         row.email_change_otp = None
         row.email_change_otp_expires_at = None
@@ -488,7 +514,7 @@ def regenerate_client_api_key(client: Client = Depends(get_current_client_strict
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
         new_key = uuid.uuid4().hex
         row.api_key = new_key
         session.commit()

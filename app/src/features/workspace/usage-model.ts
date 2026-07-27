@@ -113,6 +113,66 @@ function parsePool(record: Record<string, unknown>): CreditPool {
   };
 }
 
+/** Credits consumed this period across every metered activity in one pool. */
+function poolCreditsUsed(usage: UsageBuckets): number {
+  return (
+    usage.aiChat.creditsUsed +
+    usage.documentUpload.creditsUsed +
+    usage.urlScan.creditsUsed +
+    usage.emailSend.creditsUsed
+  );
+}
+
+/**
+ * A single credit pool ready to render as its own card: either the shared
+ * account pool (Free + legacy agents) or one agent that carries its own paid
+ * subscription. Both expose the same spendable figures; a bot pool additionally
+ * carries the agent's identity so its balance can be shown and topped up in
+ * isolation.
+ */
+export interface PoolCredit {
+  /** `null` for the shared account pool; the bot's DB id for a per-agent pool. */
+  readonly botId: number | null;
+  /** Display name — the agent's name, or a generic label for the account pool. */
+  readonly name: string;
+  /** The agent's public bot key, when this is a per-agent pool. */
+  readonly botKey: string | null;
+  /** The plan the agent is on (per-agent pools only). */
+  readonly planName: string | null;
+  /** Credits granted by the plan at the start of the period. */
+  readonly monthlyGrant: number;
+  /** Plan-bucket credits still available. */
+  readonly planRemaining: number;
+  /** Top-up (purchased) credits still available. */
+  readonly topupRemaining: number;
+  /** Total spendable credits (plan + top-up); the pool stops at 0 here. */
+  readonly totalRemaining: number;
+  /** Share of this pool's monthly grant already consumed, 0–100. */
+  readonly planUsedPct: number;
+  /** When the plan bucket refills, ISO 8601. */
+  readonly resetsAt: string | null;
+  /** Credits consumed this period from this pool. */
+  readonly periodCreditsUsed: number;
+}
+
+function poolCredit(
+  pool: CreditPool,
+  identity: { botId: number | null; name: string; botKey: string | null; planName: string | null },
+): PoolCredit {
+  const planUsed = Math.max(pool.monthlyGrant - pool.planRemaining, 0);
+  return {
+    ...identity,
+    monthlyGrant: pool.monthlyGrant,
+    planRemaining: pool.planRemaining,
+    topupRemaining: pool.topupRemaining,
+    totalRemaining: pool.totalRemaining,
+    planUsedPct:
+      pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
+    resetsAt: pool.resetsAt,
+    periodCreditsUsed: poolCreditsUsed(pool.usage),
+  };
+}
+
 /**
  * The workspace-wide credit position + this period's metered consumption,
  * aggregated across the account pool and every per-bot subscription ledger.
@@ -140,6 +200,20 @@ export interface CreditBalance {
   readonly emailSend: UsageBreakdownEntry;
   /** Credits consumed this period across every metered activity. */
   readonly periodCreditsUsed: number;
+  /**
+   * Per-agent credit pools — one entry per bot that carries its own paid
+   * subscription (isolated balance + scoped top-up). Empty for accounts where
+   * every agent draws from the shared account pool, in which case the aggregate
+   * position above already tells the whole story.
+   */
+  readonly botCredits: PoolCredit[];
+  /**
+   * The shared account pool (Free + legacy agents) as its own card. Non-null
+   * only when both per-agent pools exist AND at least one agent still drains the
+   * account pool — so the breakdown sums to the aggregate without a redundant
+   * "account" card on single-pool accounts.
+   */
+  readonly accountPool: PoolCredit | null;
 }
 
 /**
@@ -156,11 +230,38 @@ export interface CreditBalance {
 export function parseCreditBalance(raw: unknown): CreditBalance {
   const record = asRecord(raw);
 
-  const pools: CreditPool[] = [parsePool(record)];
-  const bots = Array.isArray(record.bots) ? record.bots : [];
-  for (const botRaw of bots) {
-    pools.push(parsePool(asRecord(botRaw)));
+  const accountPoolRaw = parsePool(record);
+  const pools: CreditPool[] = [accountPoolRaw];
+  const botsRaw = Array.isArray(record.bots) ? record.bots : [];
+  const botCredits: PoolCredit[] = [];
+  for (const botRaw of botsRaw) {
+    const botRecord = asRecord(botRaw);
+    const botPool = parsePool(botRecord);
+    pools.push(botPool);
+    botCredits.push(
+      poolCredit(botPool, {
+        botId: toNumber(botRecord.bot_id) || null,
+        name: toStringOrNull(botRecord.bot_name) ?? 'Agent',
+        botKey: toStringOrNull(botRecord.bot_key),
+        planName: toStringOrNull(botRecord.plan_name),
+      }),
+    );
   }
+
+  // Count of agents still drawing from the shared account pool (Free / legacy).
+  // Only surface the account pool as its own card when it's genuinely shared AND
+  // per-agent pools exist to break down — otherwise the aggregate hero already
+  // answers the whole question.
+  const accountPoolBotCount = toNumber(record.account_pool_bot_count);
+  const accountPool: PoolCredit | null =
+    botCredits.length > 0 && accountPoolBotCount > 0
+      ? poolCredit(accountPoolRaw, {
+          botId: null,
+          name: 'Free & legacy agents',
+          botKey: null,
+          planName: null,
+        })
+      : null;
 
   const empty: UsageBreakdownEntry = { creditsUsed: 0, eventCount: 0 };
   const aggregate = pools.reduce(
@@ -216,7 +317,35 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       aggregate.documentUpload.creditsUsed +
       aggregate.urlScan.creditsUsed +
       aggregate.emailSend.creditsUsed,
+    botCredits,
+    accountPool,
   };
+}
+
+// ── Consumption trend ────────────────────────────────────────────────────────
+
+/** One day in the consumption trend series (from GET /credits/daily). */
+export interface TrendPoint {
+  /** Calendar day, ISO `YYYY-MM-DD` (UTC). */
+  readonly date: string;
+  /** Credits consumed that day (metered debits only). */
+  readonly creditsUsed: number;
+}
+
+/**
+ * Parse the daily-consumption payload into an ascending, zero-filled series.
+ * The backend already zero-fills and orders the window, so this is a thin,
+ * defensive mapping that drops any malformed row.
+ */
+export function parseTrend(raw: unknown): TrendPoint[] {
+  const record = asRecord(raw);
+  const series = Array.isArray(record.series) ? record.series : [];
+  return series
+    .map((point): TrendPoint => {
+      const row = asRecord(point);
+      return { date: toStringOrNull(row.date) ?? '', creditsUsed: toNumber(row.credits_used) };
+    })
+    .filter((point) => point.date !== '');
 }
 
 // ── Consumption ledger ───────────────────────────────────────────────────────
@@ -336,4 +465,12 @@ export function formatDateTime(iso: string | null): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/** HH:MM — the time-of-day, for rows already grouped under a day header. */
+export function formatTime(iso: string | null): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
 }

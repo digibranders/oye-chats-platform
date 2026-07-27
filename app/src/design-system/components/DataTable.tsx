@@ -114,7 +114,7 @@ export function DataTable<T>({
                 className={cn(
                   'border-b border-[var(--ds-border)] last:border-0',
                   interactive &&
-                    'cursor-pointer transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ds-ring)]',
+                    'cursor-pointer transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                 )}
               >
                 {columns.map((column) => (

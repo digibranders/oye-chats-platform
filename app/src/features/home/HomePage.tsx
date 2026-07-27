@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Activity as ActivityIcon,
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   BookOpen,
   CheckCircle2,
@@ -18,7 +19,17 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { Button, Card, EmptyState, PageContainer, SectionHeader, Skeleton } from '../../design-system';
+import {
+  Button,
+  Card,
+  EmptyState,
+  LockedFeatureCard,
+  PageContainer,
+  PlanBadge,
+  QuotaMeter,
+  SectionHeader,
+  Skeleton,
+} from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { InsightCard, type InsightCardProps } from '../../design-system/components/InsightCard';
 import { ActionCard, type ActionCardProps } from '../../design-system/components/ActionCard';
@@ -27,6 +38,7 @@ import { ActivityTimeline, type ActivityItem } from '../../design-system/compone
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { QuickAction } from '../../design-system/components/QuickAction';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
 import type { TopQuestion } from '../../types/domain';
 import {
   formatRelativeTime,
@@ -153,7 +165,7 @@ function buildRecommendations(data: HomeData): Recommendation[] {
       key: 'new-agent',
       icon: Plus,
       title: 'Create another agent',
-      description: 'Spin up a new AI agent for a different site, product or audience.',
+      description: 'Spin up a new AI chatbot for a different site, product or audience.',
       to: '/agents',
       cta: 'New agent',
     });
@@ -267,18 +279,61 @@ function HomeEmpty(): ReactElement {
   return (
     <EmptyState
       icon={Sparkles}
-      title="Create your first AI agent"
-      description="Set up an agent, train it on your content and add it to your website. We’ll guide you through every step."
+      title="Create your first AI chatbot"
+      description="Set up a chatbot, train it on your content and add it to your website. We’ll guide you through every step."
       action={
         <Link
           to="/launch"
-          className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]"
+          className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ds-accent)] px-4 text-sm font-medium text-[var(--ds-accent-fg)] shadow-[var(--ds-shadow-sm)] transition-colors hover:bg-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
         >
           <Plus size={15} aria-hidden="true" />
           Get started
         </Link>
       }
     />
+  );
+}
+
+/**
+ * PlanUsageCard — a compact plan-and-capacity glance: the workspace's plan
+ * badge plus the three usage-populated limit meters (bots, operators,
+ * documents — see `useEntitlements` foundation notes; `credits`,
+ * `page_scraping`, `chat_history_days` are NOT populated by the backend
+ * `usage` map, so they're deliberately left off this summary rather than
+ * shown with a fabricated "used" count). Free workspaces get a subtle
+ * upgrade nudge into Workspace ▸ Billing.
+ */
+function PlanUsageCard(): ReactElement {
+  const { entitlements, isFree, planName, limitFor } = useEntitlements();
+
+  return (
+    <Card className="space-y-5 p-5">
+      <SectionHeader title="Plan & usage" actions={<PlanBadge planName={planName} />} />
+
+      <div className="space-y-4">
+        <QuotaMeter label="Agents" used={entitlements.usage.bots ?? 0} limit={limitFor('bots')} />
+        <QuotaMeter
+          label="Members"
+          used={entitlements.usage.operators ?? 0}
+          limit={limitFor('operators')}
+        />
+        <QuotaMeter
+          label="Documents"
+          used={entitlements.usage.documents ?? 0}
+          limit={limitFor('documents')}
+        />
+      </div>
+
+      {isFree && (
+        <Link
+          to="/workspace/billing"
+          className="flex items-center justify-between gap-2 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-accent-soft)]/80"
+        >
+          <span>You&rsquo;re on the Free plan — upgrade for more capacity</span>
+          <ArrowRight size={14} aria-hidden="true" className="shrink-0" />
+        </Link>
+      )}
+    </Card>
   );
 }
 
@@ -343,6 +398,7 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
   const insight = buildHealthInsight(data);
   const recommendations = buildRecommendations(data);
   const activityItems = toActivityItems(data.activity);
+  const { hasFeature } = useEntitlements();
 
   return (
     <div className="space-y-8">
@@ -375,7 +431,7 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
           <section aria-label="Your agents" className="space-y-4">
             <SectionHeader
               title="Your agents"
-              description="Health and activity across every AI agent in this workspace."
+              description="Health and activity across every AI chatbot in this workspace."
               actions={
                 <Link
                   to="/agents"
@@ -421,8 +477,18 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
           </section>
         </div>
 
-        {/* Aside — health insight, next steps, live activity */}
+        {/* Aside — plan usage, health insight, next steps, live activity */}
         <div className="space-y-8">
+          <section aria-label="Plan and usage">
+            <PlanUsageCard />
+          </section>
+
+          {!hasFeature('bant') && (
+            <section aria-label="Lead qualification">
+              <LockedFeatureCard intent="view_qualification" icon={Target} />
+            </section>
+          )}
+
           <section aria-label="Recommended next steps" className="space-y-4">
             <InsightCard
               icon={insight.icon}

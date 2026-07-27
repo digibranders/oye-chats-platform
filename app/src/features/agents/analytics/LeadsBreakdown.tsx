@@ -31,19 +31,19 @@ export function LeadsBreakdown({ leads, loading }: LeadsBreakdownProps): ReactEl
         color: 'var(--ds-text-subtle)',
       },
       {
-        label: 'Marketing-qualified',
+        label: 'Warm lead',
         hint: 'Showed early interest',
         value: leads.mql + leads.sal + leads.sql,
         color: 'var(--ds-info)',
       },
       {
-        label: 'Sales-accepted',
+        label: 'Strong interest',
         hint: 'Worth a sales follow-up',
         value: leads.sal + leads.sql,
         color: 'var(--ds-warning)',
       },
       {
-        label: 'Sales-qualified',
+        label: 'Ready to buy',
         hint: 'Ready to buy',
         value: leads.sql,
         color: 'var(--ds-success)',

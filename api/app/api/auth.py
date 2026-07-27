@@ -457,7 +457,7 @@ def get_current_client_strict(
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-API-Key header. This endpoint requires client (admin) authentication.",
+            detail="Missing X-API-Key header. This endpoint requires account (admin) authentication.",
         )
 
     with get_session() as session:
@@ -786,7 +786,7 @@ def get_current_bot(
                 # No bot exists — client hasn't created one yet (expected for new accounts)
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No active bot found. Please create a chatbot first.",
+                    detail="No active bot found. Please create an AI chatbot first.",
                 )
 
         raise HTTPException(

@@ -160,7 +160,7 @@ const LiveChatMode = ({
                             setChatMode('waiting');
                         } else if (data.status === 'connected') {
                             setChatMode('live');
-                            setOperatorName(data.operator_name || 'Support');
+                            setOperatorName(data.operator_name || 'Our team');
                             setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
                             // Always re-fetch history on (re)connect — covers the
@@ -206,7 +206,7 @@ const LiveChatMode = ({
                                             const base = {
                                                 id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
                                                 sender: isUser ? 'user' : 'operator',
-                                                operatorName: !isUser ? (data.operator_name || 'Support') : undefined,
+                                                operatorName: !isUser ? (data.operator_name || 'Our team') : undefined,
                                                 timestamp: m.timestamp || m.created_at,
                                                 ...(isUser ? {
                                                     dbId: typeof m.id === 'number' ? m.id : undefined,

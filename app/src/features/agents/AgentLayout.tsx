@@ -36,7 +36,7 @@ function AgentShell(): ReactElement {
   return (
     <div className="flex min-h-full flex-col bg-[var(--ds-bg-canvas)] text-[var(--ds-text)]">
       {/* Header — who am I configuring? */}
-      <header className="border-b border-[var(--ds-border)] px-4 pt-6 md:px-8">
+      <header className="border-b border-[var(--ds-border)] pt-2">
         <div className="flex items-center gap-3">
           <div
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]"
@@ -73,7 +73,7 @@ function AgentShell(): ReactElement {
                   className={({ isActive }) =>
                     cn(
                       'inline-flex items-center whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+                      'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                       isActive
                         ? 'border-[var(--ds-accent)] text-[var(--ds-text)]'
                         : 'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
@@ -89,7 +89,7 @@ function AgentShell(): ReactElement {
       </header>
 
       {/* Active tab */}
-      <main className="flex-1">
+      <main className="flex-1 pt-4">
         <Outlet />
       </main>
     </div>

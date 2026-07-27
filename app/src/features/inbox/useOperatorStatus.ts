@@ -14,6 +14,8 @@ export interface OperatorStatusState {
   error: string | null;
   /** Flip availability; no-op while a toggle is already in flight. */
   toggle: () => Promise<void>;
+  /** Re-read the current status (e.g. after adding oneself as an operator). */
+  refresh: () => Promise<void>;
 }
 
 /**
@@ -29,34 +31,29 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
   const [error, setError] = useState<string | null>(null);
   const tokenRef = useRef(0);
 
-  useEffect(() => {
+  const load = useCallback(async (): Promise<void> => {
     const token = (tokenRef.current += 1);
-    let active = true;
-
-    async function load(): Promise<void> {
-      setLoading(true);
-      try {
-        const status = await getMyOperatorStatus(botId != null ? { botId } : undefined);
-        if (!active || token !== tokenRef.current) return;
-        if (status) {
-          setIsOnline(Boolean(status.is_online));
-          setUnavailable(false);
-        } else {
-          setUnavailable(true);
-        }
-      } catch {
-        if (!active || token !== tokenRef.current) return;
+    setLoading(true);
+    try {
+      const status = await getMyOperatorStatus(botId != null ? { botId } : undefined);
+      if (token !== tokenRef.current) return;
+      if (status) {
+        setIsOnline(Boolean(status.is_online));
+        setUnavailable(false);
+      } else {
         setUnavailable(true);
-      } finally {
-        if (active && token === tokenRef.current) setLoading(false);
       }
+    } catch {
+      if (token !== tokenRef.current) return;
+      setUnavailable(true);
+    } finally {
+      if (token === tokenRef.current) setLoading(false);
     }
-
-    void load();
-    return () => {
-      active = false;
-    };
   }, [botId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const toggle = useCallback(async (): Promise<void> => {
     if (saving || unavailable) return;
@@ -79,5 +76,5 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
     }
   }, [saving, unavailable, isOnline, botId]);
 
-  return { isOnline, loading, saving, unavailable, error, toggle };
+  return { isOnline, loading, saving, unavailable, error, toggle, refresh: load };
 }

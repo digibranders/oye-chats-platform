@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { registerClient } from '../services/api';
+import { registerClient, detectCountry } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, getAuthItem, isSessionExpired } from '../utils/authStorage';
 import { cn } from '../lib/utils';
@@ -10,14 +10,11 @@ import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
 import Select from '../components/ui/Select';
 
-// Billing-country choices for the custom Select. An empty-value first option
-// keeps "Detect automatically" (currency inferred from the request IP) both
-// selectable and revertable — value '' shows this label, any code shows the
-// picked country. Built once at module load (COUNTRY_OPTIONS is static).
-const BILLING_COUNTRY_OPTIONS = [
-  { value: '', label: 'Detect automatically', search: 'detect automatically auto' },
-  ...COUNTRY_OPTIONS,
-];
+// Billing-country choices for the custom Select — the plain ISO country list.
+// The field auto-detects the visitor's country on load (see the effect below)
+// and preselects it; the user can still search/override. Built once at module
+// load (COUNTRY_OPTIONS is static).
+const BILLING_COUNTRY_OPTIONS = COUNTRY_OPTIONS;
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -61,6 +58,19 @@ export default function Register() {
   const rawNext = searchParams.get('next') || '';
   // Same open-redirect guard as Login.jsx — only relative same-origin paths.
   const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
+
+  // Auto-detect the visitor's billing country on load and preselect it. The
+  // functional update only fills an *empty* field, so a manual pick made before
+  // the async resolve wins (and we never clobber it once /geo returns).
+  useEffect(() => {
+    let cancelled = false;
+    detectCountry().then((code) => {
+      if (!cancelled && code) setBillingCountry((prev) => prev || code);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const hasMinLength = password.length >= 8;
   const hasLetter = /[A-Za-z]/.test(password);
@@ -436,7 +446,7 @@ export default function Register() {
                   value={billingCountry}
                   onChange={setBillingCountry}
                   options={BILLING_COUNTRY_OPTIONS}
-                  placeholder="Detect automatically"
+                  placeholder="Select your country"
                   searchable
                   light
                   className="pl-10 pr-4 py-2.5 rounded-xl"

@@ -72,7 +72,7 @@ export function TimingReliabilitySection({
         aria-controls="timing-panel"
         className={cn(
           'flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-4 py-3 text-left transition-colors hover:border-[var(--ds-text-subtle)]',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+          'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
         )}
       >
         <span className="text-[13px] font-medium text-[var(--ds-text)]">

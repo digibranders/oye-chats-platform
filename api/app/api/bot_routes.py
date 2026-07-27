@@ -1486,7 +1486,7 @@ def create_bot_checkout(
 
         client = session.get(Client, auth["client_id"])
         if client is None:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         # Resolve the bot's domain whitelist now (deterministic — derived
         # the same way ``POST /bots`` does) so the webhook handler doesn't
@@ -1567,7 +1567,7 @@ def verify_bot_checkout(body: BotCheckoutVerifyRequest, auth=Depends(get_current
 
     paid_client_id = razorpay_service._client_id_from_notes(notes)
     if not paid_client_id or paid_client_id != auth["client_id"]:
-        raise HTTPException(status_code=403, detail="Subscription belongs to a different client.")
+        raise HTTPException(status_code=403, detail="Subscription belongs to a different account.")
 
     # Razorpay's real webhook envelope nests entities under
     # ``payload.subscription.entity``, but ``_extract_subscription_entity``
@@ -1646,7 +1646,7 @@ def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_cl
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
         sample = get_content_sample_for_bot(session, bot_id=bot.id)
         if not sample.strip():
-            raise HTTPException(status_code=400, detail="Crawl your website first to detect its tone.")
+            raise HTTPException(status_code=400, detail="Train on your website first to detect its tone.")
 
         # Bound the interactive wait: the user is watching a spinner, so cap the
         # LLM budget (~20s × 1 retry) instead of the default ~180s worst case
@@ -1812,10 +1812,23 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 bot.bant_config = merged_bant_config
 
             if "bant_config" in update_data and update_data["bant_config"] is not None:
+                # The qualification editor always sends the COMPLETE authoritative
+                # config, so store it wholesale. A shallow merge would resurrect
+                # dimensions the user removed or renamed — orphan dimension dicts
+                # linger at the top level and ``_dimension_keys`` re-scores them,
+                # silently corrupting every session's composite score. Replacing
+                # is the only way a removal actually takes effect. Reads fall back
+                # to the framework preset (``get_framework_config`` deep-merges the
+                # preset under the stored config), so a config that omits a key is
+                # still complete at scoring time.
                 incoming_bant = dict(update_data["bant_config"])
-                merged_bant = dict(bot.bant_config or {})
-                merged_bant.update(incoming_bant)
-                bot.bant_config = merged_bant
+                # Preserve the framework applied just above if the payload omits it
+                # (e.g. a combined framework-switch + config save).
+                if "framework" not in incoming_bant:
+                    existing_framework = (bot.bant_config or {}).get("framework")
+                    if existing_framework:
+                        incoming_bant["framework"] = existing_framework
+                bot.bant_config = incoming_bant
                 update_data.pop("bant_config")
 
             # Normalize services to ``[{name, url}]`` regardless of whether the
@@ -1843,7 +1856,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
         raise HTTPException(status_code=500, detail="Failed to save bot settings.") from e
 
 
-# ── Auto-recrawl (Standard + Enterprise plans) ───────────────────────────────
+# ── Auto-recrawl (Standard + Professional plans) ────────────────────────────
 #
 # Two endpoints back the KnowledgeBase → Auto-Recrawl card:
 #
@@ -1963,7 +1976,7 @@ def update_recrawl(
                     "error": "feature_locked",
                     "feature": "auto_recrawl",
                     "current_plan": entitlements.plan_slug,
-                    "message": ("Auto-recrawl is available on Standard and Enterprise plans. Upgrade to enable it."),
+                    "message": ("Auto-recrawl is available on Standard and Professional plans. Upgrade to enable it."),
                     "upgrade_url": "/billing",
                 },
             )

@@ -8,11 +8,11 @@ subscription cancellation. Razorpay webhook handling lives in
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import config as app_config
 from app.api.auth import get_current_client_or_operator, require_verified_email
@@ -25,7 +25,7 @@ from app.config import (
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
-from app.core.pricing import format_amount
+from app.core.pricing import format_amount, seat_price
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service
@@ -157,8 +157,7 @@ class StartTrialRequest(BaseModel):
 
     The slug is the public plan identifier the pricing page renders against
     (``starter`` / ``standard``). The slug must point at an active plan with
-    ``trial_days > 0`` — the free plan and enterprise tier are intentionally
-    excluded.
+    ``trial_days > 0`` — the free plan is intentionally excluded.
     """
 
     plan_slug: str = Field(..., min_length=1, max_length=64)
@@ -755,8 +754,9 @@ def checkout_quote(
             amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
 
-        # Free plan: render a quote but mark checkout as unsupported.
-        if inr_minor == 0 and plan.slug != "enterprise":
+        # Free plan (any zero-price plan): render a quote but mark checkout as
+        # unsupported.
+        if inr_minor == 0:
             return {
                 "country": country,
                 "currency": currency,
@@ -768,21 +768,6 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": None,
                 "reason": "free_plan",
-            }
-
-        # Enterprise is always contact-sales.
-        if plan.slug == "enterprise":
-            return {
-                "country": country,
-                "currency": currency,
-                "amount_minor": amount_minor,
-                "amount_display": amount_display,
-                "billing_cycle": billing_cycle,
-                "provider": None,
-                "methods": [],
-                "checkout_supported": False,
-                "contact_sales": "developer@oyechats.com",
-                "reason": "enterprise",
             }
 
         # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
@@ -958,7 +943,7 @@ def create_checkout(
             raise HTTPException(status_code=404, detail="Plan not found.")
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
-        if plan.monthly_price_cents == 0 and plan.slug != "enterprise":
+        if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
         # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
@@ -1011,9 +996,9 @@ def create_checkout(
         # not resolved until the provider can honour it.
         provider = _resolve_provider()
         if provider == "razorpay":
-            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+            discount_bps, _ = discount_service.resolve_customer_discount_bps(session, client)
         else:
-            discount_bps, disc_meta = 0, None
+            discount_bps = 0
         try:
             result = razorpay_service.create_subscription(
                 session, client, plan, request.billing_cycle, discount_bps=discount_bps
@@ -1022,16 +1007,22 @@ def create_checkout(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        if disc_meta:
+        # Record the referral conversion for ANY attributed code, not just
+        # discount-bearing ones (finding MED-2): a commission-only code earns the
+        # affiliate a pool cut with no customer discount, and is a real
+        # conversion the super-admin view must not miss. ``disc_meta`` is None for
+        # those, so resolve the snapshot independently of the discount.
+        conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
+        if conv_meta:
             session.add(
                 ReferralConversion(
                     client_id=client.id,
-                    referral_code_id=int(disc_meta["referral_code_id"]),
+                    referral_code_id=int(conv_meta["referral_code_id"]),
                     # Snapshot the affiliate so payout reconciliation can attribute
                     # the conversion without re-joining the mutable code row (N6).
-                    affiliate_id=int(disc_meta["affiliate_id"]),
-                    commission_bps=int(disc_meta["affiliate_commission_bps"]),
-                    customer_discount_bps=int(disc_meta["discount_bps"]),
+                    affiliate_id=int(conv_meta["affiliate_id"]),
+                    commission_bps=int(conv_meta["affiliate_commission_bps"]),
+                    customer_discount_bps=int(conv_meta["discount_bps"]),
                 )
             )
         session.commit()
@@ -1477,6 +1468,52 @@ def resume_subscription(
             raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
 
         billing_cycle = sub.billing_cycle or "monthly"
+
+        _reauth_message = (
+            "The previous mandate was cancelled at the payment provider and "
+            "cannot be un-cancelled. Re-authorise payment to keep your plan."
+        )
+
+        # Finding H1: in-flight idempotency. /resume mints a FRESH Razorpay
+        # subscription (Razorpay has no un-cancel), so a sequential double
+        # /resume — two open modals, or an emailed re-auth link clicked twice —
+        # would mint TWO mandates; if the customer authorises both, both first
+        # cycles charge and Razorpay does NOT refund the sibling the activation
+        # sweep retires. lock_client_for_billing only serialises CONCURRENT
+        # calls, not a sequential re-submit. Mirror the upgrade path (finding D):
+        # if a re-auth checkout for the SAME plan is already in flight, reuse it
+        # instead of minting again. The markers are cleared at activation by
+        # apply_pending_proration (matched via prev_razorpay_subscription_id).
+        if sub.upgrade_pending_subscription_id and sub.upgrade_pending_plan_id == plan.id:
+            reused = razorpay_service.rebuild_upgrade_checkout(
+                sub.upgrade_pending_subscription_id, client, plan, billing_cycle
+            )
+            if reused is not None:
+                reused.setdefault("provider", "razorpay")
+                logger.info(
+                    "Reusing pending resume checkout %s for client %s (sub %s)",
+                    sub.upgrade_pending_subscription_id,
+                    client.id,
+                    sub.id,
+                )
+                return {
+                    "status": "reauthorise_required",
+                    "mandate_action": "reauthorise_required",
+                    "message": _reauth_message,
+                    "checkout": reused,
+                }
+            # The pending checkout was abandoned / is no longer authorizable —
+            # clear the stale marker and fall through to mint a fresh one so the
+            # customer isn't stranded with a dead checkout.
+            logger.info(
+                "Pending resume checkout %s for client %s is dead; re-minting",
+                sub.upgrade_pending_subscription_id,
+                client.id,
+            )
+            sub.upgrade_pending_subscription_id = None
+            sub.upgrade_pending_plan_id = None
+            session.flush()
+
         extra_notes = (
             {"prev_razorpay_subscription_id": sub.razorpay_subscription_id} if sub.razorpay_subscription_id else None
         )
@@ -1493,6 +1530,12 @@ def resume_subscription(
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        # Record the in-flight checkout so a sequential re-submit reuses it
+        # (finding H1). Cleared at activation by apply_pending_proration.
+        sub.upgrade_pending_subscription_id = checkout.get("subscription_id")
+        sub.upgrade_pending_plan_id = plan.id
+        session.flush()
+
         session.commit()
         checkout.setdefault("provider", "razorpay")
         logger.info(
@@ -1504,10 +1547,7 @@ def resume_subscription(
         return {
             "status": "reauthorise_required",
             "mandate_action": "reauthorise_required",
-            "message": (
-                "The previous mandate was cancelled at the payment provider and "
-                "cannot be un-cancelled. Re-authorise payment to keep your plan."
-            ),
+            "message": _reauth_message,
             "checkout": checkout,
         }
 
@@ -1583,19 +1623,25 @@ def change_seat_count(
         # (P0-3). extra_seats is clamped at 0 inside the helper.
         extra_seats = new_total - floor
 
-        # Finding J: all extra seats bill against the single global seat plan, so
-        # the price the customer is actually charged is RAZORPAY_SEAT_PLAN_PRICE_CENTS
-        # — NOT the plan's own extra_seat_price_cents. Surface the charged price
-        # (below) and log any per-plan divergence so a misconfigured plan can't
-        # silently display a seat price it will never bill.
-        seat_price_cents = app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS
-        if extra_seats > 0 and int(plan.extra_seat_price_cents or 0) != seat_price_cents:
+        # Finding H3/J: all extra seats bill against the single global seat plan,
+        # so the amount charged is the canonical seat price — NOT a plan's own
+        # ``extra_seat_price_cents``. Resolve the charged price in the customer's
+        # currency (₹449 INR / $5 international) so the displayed price always
+        # equals what the add-on bills. Log any per-plan divergence so a
+        # misconfigured plan row is visible (the plan-edit guard normally keeps
+        # them equal).
+        seat_price_cents, seat_currency = seat_price(
+            inr_cents=app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS,
+            usd_cents=app_config.EXTRA_SEAT_PRICE_USD_CENTS,
+            currency=plan.currency,
+        )
+        if extra_seats > 0 and int(plan.extra_seat_price_cents or 0) != app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS:
             logger.warning(
                 "Plan %s extra_seat_price_cents=%s but the seat add-on charges %s — "
                 "displaying the charged price; fix the plan config to match.",
                 plan.id,
                 plan.extra_seat_price_cents,
-                seat_price_cents,
+                app_config.RAZORPAY_SEAT_PLAN_PRICE_CENTS,
             )
 
         try:
@@ -1628,7 +1674,7 @@ def change_seat_count(
                 "operator_quantity": sub.operator_quantity,  # unchanged until webhook
                 "included_operator_seats": floor,
                 "extra_seat_price_cents": seat_price_cents,
-                "currency": plan.currency,
+                "currency": seat_currency,
             }
 
         # Edit against an already-authorized add-on (or a reduction) → the change
@@ -1643,7 +1689,7 @@ def change_seat_count(
             "operator_quantity": new_total,
             "included_operator_seats": floor,
             "extra_seat_price_cents": seat_price_cents,
-            "currency": plan.currency,
+            "currency": seat_currency,
         }
 
 
@@ -1832,6 +1878,60 @@ def get_credit_history(
         ]
 
 
+# Reasons that represent actual metered consumption (always debit rows). Kept
+# in sync with the four usage buckets the balance breakdown reports, so the
+# trend and the breakdown agree on what "credits used" means. Deliberately
+# excludes plan_grant (grants + monthly resets), topup, refund, expiry, and
+# manual_adjust — none of which are consumption.
+_CONSUMPTION_REASONS = ("ai_chat", "url_scan", "email_send", "document_upload")
+
+
+@credits_router.get("/daily")
+def get_credit_daily(
+    client: Client = Depends(get_current_client),
+    days: int = 30,
+):
+    """Daily credit consumption for the last ``days`` days (zero-filled).
+
+    Sums the magnitude of consumption debits per calendar day (UTC) so the
+    Usage page can render a trend line. Returns a complete ascending series —
+    one entry per day in the window, ``credits_used = 0`` on quiet days — so
+    the client can render without gap-filling.
+    """
+    days = max(min(int(days or 30), 90), 1)
+    now = datetime.now(UTC)
+    window_start = now - timedelta(days=days)
+    first_day = (now - timedelta(days=days - 1)).date()
+
+    # Cast to a UTC calendar date so grouping is stable regardless of the DB
+    # session timezone (created_at is a timezone-aware UTC timestamp).
+    day_col = func.date(func.timezone("UTC", CreditLedger.created_at))
+
+    with get_session() as session:
+        rows = session.execute(
+            select(
+                day_col.label("day"),
+                func.coalesce(func.sum(-CreditLedger.delta), 0).label("used"),
+            )
+            .where(
+                CreditLedger.client_id == client.id,
+                CreditLedger.reason.in_(_CONSUMPTION_REASONS),
+                CreditLedger.created_at >= window_start,
+            )
+            .group_by(day_col)
+        ).all()
+
+        by_day = {str(r.day): int(r.used or 0) for r in rows}
+        series = [
+            {
+                "date": (day := (first_day + timedelta(days=offset)).isoformat()),
+                "credits_used": by_day.get(day, 0),
+            }
+            for offset in range(days)
+        ]
+        return {"days": days, "series": series}
+
+
 class TopupRequest(BaseModel):
     """Top-up purchase request.
 
@@ -1856,14 +1956,14 @@ class TopupRequest(BaseModel):
 
 
 def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
-    """Find a pack whose configured amount matches ``requested_amount``.
+    """Find a pack whose configured INR price matches ``requested_amount``.
 
-    Top-up packs in the new (INR) schema use the ``amount`` key; legacy
-    Legacy packs used ``usd``. We accept either so older admin clients
-    continue to work during cutover.
+    Packs carry their INR charge under ``inr`` (``amount`` is a legacy alias).
+    The frontend sends that INR amount, so we match on it. ``usd`` is a
+    display-only figure and is accepted only as a last-resort legacy fallback.
     """
     for pack in packs:
-        if int(pack.get("amount") or pack.get("usd") or 0) == requested_amount:
+        if int(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0) == requested_amount:
             return pack
     return None
 

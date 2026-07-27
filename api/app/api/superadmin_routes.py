@@ -53,7 +53,10 @@ def create_client(request: CreateClientRequest, superadmin: Client = Depends(get
         stmt = select(Client).where(Client.email == request.email).limit(1)
         existing = session.execute(stmt).scalars().first()
         if existing:
-            raise HTTPException(status_code=400, detail="A client with this email already exists.")
+            raise HTTPException(
+                status_code=400,
+                detail="An account with this email already exists. Please sign in instead.",
+            )
 
         new_client = Client(
             name=request.name,
@@ -88,7 +91,7 @@ def delete_client(client_id: int, superadmin: Client = Depends(get_superadmin)):
         client = session.execute(stmt).scalars().first()
 
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         # Prevent superadmin from deleting themselves
         if client.id == superadmin.id:
@@ -227,6 +230,7 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                     "is_superadmin": c.is_superadmin,
                     "superadmin_role": c.superadmin_role,
                     "website": c.website,
+                    "country": c.billing_country,
                     "suspended_at": c.suspended_at.isoformat() if c.suspended_at else None,
                     "plan_name": plan.name if plan else None,
                     "plan_slug": plan.slug if plan else None,

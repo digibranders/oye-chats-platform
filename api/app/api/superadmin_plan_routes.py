@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
-from app.config import DISPLAY_USD_TO_INR
+from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
 from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
@@ -85,7 +85,9 @@ class CreatePlanRequest(BaseModel):
     overage_rate_cents: int = Field(0, ge=0)
     credits_per_month: int = Field(0, ge=0)
     included_operator_seats: int = Field(1, ge=1)
-    extra_seat_price_cents: int = Field(1500, ge=0)
+    # Defaults to the canonical charged seat price so a plan created without an
+    # explicit value stays consistent with what the seat add-on actually bills.
+    extra_seat_price_cents: int = Field(RAZORPAY_SEAT_PLAN_PRICE_CENTS, ge=0)
     razorpay_plan_id_monthly: str | None = None
     razorpay_plan_id_annual: str | None = None
     is_active: bool = True
@@ -190,10 +192,44 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
         ]
 
 
+def _reject_seat_price_drift(data: dict) -> None:
+    """Keep a plan's advertised seat price equal to what the seat add-on bills.
+
+    Extra seats always bill the single global seat add-on at the canonical price
+    (``RAZORPAY_SEAT_PLAN_PRICE_CENTS`` INR / ``EXTRA_SEAT_PRICE_USD_CENTS`` USD),
+    so a plan row must never carry an INR/USD seat price it won't actually charge
+    (finding H3). Allow ``0`` (the plan sells no extra seats) or the canonical
+    value; reject anything else with a clear 422 rather than letting the catalog
+    display a price the customer will never be billed. Only fields explicitly
+    present in ``data`` are checked, so partial updates that omit seat pricing are
+    untouched.
+    """
+    inr = data.get("extra_seat_price_cents")
+    if inr is not None and int(inr) not in (0, RAZORPAY_SEAT_PLAN_PRICE_CENTS):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Extra seats bill the global seat add-on at ₹{RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100}/mo — set "
+                f"extra_seat_price_cents to {RAZORPAY_SEAT_PLAN_PRICE_CENTS} (₹{RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100}) "
+                "or 0 (no paid seats). To change the seat price, mint a new Razorpay seat plan and update the env."
+            ),
+        )
+    usd = data.get("extra_seat_price_usd_cents")
+    if usd is not None and int(usd) not in (0, EXTRA_SEAT_PRICE_USD_CENTS):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"International seat price is fixed at ${EXTRA_SEAT_PRICE_USD_CENTS // 100}/mo — set "
+                f"extra_seat_price_usd_cents to {EXTRA_SEAT_PRICE_USD_CENTS} or 0."
+            ),
+        )
+
+
 @router.post("/plans")
 def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_superadmin)):
     """Create a new pricing plan."""
     _require_write(superadmin)
+    _reject_seat_price_drift(request.model_dump())
     with get_session() as session:
         # Check slug uniqueness
         existing = session.execute(select(Plan).where(Plan.slug == request.slug)).scalars().first()
@@ -253,6 +289,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
             raise HTTPException(status_code=404, detail="Plan not found.")
 
         update_data = request.model_dump(exclude_unset=True)
+        _reject_seat_price_drift(update_data)
 
         # If setting this as default, unset current default
         if update_data.get("is_default"):
@@ -278,7 +315,7 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
         # generic 500.
         from app.services import razorpay_service
 
-        minted_ids: dict[str, str] = {}
+        minted_ids: dict[str, str | None] = {}
         for price_field, (id_field, period) in _PRICE_TO_PLAN_ID.items():
             new_price = update_data.get(price_field)
             if (
@@ -286,6 +323,14 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
                 and int(new_price) != int(getattr(plan, price_field) or 0)
                 and id_field not in update_data
             ):
+                # A ₹0 (free) tier has no recurring Razorpay plan to mint —
+                # create_plan_for_price rejects a non-positive amount with a
+                # ValueError that would escape as a 500. Clear the gateway id
+                # instead so "make this tier free" is a clean, supported edit.
+                if int(new_price) <= 0:
+                    minted_ids[id_field] = None
+                    logger.info("Plan %s %s price set to 0 (free) — clearing Razorpay plan id", plan.id, period)
+                    continue
                 try:
                     new_rzp_id = razorpay_service.create_plan_for_price(
                         name=f"{plan.name} ({period})",
@@ -362,6 +407,11 @@ def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
             )
 
         plan.is_active = False
+        # Clear the default flag on soft-delete: a deactivated-but-still-default
+        # plan would otherwise be handed to new signups (finding). get_default_plan
+        # also filters is_active as defence-in-depth, but a deactivated plan should
+        # never remain the marked default in the first place.
+        plan.is_default = False
         session.commit()
 
         logger.info(f"Superadmin {superadmin.id} deactivated plan {plan_id} ({plan.name})")
@@ -525,7 +575,12 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
                 extra_seats = max(int(sub.operator_quantity or included) - included, 0)
                 mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle)
                 if extra_seats:
-                    mrr_cents += _to_usd_cents(extra_seats * int(plan.extra_seat_price_cents or 0), plan.currency)
+                    # Finding H3: seats bill the global seat add-on at the canonical
+                    # charged price (config.RAZORPAY_SEAT_PLAN_PRICE_CENTS, INR), NOT
+                    # a plan's own extra_seat_price_cents — using the column would
+                    # overstate/understate MRR whenever the two drift. Report the
+                    # amount actually invoiced.
+                    mrr_cents += _to_usd_cents(extra_seats * int(RAZORPAY_SEAT_PLAN_PRICE_CENTS or 0), "INR")
 
         # Total paid invoices, normalised to USD cents.
         paid_invoices = session.execute(

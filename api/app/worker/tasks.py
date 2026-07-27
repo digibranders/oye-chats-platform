@@ -1616,6 +1616,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
 
     from app import config
     from app.db.models import Invoice as InvoiceModel
+    from app.services import invoice_service
 
     if not config.INVOICING_V2_ENABLED:
         return 0
@@ -1632,6 +1633,20 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     def _run() -> int:
         done = 0
         with _invoice_pdf_session() as session:
+            # Self-heal pass (finding H-B): re-number any paid charge left
+            # un-numbered by a finalize that returned False — the pre-seller-
+            # config window or a transient error. Runs BEFORE the PDF sweep so a
+            # row numbered here gets its PDF in this same run. Safe/idempotent:
+            # finalize's own gates no-op rows that still can't be numbered.
+            try:
+                healed = invoice_service.backfill_unnumbered_invoices(session)
+                session.commit()
+                if healed:
+                    logger.info("task_render_invoice_pdfs: re-numbered %d previously un-numbered invoice(s)", healed)
+            except Exception:  # noqa: BLE001 — self-heal must never block the PDF sweep
+                session.rollback()
+                logger.exception("task_render_invoice_pdfs: un-numbered invoice backfill failed; will retry")
+
             pending = (
                 session.execute(
                     sa_select(InvoiceModel)

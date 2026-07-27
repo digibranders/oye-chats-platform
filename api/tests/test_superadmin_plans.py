@@ -80,18 +80,28 @@ def test_update_plan_marketing_and_credits(db, monkeypatch):
 
 
 def test_create_plan_extra_seat_price_cents(db, monkeypatch):
-    """extra_seat_price_cents is correctly persisted and returned."""
+    """The canonical seat price is persisted; a divergent one is rejected (H3)."""
+    from app.config import RAZORPAY_SEAT_PLAN_PRICE_CENTS
+
     c = _client(db, monkeypatch)
+    # Canonical charged price is accepted and persisted.
     res = c.post(
         "/superadmin/plans",
-        json={"name": "Pro", "slug": "pro", "extra_seat_price_cents": 2500},
+        json={"name": "Pro", "slug": "pro", "extra_seat_price_cents": RAZORPAY_SEAT_PLAN_PRICE_CENTS},
     )
     assert res.status_code == 200, res.text
     plan_id = res.json()["plan_id"]
-
     listing = c.get("/superadmin/plans").json()
     plan = next(p for p in listing if p["id"] == plan_id)
-    assert plan["extra_seat_price_cents"] == 2500
+    assert plan["extra_seat_price_cents"] == RAZORPAY_SEAT_PLAN_PRICE_CENTS
+
+    # A seat price the add-on won't actually charge is rejected — the catalog can
+    # never advertise a price the customer won't be billed.
+    bad = c.post(
+        "/superadmin/plans",
+        json={"name": "Pro2", "slug": "pro2", "extra_seat_price_cents": 2500},
+    )
+    assert bad.status_code == 422, bad.text
 
 
 def test_create_plan_included_operator_seats_default(db, monkeypatch):
@@ -110,7 +120,7 @@ def test_pricing_content_round_trip(db, monkeypatch):
     c = _client(db, monkeypatch)
     payload = {
         "faq": [{"q": "Refunds?", "a": "Pro-rated."}],
-        "feature_matrix": [{"label": "SSO", "category": "security", "values": {"free": False, "enterprise": True}}],
+        "feature_matrix": [{"label": "SSO", "category": "security", "values": {"free": False, "professional": True}}],
         "topup_packs": [{"usd": 19, "credits": 2000, "bonusPct": 0, "perThousandUsd": 9.5}],
         "credit_costs": [{"action": "1 AI reply", "credits": 1}],
     }

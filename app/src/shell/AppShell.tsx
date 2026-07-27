@@ -3,6 +3,8 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
+import { FeedbackLauncher } from './FeedbackLauncher';
+import { IncomingChatBanner } from './IncomingChatBanner';
 import { cn } from '../design-system';
 
 const MOBILE_BREAKPOINT = 768;
@@ -84,12 +86,14 @@ export function AppShell() {
 
       <div className={cn('flex min-h-screen flex-col transition-[margin] duration-300', contentMargin)}>
         <TopBar isMobile={isMobile} onToggleSidebar={toggleSidebar} onOpenSearch={openSearch} />
-        <main className="flex-1 px-4 py-6 md:px-6 md:py-8">
+        <main className="flex-1 px-4 pt-3 pb-6 md:px-6 md:pt-4 md:pb-8">
           <Outlet />
         </main>
       </div>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <FeedbackLauncher />
+      <IncomingChatBanner />
     </div>
   );
 }

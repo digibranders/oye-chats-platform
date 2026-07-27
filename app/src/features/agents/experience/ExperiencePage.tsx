@@ -20,14 +20,18 @@ import {
 import { BrandingSection } from './BrandingSection';
 import { MessagesSection } from './MessagesSection';
 import { PersonalitySection } from './PersonalitySection';
+import { BotConfigSection } from './BotConfigSection';
 import { ExperiencePreview } from './ExperiencePreview';
+import { WebsitePreviewPanel } from './WebsitePreviewPanel';
 
-type SectionKey = 'branding' | 'messages' | 'personality';
+type SectionKey = 'branding' | 'messages' | 'personality' | 'liveChatLeads' | 'servicesCopy';
 
 const SECTION_TABS: TabItem[] = [
   { key: 'branding', label: 'Branding' },
   { key: 'messages', label: 'Messages' },
   { key: 'personality', label: 'Personality' },
+  { key: 'liveChatLeads', label: 'Live chat & leads' },
+  { key: 'servicesCopy', label: 'Services & copy' },
 ];
 
 /** Narrows the Tabs' string key to a SectionKey without an unchecked assertion. */
@@ -36,7 +40,7 @@ function isSectionKey(key: string): key is SectionKey {
 }
 
 /** Brand-neutral fallback swatches, appended after any website-extracted colours. */
-const PRESET_SWATCHES = ['#a21caf', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
+const PRESET_SWATCHES = ['#7C3AED', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
 
 /**
  * ExperiencePage — the agent's "Experience" tab. One job: let the user control
@@ -46,7 +50,7 @@ const PRESET_SWATCHES = ['#a21caf', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', 
  * error, saving and saved states throughout.
  */
 export function ExperiencePage(): ReactElement {
-  const { agent, loading: agentLoading, error: agentError } = useAgent();
+  const { agent, loading: agentLoading, error: agentError, refresh } = useAgent();
   const botId = agent?.id ?? null;
 
   // Tracks the currently-loaded agent so in-flight save/upload handlers can
@@ -107,6 +111,15 @@ export function ExperiencePage(): ReactElement {
     setSaveError(null);
   }, []);
 
+  // Commit values the server has ALREADY persisted (e.g. "Detect from website")
+  // into both the baseline and the draft, so the change lands without ever
+  // reading as an unsaved edit.
+  const applyServerValues = useCallback((patch: Partial<ExperienceDraft>): void => {
+    setBaseline((prev) => (prev ? { ...prev, ...patch } : prev));
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+    setSaveError(null);
+  }, []);
+
   const handleUpload = useCallback(
     async (file: File): Promise<void> => {
       const uploadBotId = botId;
@@ -129,6 +142,9 @@ export function ExperiencePage(): ReactElement {
   const handleSave = useCallback(async (): Promise<void> => {
     if (botId === null || !draft) return;
     const saveBotId = botId;
+    // The widget display name IS the agent name; when it changes, the shared
+    // agent list must be re-fetched so the sidebar and header stay in sync.
+    const nameChanged = baseline !== null && baseline.displayName !== draft.displayName;
     setSaving(true);
     setSaveError(null);
     try {
@@ -136,13 +152,14 @@ export function ExperiencePage(): ReactElement {
       if (botIdRef.current !== saveBotId) return;
       setBaseline(draft);
       setJustSaved(true);
+      if (nameChanged) void refresh();
     } catch (err) {
       if (botIdRef.current !== saveBotId) return;
       setSaveError(err instanceof Error ? err.message : 'Could not save. Please try again.');
     } finally {
       if (botIdRef.current === saveBotId) setSaving(false);
     }
-  }, [botId, draft]);
+  }, [botId, draft, baseline, refresh]);
 
   const handleDiscard = useCallback((): void => {
     setDraft(baseline);
@@ -184,6 +201,7 @@ export function ExperiencePage(): ReactElement {
           }
         />
       ) : draft ? (
+        <div className="flex flex-col gap-8">
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
           {/* Editor column */}
           <div className="flex min-w-0 flex-col gap-6">
@@ -215,8 +233,16 @@ export function ExperiencePage(): ReactElement {
                 <MessagesSection draft={draft} onChange={updateDraft} />
               )}
               {activeSection === 'personality' && (
-                <PersonalitySection draft={draft} onChange={updateDraft} />
+                <PersonalitySection
+                  draft={draft}
+                  onChange={updateDraft}
+                  botId={botId}
+                  canDetect={Boolean(agent?.crawl_completed_at)}
+                  onServerApply={applyServerValues}
+                />
               )}
+              {activeSection === 'liveChatLeads' && <BotConfigSection variant="handoff" />}
+              {activeSection === 'servicesCopy' && <BotConfigSection variant="content" />}
             </div>
 
             {/* Sticky save bar — appears whenever there's something to act on. */}
@@ -258,9 +284,17 @@ export function ExperiencePage(): ReactElement {
           <aside className="lg:sticky lg:top-6 lg:self-start">
             <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5">
               <SectionHeader title="Preview" className="mb-4" />
-              <ExperiencePreview draft={draft} agentName={agent?.name ?? 'Your agent'} />
+              <ExperiencePreview
+                draft={draft}
+                agentName={draft.displayName.trim() || agent?.name || 'Your agent'}
+              />
             </div>
           </aside>
+        </div>
+
+        {/* Real "preview on my website" — loads the hosted demo page (which
+            overlays the live widget on the customer's URL) in an iframe. */}
+        <WebsitePreviewPanel botKey={agent?.bot_key ?? null} website={agent?.website ?? null} />
         </div>
       ) : null}
     </PageContainer>

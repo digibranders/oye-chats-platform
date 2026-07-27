@@ -28,7 +28,7 @@ export function QuickAction({ icon: Icon, label, className, ...target }: QuickAc
   );
 
   const classes = cn(
-    'inline-flex items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-bg-canvas)]',
+    'inline-flex items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:border-[var(--ds-border-strong)] hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
     className,
   );
 

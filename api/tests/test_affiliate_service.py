@@ -590,3 +590,104 @@ class TestReferralCaps:
             api_key="apikey-newbie",
         )
         assert affiliate.commission_bps == 3000
+
+
+class TestListCodeReferralsCurrency:
+    """Finding #8: affiliate earnings must be reported in INR (the billed
+    currency), not USD off the plan's unshipped headline columns."""
+
+    def test_earnings_reported_in_inr_not_usd(self, db):
+        from app.db.models import Plan, Subscription
+
+        aff = make_affiliate(db, commission_bps=2500)  # 25% pool
+        code = ReferralCode(
+            affiliate_id=aff.id,
+            code="inrtest",
+            active=True,
+            affiliate_commission_bps=1500,  # 15% to affiliate
+            customer_discount_bps=1000,  # 10% to customer
+        )
+        db.add(code)
+        db.commit()
+
+        plan = Plan(
+            name="Standard",
+            slug="std-inr-aff",
+            monthly_price_cents=94900,  # ₹949
+            annual_price_cents=910800,
+            monthly_price_usd_cents=1900,  # $19 — must NOT be used
+            credits_per_month=10000,
+            is_active=True,
+        )
+        db.add(plan)
+        db.commit()
+
+        referred = make_client(db, email="ref-inr@example.com")
+        referred.referral_code_id = code.id
+        referred.referral_attributed_at = datetime.now(UTC)
+        db.add(Subscription(client_id=referred.id, plan_id=plan.id, status="active", billing_cycle="monthly"))
+        db.commit()
+
+        result = svc.list_code_referrals(db, code.id, include_platform=False)
+
+        # Reported in INR at the real ₹949 charge, not $19 USD.
+        assert result["distribution"]["currency"] == "INR"
+        assert result["distribution"]["monthly_total_cents"] == 94900
+        assert result["distribution"]["monthly_affiliate_cents"] == int(94900 * 0.15 + 0.5)  # 14235
+        row = result["referrals"][0]
+        assert row["pricing"]["currency"] == "INR"
+        assert row["pricing"]["full_price_cents"] == 94900
+
+
+class TestReferralConversionSnapshot:
+    """Finding MED-2: a referral conversion must be recorded for ANY active
+    attributed code — including commission-only codes with no customer
+    discount — so the super-admin referral-conversions view isn't undercounting."""
+
+    def test_commission_only_code_still_yields_a_snapshot(self, db):
+        from app.services import discount_service
+
+        aff = make_affiliate(db, commission_bps=2500)
+        code = ReferralCode(
+            affiliate_id=aff.id,
+            code="commonly",
+            active=True,
+            affiliate_commission_bps=1500,  # affiliate earns
+            customer_discount_bps=0,  # NO customer discount → resolve_customer_discount_bps returns None
+        )
+        db.add(code)
+        db.commit()
+
+        client = make_client(db, email="commref@example.com")
+        client.referral_code_id = code.id
+        db.commit()
+
+        # The discount resolver skips it (no customer discount)…
+        discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(db, client)
+        assert discount_bps == 0 and disc_meta is None
+
+        # …but the conversion snapshot still records the affiliate's cut.
+        snap = discount_service.resolve_referral_conversion_snapshot(db, client)
+        assert snap is not None
+        assert snap["referral_code_id"] == str(code.id)
+        assert snap["affiliate_id"] == str(aff.id)
+        assert snap["affiliate_commission_bps"] == "1500"
+        assert snap["discount_bps"] == "0"
+
+    def test_no_attribution_yields_none(self, db):
+        from app.services import discount_service
+
+        client = make_client(db, email="noref@example.com")
+        assert discount_service.resolve_referral_conversion_snapshot(db, client) is None
+
+    def test_deactivated_code_yields_none(self, db):
+        from app.services import discount_service
+
+        aff = make_affiliate(db, commission_bps=2500)
+        code = ReferralCode(affiliate_id=aff.id, code="offcode", active=False, affiliate_commission_bps=1500)
+        db.add(code)
+        db.commit()
+        client = make_client(db, email="offref@example.com")
+        client.referral_code_id = code.id
+        db.commit()
+        assert discount_service.resolve_referral_conversion_snapshot(db, client) is None

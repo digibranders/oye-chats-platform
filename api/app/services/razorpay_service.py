@@ -49,6 +49,7 @@ from app.config import (
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
     RAZORPAY_SEAT_PLAN_ID,
+    RAZORPAY_SEAT_PLAN_PRICE_CENTS,
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
@@ -154,26 +155,24 @@ def create_topup_order(
     including the order id, key id (public, safe to expose), and the pack
     metadata it should display in the modal.
 
-    The pack must come from ``pricing_config.topup_packs`` and have an
-    ``amount`` (in the pack's currency major unit — rupees for INR — NOT
-    paise; we convert here so the config table stays human-readable).
+    The pack must come from ``pricing_config.topup_packs`` and carry an INR
+    price under ``inr`` (rupees, major unit — NOT paise; we convert here so the
+    config table stays human-readable). ``amount`` is accepted as a legacy
+    alias. Any ``usd`` on the pack is DISPLAY ONLY — Razorpay charges INR, so we
+    must never bill the USD figure.
 
     Top-ups intentionally do NOT honour referral discounts — that incentive
     fires only on subscription checkout. See subscription_routes.create_checkout.
-
-    Standard Razorpay test/live merchant accounts can only charge INR. A
-    USD-priced pack on this provider would silently mis-bill the customer,
-    so we fail-fast with ValueError instead of letting the order create.
     """
-    if not pack.get("amount"):
-        raise ValueError("Top-up pack is missing 'amount'")
+    amount_inr_major = pack.get("inr") if pack.get("inr") is not None else pack.get("amount")
+    if not amount_inr_major:
+        raise ValueError("Top-up pack is missing an INR amount ('inr')")
 
-    currency = str(pack.get("currency", "INR")).upper()
-    if currency != "INR":
-        raise ValueError(f"Razorpay only supports INR top-ups; got '{currency}'.")
+    # Razorpay charges INR on this rail regardless of the display currency.
+    currency = "INR"
 
     rzp = _get_razorpay()
-    amount_inr = int(pack["amount"])
+    amount_inr = int(amount_inr_major)
     amount_paise = amount_inr * 100
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
@@ -189,12 +188,16 @@ def create_topup_order(
         "amount_inr": str(amount_inr),
         "bonus_pct": str(bonus_pct),
     }
-    # The modal advertises USD prices while Razorpay charges INR. Carry the
-    # display price into notes so the invoice line can name the pack the
-    # customer actually chose ("$249 pack") — GST documents must state values
-    # in INR, so the USD figure stays descriptive only.
+    # The modal advertises USD prices to non-INR buyers while Razorpay charges
+    # INR. Carry the display price into notes so the invoice line can name the
+    # pack the customer chose ("$249 pack") — GST documents must state values in
+    # INR, so the USD figure stays descriptive only. Fall back to the pack's
+    # ``usd`` when no explicit display_amount is configured.
     display_amount = pack.get("display_amount")
     display_currency = str(pack.get("display_currency") or "").upper()
+    if display_amount is None and pack.get("usd") is not None:
+        display_amount = pack.get("usd")
+        display_currency = "USD"
     if display_amount is not None and display_currency:
         symbol = "$" if display_currency == "USD" else f"{display_currency} "
         notes["display_price"] = f"{symbol}{display_amount}"
@@ -602,12 +605,13 @@ def create_seat_addon_subscription(
     *,
     extra_seats: int,
 ) -> dict[str, Any]:
-    """Create a separate ₹499 × extra_seats Razorpay subscription for operator seats.
+    """Create a separate (seat-price × extra_seats) Razorpay subscription for operator seats.
 
     Must be a distinct subscription from the main plan. Razorpay `quantity`
     multiplies the entire plan amount, which would make the main plan wrong
-    (₹4,599×2 instead of ₹4,599+₹499). The Extra-Seat plan's amount IS the
-    per-seat price (₹499), so ₹499 × extra_seats is exactly right here.
+    (e.g. ₹949×2 instead of ₹949+₹449). The Extra-Seat plan's amount IS the
+    per-seat price (₹449 — ``RAZORPAY_SEAT_PLAN_PRICE_CENTS``), so
+    ``price × extra_seats`` is exactly right here.
     """
     if extra_seats < 1:
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
@@ -658,13 +662,14 @@ def _seat_checkout_payload(
     round-trip just to rebuild it — the JS SDK only needs subscription_id + key.
     ``short_url`` (Razorpay's hosted checkout) is included when known so a webhook
     path can email the customer a re-authorization link."""
+    seat_rupees = RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
         "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
-        "description": f"{extra_seats} extra seat(s) — ₹499/seat/month",
+        "description": f"{extra_seats} extra seat(s) — ₹{seat_rupees}/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",
@@ -1743,7 +1748,22 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             # the Bot.subscription relationship to avoid the circular FK.
             new_bot.subscription_id = local.id
             session.flush()
-            credit_service.grant_for_subscription(session, local)
+            # Finding H-A: grant through the period-marker helper (not the raw
+            # ``grant_for_subscription``) so ``last_granted_period_end`` is set
+            # exactly like the account-level path below. A UPI ``activated`` can
+            # land BEFORE the first charge with no ``current_end``; without the
+            # marker the first ``subscription.charged`` re-runs
+            # reset + grant for the SAME period, wiping the customer's
+            # first-cycle consumption and handing out a second full allowance
+            # (up to 72,000 credits on an annual per-bot plan). Derive the first
+            # period end from current_start + the plan interval (which equals
+            # the current_end Razorpay sends on that first charge) so the marker
+            # advances now and the charged correctly no-ops.
+            grant_period_end = current_period_end
+            if grant_period_end is None and current_period_start is not None:
+                cycle = local.billing_cycle or notes.get("billing_cycle") or "monthly"
+                grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
+            _grant_subscription_period(session, local, grant_period_end)
             logger.info(
                 "Activated per-bot Razorpay subscription %s → local %s (client %s, bot %s)",
                 razorpay_sub_id,
@@ -2211,6 +2231,77 @@ def _enter_past_due(local: Subscription) -> None:
     local.status = "past_due"
 
 
+def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bool:
+    """Reverse the FIRST period's activation grant if its charge never paid (#2).
+
+    A UPI ``subscription.activated`` grants the first period's credits BEFORE the
+    first debit. If that debit then fails — ``subscription.pending`` /
+    ``subscription.halted`` with no successful ``subscription.charged`` — the
+    customer would keep a full period of credits they never paid for.
+
+    The activation grant is the ONLY grant that precedes its payment: every later
+    period grants atomically WITH ``subscription.charged`` (renewals never
+    pre-grant). So "this subscription has zero paid invoices" cleanly identifies
+    an unpaid activation grant, without any fragile period-timestamp matching —
+    a later-cycle failure has ≥1 paid invoice and never pre-granted, so it is
+    correctly left alone.
+
+    Revoke = reset the period's UNUSED plan credits (scoped to the sub's bot, so
+    the client pool / other bots and any rollover top-up are untouched) and roll
+    the period marker back to ``current_period_start``. The rollback lets a later
+    successful retry (``period_end > start``) re-grant the period, while every
+    prior period (``end <= start``) still no-ops under the monotonic guard.
+
+    Idempotent: after a revoke the marker equals ``current_period_start``, so a
+    redelivered pending/halted short-circuits on the marker guard below. Returns
+    ``True`` when a grant was revoked.
+
+    Concurrency: ``subscription.charged`` and ``subscription.halted`` for the
+    same sub can be delivered in overlapping transactions. Without a lock, this
+    revoke could read "no paid invoice", the charged handler could then commit
+    its grant + paid invoice, and our reset would zero a PAID customer's fresh
+    credits. We take a ``SELECT ... FOR UPDATE`` row lock (the same guard
+    ``grant_subscription_period_once`` uses) so revoke and grant serialize:
+    whoever locks first commits, the loser re-reads and sees the other's effect
+    (an advanced marker + paid invoice → skip, or a rolled-back marker → grant).
+    ``flush`` first so the caller's just-set ``_enter_past_due`` write is pushed
+    before the re-read (read-your-own-writes under ``autoflush=False``).
+    """
+    session.flush()
+    session.refresh(local, with_for_update=True)
+
+    marker = local.last_granted_period_end
+    start = local.current_period_start
+    # Nothing granted for the current period, no period anchor to roll back to,
+    # or already revoked (marker sits at/below the period start).
+    if marker is None or start is None or marker <= start:
+        return False
+
+    # Any successful charge on THIS subscription writes a paid Invoice; its
+    # absence means the activation grant was never paid. Scoped to this sub so a
+    # client's other (per-bot) subscriptions can't mask an unpaid first charge.
+    has_paid_charge = (
+        session.execute(
+            select(Invoice.id).where(Invoice.subscription_id == local.id, Invoice.status == "paid").limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if has_paid_charge is not None:
+        return False
+
+    credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
+    local.last_granted_period_end = start
+    logger.info(
+        "Revoked unpaid activation grant for subscription %s (client %s, bot %s) — "
+        "first charge never paid; rolled marker back to period start for a clean re-grant on retry",
+        local.razorpay_subscription_id,
+        local.client_id,
+        local.bot_id,
+    )
+    return True
+
+
 def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -2219,6 +2310,9 @@ def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> st
     if not local:
         return "Subscription not found"
     _enter_past_due(local)
+    # Reverse an unpaid first-period activation grant (#2) so a customer whose
+    # UPI first charge fails doesn't keep a free period of credits.
+    _revoke_unpaid_activation_grant(session, local)
     session.flush()
     return f"Subscription {sub_entity.get('id')} halted"
 
@@ -2231,6 +2325,7 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     if not local:
         return "Subscription not found"
     _enter_past_due(local)
+    _revoke_unpaid_activation_grant(session, local)
     session.flush()
     return f"Subscription {sub_entity.get('id')} pending"
 
@@ -2456,7 +2551,14 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     # issued here — refund.created only means "initiated", and a bank refund
     # can still fail; the note is issued by _handle_refund_processed once the
     # settlement actually clears.
-    inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
+    #
+    # Finding #5: compare the CUMULATIVE refunded amount to the charge, not just
+    # this event's amount — otherwise an invoice fully refunded via several
+    # partial refunds stays "partially_refunded" forever. Each refund event is
+    # deduped on its refund id above, so accumulating here counts each exactly
+    # once.
+    inv.refunded_minor = int(inv.refunded_minor or 0) + refund_minor
+    inv.status = "refunded" if inv.refunded_minor >= charge_minor else "partially_refunded"
     session.flush()
 
     logger.info(

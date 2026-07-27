@@ -46,3 +46,34 @@ def resolve_customer_discount_bps(session: Session, client: Client) -> tuple[int
         "discount_bps": str(code.customer_discount_bps),
         "affiliate_commission_bps": str(code.affiliate_commission_bps),
     }
+
+
+def resolve_referral_conversion_snapshot(session: Session, client: Client) -> dict | None:
+    """Return a snapshot of the client's active referral attribution, or None.
+
+    Unlike :func:`resolve_customer_discount_bps`, this does NOT gate on a
+    non-zero customer discount: a COMMISSION-ONLY code (``customer_discount_bps
+    == 0`` — the affiliate still earns a pool cut, the customer just gets no
+    discount) is a real referral conversion and must be recorded, otherwise the
+    super-admin referral-conversions view systematically undercounts (finding
+    MED-2). Returns ``None`` only when there is no active attributed code (no
+    attribution, the code was deleted, or it's deactivated).
+
+    Values are strings so they can be snapshotted without further coercion,
+    mirroring ``resolve_customer_discount_bps``'s ``audit_meta`` shape.
+    """
+    code_id = getattr(client, "referral_code_id", None)
+    if not code_id:
+        return None
+
+    code = session.get(ReferralCode, code_id)
+    if code is None or not code.active:
+        return None
+
+    return {
+        "referral_code_id": str(code.id),
+        "referral_code": code.code,
+        "affiliate_id": str(code.affiliate_id),
+        "discount_bps": str(code.customer_discount_bps or 0),
+        "affiliate_commission_bps": str(code.affiliate_commission_bps or 0),
+    }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { Calendar, Globe, Inbox, Mail, PlugZap } from 'lucide-react';
+import { Calendar, Globe, Inbox, Lock, Mail, PlugZap } from 'lucide-react';
 import {
   Button,
   EmptyState,
@@ -11,10 +11,13 @@ import {
 import { InsightCard } from '../../../design-system/components/InsightCard';
 import { QuickAction } from '../../../design-system/components/QuickAction';
 import { useAgent } from '../../../context/AgentContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { getBot, updateBot } from '../../../services/api';
 import { type Bot } from '../../../types/domain';
 import { ChannelCard } from './ChannelCard';
 import { WebsiteInstall } from './WebsiteInstall';
+import { DomainRestrictionsSection } from './DomainRestrictionsSection';
 import { COMING_SOON_CHANNELS } from './channels.data';
 
 /**
@@ -31,6 +34,8 @@ interface ChannelBot extends Bot {
   zcal_url?: string | null;
   calcom_url?: string | null;
   notification_emails?: { default?: string[] } | null;
+  allowed_domains?: string[] | null;
+  domain_check_enabled?: boolean | null;
 }
 
 const MEETING_PROVIDER_LABELS: Record<string, string> = {
@@ -64,6 +69,9 @@ function ChannelsSkeleton(): ReactElement {
  */
 export function ChannelsPage(): ReactElement {
   const { agent, loading: agentLoading } = useAgent();
+  const { entitlements } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const premiumIntegrationsLocked = entitlements.features.integrations !== 'all';
   const numericId = agent?.id ?? null;
 
   // Load token = which agent + which retry. Storing it alongside the result lets
@@ -219,8 +227,24 @@ export function ChannelsPage(): ReactElement {
               )
             }
           >
-            {botKey ? (
-              <WebsiteInstall botKey={botKey} />
+            {botKey && numericId != null ? (
+              <>
+                <WebsiteInstall botKey={botKey} botId={numericId} />
+                {numericId != null && (
+                  <DomainRestrictionsSection
+                    key={numericId}
+                    botId={numericId}
+                    website={website}
+                    initialAllowedDomains={record.allowed_domains ?? []}
+                    initialDomainCheckEnabled={Boolean(record.domain_check_enabled)}
+                    onSaved={(next) =>
+                      setFetched((prev) =>
+                        prev && prev.token === token ? { token, bot: { ...prev.bot, ...next } } : prev,
+                      )
+                    }
+                  />
+                )}
+              </>
             ) : (
               <p className="text-[13px] text-[var(--ds-text-muted)]">
                 This agent doesn’t have an embed key yet. Finish creating the agent to get one.
@@ -228,18 +252,25 @@ export function ChannelsPage(): ReactElement {
             )}
           </ChannelCard>
 
-          {/* Meetings — bookings inside the chat */}
+          {/* Meetings — bookings inside the chat. Requires the paid `integrations: 'all'` tier. */}
           <ChannelCard
-            icon={Calendar}
-            iconTone="info"
+            icon={premiumIntegrationsLocked ? Lock : Calendar}
+            iconTone={premiumIntegrationsLocked ? 'neutral' : 'info'}
             name="Meetings"
             description={
-              meetingsOn && meetingsConfigured
-                ? `Visitors can book time via ${providerLabel} right inside the chat.`
-                : 'Let visitors book a meeting without leaving the conversation.'
+              premiumIntegrationsLocked
+                ? 'Let visitors book a meeting without leaving the conversation. Available on paid plans.'
+                : meetingsOn && meetingsConfigured
+                  ? `Visitors can book time via ${providerLabel} right inside the chat.`
+                  : 'Let visitors book a meeting without leaving the conversation.'
             }
             status={
-              meetingsOn && meetingsConfigured ? (
+              premiumIntegrationsLocked ? (
+                <StatusBadge tone="neutral">
+                  <Lock size={11} aria-hidden="true" />
+                  Locked
+                </StatusBadge>
+              ) : meetingsOn && meetingsConfigured ? (
                 <StatusBadge tone="success" dot>
                   Active
                 </StatusBadge>
@@ -250,7 +281,16 @@ export function ChannelsPage(): ReactElement {
               )
             }
             action={
-              meetingsConfigured ? (
+              premiumIntegrationsLocked ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openUpgradeModal('meetings_integration')}
+                >
+                  <Lock size={13} aria-hidden="true" />
+                  Upgrade to connect
+                </Button>
+              ) : meetingsConfigured ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     variant={meetingsOn ? 'outline' : 'primary'}
@@ -341,8 +381,7 @@ export function ChannelsPage(): ReactElement {
   return (
     <PageContainer
       title="Channels"
-      description="Where your AI agent is connected and talking to people."
-      className="px-4 py-6 md:px-8"
+      description="Where your AI chatbot is connected and talking to people."
     >
       {body()}
     </PageContainer>

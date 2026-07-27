@@ -1,15 +1,16 @@
-import { type ReactElement, type ReactNode, useMemo, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowUpRight,
   Building2,
   CalendarClock,
-  Check,
   CreditCard,
   Download,
   ExternalLink,
   FileText,
   Info,
+  LayoutDashboard,
+  Loader2,
   Minus,
   Plus,
   ReceiptText,
@@ -18,6 +19,7 @@ import {
   Users,
   Wallet,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   Button,
@@ -30,66 +32,61 @@ import {
   StatusBadge,
   cn,
 } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { Tabs } from '../../design-system/components/Tabs';
+import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../services/api';
 import { useBillingData } from './useBillingData';
-import { PlanModal } from './billing/PlanModal';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
+import { CancelSubscriptionModal } from './billing/CancelSubscriptionModal';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
+import { BillingOverview } from './billing/BillingOverview';
+import { PlansPanel } from './billing/PlansPanel';
+import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
 import {
-  formatCredits,
+  buildInvoice,
   formatDate,
   formatMoneyMinor,
-  humanizeStatus,
   INVOICE_KIND_LABEL,
   statusTone,
   type BillingDetailsView,
   type InvoiceView,
   type PlanView,
-  type SubscriptionView,
 } from './billingModel';
 
-type TabKey = 'plan' | 'invoices' | 'details';
-
-const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
-  { key: 'plan', label: 'Plan & seats' },
-  { key: 'invoices', label: 'Invoices' },
-  { key: 'details', label: 'Billing details' },
-];
-
 /**
- * BillingPage — the Workspace ▸ Billing surface. One job: answer
- * "What am I paying?". Shows the current plan and its cost, operator seats,
- * the payment method on file, issued invoices (real, downloadable), and the
- * buyer's tax/billing identity.
+ * BillingPage — the Workspace ▸ Billing surface: a subscription-management
+ * dashboard answering "what am I paying for?". Four summary cards
+ * (Subscription · Renewal · Payment · Credits) lead; issued invoices and the
+ * buyer's tax identity follow; the full plan comparison lives in a collapsed
+ * disclosure at the bottom (users come here to manage, not to re-shop).
  *
- * Credit balance and usage live on the separate Workspace ▸ Usage page — this
- * page is deliberately about money owed and paid, not consumption.
- *
- * Plan-change, seat, top-up, and billing-detail mutations open the redesigned
- * checkout modals (`billing/`), which reuse the legacy money-path logic against
- * the real Razorpay + subscription endpoints. Every success reloads the page
- * and surfaces a status message in the aria-live notice region.
+ * Credit balance and consumption live on the separate Workspace ▸ Usage page.
+ * Choosing a plan opens the slim {@link PlanConfirmModal}, which runs the
+ * shared checkout money-path against the real Razorpay + subscription
+ * endpoints. Every success reloads and surfaces a message in the aria-live
+ * notice region.
  */
 export function BillingPage(): ReactElement {
   const { loading, error, data, reload } = useBillingData();
-  const [tab, setTab] = useState<TabKey>('plan');
+  const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Checkout modal state.
-  const [planModal, setPlanModal] = useState<{ open: boolean; initialSlug: string | null }>({
-    open: false,
-    initialSlug: null,
-  });
+  const subscription = data?.subscription ?? null;
+  const plan = data?.plan ?? null;
+
+  // Comparison billing cycle — seeded to the customer's own cadence.
+  const [cycle, setCycle] = useState<BillingCycle>('monthly');
+  const [activeTab, setActiveTab] = useState<BillingTab>('overview');
+  const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
   const [topupOpen, setTopupOpen] = useState(false);
   const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
     open: false,
     delta: 1,
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [trialNudgeDismissed, setTrialNudgeDismissed] = useState(false);
 
   // Every successful mutation lands here: surface the message, refetch billing.
   const handleSuccess = (message: string): void => {
@@ -97,11 +94,36 @@ export function BillingPage(): ReactElement {
     reload();
   };
 
-  const openPlanModal = (initialSlug: string | null = null): void =>
-    setPlanModal({ open: true, initialSlug });
+  // Subscription-lifecycle reversals (undo a scheduled downgrade / reactivate a
+  // pending cancellation). Both APIs exist; the banners were display-only.
+  const [lifecycleBusy, setLifecycleBusy] = useState<'cancel_scheduled' | 'reactivate' | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
-  const subscription = data?.subscription ?? null;
-  const plan = data?.plan ?? null;
+  const handleCancelScheduled = async (): Promise<void> => {
+    setLifecycleBusy('cancel_scheduled');
+    setLifecycleError(null);
+    try {
+      await cancelScheduledChange();
+      handleSuccess('Scheduled change cancelled — you’ll stay on your current plan.');
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : 'Couldn’t cancel the scheduled change.');
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
+
+  const handleReactivate = async (): Promise<void> => {
+    setLifecycleBusy('reactivate');
+    setLifecycleError(null);
+    try {
+      await resumeSubscription();
+      handleSuccess('Subscription reactivated — it will keep renewing.');
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : 'Couldn’t reactivate your subscription.');
+    } finally {
+      setLifecycleBusy(null);
+    }
+  };
 
   // Seat math mirrors legacy pages/Billing.jsx: a plan with zero included seats
   // (Free) always shows 0 total, ignoring the Subscription model's legacy
@@ -125,22 +147,31 @@ export function BillingPage(): ReactElement {
   // "Renews" would be dishonest. scheduledChange (a downgrade) takes precedence
   // since it has its own banner; a bare pending cancellation is otherwise
   // invisible on the page.
-  const pendingCancel = Boolean(
-    subscription?.cancelAtPeriodEnd && !subscription.scheduledChange,
-  );
+  const pendingCancel = Boolean(subscription?.cancelAtPeriodEnd && !subscription.scheduledChange);
   const renewalLabel = subscription?.trialEnd
     ? formatDate(subscription.trialEnd)
     : formatDate(subscription?.currentPeriodEnd ?? null);
-  const renewalCaption = subscription?.trialEnd
-    ? 'Trial ends'
-    : pendingCancel
-      ? 'Plan ends'
-      : 'Renews';
+  const renewalCaption = subscription?.trialEnd ? 'Trial ends' : pendingCancel ? 'Plan ends' : 'Renews';
+
+  const autoRenew = Boolean(subscription?.hasActive && !subscription.cancelAtPeriodEnd);
+  // A Free plan isn't billed, so it has no payment method regardless of the
+  // subscription's default provider value.
+  const provider = plan?.isPaid ? subscription?.paymentProvider ?? null : null;
+  const paymentLabel = provider ? capitalize(provider) : 'None';
+  // Honest copy: OyeChats never stores or manages the card itself — Razorpay
+  // hosts every card/UPI detail at checkout (there is no in-app "update card"
+  // endpoint), so both the active and empty states point the customer there
+  // rather than implying a management surface we don't have.
+  const paymentSub = provider
+    ? provider.toLowerCase() === 'razorpay'
+      ? 'UPI, card, or NetBanking — managed securely by Razorpay at checkout.'
+      : 'Billed manually by our team.'
+    : 'Added securely via Razorpay when you start a paid plan.';
 
   return (
     <PageContainer
       title="Billing"
-      description="Your plan, seats, invoices, and payment method — everything you're paying for."
+      description="Manage your subscription, payment methods and invoices."
       actions={
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setTopupOpen(true)}>
@@ -190,84 +221,133 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
-          {/* At-a-glance money summary — always visible above the tabs. */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard label="Current plan" value={plan?.name ?? 'Free'} icon={Sparkles} />
-            <MetricCard
-              label={plan?.isPaid ? `Cost per ${cycleLabel}` : 'Cost'}
-              value={priceLabel}
-              icon={Wallet}
-            />
-            <MetricCard label="Operator seats" value={totalSeats} icon={Users} />
-            <MetricCard label={renewalCaption} value={renewalLabel} icon={CalendarClock} />
-          </div>
-
-          {/* Scheduled downgrade — applies account-wide, so it sits above tabs. */}
-          {subscription.scheduledChange && (
-            <ScheduledChangeBanner
-              planName={subscription.scheduledChange.planName}
-              effectiveAt={subscription.scheduledChange.effectiveAt}
-              currentPlanName={plan?.name ?? 'your current plan'}
+          {/* Active-trial conversion nudge — a growth prompt to authorise a
+              payment method before the trial ends, so the bot/credits/history
+              survive. Shown across all tabs during the trial window. */}
+          {subscription.status === 'trialing' && subscription.trialEnd && !trialNudgeDismissed && (
+            <TrialNudgeBanner
+              trialEnd={subscription.trialEnd}
+              onPickPlan={() => setActiveTab('plans')}
+              onDismiss={() => setTrialNudgeDismissed(true)}
             />
           )}
 
-          {/* Pending full cancellation — the plan ends and won't renew. */}
-          {pendingCancel && (
-            <CancellationBanner
-              endsAt={subscription.currentPeriodEnd}
-              planName={plan?.name ?? 'your current plan'}
+          {/* Data-retention purge warning — trial/subscription lapsed and the
+              account's data is scheduled for deletion. Shown across all tabs
+              because it's the most urgent thing on the page. */}
+          {subscription.dataRetentionUntil && (
+            <DataRetentionBanner
+              purgeAt={subscription.dataRetentionUntil}
+              onChoosePlan={() => setActiveTab('plans')}
             />
           )}
 
-          <Tabs
-            ariaLabel="Billing sections"
-            value={tab}
-            onChange={(key) => setTab(key as TabKey)}
-            tabs={TABS.map((item) => ({ key: item.key, label: item.label }))}
-          />
+          {/* Segmented sub-tabs — a pill control, distinct from the underline
+              Workspace tabs above, so the two nav levels read as a hierarchy. */}
+          <BillingTabs active={activeTab} onChange={setActiveTab} />
 
-          {/* All three panels stay mounted (inactive ones `hidden`) so every
-              tab's aria-controls target resolves in the DOM, per the WAI-ARIA
-              tabs contract. */}
-          <TabPanel tabKey="plan" active={tab === 'plan'}>
-            <PlanAndSeatsTab
-              plan={plan}
-              subscription={subscription}
-              totalSeats={totalSeats}
-              includedSeats={includedSeats}
-              availablePlans={data.availablePlans}
-              onChangePlan={() => openPlanModal(null)}
-              onSelectPlan={(slug) => openPlanModal(slug)}
-              onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
-              onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
+          {/* Overview — the management surface: current subscription + credits.
+              Subscription-state banners and seat management live here because
+              they're about the plan you're ON, not the ones you might switch to. */}
+          {activeTab === 'overview' && (
+            <div className="space-y-6">
+              {subscription.scheduledChange && (
+                <ScheduledChangeBanner
+                  planName={subscription.scheduledChange.planName}
+                  effectiveAt={subscription.scheduledChange.effectiveAt}
+                  currentPlanName={plan?.name ?? 'your current plan'}
+                  onKeepPlan={() => void handleCancelScheduled()}
+                  busy={lifecycleBusy === 'cancel_scheduled'}
+                  error={lifecycleBusy === null ? lifecycleError : null}
+                />
+              )}
+              {pendingCancel && (
+                <CancellationBanner
+                  endsAt={subscription.currentPeriodEnd}
+                  planName={plan?.name ?? 'your current plan'}
+                  onReactivate={() => void handleReactivate()}
+                  busy={lifecycleBusy === 'reactivate'}
+                  error={lifecycleBusy === null ? lifecycleError : null}
+                />
+              )}
+
+              <BillingOverview
+                planName={plan?.name ?? 'Free'}
+                status={subscription.status}
+                priceLabel={priceLabel}
+                isPaid={Boolean(plan?.isPaid)}
+                renewalCaption={renewalCaption}
+                renewalLabel={renewalLabel}
+                autoRenew={autoRenew}
+                paymentLabel={paymentLabel}
+                paymentSub={paymentSub}
+                creditsPerMonth={plan?.creditsPerMonth ?? 0}
+                onChangePlan={() => setActiveTab('plans')}
+                onBuyCredits={() => setTopupOpen(true)}
+                onViewUsage={() => void navigate('/workspace/usage')}
+              />
+
+              {/* Operator seats — only meaningful once the plan includes them. */}
+              {includedSeats > 0 && (
+                <SeatManager
+                  totalSeats={totalSeats}
+                  includedSeats={includedSeats}
+                  seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
+                  onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
+                  onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
+                />
+              )}
+
+              {/* Cancel — a live paid subscription that isn't already ending. A
+                  quiet, understated row (not an alarming red card): cancellation
+                  is cancel-at-period-end and fully reversible. Hidden once
+                  cancel_at_period_end is set (the Reactivate banner takes over). */}
+              {Boolean(plan?.isPaid) &&
+                subscription.status === 'active' &&
+                !subscription.cancelAtPeriodEnd && (
+                  <CancelSubscriptionRow
+                    periodEnd={subscription.currentPeriodEnd}
+                    onCancel={() => setCancelOpen(true)}
+                  />
+                )}
+            </div>
+          )}
+
+          {/* Plans — switch surface only: the grid + cycle toggle. */}
+          {activeTab === 'plans' && data.availablePlans.length > 0 && (
+            <PlansPanel
+              plans={data.availablePlans}
+              currentSlug={plan?.slug ?? 'free'}
+              cycle={cycle}
+              onCycleChange={setCycle}
+              onSelect={(candidate) => setConfirmPlan(candidate)}
+              currentStatus={subscription.status}
+              trialEnd={subscription.trialEnd}
             />
-          </TabPanel>
+          )}
 
-          <TabPanel tabKey="invoices" active={tab === 'invoices'}>
+          {activeTab === 'invoices' && (
             <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
-          </TabPanel>
+          )}
 
-          <TabPanel tabKey="details" active={tab === 'details'}>
+          {activeTab === 'details' && (
             <BillingDetailsTab details={data.details} onEdit={() => setDetailsOpen(true)} />
-          </TabPanel>
+          )}
         </>
       )}
 
-      {/* Checkout modals — reuse the legacy money-path against real endpoints. */}
-      {planModal.open && (
-        <PlanModal
-          open={planModal.open}
-          onClose={() => setPlanModal({ open: false, initialSlug: null })}
-          currentPlanSlug={plan?.slug ?? 'free'}
-          currentSubscriptionStatus={subscription?.status ?? null}
-          currentBillingCycle={(subscription?.billingCycle as BillingCycle) ?? 'monthly'}
-          hasActiveSubscription={Boolean(subscription?.hasActive)}
-          trialEndIso={subscription?.trialEnd ?? null}
-          dataRetentionUntilIso={subscription?.dataRetentionUntil ?? null}
-          initialSlug={planModal.initialSlug}
-          onSuccess={handleSuccess}
-        />
-      )}
+      {/* Centered confirm modal — runs the shared checkout money-path. */}
+      <PlanConfirmModal
+        open={confirmPlan !== null}
+        onClose={() => setConfirmPlan(null)}
+        plan={confirmPlan}
+        cycle={cycle}
+        currentPlanSlug={plan?.slug ?? 'free'}
+        currentSubscriptionStatus={subscription?.status ?? null}
+        hasActiveSubscription={Boolean(subscription?.hasActive)}
+        currentMonthlyPriceMinor={plan?.monthlyPriceMinor ?? 0}
+        onSuccess={handleSuccess}
+      />
 
       <TopupModal open={topupOpen} onClose={() => setTopupOpen(false)} onSuccess={handleSuccess} />
 
@@ -287,291 +367,188 @@ export function BillingPage(): ReactElement {
         onClose={() => setDetailsOpen(false)}
         onSuccess={handleSuccess}
       />
+
+      <CancelSubscriptionModal
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        planName={plan?.name ?? 'your plan'}
+        periodEnd={subscription?.currentPeriodEnd ?? null}
+        onSuccess={handleSuccess}
+      />
     </PageContainer>
   );
 }
 
-// ── Tab panel wrapper (a11y association with the Tabs pattern) ────────────────
+// ── Cancel subscription ───────────────────────────────────────────────────────
 
-function TabPanel({
-  tabKey,
-  active,
-  children,
+/**
+ * CancelSubscriptionRow — the understated entry point to cancellation. Framed as
+ * a calm management action, not a red alarm: it states the honest cancel-at-
+ * period-end outcome inline and hands off to {@link CancelSubscriptionModal} for
+ * the reversible confirm. Placed at the foot of the Overview tab, below the plan
+ * it governs.
+ */
+function CancelSubscriptionRow({
+  periodEnd,
+  onCancel,
 }: {
-  tabKey: TabKey;
-  active: boolean;
-  children: ReactNode;
+  periodEnd: string | null;
+  onCancel: () => void;
 }): ReactElement {
   return (
-    <div
-      role="tabpanel"
-      id={`tabpanel-${tabKey}`}
-      aria-labelledby={`tab-${tabKey}`}
-      hidden={!active}
-      tabIndex={active ? 0 : -1}
-      className="space-y-6 focus-visible:outline-none"
-    >
-      {children}
+    <div className="flex flex-col gap-3 border-t border-[var(--ds-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-[14px] font-medium text-[var(--ds-text)]">Cancel subscription</p>
+        <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
+          {periodEnd
+            ? `You’ll keep full access until ${formatDate(periodEnd)}, then billing stops.`
+            : 'You’ll keep full access until the end of your billing period, then billing stops.'}
+        </p>
+      </div>
+      <Button
+        variant="ghost"
+        onClick={onCancel}
+        className="self-start text-[var(--ds-danger)] hover:bg-[var(--ds-danger-soft)] hover:text-[var(--ds-danger)] sm:self-auto"
+      >
+        Cancel subscription
+      </Button>
     </div>
   );
 }
 
-// ── Plan & seats ──────────────────────────────────────────────────────────────
+// ── Sub-tabs ──────────────────────────────────────────────────────────────────
 
-interface PlanAndSeatsTabProps {
-  plan: PlanView | null;
-  subscription: SubscriptionView;
-  totalSeats: number;
-  includedSeats: number;
-  availablePlans: PlanView[];
-  onChangePlan: () => void;
-  onSelectPlan: (slug: string) => void;
-  onAddSeat: () => void;
-  onRemoveSeat: () => void;
-}
+type BillingTab = 'overview' | 'plans' | 'invoices' | 'details';
 
-function PlanAndSeatsTab({
-  plan,
-  subscription,
-  totalSeats,
-  includedSeats,
-  availablePlans,
-  onChangePlan,
-  onSelectPlan,
-  onAddSeat,
-  onRemoveSeat,
-}: PlanAndSeatsTabProps): ReactElement {
-  const isPaid = Boolean(plan?.isPaid);
-  const cycleLabel = subscription.billingCycle === 'annual' ? 'year' : 'month';
-  const priceMinor =
-    plan && plan.isPaid
-      ? subscription.billingCycle === 'annual'
-        ? plan.annualPriceMinor
-        : plan.monthlyPriceMinor
-      : 0;
-  const seatPriceLabel = plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—';
+const BILLING_TABS: readonly { readonly id: BillingTab; readonly label: string; readonly icon: LucideIcon }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'plans', label: 'Plans', icon: CreditCard },
+  { id: 'invoices', label: 'Invoices', icon: ReceiptText },
+  { id: 'details', label: 'Billing details', icon: Building2 },
+];
 
-  const paymentDescription = subscription.paymentProvider
-    ? `Billed securely via ${capitalize(subscription.paymentProvider)} — UPI, card, or NetBanking.`
-    : 'No payment method on file yet. Choose a paid plan to add one.';
-
+/**
+ * BillingTabs — a segmented pill control switching the Billing sub-sections. A
+ * raised active segment on a sunken track (vs. the underline Workspace tabs)
+ * makes the two navigation levels read as a clear hierarchy.
+ */
+function BillingTabs({
+  active,
+  onChange,
+}: {
+  active: BillingTab;
+  onChange: (tab: BillingTab) => void;
+}): ReactElement {
   return (
-    <>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Current plan */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-1 flex-col pt-5">
-            <div className="flex items-center gap-2">
-              <CreditCard size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Current plan</h3>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-                {plan?.name ?? 'Free'}
-              </span>
-              <StatusBadge tone={statusTone(subscription.status)}>
-                {humanizeStatus(subscription.status)}
-              </StatusBadge>
-            </div>
-            <dl className="mt-4 space-y-2 text-[13px]">
-              <DetailRow
-                label="Cost"
-                value={isPaid ? `${formatMoneyMinor(priceMinor)} / ${cycleLabel}` : 'No paid subscription'}
-              />
-              <DetailRow
-                label="Credits"
-                value={
-                  plan && plan.creditsPerMonth > 0
-                    ? `${formatCredits(plan.creditsPerMonth)} / month`
-                    : '—'
-                }
-              />
-              <DetailRow label="Billing cycle" value={capitalize(subscription.billingCycle)} />
-            </dl>
-            <div className="mt-auto pt-5">
-              <Button onClick={onChangePlan}>
-                <ArrowUpRight size={16} aria-hidden="true" />
-                {isPaid ? 'Change plan' : 'Choose a plan'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Operator seats */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-1 flex-col pt-5">
-            <div className="flex items-center gap-2">
-              <Users size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Operator seats</h3>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-                {totalSeats}
-              </span>
-              <span className="text-[13px] text-[var(--ds-text-muted)]">total seats</span>
-            </div>
-            <dl className="mt-4 space-y-2 text-[13px]">
-              <DetailRow
-                label="Included"
-                value={
-                  includedSeats > 0
-                    ? `${includedSeats} with your plan`
-                    : 'Free plan includes none'
-                }
-              />
-              <DetailRow label="Extra seat" value={includedSeats > 0 ? `${seatPriceLabel} each` : '—'} />
-            </dl>
-            <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
-              {includedSeats === 0 ? (
-                <Button onClick={onChangePlan}>
-                  <ArrowUpRight size={16} aria-hidden="true" />
-                  Upgrade to add seats
-                </Button>
-              ) : (
-                <>
-                  <Button variant="outline" onClick={onAddSeat}>
-                    <Plus size={16} aria-hidden="true" />
-                    Add seat
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={onRemoveSeat}
-                    disabled={totalSeats <= includedSeats}
-                    title={
-                      totalSeats <= includedSeats
-                        ? `You can’t go below the ${includedSeats} included with your plan`
-                        : undefined
-                    }
-                  >
-                    <Minus size={16} aria-hidden="true" />
-                    Remove seat
-                  </Button>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Payment method */}
-        <Card className="flex flex-col">
-          <CardContent className="flex flex-1 flex-col pt-5">
-            <div className="flex items-center gap-2">
-              <Wallet size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Payment method</h3>
-            </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-                {subscription.paymentProvider ? capitalize(subscription.paymentProvider) : 'None'}
-              </span>
-            </div>
-            <p className="mt-4 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-              {paymentDescription}
-            </p>
-            <div className="mt-auto pt-5">
-              <Button
-                variant="outline"
-                onClick={onChangePlan}
-                disabled={!subscription.paymentProvider}
-              >
-                <CreditCard size={16} aria-hidden="true" />
-                Manage payment method
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Plan comparison — real catalog from getSubscriptionPlans. */}
-      {availablePlans.length > 0 && (
-        <section aria-label="Available plans" className="space-y-4">
-          <SectionHeader
-            title="Compare plans"
-            description="Pick the plan that matches how much you expect your AI to handle."
-          />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {availablePlans.map((candidate) => (
-              <PlanOption
-                key={candidate.slug}
-                plan={candidate}
-                current={candidate.slug === plan?.slug}
-                cycle={subscription.billingCycle}
-                onSelect={() => onSelectPlan(candidate.slug)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-    </>
+    <div
+      role="tablist"
+      aria-label="Billing sections"
+      className="inline-flex items-center gap-1 self-start rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-1"
+    >
+      {BILLING_TABS.map(({ id, label, icon: Icon }) => {
+        const isActive = active === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(id)}
+            className={cn(
+              'inline-flex items-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-[13px] font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
+              isActive
+                ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
+            )}
+          >
+            <Icon size={15} aria-hidden="true" />
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-function PlanOption({
-  plan,
-  current,
-  cycle,
-  onSelect,
+// ── Operator seats ────────────────────────────────────────────────────────────
+
+function SeatManager({
+  totalSeats,
+  includedSeats,
+  seatPriceLabel,
+  onAddSeat,
+  onRemoveSeat,
 }: {
-  plan: PlanView;
-  current: boolean;
-  cycle: string;
-  onSelect: () => void;
+  totalSeats: number;
+  includedSeats: number;
+  seatPriceLabel: string;
+  onAddSeat: () => void;
+  onRemoveSeat: () => void;
 }): ReactElement {
-  // Match the pricing shown in the summary card above: when the customer bills
-  // annually, compare on the annual figure (falling back to monthly for plans
-  // that carry no annual price) so the current tier's number is consistent.
-  const useAnnual = cycle === 'annual' && plan.annualPriceMinor > 0;
-  const priceMinor = useAnnual ? plan.annualPriceMinor : plan.monthlyPriceMinor;
-  const cycleSuffix = useAnnual ? '/yr' : '/mo';
   return (
-    <Card
-      className={cn(
-        'flex flex-col',
-        current ? 'border-[var(--ds-accent)] ring-1 ring-[var(--ds-accent)]' : '',
-      )}
-    >
-      <CardContent className="flex flex-1 flex-col pt-5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[15px] font-semibold text-[var(--ds-text)]">{plan.name}</span>
-        {current && (
-          <StatusBadge tone="accent" dot>
-            Current
-          </StatusBadge>
-        )}
-      </div>
-      <div className="mt-3 flex items-baseline gap-1">
-        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">
-          {plan.isPaid ? formatMoneyMinor(priceMinor) : 'Free'}
-        </span>
-        {plan.isPaid && <span className="text-[13px] text-[var(--ds-text-muted)]">{cycleSuffix}</span>}
-      </div>
-      <ul className="mt-4 flex-1 space-y-2 text-[13px] text-[var(--ds-text-muted)]">
-        <li className="flex items-center gap-2">
-          <Check size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-success)]" />
-          {plan.creditsPerMonth > 0 ? `${formatCredits(plan.creditsPerMonth)} credits / month` : 'Trial credits'}
-        </li>
-        <li className="flex items-center gap-2">
-          <Check size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-success)]" />
-          {plan.includedSeats > 0
-            ? `${plan.includedSeats} operator seat${plan.includedSeats === 1 ? '' : 's'}`
-            : 'No operator seats'}
-        </li>
-      </ul>
-      <div className="mt-5">
-        <Button
-          variant={current ? 'outline' : 'primary'}
-          onClick={onSelect}
-          disabled={current}
-          className="w-full"
-        >
-          {current ? 'Your plan' : 'Select plan'}
-        </Button>
-      </div>
+    <Card>
+      <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-subtle)] text-[var(--ds-text-muted)]">
+            <Users size={18} aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-[15px] font-semibold text-[var(--ds-text)]">
+              {totalSeats} operator seat{totalSeats === 1 ? '' : 's'}
+            </p>
+            <p className="text-[13px] text-[var(--ds-text-muted)]">
+              {includedSeats} included with your plan · {seatPriceLabel} per extra seat
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            onClick={onRemoveSeat}
+            disabled={totalSeats <= includedSeats}
+            title={
+              totalSeats <= includedSeats
+                ? `You can’t go below the ${includedSeats} included with your plan`
+                : undefined
+            }
+          >
+            <Minus size={16} aria-hidden="true" />
+            Remove
+          </Button>
+          <Button variant="outline" onClick={onAddSeat}>
+            <Plus size={16} aria-hidden="true" />
+            Add seat
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
 }
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
+
+// A freshly-issued invoice's `pdf_url` is null until the ARQ worker renders it
+// (seconds after payment; 5-min sweep as a backstop — see root CLAUDE.md and
+// the legacy InvoicesCard). We poll `getInvoices` in place so the Download link
+// appears without a manual refresh, and — crucially — WITHOUT the page-blanking
+// parent reload (which resets billing to a full-page skeleton every tick).
+const INVOICE_POLL_INTERVAL_MS = 5_000;
+const MAX_INVOICE_POLLS = 12; // ≈1 min of polling, then stop (manual Refresh stays)
+const PDF_PENDING_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * A numbered invoice whose PDF is still rendering: it has an invoice number but
+ * no downloadable/viewable link yet, and was issued recently enough that the
+ * worker is plausibly still on it. The recency window stops us from polling
+ * forever on an old invoice that's stuck for some other reason.
+ */
+function isInvoicePreparing(invoice: InvoiceView): boolean {
+  if (!invoice.number || invoice.pdfUrl || invoice.invoiceUrl || !invoice.date) return false;
+  const issuedMs = new Date(invoice.date).getTime();
+  if (Number.isNaN(issuedMs)) return false;
+  return Date.now() - issuedMs < PDF_PENDING_WINDOW_MS;
+}
 
 function InvoicesTab({
   invoices,
@@ -582,6 +559,57 @@ function InvoicesTab({
   hasError: boolean;
   onRetry: () => void;
 }): ReactElement {
+  // Locally-polled overlay over the server-provided invoices. `null` means
+  // "render the parent's list as-is"; a poll swaps in fresh rows so a pending
+  // PDF's Download link can appear without blanking the whole page.
+  const [polled, setPolled] = useState<InvoiceView[] | null>(null);
+  const [pollAttempts, setPollAttempts] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // When the parent refetches billing (new `invoices` reference — e.g. after a
+  // payment), drop our overlay and reset the poll budget so we track the fresh
+  // server data. Adjusting state during render on a prop change is React's
+  // supported pattern and keeps this out of an effect (no set-state-in-effect).
+  const [seenInvoices, setSeenInvoices] = useState(invoices);
+  if (invoices !== seenInvoices) {
+    setSeenInvoices(invoices);
+    setPolled(null);
+    setPollAttempts(0);
+  }
+
+  const rows = polled ?? invoices;
+  const preparingCount = useMemo(() => rows.filter(isInvoicePreparing).length, [rows]);
+
+  // Silent, in-place refetch of just the invoices list — never the parent's
+  // page-blanking reload.
+  const refetchInvoices = useCallback(async (): Promise<void> => {
+    const raw = await getInvoices();
+    const next = (Array.isArray(raw) ? raw : []).map((row, index) => buildInvoice(row, index));
+    setPolled(next);
+  }, []);
+
+  // Auto-poll while any invoice's PDF is still rendering. The timer re-arms via
+  // the `pollAttempts` dependency for a bounded ~5s cadence; the effect stops
+  // the moment nothing is preparing or the budget is spent, and cleanup clears
+  // the pending timer on unmount. setState only ever runs inside async
+  // callbacks here — never synchronously in the effect body.
+  useEffect(() => {
+    if (preparingCount === 0 || pollAttempts >= MAX_INVOICE_POLLS) return undefined;
+    const timer = setTimeout(() => {
+      void refetchInvoices()
+        .catch(() => undefined)
+        .finally(() => setPollAttempts((attempts) => attempts + 1));
+    }, INVOICE_POLL_INTERVAL_MS);
+    return () => clearTimeout(timer);
+  }, [preparingCount, pollAttempts, refetchInvoices]);
+
+  const handleManualRefresh = useCallback((): void => {
+    setRefreshing(true);
+    void refetchInvoices()
+      .catch(() => undefined)
+      .finally(() => setRefreshing(false));
+  }, [refetchInvoices]);
+
   if (hasError) {
     return (
       <EmptyState
@@ -628,9 +656,7 @@ function InvoicesTab({
         <span
           className={cn(
             'tabular-nums font-medium',
-            invoice.kind === 'credit_note'
-              ? 'text-[var(--ds-text-muted)]'
-              : 'text-[var(--ds-text)]',
+            invoice.kind === 'credit_note' ? 'text-[var(--ds-text-muted)]' : 'text-[var(--ds-text)]',
           )}
         >
           {formatMoneyMinor(invoice.amountMinor, invoice.currency)}
@@ -660,11 +686,33 @@ function InvoicesTab({
       <SectionHeader
         title="Invoices & receipts"
         description="Every payment produces a numbered tax document you can download for your records."
+        actions={
+          <Button variant="outline" size="sm" onClick={handleManualRefresh} disabled={refreshing}>
+            <RefreshCw
+              size={15}
+              aria-hidden="true"
+              className={refreshing ? 'animate-spin' : undefined}
+            />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        }
       />
+      {/* Aria-live so the "still preparing" progress is announced as the worker
+          renders the PDF. Kept mounted so screen readers see the region early. */}
+      <div aria-live="polite">
+        {preparingCount > 0 && (
+          <p className="mb-3 flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
+            <Loader2 size={13} aria-hidden="true" className="animate-spin text-[var(--ds-text-subtle)]" />
+            {preparingCount === 1
+              ? 'Preparing your latest invoice for download…'
+              : `Preparing ${preparingCount} invoices for download…`}
+          </p>
+        )}
+      </div>
       <DataTable
         caption="Invoices"
         columns={columns}
-        rows={invoices}
+        rows={rows}
         rowKey={(invoice) => invoice.id}
         empty={
           <EmptyState
@@ -686,7 +734,7 @@ function InvoiceDownload({ invoice }: { invoice: InvoiceView }): ReactElement {
         href={invoice.pdfUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       >
         <Download size={14} aria-hidden="true" />
         PDF
@@ -699,7 +747,7 @@ function InvoiceDownload({ invoice }: { invoice: InvoiceView }): ReactElement {
         href={invoice.invoiceUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
       >
         <ExternalLink size={14} aria-hidden="true" />
         View
@@ -724,21 +772,12 @@ function BillingDetailsTab({
   details: BillingDetailsView;
   onEdit: () => void;
 }): ReactElement {
-  if (details.isEmpty) {
-    return (
-      <EmptyState
-        icon={Building2}
-        title="No billing details yet"
-        description="Add your legal name and tax identity so your invoices carry the right business information."
-        action={
-          <Button onClick={onEdit}>
-            <Plus size={16} aria-hidden="true" />
-            Add billing details
-          </Button>
-        }
-      />
-    );
-  }
+  // A workspace always has exactly one billing identity, so there is no "add"
+  // flow — we always show the details, prefilled from the account data we
+  // already hold (company name → legal name, login email → billing email,
+  // signup country → country) until the customer refines them via Edit.
+  const legalName = details.legalName ?? details.companyName;
+  const billingEmail = details.email ?? details.accountEmail;
 
   const addressLines = details.address
     ? [
@@ -765,8 +804,8 @@ function BillingDetailsTab({
       <Card>
         <CardContent className="pt-5">
           <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
-            <DetailBlock label="Legal name" value={details.legalName} />
-            <DetailBlock label="Billing email" value={details.email} />
+            <DetailBlock label="Legal name" value={legalName} />
+            <DetailBlock label="Billing email" value={billingEmail} />
             <DetailBlock label="GSTIN" value={details.gstin} mono />
             <DetailBlock label="Country" value={details.country} />
             {details.stateCode && <DetailBlock label="GST state code" value={details.stateCode} />}
@@ -815,11 +854,44 @@ function DetailBlock({
 
 // ── Shared bits ───────────────────────────────────────────────────────────────
 
-function DetailRow({ label, value }: { label: string; value: ReactNode }): ReactElement {
+/** A warning-toned banner with a reversal action + inline error. */
+function LifecycleBanner({
+  icon: Icon,
+  title,
+  detail,
+  actionLabel,
+  onAction,
+  busy,
+  error,
+}: {
+  icon: LucideIcon;
+  title: ReactElement | string;
+  detail: string;
+  actionLabel: string;
+  onAction: () => void;
+  busy: boolean;
+  error: string | null;
+}): ReactElement {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 text-[var(--ds-text-muted)]">{label}</dt>
-      <dd className="min-w-0 break-words text-right font-medium text-[var(--ds-text)]">{value}</dd>
+    <div
+      role="status"
+      className="rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
+    >
+      <div className="flex items-start gap-3">
+        <Icon size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[var(--ds-text)]">{title}</p>
+          <p className="mt-0.5 text-[var(--ds-text-muted)]">{detail}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onAction} disabled={busy} className="shrink-0">
+          {busy ? 'Working…' : actionLabel}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 pl-7 text-[12px] text-[var(--ds-danger)]">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -828,59 +900,144 @@ function ScheduledChangeBanner({
   planName,
   effectiveAt,
   currentPlanName,
+  onKeepPlan,
+  busy,
+  error,
 }: {
   planName: string | null;
   effectiveAt: string | null;
   currentPlanName: string;
+  onKeepPlan: () => void;
+  busy: boolean;
+  error: string | null;
 }): ReactElement {
   return (
-    <div
-      role="status"
-      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
-    >
-      <CalendarClock
-        size={16}
-        aria-hidden="true"
-        className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
-      />
-      <div>
-        <p className="font-semibold text-[var(--ds-text)]">
+    <LifecycleBanner
+      icon={CalendarClock}
+      title={
+        <>
           Scheduled downgrade to {planName ?? 'a different plan'}
           {effectiveAt ? ` on ${formatDate(effectiveAt)}` : ''}.
-        </p>
-        <p className="mt-0.5 text-[var(--ds-text-muted)]">
-          You’ll keep {currentPlanName} until then.
-        </p>
-      </div>
-    </div>
+        </>
+      }
+      detail={`You’ll keep ${currentPlanName} until then.`}
+      actionLabel={`Keep ${currentPlanName}`}
+      onAction={onKeepPlan}
+      busy={busy}
+      error={error}
+    />
   );
 }
 
 function CancellationBanner({
   endsAt,
   planName,
+  onReactivate,
+  busy,
+  error,
 }: {
   endsAt: string | null;
   planName: string;
+  onReactivate: () => void;
+  busy: boolean;
+  error: string | null;
+}): ReactElement {
+  return (
+    <LifecycleBanner
+      icon={AlertTriangle}
+      title={
+        <>
+          {planName} ends{endsAt ? ` on ${formatDate(endsAt)}` : ' at the end of the current period'} and won’t
+          renew.
+        </>
+      }
+      detail="You’ll keep access until then. Reactivate before it ends to stay on the plan."
+      actionLabel="Reactivate"
+      onAction={onReactivate}
+      busy={busy}
+      error={error}
+    />
+  );
+}
+
+/**
+ * TrialNudgeBanner — an active free trial is running. A calm, accent-toned
+ * growth prompt to authorise a payment method (via Pick a plan) before the
+ * trial ends so the bot, credits, and chat history are kept. Dismissible for
+ * the session; reappears on reload while the trial is still active.
+ */
+function TrialNudgeBanner({
+  trialEnd,
+  onPickPlan,
+  onDismiss,
+}: {
+  trialEnd: string;
+  onPickPlan: () => void;
+  onDismiss: () => void;
 }): ReactElement {
   return (
     <div
       role="status"
-      className="flex items-start gap-3 rounded-xl border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
+      className="mb-6 flex flex-col gap-3 rounded-xl border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)] sm:flex-row sm:items-center sm:justify-between"
     >
-      <AlertTriangle
-        size={16}
-        aria-hidden="true"
-        className="mt-0.5 shrink-0 text-[var(--ds-warning)]"
-      />
-      <div>
-        <p className="font-semibold text-[var(--ds-text)]">
-          {planName} ends{endsAt ? ` on ${formatDate(endsAt)}` : ' at the end of the current period'} and
-          won’t renew.
+      <div className="flex items-start gap-3">
+        <Sparkles size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-accent-text)]" />
+        <p>
+          <span className="font-semibold">Your free trial ends {formatDate(trialEnd)}.</span>{' '}
+          <span className="text-[var(--ds-text-muted)]">
+            Authorise a payment method to keep your bot, credits, and chat history when it ends — you won’t be
+            charged until the trial is over.
+          </span>
         </p>
-        <p className="mt-0.5 text-[var(--ds-text-muted)]">
-          You’ll keep access until then. Reactivate any time before it ends to stay on the plan.
-        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+        <Button size="sm" onClick={onPickPlan}>
+          Pick a plan
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Dismiss trial reminder"
+          onClick={onDismiss}
+        >
+          <X size={15} aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * DataRetentionBanner — the account has lapsed and its data is scheduled for
+ * permanent deletion on `purgeAt`. The most urgent thing on the page, so it's
+ * danger-toned and shown above the tabs regardless of which tab is active.
+ */
+function DataRetentionBanner({
+  purgeAt,
+  onChoosePlan,
+}: {
+  purgeAt: string;
+  onChoosePlan: () => void;
+}): ReactElement {
+  return (
+    <div
+      role="alert"
+      className="mb-6 rounded-xl border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]"
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-danger)]" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[var(--ds-text)]">
+            Your data is scheduled for deletion on {formatDate(purgeAt)}.
+          </p>
+          <p className="mt-0.5 text-[var(--ds-text-muted)]">
+            Your subscription has lapsed. Choose a plan before this date to keep your agents, knowledge, and
+            conversations — after it, they’re permanently removed.
+          </p>
+        </div>
+        <Button size="sm" onClick={onChoosePlan} className="shrink-0">
+          Choose a plan
+        </Button>
       </div>
     </div>
   );
@@ -896,17 +1053,9 @@ function capitalize(value: string): string {
 function LoadingState(): ReactElement {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
+      <Skeleton className="h-28 rounded-xl" />
       <Skeleton className="h-9 w-72 rounded-lg" />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <Skeleton key={index} className="h-56 rounded-xl" />
-        ))}
-      </div>
+      <Skeleton className="h-80 rounded-xl" />
     </div>
   );
 }

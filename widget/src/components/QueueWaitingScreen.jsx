@@ -13,8 +13,8 @@ import { sanitizeColor } from '../services/sanitize';
  * impatient visitors self-serve to the form.
  *
  * Visual states by elapsed time (against ``timeoutSeconds``, default 20s):
- *   0–25%  : "Looking for an available agent..." 🔍
- *   25–50% : "All agents are busy — waiting for the next available..." ⏳
+ *   0–25%  : "Connecting you with our team..." 🔍
+ *   25–50% : "Our team is busy — you're in the queue" ⏳
  *   50–80% : "This is taking longer than usual..." ⌛
  *   80–100%: Choice card — [Keep waiting] [Leave a message]
  *
@@ -60,9 +60,9 @@ const QueueWaitingScreen = ({
     const progress = Math.min(1, elapsed / timeoutSeconds);
     let status;
     if (progress < 0.25) {
-        status = { icon: Users, text: 'Looking for an available agent...', accent: primaryColor };
+        status = { icon: Users, text: 'Connecting you with our team...', accent: primaryColor };
     } else if (progress < 0.5) {
-        status = { icon: Clock, text: 'All agents are busy — waiting for the next available...', accent: '#F59E0B' };
+        status = { icon: Clock, text: 'Our team is busy — you’re in the queue', accent: '#F59E0B' };
     } else {
         status = { icon: Clock, text: 'This is taking a little longer than usual...', accent: '#EF4444' };
     }

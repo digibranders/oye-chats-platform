@@ -23,6 +23,10 @@ export type { StatusBadgeProps } from './primitives/Badge';
 export { Skeleton } from './primitives/Skeleton';
 export { Input } from './primitives/Input';
 export type { InputProps } from './primitives/Input';
+export { Textarea } from './primitives/Textarea';
+export type { TextareaProps } from './primitives/Textarea';
+export { Select } from './primitives/Select';
+export type { SelectProps, SelectOption } from './primitives/Select';
 export { Progress } from './primitives/Progress';
 export type { ProgressProps } from './primitives/Progress';
 
@@ -59,3 +63,19 @@ export { Tabs } from './components/Tabs';
 export type { TabsProps, TabItem } from './components/Tabs';
 export { Modal } from './components/Modal';
 export type { ModalProps, ModalSize } from './components/Modal';
+export { Popover } from './components/Popover';
+export type { PopoverProps, PopoverAlign, PopoverTriggerProps } from './components/Popover';
+export { Drawer } from './components/Drawer';
+export type { DrawerProps, DrawerWidth } from './components/Drawer';
+
+// Composite components — Plan entitlements gating
+export { PlanBadge } from './components/PlanBadge';
+export type { PlanBadgeProps } from './components/PlanBadge';
+export { QuotaMeter } from './components/QuotaMeter';
+export type { QuotaMeterProps } from './components/QuotaMeter';
+export { UpgradeModal } from './components/UpgradeModal';
+export type { UpgradeModalProps, UpgradeModalReason } from './components/UpgradeModal';
+export { FeatureGate } from './components/FeatureGate';
+export type { FeatureGateProps } from './components/FeatureGate';
+export { LockedFeatureCard } from './components/LockedFeatureCard';
+export type { LockedFeatureCardProps } from './components/LockedFeatureCard';

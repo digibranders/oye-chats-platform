@@ -259,6 +259,48 @@ def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
         return False
 
 
+def backfill_unnumbered_invoices(session: Session, *, limit: int = 50) -> int:
+    """Re-finalize paid charges that were left un-numbered (finding H-B).
+
+    A charge whose finalize returned ``False`` — because the seller profile
+    wasn't saved yet (pre-config window), a transient error rolled back the
+    savepoint, or the invoicing flag was off at capture time — leaves a legacy
+    row with no ``invoice_number`` and no tax document, and *nothing else ever
+    re-numbers it*: the PDF sweep and every reconciliation query filter on
+    ``invoice_number IS NOT NULL``, so the charge is silently un-documented and
+    invisible.
+
+    This sweep re-attempts finalize on every paid, un-numbered row. The moment
+    the blocking condition clears (super-admin saves the seller profile, the
+    transient error passes) the row becomes a proper numbered invoice and the
+    PDF sweep picks it up. Rows that still can't finalize (non-INR, invoicing
+    off, seller still unconfigured) no-op harmlessly via ``finalize_invoice``'s
+    own gates and are retried next sweep — so this is safe to run unconditionally
+    and idempotent.
+
+    Each row finalizes inside its own SAVEPOINT (``finalize_invoice_safely``), so
+    one poison row can't abort the batch; the caller owns the outer
+    transaction/commit. Returns the number of rows newly numbered this pass.
+    """
+    if not config.INVOICING_V2_ENABLED:
+        return 0
+    rows = (
+        session.execute(
+            select(Invoice)
+            .where(Invoice.invoice_number.is_(None), Invoice.status == "paid")
+            .order_by(Invoice.id)
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    numbered = 0
+    for invoice in rows:
+        if finalize_invoice_safely(session, invoice):
+            numbered += 1
+    return numbered
+
+
 CREDIT_NOTE_SERIES_PREFIX = "CN"
 
 

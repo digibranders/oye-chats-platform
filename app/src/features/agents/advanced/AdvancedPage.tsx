@@ -24,6 +24,7 @@ import { ScopeStrictnessSection } from './ScopeStrictnessSection';
 import { QualificationSection } from './QualificationSection';
 import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
+import { DeveloperAccessSection } from './DeveloperAccessSection';
 
 /**
  * Order-independent serialization. `bantConfig` is an opaque server object whose
@@ -135,6 +136,11 @@ export function AdvancedPage(): ReactElement {
     [presets],
   );
 
+  const setBantConfig = useCallback((config: Record<string, unknown>) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, bantConfig: config } : prev));
+  }, []);
+
   const toggleFlag = useCallback((flagKey: string, next: boolean) => {
     setSaveError(null);
     setDraft((prev) =>
@@ -185,10 +191,14 @@ export function AdvancedPage(): ReactElement {
     setSaveError(null);
     try {
       const frameworkChanged = draft.qualificationFramework !== initial.qualificationFramework;
+      const bantConfigChanged =
+        stableStringify(draft.bantConfig) !== stableStringify(initial.bantConfig);
 
       // Widget-scoped settings persist through the settings endpoint; the
-      // qualification framework is a distinct concern saved via updateBot
-      // (mirrors Qualification.jsx), including its preset scoring config.
+      // qualification framework + scoring config are a distinct concern saved via
+      // updateBot (mirrors Qualification.jsx). Persist the framework whenever it
+      // OR the bant_config changed, keeping the stored `framework` field in sync
+      // with the selected framework.
       const tasks: Array<Promise<unknown>> = [
         updateClientSettings(
           {
@@ -199,11 +209,16 @@ export function AdvancedPage(): ReactElement {
           agentId,
         ),
       ];
-      if (frameworkChanged) {
+      if (frameworkChanged || bantConfigChanged) {
         const qualificationPayload: Record<string, unknown> = {
           qualification_framework: draft.qualificationFramework,
         };
-        if (draft.bantConfig) qualificationPayload.bant_config = draft.bantConfig;
+        if (draft.bantConfig) {
+          qualificationPayload.bant_config = {
+            ...draft.bantConfig,
+            framework: draft.qualificationFramework,
+          };
+        }
         tasks.push(updateBot(agentId, qualificationPayload));
       }
 
@@ -220,7 +235,7 @@ export function AdvancedPage(): ReactElement {
   // ── States: no agent / loading / error ──────────────────────────────────────
   if (agentId === null && !agentLoading) {
     return (
-      <div className="px-4 py-6 md:px-8">
+      <div>
         <PageContainer title="Advanced">
           <EmptyState
             icon={SlidersHorizontal}
@@ -239,7 +254,7 @@ export function AdvancedPage(): ReactElement {
   const loading = draft === null && loadError === null;
 
   return (
-    <div className="px-4 py-6 md:px-8">
+    <div>
       <PageContainer
         title="Advanced"
         description="How your agent decides what to answer, qualifies leads, and behaves in the widget. These are power-user settings — the defaults suit most sites."
@@ -281,6 +296,7 @@ export function AdvancedPage(): ReactElement {
               framework={draft.qualificationFramework}
               bantConfig={draft.bantConfig}
               onFrameworkChange={setFramework}
+              onBantConfigChange={setBantConfig}
             />
 
             <div className="border-t border-[var(--ds-border)]" />
@@ -290,6 +306,10 @@ export function AdvancedPage(): ReactElement {
             <div className="border-t border-[var(--ds-border)]" />
 
             <TimingReliabilitySection config={draft.widgetConfig} onChange={setConfigField} />
+
+            <div className="border-t border-[var(--ds-border)]" />
+
+            <DeveloperAccessSection />
 
             {/* Save bar — appears once there are unsaved edits. A saved
                 confirmation persists (keyed by savedTick) until the next edit. */}
