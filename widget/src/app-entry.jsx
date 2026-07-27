@@ -5,16 +5,52 @@ import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { getController } from './widget-controller.js'
 
+// True when the page embedding the widget is a developer machine rather than a
+// deployed site — including a production widget bundle (`vite preview`) dropped
+// onto a localhost test page.
+const isLocalHostname = (hostname) => {
+  const host = String(hostname || '').toLowerCase()
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local')
+  )
+}
+
 // Lazy-loaded only on first error or when OYECHATS_DEBUG=true.
+// Production only: dev builds and localhost-embedded widgets are skipped so
+// developer noise never reaches the Sentry project that pages on real incidents.
 const loadSentry = async () => {
   const dsn = import.meta.env.VITE_SENTRY_DSN
-  if (!dsn) return
+  if (!dsn || !import.meta.env.PROD) return
+  if (isLocalHostname(window.location.hostname)) return
   try {
     const Sentry = await import('@sentry/react')
     Sentry.init({
       dsn,
       environment: import.meta.env.MODE,
+      integrations: [
+        // Replay records the DOM of the CUSTOMER's page, not just our widget.
+        // Hence: everything masked, media blocked, and error-only capture — we
+        // never record a visitor session that completed without a crash.
+        Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
+        // Only activates when the host page serves `Document-Policy:
+        // js-profiling`; on every other site the browser withholds the JS
+        // profiler and the integration is inert. We cannot set that header on
+        // a customer's domain, so treat profiles here as best-effort.
+        Sentry.browserProfilingIntegration(),
+        Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
+      ],
       tracesSampleRate: 0.1,
+      replaysSessionSampleRate: 0,
+      replaysOnErrorSampleRate: 1.0,
+      profileSessionSampleRate: 0.1,
+      profileLifecycle: 'trace',
+      enableLogs: true,
       sendDefaultPii: false,
     })
   } catch (e) {

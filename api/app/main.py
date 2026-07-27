@@ -112,6 +112,8 @@ if SENTRY_ENABLED:
     # but tags itself ``service: worker`` in app/worker/settings.py).
     sentry_sdk.set_tag("service", "api")
     logger.info(f"Sentry error tracking enabled | env={APP_ENV}")
+elif SENTRY_DSN:
+    logger.info(f"Sentry error tracking disabled (APP_ENV={APP_ENV}, production only)")
 else:
     logger.info("Sentry error tracking disabled (no DSN configured)")
 

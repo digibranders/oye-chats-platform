@@ -146,9 +146,25 @@ elif LANGFUSE_ENABLED:
 else:
     logger.info("Langfuse tracing disabled (no keys configured)")
 
-SENTRY_DSN = os.getenv("SENTRY_DSN") or os.getenv("SENTRY_DSN_BACKEND")
-SENTRY_ENABLED = bool(SENTRY_DSN)
 APP_ENV = os.getenv("APP_ENV", "development")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN") or os.getenv("SENTRY_DSN_BACKEND")
+# Set SENTRY_FORCE_ENABLE=true to opt a non-production process in temporarily
+# (e.g. reproducing a prod-only crash locally against the same DSN).
+_SENTRY_FORCE_ENABLE = os.getenv("SENTRY_FORCE_ENABLE", "").lower() in ("1", "true", "yes")
+
+
+def sentry_enabled(dsn: str | None, app_env: str, force_enable: bool = False) -> bool:
+    """Whether this process should send events to Sentry.
+
+    Production-only by design: a DSN in a developer's ``.env`` (or in CI, where
+    ``APP_ENV=testing``) otherwise turns every localhost traceback and every test
+    run into a Sentry alert that nobody acts on, burying real production issues.
+    """
+    return bool(dsn) and (app_env == "production" or force_enable)
+
+
+SENTRY_ENABLED = sentry_enabled(SENTRY_DSN, APP_ENV, _SENTRY_FORCE_ENABLE)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Email Notifications (Brevo / Sendinblue)

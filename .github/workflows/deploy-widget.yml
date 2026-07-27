@@ -56,6 +56,10 @@ jobs:
           VITE_API_URL: https://api.oyechats.com
           VITE_BUILD_TIMESTAMP: ${{ github.sha }}
           VITE_WIDGET_BASE: https://cdn.oyechats.com
+          # Baked in at build time — the widget is a static CDN bundle with no
+          # runtime env. Unset secret => empty => Sentry stays disabled, which
+          # is the safe default rather than a build failure.
+          VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN_WIDGET }}
 
       - name: Verify build outputs
         working-directory: widget

@@ -72,11 +72,13 @@ def _init_sentry_for_worker() -> None:
     they only end up in ``journalctl`` on the droplet.
 
     Tagged as ``service: worker`` so events can be filtered apart from the API.
+    Production-only, same as the API — see ``app.config.sentry_enabled``.
     """
     from app.config import APP_ENV, SENTRY_DSN, SENTRY_ENABLED
 
     if not SENTRY_ENABLED:
-        logger.info("Sentry disabled in worker (no DSN configured)")
+        reason = f"APP_ENV={APP_ENV}, production only" if SENTRY_DSN else "no DSN configured"
+        logger.info(f"Sentry disabled in worker ({reason})")
         return
 
     import sentry_sdk
