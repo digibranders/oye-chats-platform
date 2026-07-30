@@ -7,7 +7,7 @@
 /** Whole days until the trial-end ISO timestamp (ceil; 0/negative once lapsed). */
 export function trialDaysLeft(iso: string, nowMs?: number): number | null;
 
-/** Whole days until an arbitrary ISO timestamp (ceil) — e.g. data-retention deadline. */
+/** Whole days until an arbitrary ISO timestamp (ceil) - e.g. data-retention deadline. */
 export function daysUntil(iso: string, nowMs?: number): number | null;
 
 /** Human-friendly absolute date, e.g. "Jul 16, 2026". Returns the input unchanged if unparseable. */

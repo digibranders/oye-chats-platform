@@ -1,5 +1,5 @@
 /**
- * AgentCard (feature) — the agent tile as it appears in the AI Agents grid.
+ * AgentCard (feature) - the agent tile as it appears in the AI Agents grid.
  *
  * Wraps the shared design-system `AgentCard` (identity · status · metrics ·
  * navigation) and adds two quiet identifiers ported from the legacy BotCard: a

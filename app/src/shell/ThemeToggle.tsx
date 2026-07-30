@@ -3,9 +3,9 @@ import { Moon, Sun } from 'lucide-react';
 import { cn, useTheme } from '../design-system';
 
 /**
- * ThemeToggle — animated light ⇄ dark switch (ported from the pre-redesign
+ * ThemeToggle - animated light ⇄ dark switch (ported from the pre-redesign
  * `layouts/TopBar.jsx`, remapped to the new `useTheme()` hook and `--ds-*`
- * tokens). Two states only — "system" lives in Settings › Appearance;
+ * tokens). Two states only - "system" lives in Settings › Appearance;
  * toggling from "system" resolves to the opposite of whatever it currently
  * renders as.
  */

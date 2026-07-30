@@ -28,7 +28,7 @@ const toneStyles: Record<InsightTone, { iconBg: string; iconText: string }> = {
 };
 
 /**
- * InsightCard — a recommendation or observation surfaced to the user (mandate
+ * InsightCard - a recommendation or observation surfaced to the user (mandate
  * shared component). Leads with a tinted glyph, a bold takeaway, an
  * explanation, and an optional next-step action.
  */

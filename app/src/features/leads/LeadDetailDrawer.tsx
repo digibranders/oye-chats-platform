@@ -1,5 +1,5 @@
 /**
- * LeadDetailDrawer — a right-anchored slide-over that answers "who is this lead
+ * LeadDetailDrawer - a right-anchored slide-over that answers "who is this lead
  * and what do they want?" without leaving the list.
  *
  * It shows the captured contact, a plain-language quality verdict with a score
@@ -134,7 +134,7 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
 /**
  * The private notes + tags editor. Mounted with a `key` of the lead's session
  * id by the caller, so switching leads remounts it and its local draft resets
- * from the incoming controller — no synchronous setState in an effect.
+ * from the incoming controller - no synchronous setState in an effect.
  */
 function LeadAnnotationsSection({
   controller,
@@ -148,7 +148,7 @@ function LeadAnnotationsSection({
   const [tagsJustSaved, setTagsJustSaved] = useState(false);
 
   const noteChanged = noteDraft.trim() !== (note?.text ?? '');
-  // Cheap dirty check — the controller re-normalises on save, so the worst case
+  // Cheap dirty check - the controller re-normalises on save, so the worst case
   // is a redundant (idempotent) write, never lost input.
   const tagsChanged = tagDraft.trim() !== tags.join(', ');
 
@@ -170,7 +170,7 @@ function LeadAnnotationsSection({
       </h3>
       <div className="space-y-4 rounded-xl border border-[var(--ds-border)] p-4">
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          Only your team sees these — they stay in this browser and aren&rsquo;t sent to the visitor.
+          Only your team sees these - they stay in this browser and aren&rsquo;t sent to the visitor.
         </p>
 
         {/* Note editor */}
@@ -185,7 +185,7 @@ function LeadAnnotationsSection({
             id="lead-note"
             rows={3}
             value={noteDraft}
-            placeholder="Add context for your team — next steps, who to loop in…"
+            placeholder="Add context for your team - next steps, who to loop in…"
             onChange={(event) => {
               setNoteDraft(event.target.value);
               setNoteJustSaved(false);
@@ -310,7 +310,7 @@ export function LeadDetailDrawer({
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (!first || !last) {
-        // Nothing focusable inside — keep focus pinned to the panel itself.
+        // Nothing focusable inside - keep focus pinned to the panel itself.
         event.preventDefault();
         panel.focus();
         return;
@@ -421,11 +421,6 @@ export function LeadDetailDrawer({
               </div>
             </section>
 
-            {/* Operator-private notes & tags (remounts per lead via key). */}
-            {annotations && (
-              <LeadAnnotationsSection key={detail.session_id} controller={annotations} />
-            )}
-
             {/* Qualification breakdown */}
             {detail.bant && Object.keys(detail.bant).length > 0 && (
               <section className="space-y-3">
@@ -505,6 +500,11 @@ export function LeadDetailDrawer({
                 </p>
               )}
             </section>
+
+            {/* Operator-private notes & tags (remounts per lead via key). */}
+            {annotations && (
+              <LeadAnnotationsSection key={detail.session_id} controller={annotations} />
+            )}
 
             <footer className="border-t border-[var(--ds-border)] pt-4 text-[12px] text-[var(--ds-text-subtle)]">
               Last active {formatDateTime(detail.last_active_at)}

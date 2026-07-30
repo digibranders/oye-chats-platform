@@ -2,8 +2,8 @@
  * Platform integration configurations for the OyeChats widget.
  *
  * Each platform provides:
- *  - id, name, category, description  — metadata for the selector grid
- *  - getSteps(botKey, env)            — returns an array of step objects
+ *  - id, name, category, description  - metadata for the selector grid
+ *  - getSteps(botKey, env)            - returns an array of step objects
  *    whose code snippets dynamically reflect the chosen environment.
  *
  * env is 'production' | 'development'.
@@ -193,7 +193,7 @@ const angular = {
         {
             title: 'Build and deploy',
             description:
-                'Run ng build and deploy the dist/ folder. The widget works with Angular Universal (SSR) as well — it only runs in the browser.',
+                'Run ng build and deploy the dist/ folder. The widget works with Angular Universal (SSR) as well - it only runs in the browser.',
             code: null,
         },
     ],

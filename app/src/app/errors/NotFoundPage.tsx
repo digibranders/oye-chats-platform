@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { EmptyState, PageContainer, buttonVariants } from '../../design-system';
 
 /**
- * NotFoundPage — the in-shell 404 for unknown authenticated routes.
+ * NotFoundPage - the in-shell 404 for unknown authenticated routes.
  *
  * Replaces the previous silent redirect-to-home so a mistyped or stale URL is
  * acknowledged (and stays in the address bar) rather than quietly bouncing the

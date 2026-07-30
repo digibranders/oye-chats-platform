@@ -7,7 +7,7 @@ import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
-import { getSessionKey, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
+import { readSessionId, writeSessionId, clearSessionId, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
@@ -176,9 +176,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // disappears as soon as the smooth scroll catches up — without the pulse
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
-    const [sessionId, setSessionId] = useState(() => {
-        try { return localStorage.getItem(getSessionKey()); } catch { return null; }
-    });
+    const [sessionId, setSessionId] = useState(() => readSessionId());
     const [showWelcome, setShowWelcome] = useState(isOnline);
     const [welcomeExiting, setWelcomeExiting] = useState(false);
     const [showLeadForm, setShowLeadForm] = useState(false);
@@ -579,7 +577,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         }));
                         setMessages(mapped);
                         setIsReturningUser(true);
-                        setShowWelcomeBackBanner(true);
+                        // "Welcome back" should only greet a genuine return after a
+                        // break — NOT a mid-conversation hop across subdomains, where
+                        // the shared-session cookie loads history seconds later and a
+                        // "welcome back" reads as nonsense. Gate the banner on how long
+                        // ago the last message was; unknown/unparseable timestamps fall
+                        // back to showing it (safe default).
+                        const RETURNING_GAP_MS = 30 * 60 * 1000; // 30 minutes
+                        const lastTs = mapped[mapped.length - 1]?.timestamp;
+                        const lastMs = lastTs ? new Date(lastTs).getTime() : NaN;
+                        const isGenuineReturn =
+                            !Number.isFinite(lastMs) || (Date.now() - lastMs) > RETURNING_GAP_MS;
+                        setShowWelcomeBackBanner(isGenuineReturn);
                         setHasMoreHistory(history.length >= 50);
                         setShowWelcome(false);
                     }
@@ -639,7 +648,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         pageContextRef.current = collectPageContext();
 
         const handleUnload = () => {
-            const sid = sessionId || localStorage.getItem(getSessionKey());
+            const sid = sessionId || readSessionId();
             if (sid && pageContextRef.current) {
                 sendTimeOnPage(sid, pageContextRef.current._load_time);
             }
@@ -956,13 +965,31 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     };
 
+    // ── Clear view (slash /clear) ───────────────────────────────────────────────
+    // Cosmetic wipe of the on-screen transcript — the server-side ChatSession
+    // and its ChatMessage rows are untouched, and the session_id stays the
+    // same so BANT context and any pending handoff continue seamlessly.
+    // Use case: the visitor scrolled a long, off-topic thread and wants a
+    // clean viewport without losing continuity with the bot.
+    const handleClearMessages = () => {
+        setMessages([{
+            id: 'welcome',
+            text: `Hi There, How can I help you today?`,
+            sender: 'bot',
+            timestamp: new Date().toISOString(),
+            feedback: null,
+        }]);
+        setShowWelcomeBackBanner(false);
+        setHasMoreHistory(false);
+    };
+
     // ── New chat ─────────────────────────────────────────────────────────────────
     const handleNewChat = () => {
         setIsInitializing(true);
-        localStorage.removeItem(getSessionKey());
+        clearSessionId({ shareDomain: settings?.session_share_domain });
         const newSession = `session_${crypto.randomUUID()}`;
         setSessionId(newSession);
-        localStorage.setItem(getSessionKey(), newSession);
+        writeSessionId(newSession, { shareDomain: settings?.session_share_domain });
         setShowWelcome(true);
         handoffTriggeredRef.current = false;
         handoffFormInjectedRef.current = false;
@@ -1037,7 +1064,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 onMetadata: (metadata) => {
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
-                        localStorage.setItem(getSessionKey(), metadata.session_id);
+                        writeSessionId(metadata.session_id, { shareDomain: settings?.session_share_domain });
                     }
                     // Send behavioral signals once per conversation
                     const resolvedSid = metadata.session_id || sessionId;
@@ -1266,7 +1293,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (!sessionId) {
             const newSession = `session_${crypto.randomUUID()}`;
             setSessionId(newSession);
-            localStorage.setItem(getSessionKey(), newSession);
+            writeSessionId(newSession, { shareDomain: settings?.session_share_domain });
         }
         if (handoffFormInjectedRef.current) return;
         handoffFormInjectedRef.current = true;
@@ -1277,7 +1304,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         } else {
             injectHandoffForm();
         }
-    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm]);
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, settings?.session_share_domain]);
 
     const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
     // Live chat availability state from the backend resolver. Set on the
@@ -1632,7 +1659,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const newSessionId = sessionId || `session_${crypto.randomUUID()}`;
         if (!sessionId) {
             setSessionId(newSessionId);
-            localStorage.setItem(getSessionKey(), newSessionId);
+            writeSessionId(newSessionId, { shareDomain: settings?.session_share_domain });
         }
         await submitLeadCapture(newSessionId, formData);
         markLeadCaptured();
@@ -2822,6 +2849,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onInputFocus={scrollToBottom}
                     onInputBlur={resyncViewport}
                     userHasSent={messages.some((m) => m.sender === 'user')}
+                    userMessageCount={messages.reduce((n, m) => (m.sender === 'user' ? n + 1 : n), 0)}
+                    onNewChat={chatMode === 'bot' && !isInitializing ? handleNewChat : undefined}
+                    onClearMessages={chatMode === 'bot' && !isInitializing ? handleClearMessages : undefined}
                     meetingBookingEnabled={!!settings.meeting_booking_enabled && !meetingBooked}
                     onBookMeeting={() => {
                         if (settings.meeting_booking_enabled && !meetingBooked) {

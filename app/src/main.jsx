@@ -6,7 +6,7 @@ import ErrorFallback from './components/ErrorFallback.jsx'
 import './index.css'
 import './design-system/tokens.css'
 // Admin Platform 2.0 entry. The strangler-fig migration is complete for the
-// primary surfaces — the legacy root (./App.jsx) and its dead pages/layouts
+// primary surfaces - the legacy root (./App.jsx) and its dead pages/layouts
 // have been removed; reused legacy modules (services, contexts, utils) remain.
 // The new root (./app/App) owns theming, so the old ThemeProvider wrapper is
 // gone from here.

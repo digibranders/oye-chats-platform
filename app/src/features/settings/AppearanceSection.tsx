@@ -16,10 +16,10 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
 ];
 
 /**
- * AppearanceSection — the Settings ▸ Appearance surface. One job: let the
+ * AppearanceSection - the Settings ▸ Appearance surface. One job: let the
  * user choose Light, Dark, or System. Pure client state via the
  * design-system `useTheme` hook (`ThemeProvider` persists the choice and
- * applies it before first paint) — no network calls.
+ * applies it before first paint) - no network calls.
  *
  * The three options render as an accessible radiogroup: arrow keys rove
  * focus AND select (matching native `<input type="radio">` behaviour), Home
@@ -66,7 +66,7 @@ export function AppearanceSection(): ReactElement {
         title={<span id="appearance-heading">Appearance</span>}
         description={
           theme === 'system'
-            ? `Match your device appearance — currently ${resolvedTheme}.`
+            ? `Match your device appearance - currently ${resolvedTheme}.`
             : 'Choose how OyeChats looks on this device.'
         }
       />

@@ -15,14 +15,14 @@ export interface PopoverTriggerProps {
 }
 
 export interface PopoverProps {
-  /** Renders the trigger element inline — spread the given props onto it. */
+  /** Renders the trigger element inline - spread the given props onto it. */
   trigger: (props: PopoverTriggerProps) => ReactNode;
   /** Renders the panel content; call `close()` from inside to dismiss. */
   children: (close: () => void) => ReactNode;
   /** Which edge of the panel anchors to the trigger. Defaults to `end` (right-aligned). */
   align?: PopoverAlign;
   /**
-   * ARIA role shared by the trigger's `aria-haspopup` and the panel — `menu`
+   * ARIA role shared by the trigger's `aria-haspopup` and the panel - `menu`
    * for action lists (profile menu), `dialog` for richer, non-menu content
    * (e.g. a notification feed). Defaults to `menu`. `menu` also enables
    * ArrowUp/ArrowDown roving between the panel's focusable items.
@@ -58,7 +58,7 @@ function getFocusable(panel: HTMLElement): HTMLElement[] {
  * viewport. Vertical: open below by default, flip above when the panel would
  * overflow the bottom edge and there's room above, otherwise clamp `top` so
  * the panel stays fully on-screen. `panelHeight` is 0 on the first pass
- * (panel not yet measured) — that resolves to the plain "below" placement,
+ * (panel not yet measured) - that resolves to the plain "below" placement,
  * which the post-mount re-measure then corrects before paint.
  */
 function computePosition(trigger: HTMLElement, panelHeight: number, offset: number): Position {
@@ -84,13 +84,13 @@ function computePosition(trigger: HTMLElement, panelHeight: number, offset: numb
 }
 
 /**
- * Popover — accessible, anchored floating panel rendered through a portal to
+ * Popover - accessible, anchored floating panel rendered through a portal to
  * `document.body`. Backs both the profile menu and the notification bell.
  *
  * Renders `fixed`-positioned from the trigger's live `getBoundingClientRect()`
  * (recomputed on open, and on window resize/scroll while open) rather than
  * `position: absolute`, because the TopBar header uses `backdrop-blur-md`,
- * which clips `absolute` descendants — an anchored dropdown living inside it
+ * which clips `absolute` descendants - an anchored dropdown living inside it
  * would be cut off at the header's bottom edge.
  *
  * Once open the panel is a focus trap: focus moves into it on open, Tab /
@@ -113,7 +113,7 @@ export function Popover({
   const [triggerEl, setTriggerEl] = useState<HTMLElement | null>(null);
   // The measured panel height, kept in state (not read off the ref) so the
   // click-reachable `recomputePosition`/`toggle` never touch a ref during a
-  // render-reachable path — that trips the React Compiler's ref-safety rule.
+  // render-reachable path - that trips the React Compiler's ref-safety rule.
   const [panelHeight, setPanelHeight] = useState(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
@@ -188,7 +188,7 @@ export function Popover({
       if (event.key === 'Tab') {
         const nodes = getFocusable(panel);
         if (nodes.length === 0) {
-          // Nothing tabbable — keep focus on the panel itself.
+          // Nothing tabbable - keep focus on the panel itself.
           event.preventDefault();
           panel.focus();
           return;

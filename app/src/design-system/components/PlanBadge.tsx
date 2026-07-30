@@ -8,7 +8,7 @@ export interface PlanBadgeProps {
 }
 
 /**
- * PlanBadge — compact plan-name pill (mandate shared component). Free
+ * PlanBadge - compact plan-name pill (mandate shared component). Free
  * renders neutral; every paid plan renders accent, so the badge doubles as a
  * cheap "are they paying?" visual cue anywhere a plan needs a one-glance label.
  */

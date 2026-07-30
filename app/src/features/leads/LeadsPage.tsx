@@ -1,5 +1,5 @@
 /**
- * LeadsPage — "Who are my qualified leads?"
+ * LeadsPage - "Who are my qualified leads?"
  *
  * One job: surface the people who chatted with your AI, ranked by how ready
  * they are to buy, with a one-glance pipeline summary up top and a click-to-open
@@ -8,7 +8,7 @@
  *
  * Data comes from the reused backend via {@link useLeads} (list + tier summary +
  * funnel) and {@link useLeadDetail} (drawer). Loading is derived from a status
- * enum, and every state — loading, empty, error, ready — is explained on screen.
+ * enum, and every state - loading, empty, error, ready - is explained on screen.
  */
 import { type ReactElement, useCallback, useMemo, useState } from 'react';
 import {
@@ -83,7 +83,7 @@ function csvField(value: string | number | null | undefined): string {
 /**
  * Build a CSV for a subset of leads entirely client-side. The server export
  * (`exportLeadsCsv`) only emits the full set, so "Export selected" assembles its
- * own file from the rows the user ticked — including their private tags.
+ * own file from the rows the user ticked - including their private tags.
  */
 function buildSelectedLeadsCsv(leads: Lead[], tagsFor: (sessionId: string) => readonly string[]): string {
   const header = ['Name', 'Email', 'Phone', 'Company', 'Quality', 'Score', 'Location', 'Tags', 'Last active'];
@@ -267,7 +267,7 @@ export function LeadsPage(): ReactElement {
   const botId = selectedBot?.id;
   const { isFree } = useEntitlements();
 
-  // Free-plan workspaces never get the list — the backend's `/leads` route
+  // Free-plan workspaces never get the list - the backend's `/leads` route
   // 403s for them. `useLeads` takes `enabled: false` so it never issues that
   // doomed request; a Free user (including one who deep-links `/leads`) sees
   // the upgrade teaser below instead of a broken fetch.
@@ -479,7 +479,7 @@ export function LeadsPage(): ReactElement {
         key: 'location',
         header: 'Location',
         render: (lead) => (
-          <span className="text-[12px] text-[var(--ds-text-muted)]">{lead.location || '—'}</span>
+          <span className="text-[12px] text-[var(--ds-text-muted)]">{lead.location || '-'}</span>
         ),
       },
       {
@@ -509,7 +509,7 @@ export function LeadsPage(): ReactElement {
   );
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  // Free plan: never render the list (or its loading/error states) — show the
+  // Free plan: never render the list (or its loading/error states) - show the
   // upgrade teaser, full stop. Takes priority over every other guard below so
   // a Free user who deep-links `/leads` always lands here, not on a skeleton
   // or empty state for data that was never fetched.
@@ -517,7 +517,7 @@ export function LeadsPage(): ReactElement {
     return (
       <PageContainer
         title="Leads"
-        description="The people who talked to your AI — sorted by how ready they are to buy."
+        description="The people who talked to your AI - sorted by how ready they are to buy."
       >
         <div className="mx-auto w-full max-w-md py-12">
           <LockedFeatureCard intent="view_leads" icon={Users} />
@@ -545,7 +545,7 @@ export function LeadsPage(): ReactElement {
         <EmptyState
           icon={Users}
           title="No leads yet"
-          description="Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here — ranked by how ready they are to buy."
+          description="Create your first AI chatbot and add it to your site. Every visitor who chats becomes a lead here - ranked by how ready they are to buy."
         />
       </PageContainer>
     );
@@ -558,7 +558,7 @@ export function LeadsPage(): ReactElement {
       disabled={isExporting || leads.length === 0}
     >
       <Download size={16} aria-hidden="true" />
-      {/* Export ignores the active table filters — it always emits the full
+      {/* Export ignores the active table filters - it always emits the full
           server-side lead set for the agent, so the label says so explicitly. */}
       {isExporting ? 'Exporting…' : 'Export all leads'}
     </Button>
@@ -567,7 +567,7 @@ export function LeadsPage(): ReactElement {
   return (
     <PageContainer
       title="Leads"
-      description="The people who talked to your AI — sorted by how ready they are to buy."
+      description="The people who talked to your AI - sorted by how ready they are to buy."
       actions={
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => void handleMarkAllRead()} disabled={!hasUnread}>
@@ -687,7 +687,7 @@ export function LeadsPage(): ReactElement {
             </div>
           </div>
 
-          {/* Result count — makes any active filter visible so a narrowed
+          {/* Result count - makes any active filter visible so a narrowed
               table never reads as data loss against the headline totals. */}
           <p className="text-[12px] text-[var(--ds-text-subtle)]" aria-live="polite">
             {filtered.length === leads.length
@@ -695,7 +695,7 @@ export function LeadsPage(): ReactElement {
               : `Showing ${filtered.length.toLocaleString()} of ${leads.length.toLocaleString()} leads`}
           </p>
 
-          {/* Bulk-action bar — appears only with a live selection. Exports the
+          {/* Bulk-action bar - appears only with a live selection. Exports the
               ticked rows to a CSV built client-side (tags included). */}
           {selectedIds.size > 0 && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-4 py-2.5">

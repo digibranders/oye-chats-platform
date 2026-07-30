@@ -20,7 +20,7 @@ function starColor(star: RatingStar): string {
 }
 
 /**
- * SatisfactionBreakdown — post-chat sentiment for this agent: the star-rating
+ * SatisfactionBreakdown - post-chat sentiment for this agent: the star-rating
  * distribution and the resolved / unresolved split. Both come from the optional
  * end-of-chat survey, so each half degrades to its own empty state.
  */

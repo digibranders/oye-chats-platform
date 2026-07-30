@@ -7,10 +7,10 @@ import {
 import { cn } from '../../lib/utils';
 
 /**
- * View-referrals modal — used by both the affiliate dashboard and the
+ * View-referrals modal - used by both the affiliate dashboard and the
  * super-admin affiliate drawer.
  *
- * The two contexts call different backend endpoints — the affiliate scope
+ * The two contexts call different backend endpoints - the affiliate scope
  * returns masked emails and no platform commission; the super-admin scope
  * returns the unmasked PII plus the platform's revenue cut. The shape is
  * otherwise identical, so this component stays surface-agnostic: the
@@ -19,17 +19,17 @@ import { cn } from '../../lib/utils';
  * platform's slice is rendered iff appropriate.
  *
  * Closes on backdrop click, ESC, and the X button. Locks body scroll while
- * open — consistent with CreateCodeModal / EditCodeModal in this folder.
+ * open - consistent with CreateCodeModal / EditCodeModal in this folder.
  */
 export default function ReferralsModal({
     open,
     onClose,
-    code,           // string — used as headline + fallback when fetch lags
+    code,           // string - used as headline + fallback when fetch lags
     fetcher,        // () => Promise<{code, breakdown, referrals}>
     isSuperAdmin = false,
 }) {
     // Single ``view`` object so the compiler-aware lint sees one setState
-    // per cycle — splitting into data/loading/error tripped the
+    // per cycle - splitting into data/loading/error tripped the
     // react-hooks/set-state-in-effect rule. Status is a small state machine
     // rather than a boolean so the UI can distinguish "never fetched" (idle)
     // from "actively loading" without juggling two booleans.
@@ -37,7 +37,7 @@ export default function ReferralsModal({
 
     // Reload whenever the modal opens for a different code. React Compiler's
     // ``set-state-in-effect`` rule flags the synchronous reset on line 1 of
-    // the effect body — but this is the canonical async-fetch pattern: the
+    // the effect body - but this is the canonical async-fetch pattern: the
     // alternative (deriving "is loading" from cached query state) requires a
     // data layer this surface doesn't have. Suppressed locally rather than
     // file-wide so any unrelated effect that picks up this state is still
@@ -122,7 +122,7 @@ export default function ReferralsModal({
                                     </h2>
                                     <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">
                                         {isSuperAdmin
-                                            ? 'Super-admin view — full PII and platform commission visible.'
+                                            ? 'Super-admin view - full PII and platform commission visible.'
                                             : 'Customers who signed up using this code. Emails are masked for privacy.'}
                                     </p>
                                 </div>
@@ -186,7 +186,7 @@ export default function ReferralsModal({
                                 </p>
                             </section>
 
-                            {/* Monthly revenue distribution — aggregate $ across all paying referrals. */}
+                            {/* Monthly revenue distribution - aggregate $ across all paying referrals. */}
                             <section className="space-y-2">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="flex items-center gap-1.5">
@@ -303,7 +303,7 @@ export default function ReferralsModal({
                                             No signups yet
                                         </p>
                                         <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1 max-w-sm mx-auto">
-                                            Share the code <code className="font-mono uppercase tracking-wider">{headline}</code> wherever you reach customers — Twitter, LinkedIn, your newsletter — and signups will show here.
+                                            Share the code <code className="font-mono uppercase tracking-wider">{headline}</code> wherever you reach customers - Twitter, LinkedIn, your newsletter - and signups will show here.
                                         </p>
                                     </div>
                                 ) : (
@@ -365,7 +365,7 @@ function BreakdownCard({ label, value, hint }) {
                 {label}
             </p>
             <p className="mt-1 text-lg font-bold tabular-nums leading-none text-surface-900 dark:text-surface-50">
-                {pct == null ? '—' : `${pct.toFixed(2)}%`}
+                {pct == null ? '-' : `${pct.toFixed(2)}%`}
             </p>
             {hint && (
                 <p className="mt-1 text-[10px] text-surface-500 dark:text-surface-400 truncate">{hint}</p>
@@ -379,7 +379,7 @@ function Avatar({ name }) {
     const display = (name || '?').trim();
     const initial = (display[0] || '?').toUpperCase();
     // Stable colour from name hash so the same customer keeps the same circle
-    // across reloads — purely aesthetic.
+    // across reloads - purely aesthetic.
     const palette = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'];
     let hash = 0;
     for (let i = 0; i < display.length; i++) hash = (hash * 31 + display.charCodeAt(i)) | 0;
@@ -396,15 +396,15 @@ function Avatar({ name }) {
 }
 
 function fmtDate(iso) {
-    if (!iso) return '—';
+    if (!iso) return '-';
     const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '—';
+    if (Number.isNaN(d.getTime())) return '-';
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /** Format an amount in minor units (cents/paise) with the right symbol. */
 function fmtMoney(cents, currency) {
-    if (cents == null) return '—';
+    if (cents == null) return '-';
     const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency || ''} `;
     const major = Number(cents) / 100;
     const formatted = Number.isInteger(major)
@@ -420,7 +420,7 @@ const MONEY_TINTS = {
     amber:   'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-500/30',
 };
 
-/** Aggregate-distribution card — one per slice (total / affiliate / customer / platform). */
+/** Aggregate-distribution card - one per slice (total / affiliate / customer / platform). */
 function MoneyCard({ icon, label, currency, cents, tint = 'slate' }) {
     return (
         <div className={cn('rounded-xl border px-3 py-2.5', MONEY_TINTS[tint])}>
@@ -457,7 +457,7 @@ function PlanChip({ slug }) {
     );
 }
 
-/** Per-row pricing tail — what this single customer contributes per month. */
+/** Per-row pricing tail - what this single customer contributes per month. */
 function RowPricing({ pricing, isSuperAdmin }) {
     if (!pricing || !pricing.full_price_cents) {
         return (

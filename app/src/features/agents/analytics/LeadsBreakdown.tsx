@@ -16,7 +16,7 @@ interface FunnelStage {
 }
 
 /**
- * LeadsBreakdown — the qualification funnel for this agent: how many
+ * LeadsBreakdown - the qualification funnel for this agent: how many
  * conversations became marketing-, sales-accepted-, and sales-qualified leads.
  * Bars are proportional to the total so drop-off between stages is visible.
  */

@@ -1,9 +1,9 @@
 /**
- * useAffiliateData — loads the affiliate self-service dashboard state.
+ * useAffiliateData - loads the affiliate self-service dashboard state.
  *
  * Fetches the profile, codes, and stats in parallel (one round-trip of latency,
  * not three) and coerces them into strict view-models. A 403 from the profile
- * endpoint means the signed-in client is not an enrolled affiliate — surfaced as
+ * endpoint means the signed-in client is not an enrolled affiliate - surfaced as
  * `notEnrolled` so the page can render an explanatory empty state instead of an
  * error. Exposes `reload` so mutations (create/edit/deactivate a code) can
  * refresh without a full remount.
@@ -48,7 +48,7 @@ export function useAffiliateData(): AffiliateData {
   const [stats, setStats] = useState<AffiliateStatsView | null>(null);
   const [nonce, setNonce] = useState(0);
 
-  // Reset the request state here (an event callback), not in the effect body —
+  // Reset the request state here (an event callback), not in the effect body -
   // synchronous setState inside an effect triggers cascading renders (and the
   // react-hooks lint rule). The effect below only sets state after an await.
   const reload = useCallback(() => {

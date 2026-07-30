@@ -18,7 +18,7 @@ const TABS: TabItem[] = [
 ];
 
 /**
- * InboxPage — answers "What are my visitors saying?".
+ * InboxPage - answers "What are my visitors saying?".
  *
  * One job: give an operator a single place to read and respond to visitors. Two
  * modes behind a tab: fully-wired offline messages (read, triage, reply, delete)

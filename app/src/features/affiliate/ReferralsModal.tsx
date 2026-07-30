@@ -1,9 +1,9 @@
 /**
- * ReferralsModal — the per-code referral detail.
+ * ReferralsModal - the per-code referral detail.
  *
  * Rebuilt from the legacy `components/affiliate/ReferralsModal.jsx` in the new
  * design language. Shows how each referred bill splits (commission breakdown),
- * the aggregate monthly-equivalent money the code pulls in (all INR now — the
+ * the aggregate monthly-equivalent money the code pulls in (all INR now - the
  * backend reports the billed currency, finding #8), and the list of customers
  * who signed up through the code (emails masked on the affiliate route).
  *
@@ -109,7 +109,7 @@ export function ReferralsModal({ open, onClose, codeId, codeName }: ReferralsMod
   const [requestedId, setRequestedId] = useState<number | null>(null);
 
   // Reset to the loading state during render (not in the effect) when a new
-  // code opens — synchronous setState in an effect body triggers cascading
+  // code opens - synchronous setState in an effect body triggers cascading
   // renders (and the react-hooks lint rule). This is the "adjust state during
   // render" pattern; the effect below only sets state after an await.
   if (open && codeId != null && requestedId !== codeId) {
@@ -145,7 +145,7 @@ export function ReferralsModal({ open, onClose, codeId, codeName }: ReferralsMod
   const hasPayers = (dist?.payingReferrals ?? 0) > 0;
 
   return (
-    <Modal open={open} onClose={onClose} size="lg" title={`Referrals — ${codeName ?? ''}`} description="Who signed up, and what each one earns you.">
+    <Modal open={open} onClose={onClose} size="lg" title={`Referrals - ${codeName ?? ''}`} description="Who signed up, and what each one earns you.">
       {loading ? (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -203,7 +203,7 @@ export function ReferralsModal({ open, onClose, codeId, codeName }: ReferralsMod
               <EmptyState
                 icon={Users}
                 title="No signups yet"
-                description="Share this code’s link — the customers who subscribe through it will appear here."
+                description="Share this code’s link - the customers who subscribe through it will appear here."
               />
             ) : (
               <ul className="divide-y divide-[var(--ds-border)]">

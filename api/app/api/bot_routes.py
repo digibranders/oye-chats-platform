@@ -77,6 +77,29 @@ def _derive_allowed_domains_from_website(website: str | None) -> list[str]:
     return [apex, f"*.{apex}"]
 
 
+def _normalize_session_share_domain(raw: str | None) -> str | None:
+    """Validate the cross-subdomain session-sharing domain.
+
+    Returns a bare, canonical hostname (``example.com``) or ``None`` when the
+    input is empty (which disables sharing). Unlike ``allowed_domains``, a
+    wildcard is rejected here: this value becomes a cookie ``Domain`` attribute,
+    which is a single parent domain and cannot be a wildcard pattern. The widget
+    prepends the leading dot at cookie-write time.
+
+    Raises ``ValueError`` with a user-friendly message on an invalid domain.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("session_share_domain must be a string")
+    if not raw.strip():
+        return None
+    normalized = normalize_domain_input(raw)
+    if normalized.startswith("*."):
+        raise ValueError("session_share_domain cannot be a wildcard — use the parent domain, e.g. example.com")
+    return normalized
+
+
 logger = logging.getLogger(__name__)
 
 # Hostnames that are OUR OWN surfaces (dashboard preview, marketing site, demo
@@ -254,6 +277,9 @@ class UpdateBotRequest(BaseModel):
     # Widget embed origin restriction.
     allowed_domains: list[str] | None = None
     domain_check_enabled: bool | None = None
+    # Cross-subdomain session continuity. Empty string clears it (disables
+    # sharing); a bare/registrable domain enables it.
+    session_share_domain: str | None = None
 
     @field_validator("allowed_domains")
     @classmethod
@@ -261,6 +287,13 @@ class UpdateBotRequest(BaseModel):
         if value is None:
             return None
         return _normalize_allowed_domains(value)
+
+    @field_validator("session_share_domain")
+    @classmethod
+    def _validate_session_share_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_session_share_domain(value)
 
     @field_validator("brand_tone_preset")
     @classmethod
@@ -360,6 +393,7 @@ class BotResponse(BaseModel):
     services_url: str | None = None  # Legacy field kept for compat.
     allowed_domains: list[str] = []
     domain_check_enabled: bool = False
+    session_share_domain: str | None = None
     is_active: bool
     created_at: str
 
@@ -443,6 +477,7 @@ def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
         services_url=bot.services_url,
         allowed_domains=list(bot.allowed_domains or []),
         domain_check_enabled=bool(bot.domain_check_enabled),
+        session_share_domain=bot.session_share_domain,
         is_active=bot.is_active,
         created_at=bot.created_at.isoformat() if bot.created_at else "",
     )
@@ -609,6 +644,10 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "calendly_url": bot.calendly_url,
         "zcal_url": bot.zcal_url,
         "calcom_url": bot.calcom_url,
+        # Cross-subdomain session continuity (null = disabled). When set, the
+        # widget mirrors the session id into a cookie scoped to this parent
+        # domain so the conversation survives navigation across subdomains.
+        "session_share_domain": bot.session_share_domain,
         "bant_cta_options": _build_public_cta_options(bot),
         # ── Service status ──
         # ``is_offline=True`` flips the widget into "leave a message" mode

@@ -1,5 +1,5 @@
 /**
- * GSTIN validation — a faithful client mirror of the backend validator
+ * GSTIN validation - a faithful client mirror of the backend validator
  * (`api/app/core/gstin.py`): structure regex + place-of-supply state code +
  * mod-36 check character. Kept in lockstep so the form rejects a malformed
  * GSTIN inline instead of surfacing it as a 422 round-trip.
@@ -11,7 +11,7 @@
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-/** GST state codes 01–38 plus 97 (Other Territory) — matches VALID_STATE_CODES. */
+/** GST state codes 01–38 plus 97 (Other Territory) - matches VALID_STATE_CODES. */
 export const GST_STATE_CODES: ReadonlySet<string> = new Set([
   ...Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, '0')),
   '97',
@@ -82,7 +82,7 @@ function computeCheckChar(body14: string): string {
   return CHARS[(36 - (total % 36)) % 36];
 }
 
-/** Structure + state code + checksum — the exact contract of `is_valid_gstin`. */
+/** Structure + state code + checksum - the exact contract of `is_valid_gstin`. */
 export function isValidGstin(raw: string): boolean {
   const gstin = normalizeGstin(raw || '');
   if (!GSTIN_RE.test(gstin)) return false;

@@ -1,6 +1,6 @@
 /**
  * Pure, framework-free helpers for the feedback log. Ported 1:1 from the
- * legacy `pages/Feedback.jsx:18-77` — same bucketing/sorting/CSV behavior,
+ * legacy `pages/Feedback.jsx:18-77` - same bucketing/sorting/CSV behavior,
  * now typed and unit-testable in isolation from any component.
  */
 import { type DateRange, type FeedbackFilter, type FeedbackItem } from './types';
@@ -95,7 +95,7 @@ export interface TopDownvotedItem {
 
 /**
  * Groups negative ratings by normalized question text and returns the top
- * `limit` most frequently downvoted prompts — the answers to fix first.
+ * `limit` most frequently downvoted prompts - the answers to fix first.
  * Ported from the legacy `buildTopDownvoted`.
  */
 export function buildTopDownvoted(

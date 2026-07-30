@@ -29,7 +29,7 @@ const DEFAULT_TEMPLATES: ReadonlyArray<{ label: string; body: string }> = [
   },
   {
     label: 'Sent the info',
-    body: "Hi {name},\n\nThank you for your message. We've sent the information you requested — please check your inbox.\n\nBest regards",
+    body: "Hi {name},\n\nThank you for your message. We've sent the information you requested - please check your inbox.\n\nBest regards",
   },
   {
     label: 'Marked resolved',
@@ -52,10 +52,10 @@ export interface MessageDetailProps {
 }
 
 /**
- * MessageDetail — the right-hand reading pane for one offline message. Shows who
+ * MessageDetail - the right-hand reading pane for one offline message. Shows who
  * wrote in, their message, and the operator's next actions: mark read/replied,
  * reply by email (pre-filled with a template or workspace quick reply), or
- * delete. Opening a reply only marks the message "read" — opening a mail client
+ * delete. Opening a reply only marks the message "read" - opening a mail client
  * isn't proof an email was sent, so "replied" stays an explicit operator
  * confirmation via the "Mark as replied" button.
  */

@@ -14,12 +14,12 @@ const HIDDEN_KEY = 'oc_studio_resume_hidden';
  * A customer who clicks "Skip to dashboard" mid-onboarding lands here. This
  * slim, dismissible banner
  * nudges them back into /build and self-hides the moment onboarding is complete
- * (server-derived from /auth/me — it can never drift from the truth) or when the
+ * (server-derived from /auth/me - it can never drift from the truth) or when the
  * user dismisses it. Affiliate-only accounts never see it.
  */
 export default function StudioResumeCard() {
   const navigate = useNavigate();
-  // null = unknown (loading / fetch error) — never render on an unknown state.
+  // null = unknown (loading / fetch error) - never render on an unknown state.
   const [onboardingComplete, setOnboardingComplete] = useState(null);
   const [affiliateOnly, setAffiliateOnly] = useState(false);
   const [hidden, setHidden] = useState(() => {
@@ -39,7 +39,7 @@ export default function StudioResumeCard() {
         setAffiliateOnly(Boolean(me?.is_affiliate_only));
       })
       .catch(() => {
-        // Leave `onboardingComplete` null so the card stays hidden on error —
+        // Leave `onboardingComplete` null so the card stays hidden on error -
         // we never nudge a user whose real state we couldn't confirm.
       });
     return () => {
@@ -55,7 +55,7 @@ export default function StudioResumeCard() {
     try {
       key = localStorage.getItem(STUDIO_RESUME_KEY) || '';
     } catch {
-      /* localStorage unavailable — fall back to the default first step */
+      /* localStorage unavailable - fall back to the default first step */
     }
     navigate(isMilestoneKey(key) ? `/build?m=${key}` : '/build');
   };
@@ -65,7 +65,7 @@ export default function StudioResumeCard() {
     try {
       localStorage.setItem(HIDDEN_KEY, 'true');
     } catch {
-      /* localStorage unavailable — the card just reappears next load */
+      /* localStorage unavailable - the card just reappears next load */
     }
   };
 
@@ -97,7 +97,7 @@ export default function StudioResumeCard() {
         <div>
           <p className="text-sm font-semibold text-[var(--text)]">Finish setting up your agent</p>
           <p className="text-sm text-[var(--text-muted)]">
-            Pick up the guided setup where you left off — train it, test it, and put it live.
+            Pick up the guided setup where you left off - train it, test it, and put it live.
           </p>
         </div>
       </div>

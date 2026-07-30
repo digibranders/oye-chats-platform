@@ -48,14 +48,16 @@ function errorMessage(cause: unknown): string {
 }
 
 /**
- * Loads every workspace-level analytics feed in parallel (no `bot_id` → all
- * agents aggregated) and exposes a single status machine. Loading is *derived*
- * from that machine rather than toggled inside the effect: the effect only
- * calls `setState` after an `await` (never synchronously during render), and a
- * `reloadToken` drives re-fetches. Lead stats are optional — a workspace with
- * qualification disabled still gets a full page.
+ * Loads every analytics feed in parallel and exposes a single status machine.
+ * When `botId` is a number, every request is scoped to that agent via the
+ * backend's `?bot_id=` filter; when `botId` is null (the shell's "All agents"
+ * scope), no filter is passed and the backend aggregates across the workspace.
+ * Loading is *derived* from the state machine rather than toggled inside the
+ * effect: `setState` only runs after an `await` (never synchronously during
+ * render), and a `reloadToken` drives re-fetches. Lead stats are optional - a
+ * workspace with qualification disabled still gets a full page.
  */
-export function useWorkspaceAnalytics(): UseWorkspaceAnalyticsResult {
+export function useWorkspaceAnalytics(botId: number | null = null): UseWorkspaceAnalyticsResult {
   const [reloadToken, setReloadToken] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [state, setState] = useState<{
@@ -66,16 +68,18 @@ export function useWorkspaceAnalytics(): UseWorkspaceAnalyticsResult {
 
   useEffect(() => {
     let active = true;
+    // The API wrappers treat `undefined` as "no filter" - normalize null → undefined.
+    const scope = botId ?? undefined;
 
     void (async () => {
       try {
         const [dashboard, activity, questions, ratings, leads] = await Promise.all([
-          getDashboardStats(),
-          getActivityStats(),
-          getTopQuestions(),
-          getRatingsSummary(),
-          // Optional surface — never fail the whole page if leads are unavailable.
-          getLeadStats().catch(() => ({}) as Record<string, unknown>),
+          getDashboardStats(scope),
+          getActivityStats(scope),
+          getTopQuestions(scope),
+          getRatingsSummary(scope),
+          // Optional surface - never fail the whole page if leads are unavailable.
+          getLeadStats(scope).catch(() => ({}) as Record<string, unknown>),
         ]);
 
         if (!active) return;
@@ -108,7 +112,7 @@ export function useWorkspaceAnalytics(): UseWorkspaceAnalyticsResult {
     return () => {
       active = false;
     };
-  }, [reloadToken]);
+  }, [reloadToken, botId]);
 
   const reload = useCallback(() => {
     setRefreshing(true);

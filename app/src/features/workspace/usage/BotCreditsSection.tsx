@@ -96,11 +96,11 @@ function PoolCard({ pool, onTopup }: { pool: PoolCredit; onTopup: (t: TopupTarge
 }
 
 /**
- * BotCreditsSection — the per-agent credit breakdown on the Usage page. When an
+ * BotCreditsSection - the per-agent credit breakdown on the Usage page. When an
  * account runs more than one credit pool (any agent on its own paid
  * subscription keeps an isolated balance), the aggregate hero can't answer
  * "which agent is running low?" or let you top up just that one. This lays the
- * pools side by side — the shared account pool plus one card per agent — each
+ * pools side by side - the shared account pool plus one card per agent - each
  * with its own balance, plan-grant progress, reset date, and a scoped top-up.
  */
 export function BotCreditsSection({ pools, onTopup }: BotCreditsSectionProps): ReactElement | null {

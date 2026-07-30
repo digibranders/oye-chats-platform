@@ -2,7 +2,7 @@ import { Clock } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 /**
- * BusinessHoursEditor — reusable business hours UI.
+ * BusinessHoursEditor - reusable business hours UI.
  *
  * Was previously inlined in the workspace Settings page; now lives in
  * Team → Departments → Edit so each department can have its own schedule.
@@ -23,8 +23,8 @@ import { cn } from '../lib/utils';
  *
  * Props:
  *   - value         : current business hours config (or null)
- *   - onChange      : (next) => void  — called on every edit
- *   - saving        : optional bool — render a spinner if true
+ *   - onChange      : (next) => void  - called on every edit
+ *   - saving        : optional bool - render a spinner if true
  *   - disabled      : optional bool
  */
 
@@ -93,7 +93,7 @@ export default function BusinessHoursEditor({ value, onChange, disabled = false 
 
     return (
         <div className="space-y-4">
-            {/* Master enable toggle — null/false means "always open" so the
+            {/* Master enable toggle - null/false means "always open" so the
                 state resolver short-circuits without checking days. */}
             <div className="flex items-center justify-between gap-3">
                 <div>

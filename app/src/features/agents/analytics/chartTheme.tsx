@@ -30,7 +30,7 @@ type ChartTooltipProps = TooltipProps<ValueType, NameType> & {
 };
 
 /**
- * ChartTooltip — a design-system-styled Recharts tooltip. Renders the hovered
+ * ChartTooltip - a design-system-styled Recharts tooltip. Renders the hovered
  * label and value on a raised surface so it reads in both themes (the default
  * white Recharts tooltip is invisible in dark mode).
  */

@@ -43,13 +43,13 @@ interface FeedbackTrendChartProps {
 }
 
 /**
- * FeedbackTrendChart — daily positive-rate trend (last 14 buckets). Restyled
+ * FeedbackTrendChart - daily positive-rate trend (last 14 buckets). Restyled
  * port of the legacy CSAT trend line (`pages/Feedback.jsx:222-239`). The
  * caller decides whether there's enough signal to render (matches the legacy
  * `trendData.length > 1` gate).
  *
- * Colors come from `useChartPalette()` as concrete, theme-aware values — the
- * same hook the sibling `MessageTrendChart` uses — because Recharts renders
+ * Colors come from `useChartPalette()` as concrete, theme-aware values - the
+ * same hook the sibling `MessageTrendChart` uses - because Recharts renders
  * `stroke`/`fill`/tick/grid/cursor straight to SVG presentation attributes,
  * which do NOT resolve CSS `var(--…)` custom properties. The palette has no
  * dedicated success color, so the positive-rate line uses the lead accent,

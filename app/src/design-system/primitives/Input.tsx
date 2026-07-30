@@ -3,7 +3,7 @@ import { cn } from '../lib/cn';
 
 export type InputProps = InputHTMLAttributes<HTMLInputElement>;
 
-/** Input — the standard single-line text field. */
+/** Input - the standard single-line text field. */
 export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, ...props }, ref) => (
   <input
     ref={ref}

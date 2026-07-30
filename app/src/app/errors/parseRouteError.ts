@@ -11,13 +11,13 @@ export interface ParsedRouteError {
   status?: number;
   title: string;
   description: string;
-  /** Technical detail (message + stack). Surfaced in dev only — never to users. */
+  /** Technical detail (message + stack). Surfaced in dev only - never to users. */
   detail?: string;
 }
 
 /**
- * Turn whatever `useRouteError()` returns — a router error response, a thrown
- * `Error`, or an arbitrary value — into consistent, human-readable copy.
+ * Turn whatever `useRouteError()` returns - a router error response, a thrown
+ * `Error`, or an arbitrary value - into consistent, human-readable copy.
  */
 export function parseRouteError(error: unknown): ParsedRouteError {
   if (isRouteErrorResponse(error)) {

@@ -14,6 +14,13 @@ import litellm
 from arq import cron
 from arq.connections import RedisSettings
 
+# Import app.config eagerly so its module-level load_dotenv() runs before
+# _parse_redis_settings() (below) reads REDIS_URL at class-body time. Task
+# modules only import app.config lazily inside function bodies, so without
+# this the worker sees an empty environment and fails at import with
+# "REDIS_URL is required".
+import app.config  # noqa: F401
+
 # Same fix as app/main.py — silently drop provider-unsupported params
 # (e.g. temperature=0 on gpt-5 family) so background tasks that share
 # llm_service.py (BANT extraction, brand-tone extraction, etc.) don't

@@ -8,7 +8,7 @@ interface FeedbackSummaryBarProps {
 }
 
 /**
- * FeedbackSummaryBar — total ratings, positive rate, negative count, and a
+ * FeedbackSummaryBar - total ratings, positive rate, negative count, and a
  * proportional progress bar. Restyled port of the legacy summary bar
  * (`pages/Feedback.jsx:197-218`), same figures.
  */

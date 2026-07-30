@@ -4,12 +4,12 @@ import { Button, StatusBadge, cn } from '../../../design-system';
 import { formatCredits, formatDate, formatMoneyMinor, type PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 
-/** A subscription that hasn't converted to paid yet — its own plan card offers activation. */
+/** A subscription that hasn't converted to paid yet - its own plan card offers activation. */
 function isUnconverted(status: string | null | undefined): boolean {
   return status === 'trialing' || status === 'trial_expired';
 }
 
-/** Short, differentiated highlights per card — the matrix below carries the full grid. */
+/** Short, differentiated highlights per card - the matrix below carries the full grid. */
 function highlights(plan: PlanView): string[] {
   const out = [
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
@@ -25,7 +25,7 @@ function highlights(plan: PlanView): string[] {
 
 /**
  * Price for a card. On the annual cycle we lead with the monthly-EQUIVALENT
- * (annual ÷ 12) and caption the annual total billed — the same two-figure
+ * (annual ÷ 12) and caption the annual total billed - the same two-figure
  * presentation as the public pricing page, so the headline stays comparable
  * month-to-month across cycles while staying honest about what's charged.
  */
@@ -51,20 +51,20 @@ export interface PlanCardsProps {
   currentSlug: string;
   cycle: BillingCycle;
   onSelect: (plan: PlanView) => void;
-  /** Current subscription status — drives the trial → paid activation CTA. */
+  /** Current subscription status - drives the trial → paid activation CTA. */
   currentStatus?: string | null;
-  /** Trial end date (ISO) — shown on the trialing plan's own card. */
+  /** Trial end date (ISO) - shown on the trialing plan's own card. */
   trialEnd?: string | null;
 }
 
 /**
- * PlanCards — the plan grid on Billing ▸ Plans. This is a management surface, so
+ * PlanCards - the plan grid on Billing ▸ Plans. This is a management surface, so
  * it obeys one rule that keeps it from reading like a marketing page: **one
  * accent, one primary action**. The current plan is a muted "you're here" card
- * with a ghost, disabled CTA — never an accent border. The single violet accent
+ * with a ghost, disabled CTA - never an accent border. The single violet accent
  * (border + filled CTA) goes to exactly one card: the *recommended upgrade* (the
  * cheapest tier above the current one). Downgrades get a deliberately quiet CTA.
- * No "Popular" ribbon — "popular" is a nudge for anonymous visitors; a customer
+ * No "Popular" ribbon - "popular" is a nudge for anonymous visitors; a customer
  * needs "current" and "recommended", which are different semantics.
  */
 export function PlanCards({
@@ -77,7 +77,7 @@ export function PlanCards({
 }: PlanCardsProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
 
-  // While trialing, the hero action is converting THIS trial to paid — so the
+  // While trialing, the hero action is converting THIS trial to paid - so the
   // single accent goes to the current (trial) plan's own card, and the upgrade
   // recommendation is suppressed to keep one accent per view.
   const trialing = isUnconverted(currentStatus);
@@ -95,14 +95,14 @@ export function PlanCards({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {ordered.map((plan) => {
         const isCurrent = plan.slug === currentSlug;
-        // The customer is on this plan but hasn't paid yet — its card converts
+        // The customer is on this plan but hasn't paid yet - its card converts
         // the trial to a paid subscription instead of showing a dead button.
         const isTrialingCurrent = isCurrent && trialing;
         const isRecommended = plan.slug === recommendedSlug;
         const isDowngrade = !isCurrent && plan.monthlyPriceMinor < currentPrice;
         const { amount, suffix, billed } = price(plan, cycle);
 
-        // Exactly one accent: the recommended upgrade, or — while trialing — the
+        // Exactly one accent: the recommended upgrade, or - while trialing - the
         // current plan's own card (its activation is the priority action).
         const cardTone =
           isRecommended || isTrialingCurrent
@@ -177,12 +177,12 @@ export function PlanCards({
               ))}
             </ul>
 
-            {/* Trial reassurance on the plan being trialed — states the deadline
+            {/* Trial reassurance on the plan being trialed - states the deadline
                 and that activating keeps it, before the CTA. */}
             {isTrialingCurrent && (
               <p className="mt-4 text-[12px] leading-relaxed text-[var(--ds-accent-text)]">
                 {trialEnd
-                  ? `Trial ends ${formatDate(trialEnd)}. Add a payment method to keep ${plan.name} — you won’t be charged until it ends.`
+                  ? `Trial ends ${formatDate(trialEnd)}. Add a payment method to keep ${plan.name} - you won’t be charged until it ends.`
                   : `Add a payment method to keep ${plan.name} when your trial ends.`}
               </p>
             )}

@@ -4,17 +4,17 @@ import { cn } from '../../lib/utils';
 import { daysUntil, formatTrialDate, trialDaysLeft } from '../../utils/trial';
 
 /**
- * TrialUpgradeBanner — the missing "you decided to pay, here's the button"
+ * TrialUpgradeBanner - the missing "you decided to pay, here's the button"
  * surface for two moments in the free-trial lifecycle:
  *
- *   1. **In-trial** (`subscription.status === 'trialing'`) — nudges the
+ *   1. **In-trial** (`subscription.status === 'trialing'`) - nudges the
  *      customer to authorise a paid mandate before the trial expires, so
  *      the chatbot never goes offline. Copy softens for the first few
  *      days, sharpens to warning at ≤2 days left, escalates to alarm on
  *      the day of expiry.
  *
  *   2. **In grace window** (`subscription.status === 'trial_expired'` with
- *      `data_retention_until` still in the future) — the bot is already
+ *      `data_retention_until` still in the future) - the bot is already
  *      showing the offline-message payload to visitors, but the workspace
  *      data is preserved for another 15 days (see `TRIAL_DATA_RETENTION_DAYS`
  *      in the backend). Copy emphasises the deletion deadline instead of
@@ -30,7 +30,7 @@ export default function TrialUpgradeBanner({
   subscription,
   planName,
   onUpgradeClick,
-  // Test hook — freeze the reference "now" for deterministic snapshots.
+  // Test hook - freeze the reference "now" for deterministic snapshots.
   nowMs: nowMsProp,
 }) {
   const [now, setNow] = useState(() => nowMsProp ?? Date.now());
@@ -42,7 +42,7 @@ export default function TrialUpgradeBanner({
 
   // Session-scoped dismissal for the LOW-urgency in-trial banner only.
   // High-urgency (≤3 days left, or any post-trial grace state) intentionally
-  // ignores this — that banner is a "your data is about to be deleted"
+  // ignores this - that banner is a "your data is about to be deleted"
   // notice, not a marketing nudge, so it must not be dismissable.
   const [dismissed, setDismissed] = useState(false);
 
@@ -70,7 +70,7 @@ export default function TrialUpgradeBanner({
       const daysLeft = daysUntil(retentionIso, now);
       if (daysLeft === null) return null;
       // Once the retention window has itself elapsed, the purge cron will
-      // fire on its next tick — nothing to upsell, hide the banner.
+      // fire on its next tick - nothing to upsell, hide the banner.
       if (daysLeft < 0) return null;
       const urgency = daysLeft <= 3 ? 'alarm' : daysLeft <= 7 ? 'warning' : 'warning';
       return { kind: 'trial_expired', daysLeft, deadlineIso: retentionIso, urgency };
@@ -191,7 +191,7 @@ function copyFor(view, planName) {
     };
   }
 
-  // trial_expired — grace window
+  // trial_expired - grace window
   if (view.daysLeft <= 0) {
     return {
       headline: 'Your workspace is scheduled for deletion today.',
@@ -206,11 +206,11 @@ function copyFor(view, planName) {
       body:
         `Your${planLabel} trial has ended, and your chatbot is offline on ` +
         `visitor sites. Upgrade before ${deadline} to keep your knowledge base, ` +
-        `leads and settings — after that, everything is permanently deleted.`,
+        `leads and settings - after that, everything is permanently deleted.`,
     };
   }
   return {
-    headline: 'Your trial has ended — your chatbot is offline.',
+    headline: 'Your trial has ended - your chatbot is offline.',
     body:
       `Visitors currently see your offline message. Your workspace (knowledge ` +
       `base, leads, bot settings) stays intact until ${deadline}, then gets ` +

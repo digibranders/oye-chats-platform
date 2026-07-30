@@ -4,7 +4,7 @@ import { MessageCircle } from 'lucide-react';
 import { FeedbackModal, type FeedbackTab } from './feedback/FeedbackModal';
 
 /**
- * FeedbackLauncher — the right-edge "Feedback" tab (desktop-only) that opens
+ * FeedbackLauncher - the right-edge "Feedback" tab (desktop-only) that opens
  * the admin → OyeChats product-feedback modal (`FeedbackModal`). Mounted once
  * in `AppShell`, so it appears on every authenticated page but never on
  * Launch Studio, a full-screen onboarding route rendered outside the shell.

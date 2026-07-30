@@ -43,7 +43,7 @@ function DeveloperAccessCard({
 }
 
 /**
- * Developer access — Webhooks and API access, gated on the `webhooks` and
+ * Developer access - Webhooks and API access, gated on the `webhooks` and
  * `api_access` plan features. Advanced doesn't own the actual management UI
  * for either (Webhooks live on Workspace ▸ Integrations, API keys on
  * Workspace ▸ API keys); on an entitled plan this section is an honest

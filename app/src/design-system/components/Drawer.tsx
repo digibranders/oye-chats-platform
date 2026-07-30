@@ -22,7 +22,7 @@ export interface DrawerProps {
   description?: ReactNode;
   /** Panel width preset. Defaults to `sm`. */
   width?: DrawerWidth;
-  /** Disable ESC / backdrop dismissal — e.g. while a payment is in flight. */
+  /** Disable ESC / backdrop dismissal - e.g. while a payment is in flight. */
   dismissible?: boolean;
   /** Footer content pinned below the scrollable body. */
   footer?: ReactNode;
@@ -60,10 +60,10 @@ function releaseScrollLock(): void {
 }
 
 /**
- * Drawer — a right-anchored, full-height sheet (mandate shared component).
+ * Drawer - a right-anchored, full-height sheet (mandate shared component).
  * Same a11y contract as {@link Modal} (portal, scrim, `role="dialog"
  * aria-modal`, focus trap, ESC-to-close, scroll lock, focus restoration) but
- * slides in from the trailing edge — the right surface for focused confirm /
+ * slides in from the trailing edge - the right surface for focused confirm /
  * detail flows that shouldn't blank the whole page. Theme-aware via `--ds-*`.
  */
 export function Drawer({

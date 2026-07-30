@@ -49,7 +49,7 @@ function draftsEqual(a: AdvancedDraft, b: AdvancedDraft): boolean {
 }
 
 /**
- * AdvancedPage — the agent "Advanced" tab. Answers: *"How do I configure
+ * AdvancedPage - the agent "Advanced" tab. Answers: *"How do I configure
  * technical behaviour?"* It gathers the power-user knobs (answering scope,
  * lead-qualification framework, widget behaviour flags, timing & reliability)
  * onto one draft-and-save surface. All data is the reused Bot payload, loaded
@@ -71,7 +71,7 @@ export function AdvancedPage(): ReactElement {
 
   // Reset the surface when the URL switches to a different agent (the component
   // stays mounted across `:agentId` changes). Done as a render-phase adjustment
-  // — React's recommended pattern for resetting state on a prop change — so the
+  // - React's recommended pattern for resetting state on a prop change - so the
   // skeleton shows immediately and no stale draft, saved banner, or error card
   // from the previous agent leaks in before the new fetch resolves.
   const [loadedAgentId, setLoadedAgentId] = useState<number | null>(agentId);
@@ -255,10 +255,7 @@ export function AdvancedPage(): ReactElement {
 
   return (
     <div>
-      <PageContainer
-        title="Advanced"
-        description="How your agent decides what to answer, qualifies leads, and behaves in the widget. These are power-user settings — the defaults suit most sites."
-      >
+      <PageContainer>
         {loadError ? (
           <Card className="flex flex-col items-start gap-3 p-5 sm:flex-row sm:items-center">
             <AlertTriangle size={18} className="shrink-0 text-[var(--ds-danger)]" aria-hidden="true" />
@@ -311,7 +308,7 @@ export function AdvancedPage(): ReactElement {
 
             <DeveloperAccessSection />
 
-            {/* Save bar — appears once there are unsaved edits. A saved
+            {/* Save bar - appears once there are unsaved edits. A saved
                 confirmation persists (keyed by savedTick) until the next edit. */}
             {dirty ? (
               <div className="sticky bottom-4 z-10 mt-2">

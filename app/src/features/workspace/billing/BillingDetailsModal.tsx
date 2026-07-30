@@ -27,7 +27,7 @@ export interface BillingDetailsModalProps {
 }
 
 /**
- * BillingDetailsModal — edit the legal/tax identity printed on invoices. Loads
+ * BillingDetailsModal - edit the legal/tax identity printed on invoices. Loads
  * the current record, saves only changed fields (PATCH semantics ported from
  * the legacy card), and propagates the country to `CurrencyProvider` so prices
  * across the app flip to the charged currency immediately. Not a payment flow.
@@ -185,7 +185,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="Country"
-              hint="ISO-2 code — drives your billing currency."
+              hint="ISO-2 code - drives your billing currency."
               error={errors.billing_country}
             >
               <Input
@@ -241,7 +241,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
             <Field
               label="State"
               hint={
-                manualStateName ? `${manualStateName}.` : 'GST state code — only needed when no GSTIN is set.'
+                manualStateName ? `${manualStateName}.` : 'GST state code - only needed when no GSTIN is set.'
               }
               error={errors.billing_state_code}
             >
@@ -282,7 +282,7 @@ function Field({
     <label className="block">
       <span className="mb-1.5 block text-[12px] font-medium text-[var(--ds-text-muted)]">{label}</span>
       {children}
-      {/* Error wins over the hint — one line of guidance beneath the field. */}
+      {/* Error wins over the hint - one line of guidance beneath the field. */}
       {error ? (
         <span className="mt-1 flex items-start gap-1 text-[11px] text-[var(--ds-danger)]">
           <AlertCircle size={12} className="mt-px shrink-0" />

@@ -1,6 +1,6 @@
 /**
  * Type shim for the reused legacy platform-integration data
- * (`data/platformIntegrations.js`) — pure data/logic, reused as-is; the Deploy
+ * (`data/platformIntegrations.js`) - pure data/logic, reused as-is; the Deploy
  * UI is rebuilt fresh in TS on the new design system.
  */
 export type PlatformEnv = 'production' | 'development';

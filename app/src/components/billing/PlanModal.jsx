@@ -18,7 +18,7 @@ import { cn } from '../../lib/utils';
 import { useCurrency } from '../../context/CurrencyContext';
 
 // Override at build time via VITE_SALES_EMAIL when the sales address ever
-// changes — same env-driven pattern as VITE_API_URL elsewhere in the app.
+// changes - same env-driven pattern as VITE_API_URL elsewhere in the app.
 const SUPPORT_EMAIL = import.meta.env.VITE_SALES_EMAIL || 'support@oyechats.com';
 
 // Slug → tier-card metadata. Kept here so the modal can render a fallback
@@ -48,13 +48,13 @@ const ACCENTS = {
 };
 
 /**
- * Plan picker / upgrade modal — the centrepiece of the Billing → Plan & seats
+ * Plan picker / upgrade modal - the centrepiece of the Billing → Plan & seats
  * tab. Renders a two-column layout: tier rail on the left, focus-pane on the
  * right with the selected plan's price, features, and a context-aware CTA.
  *
  * All prices are shown in USD. All checkout flows go through Razorpay.
  *
- * Annual toggle persists in component state only — the prior selection on
+ * Annual toggle persists in component state only - the prior selection on
  * close is discarded (intentional; re-opening from a clean slate prevents
  * "wait, I thought I was looking at monthly?" surprises).
  */
@@ -80,7 +80,7 @@ export default function PlanModal({
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
     // Geo profile from /subscriptions/geo. Always display_currency: "USD".
-    // Null while first fetch is in flight — components fall back to plan-row
+    // Null while first fetch is in flight - components fall back to plan-row
     // USD columns until it lands.
     const [geo, setGeo] = useState(null);
 
@@ -95,12 +95,12 @@ export default function PlanModal({
     const [appliedCode, setAppliedCode] = useState(null);
     const [discountPct, setDiscountPct] = useState(0);
     const referralInputRef = useRef(null);
-    // Informational (non-error) checkout notice — e.g. "payment cancelled".
+    // Informational (non-error) checkout notice - e.g. "payment cancelled".
     const [submitNotice, setSubmitNotice] = useState('');
 
     // Currency/country come from the ACCOUNT (set once in Billing details or at
     // signup, honoured app-wide via CurrencyContext). The plan modal has no
-    // country picker of its own — Billing details is the single place to change
+    // country picker of its own - Billing details is the single place to change
     // it; here we just reflect the account's currency.
     const { country: acctCountry, currency: acctCurrency } = useCurrency();
     const effectiveCountry = acctCountry || geo?.country || null;
@@ -123,7 +123,7 @@ export default function PlanModal({
     }, [open, submitting, onClose]);
 
     // Lazy-load the plan list whenever the modal opens. Reusing the
-    // /subscriptions/plans payload — no separate "presentation plans"
+    // /subscriptions/plans payload - no separate "presentation plans"
     // endpoint, since the same rows feed checkout, change-plan, and
     // the marketing site.
     useEffect(() => {
@@ -137,7 +137,7 @@ export default function PlanModal({
         setSelectedSlug(currentPlanSlug || MOST_POPULAR_SLUG);
         // Reset referral state on every open so we don't flash a previous
         // session's chip while the new fetch resolves. Persisting it across
-        // close/reopen would also be wrong semantically — the user might
+        // close/reopen would also be wrong semantically - the user might
         // intend a different code on a second pass.
         setReferralInput('');
         setReferralStatus('idle');
@@ -147,7 +147,7 @@ export default function PlanModal({
         setSubmitNotice('');
         // Standing attribution: an account with a referral code attached gets
         // its discount applied server-side at checkout no matter what this
-        // modal shows — so show the permanent badge, not an empty input that
+        // modal shows - so show the permanent badge, not an empty input that
         // implies "no discount" (prod confusion, 2026-07-02).
         getReferralStatus().then((rs) => {
             if (cancelled || !rs?.attributed) return;
@@ -158,7 +158,7 @@ export default function PlanModal({
         Promise.all([getSubscriptionPlans(), getBillingGeo().catch(() => null)])
             .then(([rows, geoProfile]) => {
                 if (cancelled) return;
-                // Defensive sort — backend already sort_order ASC but never
+                // Defensive sort - backend already sort_order ASC but never
                 // trust the wire to be stable.
                 const sorted = [...(rows || [])].sort(
                     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
@@ -214,7 +214,7 @@ export default function PlanModal({
     }
 
     // NOTE: there is deliberately no "clear referral" handler. Attribution
-    // is first-touch and permanent server-side (clients.referral_code_id) —
+    // is first-touch and permanent server-side (clients.referral_code_id) -
     // the old X button only reset local state while checkout still charged
     // the discounted price, which read as a billing bug (prod, 2026-07-02).
 
@@ -244,7 +244,7 @@ export default function PlanModal({
         }
 
         // Trial-start path. When the user explicitly clicked "Upgrade"
-        // (actionKind='paid') we deliberately skip the trial — that's the
+        // (actionKind='paid') we deliberately skip the trial - that's the
         // whole point of the two-button shape. ``actionKind='auto'`` is the
         // legacy single-button code path: take the trial when eligible.
         const trialEligible = canStartTrial({
@@ -265,7 +265,7 @@ export default function PlanModal({
             } catch (err) {
                 // The backend's 409 ``already_trialed`` and 400
                 // ``plan_not_trialable`` carry useful copy in
-                // ``err.message`` — surface them straight to the user
+                // ``err.message`` - surface them straight to the user
                 // rather than swallowing into a generic banner.
                 setSubmitError(err?.message || 'Could not start your free trial.');
             } finally {
@@ -276,7 +276,7 @@ export default function PlanModal({
 
         // Note: we no longer short-circuit to a mailto when geo signals
         // checkout isn't available. Every customer who reaches a paid plan
-        // CTA goes through the real checkout — if the gateway truly can't
+        // CTA goes through the real checkout - if the gateway truly can't
         // accept their card the backend returns a 4xx with a usable
         // message, which beats a "Contact sales" dead end every time.
 
@@ -331,11 +331,11 @@ export default function PlanModal({
                     onClose();
                     return;
                 } catch (cbErr) {
-                    // User-dismissed isn't an error to surface — they may
+                    // User-dismissed isn't an error to surface - they may
                     // come back to it. Anything else, we show as-is so the
                     // user sees the failure reason from Razorpay.
                     if (cbErr?.code === 'dismissed') {
-                        setSubmitNotice('Payment cancelled — you have not been charged.');
+                        setSubmitNotice('Payment cancelled - you have not been charged.');
                         return;
                     }
                     throw cbErr;
@@ -354,7 +354,7 @@ export default function PlanModal({
                 return;
             }
 
-            // New paid→paid Razorpay downgrade path — the backend queues the
+            // New paid→paid Razorpay downgrade path - the backend queues the
             // cutover at period end instead of swapping immediately. Surface
             // the effective date so the parent can render a "switching on X"
             // banner / toast.
@@ -375,7 +375,7 @@ export default function PlanModal({
             // change-plan axios path exposes it under err.response.data.detail.
             const detail = err?.response?.data?.detail ?? err?.detail;
 
-            // International (USD) billing isn't live yet — the backend returns a
+            // International (USD) billing isn't live yet - the backend returns a
             // structured intl_usd_pending. Show a friendly contact-sales notice
             // rather than a red error.
             if (detail && typeof detail === 'object' && detail.reason === 'intl_usd_pending') {
@@ -385,7 +385,7 @@ export default function PlanModal({
                 );
                 return;
             }
-            // Seat-overflow on a downgrade — the customer has more active
+            // Seat-overflow on a downgrade - the customer has more active
             // operators than the target plan allows. The backend's payload
             // includes ``active_seats`` / ``allowed_seats`` / ``excess`` so
             // we can render specific copy ("Deactivate 3 operators") instead
@@ -438,7 +438,7 @@ export default function PlanModal({
                                     Choose a plan
                                 </h2>
                                 <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">
-                                    Every plan ships with the embeddable chat widget. Upgrade any time —
+                                    Every plan ships with the embeddable chat widget. Upgrade any time -
                                     we prorate the difference automatically. Pay with card or UPI.
                                 </p>
                             </div>
@@ -456,10 +456,10 @@ export default function PlanModal({
                             </div>
                         </div>
 
-                        {/* Body — two-pane on md+, stacked on mobile */}
+                        {/* Body - two-pane on md+, stacked on mobile */}
                         <div className="flex-1 overflow-y-auto">
                             <div className="grid md:grid-cols-[280px_1fr] gap-0">
-                                {/* Left rail — tier picker */}
+                                {/* Left rail - tier picker */}
                                 <div className="p-4 md:p-5 md:border-r border-surface-200 dark:border-surface-800 space-y-3 bg-surface-50/60 dark:bg-surface-950/40">
                                     {loading && plans.length === 0 ? (
                                         Array.from({ length: 4 }).map((_, i) => (
@@ -492,12 +492,12 @@ export default function PlanModal({
                                     )}
                                 </div>
 
-                                {/* Right pane — focused plan.
+                                {/* Right pane - focused plan.
                                     ``min-h`` reserves vertical space so the modal stops
                                     pumping up/down as the user clicks between plans with
                                     different feature counts. The number is sized to fit
                                     Standard (the busiest tier) without making Free look
-                                    awkwardly tall — anything taller scrolls inside the
+                                    awkwardly tall - anything taller scrolls inside the
                                     outer body's ``overflow-y-auto`` instead. */}
                                 <div className="p-5 md:p-7 md:min-h-[560px]">
                                     {selected ? (
@@ -619,7 +619,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
             aria-pressed={isSelected}
             className={cn(
                 // Larger padding + min-height keeps every tier card the same
-                // size regardless of description length — no more "Free" being
+                // size regardless of description length - no more "Free" being
                 // shorter than "Standard" in the rail.
                 'relative w-full text-left rounded-xl border px-4 py-3.5 min-h-[88px]',
                 'transition-colors duration-200 group',
@@ -633,7 +633,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
                     Most popular
                 </span>
             )}
-            {/* Title row — icon + name + (optional) current chip + price */}
+            {/* Title row - icon + name + (optional) current chip + price */}
             <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                     <span className={cn(
@@ -704,7 +704,7 @@ function FocusedPlan({
                 </p>
             </div>
 
-            {/* Trial-context strip — rendered inline in the modal so a customer
+            {/* Trial-context strip - rendered inline in the modal so a customer
                 looking at their current plan card can see AT A GLANCE which
                 lifecycle state they're in and what will happen if they don't
                 act. Without this, the modal reads identically for a fresh
@@ -729,7 +729,7 @@ function FocusedPlan({
                 appliedCode={referralEligible ? referral?.appliedCode : null}
             />
 
-            {/* Referral chip — paid plans only. */}
+            {/* Referral chip - paid plans only. */}
             {referralEligible && <ReferralBlock referral={referral} />}
 
             {/* Features */}
@@ -766,7 +766,7 @@ function FocusedPlan({
                 </div>
             )}
 
-            {/* CTAs — usually one button; Starter / Standard with an
+            {/* CTAs - usually one button; Starter / Standard with an
                 eligible trial render two (trial + paid). The first CTA
                 gets the accent style, secondaries get a ghost outline so
                 the trial path stays the visual default without removing
@@ -818,7 +818,7 @@ function FocusedPlan({
 }
 
 /**
- * Inline referral-code input + applied-chip — only rendered for paid
+ * Inline referral-code input + applied-chip - only rendered for paid
  * recurring plans. Same UX language as the strikethrough/AnimatePresence
  * pattern from the old TopupModal, ported across to the subscription
  * surface where the discount actually fires.
@@ -862,17 +862,17 @@ function ReferralBlock({ referral }) {
                                 <p className="text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
                                     <code className="font-mono tracking-wider">{appliedCode}</code>
                                     {discountPct > 0 && (
-                                        <span className="ml-1 font-bold">— {discountPct.toFixed(0)}% off every renewal</span>
+                                        <span className="ml-1 font-bold">- {discountPct.toFixed(0)}% off every renewal</span>
                                     )}
                                     {discountPct === 0 && (
                                         <span className="ml-1 text-emerald-600/80 dark:text-emerald-400/80 font-normal">
-                                            — thanks, your referrer is credited
+                                            - thanks, your referrer is credited
                                         </span>
                                     )}
                                 </p>
                             </div>
                             <p className="mt-1 text-[11px] text-emerald-700/80 dark:text-emerald-400/70">
-                                Applied automatically at checkout — linked to your account and can&apos;t be removed.
+                                Applied automatically at checkout - linked to your account and can&apos;t be removed.
                             </p>
                         </div>
                     </motion.div>
@@ -952,7 +952,7 @@ function ReferralBlock({ referral }) {
  *
  * The conversion is one-way (INR → USD) because plan rows are always
  * INR-priced today. A plan that ever ships pre-priced in USD will pass
- * through unchanged — geo-display currency equals plan currency, no math.
+ * through unchanged - geo-display currency equals plan currency, no math.
  */
 function toDisplayPrice(planCents, planCurrency, geo) {
     const safeCents = Number(planCents) || 0;
@@ -981,7 +981,7 @@ function toDisplayPrice(planCents, planCurrency, geo) {
 }
 
 function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = null }) {
-    // Prefer stored USD prices when displaying to non-Indian visitors —
+    // Prefer stored USD prices when displaying to non-Indian visitors -
     // these are the exact prices charged at the gateway, not a rate conversion.
     // Fall back to INR→USD conversion only if the USD columns are absent.
     const displayCurrency = (geo?.display_currency || plan.currency || 'INR').toUpperCase();
@@ -1003,7 +1003,7 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
         );
     }
     // Apply the discount in cents so the strikethrough is precise
-    // (10% off $19 = $17.10, not $18 — done in minor units).
+    // (10% off $19 = $17.10, not $18 - done in minor units).
     const hasDiscount = discountPct > 0 && appliedCode;
     const bps = Math.max(0, Math.min(10_000, Math.round((discountPct || 0) * 100)));
     const chargedCents = hasDiscount ? cents - Math.floor((cents * bps) / 10_000) : cents;
@@ -1073,7 +1073,7 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
                     <span className="font-semibold text-surface-700 dark:text-surface-300 tabular-nums">
                         {sym}{monthlyEquiv.toFixed(2)}
                     </span>{' '}
-                    / month — save vs paying month-to-month.
+                    / month - save vs paying month-to-month.
                 </p>
             )}
             {!hasDiscount && billingCycle === 'monthly' && hasMonthlyCents && (usdAvailable ? (plan.annual_price_usd_cents ?? 0) > 0 : (plan.annual_price_cents ?? 0) > 0) && (() => {
@@ -1114,7 +1114,7 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
  *      on Free (any status), trialing a different plan, or with no sub
  *      at all are eligible. Trial-to-trial swaps are explicitly supported
  *      by the backend so a prospect can evaluate Starter and Standard
- *      sequentially without paying — the lifetime one-trial-per-plan rule
+ *      sequentially without paying - the lifetime one-trial-per-plan rule
  *      still prevents bouncing back and forth as a credit faucet.
  *
  * The backend also enforces "lifetime one trial per plan" (returns 409
@@ -1126,7 +1126,7 @@ function canStartTrial({ plan, isCurrent, currentPlanSlug, currentSubscriptionSt
     const trialDays = Number(plan.trial_days || 0);
     if (trialDays <= 0) return false;
     // The only state that locks the trial path is "active on a paid plan"
-    // — that's a real paying customer who must change tiers through the
+    // - that's a real paying customer who must change tiers through the
     // upgrade flow, not restart a trial. Free-tier customers (active on
     // the ``free`` plan) and trialing customers can both start a trial of
     // a different paid plan; the backend has the final word on lifetime
@@ -1137,7 +1137,7 @@ function canStartTrial({ plan, isCurrent, currentPlanSlug, currentSubscriptionSt
 
 /**
  * Build the CTA list for the focused plan card. Returns an array so cards
- * that legitimately offer two paths (e.g. Starter — try the trial OR pay
+ * that legitimately offer two paths (e.g. Starter - try the trial OR pay
  * immediately) render both buttons stacked. ``kind`` drives the click
  * handler's branching; ``variant`` drives the button style (``primary`` is
  * the accent-coloured CTA, ``secondary`` is a ghost outline that lives
@@ -1149,7 +1149,7 @@ function ctasFor({
 }) {
     if (isCurrent) {
         // Trialing / trial-expired customers landing on THEIR OWN plan card
-        // want to convert the trial into a paid subscription — same tier, no
+        // want to convert the trial into a paid subscription - same tier, no
         // plan swap. The old "Current plan" dead-button hid that path, which
         // was a documented churn source (customers who decided to pay had to
         // hunt for a different plan or a different page). Surface the paid
@@ -1192,11 +1192,11 @@ function ctasFor({
             kind: 'noop',
             variant: 'primary',
             label: 'You’re on Free',
-            note: 'Free tier is your default — no action required.',
+            note: 'Free tier is your default - no action required.',
         }];
     }
 
-    // Compose the paid-path CTA first — its shape depends on whether the
+    // Compose the paid-path CTA first - its shape depends on whether the
     // customer already has a billable subscription (silent swap vs. fresh
     // checkout) and the direction of the transition (upgrade vs. downgrade).
     let paidLabel;
@@ -1239,17 +1239,17 @@ function ctasFor({
     return [paid];
 }
 
-// Per-slug fallback crawl limits — mirror the latest alembic revision so
+// Per-slug fallback crawl limits - mirror the latest alembic revision so
 // the "Crawl up to N pages" bullet still renders correctly on environments
 // where the migration hasn't been applied yet (or on hand-edited rows that
 // don't have the JSONB keys). When the migration HAS run, ``plan.limits``
 // is the source of truth and this constant is ignored.
 //
 // Latest values come from revision b8d2faf4c321, which raised page caps
-// to align with credit budgets — see the migration's docstring for the
+// to align with credit budgets - see the migration's docstring for the
 // reasoning. Depth stays per a7c1e9f3b210 since that's a workload
 // protection, not a cost one.
-// ``-1`` (UNLIMITED) means the plan has no per-crawl page cap — page
+// ``-1`` (UNLIMITED) means the plan has no per-crawl page cap - page
 // spend is governed entirely by credits (5 credits per page). Starter
 // and Standard moved to UNLIMITED in migration c5d7a9e2b104; the
 // fallback table reflects that so the bullet renders correctly even
@@ -1264,7 +1264,7 @@ function buildFeatureList(plan, geo) {
     const out = [];
     const credits = plan.credits_per_month;
     const seats = plan.included_operator_seats || 0;
-    // Seat price in the VIEWER's display currency — mirror renderPriceLabel.
+    // Seat price in the VIEWER's display currency - mirror renderPriceLabel.
     // Show the USD headline ($5) only when the account displays in USD;
     // otherwise show the native INR price (₹499). The previous logic keyed off
     // "does a USD column exist", so INR customers wrongly saw "+$5/mo".
@@ -1275,11 +1275,11 @@ function buildFeatureList(plan, geo) {
         : (plan.extra_seat_price_cents ?? 0);
     const sym = useUsdSeat ? '$' : '₹';
 
-    // Plan-aware crawl limits — read from ``plan.limits`` first (source of
+    // Plan-aware crawl limits - read from ``plan.limits`` first (source of
     // truth once the migration has run), then fall back to the per-slug
     // constants so the bullet renders on environments that haven't been
     // migrated yet. The bullet is one of the strongest upgrade signals on
-    // this modal — never want it to silently disappear.
+    // this modal - never want it to silently disappear.
     const planLimits = plan.limits || {};
     const fallback = CRAWL_FALLBACK_BY_SLUG[plan.slug] || null;
     const maxCrawlPages = planLimits.max_crawl_pages ?? fallback?.pages;
@@ -1288,7 +1288,7 @@ function buildFeatureList(plan, geo) {
     if (credits != null) {
         out.push(`${credits.toLocaleString()} credits / month`);
     }
-    // Operator seats are a live-chat concept — surfacing them on Free (which
+    // Operator seats are a live-chat concept - surfacing them on Free (which
     // has no live chat) is misleading. Suppressed for that slug only; every
     // other tier keeps the seat line.
     if (seats > 0 && plan.slug !== 'free') {
@@ -1299,10 +1299,10 @@ function buildFeatureList(plan, geo) {
         );
     }
     if (maxCrawlPages === -1) {
-        // UNLIMITED — paid tiers spend credits per page. The per-page
+        // UNLIMITED - paid tiers spend credits per page. The per-page
         // credit price used to be inlined here ("(5 credits each)") but
         // was cut because the number moved to a runtime PricingConfig
-        // value and stopped being a stable marketing fact — see
+        // value and stopped being a stable marketing fact - see
         // super-admin credit-cost tuning. Customers still see the
         // per-action credit breakdown on the pricing page's cost table.
         out.push(
@@ -1398,12 +1398,12 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
 
     if (status === 'trialing') {
         if (!trialEndIso) return null;
-        // Live countdown — decrements as time passes (ticks every 60s via the
+        // Live countdown - decrements as time passes (ticks every 60s via the
         // ``now`` state above) so the headline reads "7 days free trial"
         // when a customer starts their trial, then "6", "5", … "1 day
         // free trial · ends today" as the deadline approaches. Ceil-rounded
         // to match every other trial countdown in the app (outer banner,
-        // top-bar badge) — a trial ending in 2h still reads "1 day left".
+        // top-bar badge) - a trial ending in 2h still reads "1 day left".
         // Falls back to the plan-configured trial length if the deadline
         // itself is unparseable, which shouldn't happen in practice but
         // beats rendering "NaN days".
@@ -1425,7 +1425,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
                 )}
             >
                 <div className="flex items-center gap-4">
-                    {/* Left — circular calendar icon */}
+                    {/* Left - circular calendar icon */}
                     <div
                         className={cn(
                             'flex-shrink-0 w-14 h-14 rounded-full flex items-center justify-center',
@@ -1435,7 +1435,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
                         <Calendar className="w-6 h-6 text-primary-600 dark:text-primary-300" strokeWidth={1.9} />
                     </div>
 
-                    {/* Middle — headline + body */}
+                    {/* Middle - headline + body */}
                     <div className="min-w-0 flex-1">
                         <div className="text-[15px] font-bold tracking-tight text-primary-900 dark:text-primary-50">
                             {headline}
@@ -1446,7 +1446,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
                         </p>
                     </div>
 
-                    {/* Right — decorative gift illustration, split off by a
+                    {/* Right - decorative gift illustration, split off by a
                         subtle divider so the strip reads as a two-part card
                         (the offer, then the perk). Hidden on narrow widths so
                         the strip stays useful on mobile without wrapping the
@@ -1465,7 +1465,7 @@ function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataReten
         );
     }
 
-    // trial_expired — grace-window warning / alarm. Keeps the compact
+    // trial_expired - grace-window warning / alarm. Keeps the compact
     // warning-strip shape so it visually reads as a "problem" surface, not
     // a "here's the perk" card.
     if (!dataRetentionUntilIso) return null;

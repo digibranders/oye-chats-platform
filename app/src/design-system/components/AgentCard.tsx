@@ -34,7 +34,7 @@ function initial(name: string): string {
 }
 
 /**
- * AgentCard — one AI agent as a tile in a grid (mandate shared component).
+ * AgentCard - one AI agent as a tile in a grid (mandate shared component).
  * Shows identity, status, and a compact metrics row; the whole card navigates
  * to the agent. Renders as a router `<Link>` when `to` is given, else a
  * `<button>`.

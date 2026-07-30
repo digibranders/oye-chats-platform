@@ -562,7 +562,13 @@ def batch_web_ingestion(
 
         if not all_chunk_contents:
             logger.info("No new content to process")
-            return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
+            return {
+                "chunks": 0,
+                "pages_changed": 0,
+                "pages_charged": 0,
+                "credits_deducted": 0,
+                "aborted": False,
+            }
 
         # Embed all chunks. embed_chunks sub-batches internally and runs the
         # batches concurrently (EMBED_CONCURRENCY), which is the main lever on
@@ -579,6 +585,12 @@ def batch_web_ingestion(
         pages_charged = 0
         credits_deducted = 0
         aborted = False
+        # ``pages_changed`` counts pages whose fresh chunks were committed —
+        # i.e. re-ingested pages that made it past the hash-skip AND the
+        # insert TX succeeded. Bumped inside the successful-commit branch so
+        # rollbacks (bad insert, ``InsufficientCredits``, kill switch, generic
+        # DB error) don't inflate the number the summary reports upstream.
+        pages_changed = 0
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
@@ -629,6 +641,7 @@ def batch_web_ingestion(
                     )
                 session.commit()
                 total += count
+                pages_changed += 1
                 if cost_per_page > 0:
                     pages_charged += 1
                     credits_deducted += cost_per_page
@@ -676,6 +689,7 @@ def batch_web_ingestion(
     )
     return {
         "chunks": total,
+        "pages_changed": pages_changed,
         "pages_charged": pages_charged,
         "credits_deducted": credits_deducted,
         "aborted": aborted,

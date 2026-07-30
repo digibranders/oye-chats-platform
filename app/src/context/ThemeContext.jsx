@@ -14,13 +14,13 @@ const STORAGE_KEY = 'admin_theme_mode';
 const MODES = ['light', 'dark', 'system'];
 
 /** Read the persisted mode synchronously so the first render matches the DOM.
- *  Default is 'light' — a returning user only gets dark/system if they chose it. */
+ *  Default is 'light' - a returning user only gets dark/system if they chose it. */
 function readStoredMode() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (MODES.includes(stored)) return stored;
   } catch {
-    // localStorage unavailable (private mode / SSR) — fall through to default.
+    // localStorage unavailable (private mode / SSR) - fall through to default.
   }
   return 'light';
 }
@@ -33,7 +33,7 @@ function systemPrefersDark() {
   );
 }
 
-/** Apply the resolved theme to <html> — the `.dark` class drives Tailwind's
+/** Apply the resolved theme to <html> - the `.dark` class drives Tailwind's
  *  dark variant, and color-scheme fixes native form controls / scrollbars. */
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -42,7 +42,7 @@ function applyTheme(theme) {
 }
 
 /**
- * ThemeProvider — light / dark / system with persistence.
+ * ThemeProvider - light / dark / system with persistence.
  *
  * `mode` is the user's choice ('light' | 'dark' | 'system'); `theme` is the
  * concrete resolved value ('light' | 'dark') after applying the system
@@ -62,7 +62,7 @@ export function ThemeProvider({ children }) {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  // Derived, not stored — no setState-in-effect churn.
+  // Derived, not stored - no setState-in-effect churn.
   const theme = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
 
   // Sync the external DOM (html class + color-scheme) with the resolved theme.

@@ -152,7 +152,7 @@ function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): ReactEleme
             // /forgot-password page already owns the full email-OTP reset flow;
             // its `requestPasswordReset` / `resetPassword` api.js functions are
             // not present in api.d.ts, so we can't safely inline that OTP flow
-            // here under strict types — we route to that page instead of
+            // here under strict types - we route to that page instead of
             // reaching for untyped imports. Clients only: operators reset via
             // their workspace owner (same as the standalone page).
             !isOperator ? (
@@ -287,7 +287,7 @@ interface ChangeEmailCardProps {
  *
  * "Resend" re-uses the same request call, but the current password isn't
  * cached across reloads (it's never persisted, only held in memory for the
- * lifetime of this component) — so resuming a pending change from a fresh
+ * lifetime of this component) - so resuming a pending change from a fresh
  * load routes Resend back through the request step, pre-filled, honestly
  * asking for the password again rather than faking a passwordless resend.
  */
@@ -311,7 +311,7 @@ function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): ReactEl
   };
 
   const startResend = (): void => {
-    // We don't have a cached password to resend silently — route back
+    // We don't have a cached password to resend silently - route back
     // through the request form, pre-filled with the pending address.
     setNewEmail(pendingEmail ?? '');
     setCurrentPassword('');
@@ -417,7 +417,7 @@ function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): ReactEl
           <div className="mt-4 flex items-center justify-between gap-4 py-1">
             <span className="text-[13px] text-[var(--ds-text-muted)]">Current email</span>
             <span className="truncate text-[13px] font-medium text-[var(--ds-text)]">
-              {user.email ?? '—'}
+              {user.email ?? '-'}
             </span>
           </div>
         )}
@@ -477,7 +477,7 @@ function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): ReactEl
               <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
               <span>
                 Verification pending for <strong>{pendingEmail ?? newEmail}</strong>. Enter the code we
-                emailed there to finish the change — your login email stays{' '}
+                emailed there to finish the change - your login email stays{' '}
                 <strong>{user.email ?? 'unchanged'}</strong> until then.
               </span>
             </div>
@@ -535,10 +535,10 @@ export interface AccountSecuritySectionProps {
 }
 
 /**
- * AccountSecuritySection — the Settings ▸ Account security surface: change
+ * AccountSecuritySection - the Settings ▸ Account security surface: change
  * password (both account kinds) and change email (client accounts only).
- * Operators don't own an in-app email-change flow — the backend has no
- * endpoint for it — so they see an honest disabled note instead of a faked
+ * Operators don't own an in-app email-change flow - the backend has no
+ * endpoint for it - so they see an honest disabled note instead of a faked
  * form.
  */
 export function AccountSecuritySection({ user, onEmailChange }: AccountSecuritySectionProps): ReactElement {
@@ -562,7 +562,7 @@ export function AccountSecuritySection({ user, onEmailChange }: AccountSecurityS
                   Email address
                 </p>
                 <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-                  Contact your workspace owner to change your email — operator accounts don’t have a
+                  Contact your workspace owner to change your email - operator accounts don’t have a
                   self-serve email change today.
                 </p>
               </div>

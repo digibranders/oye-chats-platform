@@ -2,33 +2,33 @@ import { useCallback, useEffect, useState } from 'react';
 import { Bell, BellOff, ShieldAlert, X } from 'lucide-react';
 
 /**
- * PushPermissionBanner — refined floating card surfacing three actionable states:
+ * PushPermissionBanner - refined floating card surfacing three actionable states:
  *
- *   1. ``default`` — they haven't been asked yet. Cobalt nudge with a clear
+ *   1. ``default`` - they haven't been asked yet. Cobalt nudge with a clear
  *      "Enable notifications" CTA. Fires the browser permission prompt.
- *   2. ``denied``  — they previously blocked. Browsers don't let us re-prompt
+ *   2. ``denied``  - they previously blocked. Browsers don't let us re-prompt
  *      from JS, so we show recovery instructions instead. Calm amber, not
- *      alarming red — this isn't an error, it's a config drift.
- *   3. ``granted`` but subscription error — soft amber + retry button.
+ *      alarming red - this isn't an error, it's a config drift.
+ *   3. ``granted`` but subscription error - soft amber + retry button.
  *
  * Hidden on:
  *   • Anonymous visitors / unsupported browsers
  *   • The happy path (granted && subscribed && no error)
  *   • Routes where it would clash with focused work (login, settings forms,
- *     full-screen modals) — caller decides; the layout still wraps it.
+ *     full-screen modals) - caller decides; the layout still wraps it.
  *
  * Design rationale:
  *   • A floating bottom-right card (Linear / Stripe / Vercel pattern) feels
  *     like a settings nudge, not a system alert. Full-width banners read as
  *     "something is broken" and degrade the dashboard's premium feel.
- *   • One-time slide-in animation on mount — subtle motion to draw the eye
+ *   • One-time slide-in animation on mount - subtle motion to draw the eye
  *     without being distracting. No looping pulse.
  *   • Tight typography hierarchy: bold 13px title, muted 12.5px body, 12px
- *     button label — same scale as the rest of the admin app.
+ *     button label - same scale as the rest of the admin app.
  *   • Dark mode tuned with translucent zinc surfaces + backdrop-blur for a
  *     glass-card feel that sits cleanly over any background.
  *
- * Dismissal is session-scoped — closing suppresses the card until the next
+ * Dismissal is session-scoped - closing suppresses the card until the next
  * tab session, but a re-login or browser restart brings it back. Prevents
  * a user from accidentally locking themselves out of alerts permanently.
  */
@@ -47,13 +47,13 @@ function markDismissed() {
     try {
         sessionStorage.setItem(DISMISS_KEY, '1');
     } catch {
-        /* sessionStorage disabled — no-op */
+        /* sessionStorage disabled - no-op */
     }
 }
 
 /**
  * Visual variant config keyed by state. Centralising it keeps each branch's
- * markup identical so the card looks consistent across all three states —
+ * markup identical so the card looks consistent across all three states -
  * only the icon, copy, and accent change.
  */
 const VARIANTS = {
@@ -65,7 +65,7 @@ const VARIANTS = {
         buttonClass:
             'bg-primary-600 hover:bg-primary-500 active:bg-primary-700 text-white shadow-sm shadow-primary-600/20',
         title: 'Stay reachable when this tab is closed',
-        body: 'Turn on browser notifications and we will alert you the moment a visitor wants to chat — even when the dashboard tab is in the background.',
+        body: 'Turn on browser notifications and we will alert you the moment a visitor wants to chat - even when the dashboard tab is in the background.',
         actionLabel: 'Enable notifications',
     },
     denied: {
@@ -98,9 +98,9 @@ export default function PushPermissionBanner({ push }) {
     const [dismissed, setDismissed] = useState(readDismissed);
     // One-time slide-in. We flip `mounted` to true on the first paint after
     // mount so the from/to CSS transition kicks in cleanly. No further state
-    // changes after that — the animation runs once and stays put.
+    // changes after that - the animation runs once and stays put.
     const [mounted, setMounted] = useState(false);
-    // Set when a permission request resolves to "denied" — browsers won't show
+    // Set when a permission request resolves to "denied" - browsers won't show
     // the prompt once blocked, so we surface the manual lock-icon path instead
     // of leaving the click feeling broken.
     const [stillBlocked, setStillBlocked] = useState(false);
@@ -119,7 +119,7 @@ export default function PushPermissionBanner({ push }) {
     // state this shows the OS prompt; on `denied` the browser resolves to
     // "denied" without prompting (no JS re-prompt is allowed), so we flag
     // `stillBlocked` to keep the lock-icon recovery path visible. Must run from
-    // this click handler — the user-gesture requirement is satisfied here.
+    // this click handler - the user-gesture requirement is satisfied here.
     const onActivate = useCallback(async () => {
         if (!push?.request) return;
         const result = await push.request();
@@ -145,7 +145,7 @@ export default function PushPermissionBanner({ push }) {
     // returning user (permission already "granted", subscription still present
     // at the browser layer) sees the cobalt "Enable notifications" card flash
     // for ~10ms while the hook awaits ``getSubscription()`` + re-posts to the
-    // backend — confusing UX since they're about to land back in the happy
+    // backend - confusing UX since they're about to land back in the happy
     // path. The hook flips ``initializing`` to false the moment the first
     // subscribe attempt resolves, so the banner appears immediately for
     // genuinely-unsubscribed users and stays hidden for everyone else.
@@ -153,7 +153,7 @@ export default function PushPermissionBanner({ push }) {
     if (permission === 'granted' && subscribed && !error) return null;
     if (dismissed) return null;
 
-    // Pick the variant. ``error`` only applies when permission is granted —
+    // Pick the variant. ``error`` only applies when permission is granted -
     // a "default" + error means we never got far enough to error, so it
     // falls back to the default invitation.
     let variantKey = 'default';
@@ -209,7 +209,7 @@ export default function PushPermissionBanner({ push }) {
                         ) : null}
                         {stillBlocked && permission === 'denied' ? (
                             <p className="mt-1.5 text-[12px] leading-relaxed font-medium text-amber-600 dark:text-amber-400">
-                                Still blocked — set it to Allow via the lock icon, then click again (or reload).
+                                Still blocked - set it to Allow via the lock icon, then click again (or reload).
                             </p>
                         ) : null}
                         {variant.actionLabel ? (

@@ -36,7 +36,7 @@ import { clockTime, initials, maxVisitorDbId, parseHistoryMessage, relativeTime 
 
 export interface LiveChatPanelProps {
   operator: OperatorStatusState;
-  /** Active agent — scopes the queue / active / qualified lists to this bot. */
+  /** Active agent - scopes the queue / active / qualified lists to this bot. */
   botId?: number;
 }
 
@@ -185,7 +185,7 @@ function previewRoleLabel(role: OperatorMessage['role']): string {
 }
 
 /**
- * LiveChatPanel — the real-time operator console.
+ * LiveChatPanel - the real-time operator console.
  *
  * A three-pane workspace (queue/active/qualified · conversation · visitor details)
  * backed by the `/ws/operator` WebSocket. Operators set availability, accept
@@ -298,11 +298,11 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
 
   // Selection auto-drops via render: when the selected chat leaves `activeChats`
   // (closed / transferred away), `selectedChat` becomes undefined and the centre
-  // pane falls back to its empty state — no effect / setState needed.
+  // pane falls back to its empty state - no effect / setState needed.
 
   // Drop the history-loaded marker for any session that has left the board so a
   // future chat reusing the id re-fetches its transcript (the socket hook has
-  // already pruned that session's messages). Ref-only mutation — no setState.
+  // already pruned that session's messages). Ref-only mutation - no setState.
   useEffect(() => {
     const loaded = loadedHistoryRef.current;
     if (loaded.size === 0) return;
@@ -622,7 +622,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       )}
 
       <div className="grid min-h-[600px] grid-cols-1 overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] lg:grid-cols-[280px_1fr] xl:grid-cols-[280px_1fr_300px]">
-        {/* Left rail — queue / active / qualified */}
+        {/* Left rail - queue / active / qualified */}
         <div className="flex max-h-[720px] flex-col overflow-y-auto border-b border-[var(--ds-border)] lg:border-b-0 lg:border-r">
           <div className="flex-1 space-y-1 p-3">
             <RailSection icon={<Inbox size={13} />} label="Waiting" count={visibleQueue.length} />
@@ -749,7 +749,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           <TeamRoster roster={roster} />
         </div>
 
-        {/* Centre — conversation */}
+        {/* Centre - conversation */}
         <div className="min-h-[400px] border-b border-[var(--ds-border)] lg:border-b-0 xl:border-r">
           {selectedChat ? (
             <ConversationView
@@ -786,7 +786,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           )}
         </div>
 
-        {/* Right — visitor details */}
+        {/* Right - visitor details */}
         <div className="hidden xl:block">
           {selectedChat ? (
             <SessionDetailsPanel key={selectedChat.session_id} sessionId={selectedChat.session_id} />
@@ -817,7 +817,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ds-overlay)] p-4"
           role="dialog"
           aria-modal="true"
-          aria-label={`Conversation preview — ${previewSession.name}`}
+          aria-label={`Conversation preview - ${previewSession.name}`}
         >
           <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-lg">
             {/* Header */}
@@ -879,7 +879,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
               )}
             </div>
 
-            {/* Actions — mirror the qualified-row Connect/Cancel controls */}
+            {/* Actions - mirror the qualified-row Connect/Cancel controls */}
             <div className="flex items-center justify-end gap-2 border-t border-[var(--ds-border)] px-4 py-3">
               {previewAwaiting ? (
                 <Button

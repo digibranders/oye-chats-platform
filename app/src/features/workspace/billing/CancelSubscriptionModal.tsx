@@ -7,19 +7,21 @@ import { formatDate } from '../billingModel';
 export interface CancelSubscriptionModalProps {
   open: boolean;
   onClose: () => void;
-  /** The plan being cancelled — named in the copy so the customer knows exactly what ends. */
+  /** The plan being cancelled - named in the copy so the customer knows exactly what ends. */
   planName: string;
-  /** End of the current billing period (ISO) — access is retained until this date. */
+  /** End of the current billing period (ISO) - access is retained until this date. */
   periodEnd: string | null;
+  /** Selected agent id: cancels that agent's subscription (null = account subscription). */
+  botId?: number | null;
   /** Fired with a status message after a successful cancellation. */
   onSuccess: (message: string) => void;
 }
 
 /**
- * CancelSubscriptionModal — the explicit, reversible cancel flow. Cancellation
+ * CancelSubscriptionModal - the explicit, reversible cancel flow. Cancellation
  * is cancel-at-period-end (the backend calls the provider's cycle-end cancel and
  * only marks `cancel_at_period_end` until the webhook fires), so the plan stays
- * fully active until the period closes — the industry-standard behaviour. This
+ * fully active until the period closes - the industry-standard behaviour. This
  * dialog states that plainly, spells out what happens after, keeps the tone calm
  * rather than alarming, and captures an optional reason. It's fully reversible:
  * on success the Billing page surfaces a Reactivate banner until the period ends.
@@ -29,6 +31,7 @@ export function CancelSubscriptionModal({
   onClose,
   planName,
   periodEnd,
+  botId = null,
   onSuccess,
 }: CancelSubscriptionModalProps): ReactElement | null {
   const [reason, setReason] = useState('');
@@ -51,7 +54,7 @@ export function CancelSubscriptionModal({
     setSubmitting(true);
     setError('');
     try {
-      const res = (await cancelSubscription(reason.trim() || null)) as Record<string, unknown>;
+      const res = (await cancelSubscription(reason.trim() || null, botId)) as Record<string, unknown>;
       onSuccess(
         (res?.message as string) ||
           `Your ${planName} plan stays active until ${endLabel}, then cancels. You can reactivate anytime before then.`,
@@ -100,12 +103,12 @@ export function CancelSubscriptionModal({
           </p>
         </div>
 
-        {/* What happens next — honest, specific, no surprises. */}
+        {/* What happens next - honest, specific, no surprises. */}
         <ul className="space-y-2 text-[13px] text-[var(--ds-text-muted)]">
           {[
             `Full access to ${planName} continues until ${endLabel}.`,
             'After that, your agents stop replying and go offline.',
-            'Any top-up credits you’ve bought stay valid — they don’t expire for 12 months.',
+            'Any top-up credits you’ve bought stay valid - they don’t expire for 12 months.',
             `Changed your mind? Reactivate anytime before ${endLabel} to stay on the plan.`,
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5">
@@ -117,7 +120,7 @@ export function CancelSubscriptionModal({
           ))}
         </ul>
 
-        {/* Optional reason — helps the business, never blocks the cancel. */}
+        {/* Optional reason - helps the business, never blocks the cancel. */}
         <div>
           <label
             htmlFor="cancel-reason"

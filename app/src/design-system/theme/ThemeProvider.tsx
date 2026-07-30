@@ -42,7 +42,7 @@ function applyTheme(resolved: ResolvedTheme): void {
 }
 
 /**
- * Theme Provider — light / dark / system with the `.dark` class strategy.
+ * Theme Provider - light / dark / system with the `.dark` class strategy.
  * `resolvedTheme` is derived from the chosen preference and the OS store, and
  * synced to the document in a single effect (an external-system write, not a
  * state update).

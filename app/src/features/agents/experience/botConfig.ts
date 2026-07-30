@@ -6,7 +6,7 @@
  *
  * These fields live directly on the `Bot` record (not on the client-settings
  * draft that `types.ts` manages), so they load via `getBot(botId)` and persist
- * via `updateBot(botId, …)` — each surface saving its own slice independently.
+ * via `updateBot(botId, …)` - each surface saving its own slice independently.
  * The `Bot` domain type is intentionally narrow, so the raw payload is read
  * here as a loose record and normalised into these strict shapes.
  *
@@ -22,7 +22,7 @@ export interface LiveChatConfig {
   enabled: boolean;
   /** Shown while a visitor waits for an operator to accept. */
   waitingMessage: string;
-  /** Top-level `bot.offline_message` — the handoff "no operators" state. */
+  /** Top-level `bot.offline_message` - the handoff "no operators" state. */
   offlineMessage: string;
   /** Delay before the handoff form appears after the bot suggests live chat. */
   handoffDelaySeconds: number;
@@ -54,7 +54,7 @@ export interface ServiceEntry {
 
 // ── Remaining widget copy (#11) ───────────────────────────────────────────────
 export interface WidgetCopy {
-  /** `widget_messages.offline_message` — distinct from the top-level live-chat
+  /** `widget_messages.offline_message` - distinct from the top-level live-chat
    * `offline_message`; this is the widget's own offline-mode banner. */
   offlineMessage: string;
   liveChatLabel: string;
@@ -94,7 +94,7 @@ export const HANDOFF_DELAY_OPTIONS: readonly { value: number; label: string }[] 
 export const QUEUE_TIMEOUT = { min: 5, max: 600, default: 20 } as const;
 export const MAX_QUEUE = { min: 1, max: 100, default: 10 } as const;
 
-/** Placeholder copy — mirrors the shipped widget's own fallbacks. */
+/** Placeholder copy - mirrors the shipped widget's own fallbacks. */
 export const COPY_PLACEHOLDERS: WidgetCopy = {
   offlineMessage: "We'll be right back! Leave a message and we'll follow up shortly.",
   liveChatLabel: 'Live chat',
@@ -199,7 +199,7 @@ export function draftFromBot(raw: Record<string, unknown>): BotConfigDraft {
 // ── Normalizers ───────────────────────────────────────────────────────────────
 // Shared by the PATCH builders (what we send) and the save handlers (what we
 // commit to the baseline + visible draft), so the UI always reflects exactly
-// what the server persisted — no drift between a clamped/cleaned value on the
+// what the server persisted - no drift between a clamped/cleaned value on the
 // wire and a stale raw value on screen.
 
 /** Clamp the numeric live-chat fields into their persisted ranges. */

@@ -1,5 +1,5 @@
 /**
- * OyeChatsMark — the brand glyph.
+ * OyeChatsMark - the brand glyph.
  *
  * The source PNG (`/public/oye.png`) is the full lockup (icon + wordmark).
  * We scale the image up and translate it so only the planet+bubble glyph

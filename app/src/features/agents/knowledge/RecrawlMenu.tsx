@@ -18,15 +18,15 @@ export interface RecrawlMenuProps {
 }
 
 /**
- * RecrawlMenu — the two-mode re-crawl action for a website source.
+ * RecrawlMenu - the two-mode re-crawl action for a website source.
  *
  * A subtle icon trigger opens a popover with two choices:
- *   1. Full recrawl — re-scrape every page, billed per page. Every plan.
- *   2. Updated pages only — skip unchanged pages, billing only what changed.
+ *   1. Full recrawl - re-scrape every page, billed per page. Every plan.
+ *   2. Updated pages only - skip unchanged pages, billing only what changed.
  *      A Standard+ perk; lower tiers see it dimmed with an upgrade CTA so the
  *      capability stays discoverable.
  *
- * Backend `plan_service` re-enforces the delta gate — this is a UX affordance,
+ * Backend `plan_service` re-enforces the delta gate - this is a UX affordance,
  * not the security boundary.
  */
 export function RecrawlMenu({

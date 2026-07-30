@@ -21,7 +21,7 @@ export interface AutoRecrawlCardProps {
 }
 
 /**
- * AutoRecrawlCard — bot-scoped weekly auto-refresh of every crawled URL, plus
+ * AutoRecrawlCard - bot-scoped weekly auto-refresh of every crawled URL, plus
  * the re-crawl run history. Standard+ plans get a working toggle with the next
  * scheduled run and recent-run summaries; lower tiers see the same layout with
  * the toggle gated to the upgrade flow. The backend re-enforces the entitlement
@@ -175,13 +175,13 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
           <StatusTile
             icon={<Clock size={14} aria-hidden="true" />}
             label="Last checked"
-            value={data.lastRecrawlAt ? formatRelative(data.lastRecrawlAt) : '—'}
+            value={data.lastRecrawlAt ? formatRelative(data.lastRecrawlAt) : '-'}
             sub={data.lastRecrawlStatus ? capitalize(data.lastRecrawlStatus) : null}
           />
           <StatusTile
             icon={<CalendarClock size={14} aria-hidden="true" />}
             label="Next check"
-            value={toggleOn && data.nextRecrawlAt ? formatRelative(data.nextRecrawlAt) : '—'}
+            value={toggleOn && data.nextRecrawlAt ? formatRelative(data.nextRecrawlAt) : '-'}
             sub={toggleOn && data.nextRecrawlAt ? formatDate(data.nextRecrawlAt) : null}
           />
         </div>
@@ -249,7 +249,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
                   className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px] tabular-nums text-[var(--ds-text-muted)]"
                 >
                   <span className="min-w-[7rem] text-[var(--ds-text-subtle)]">
-                    {entry.ranAt ? formatDate(entry.ranAt) : '—'}
+                    {entry.ranAt ? formatDate(entry.ranAt) : '-'}
                   </span>
                   <span>
                     <span className="text-[var(--ds-text-subtle)]">unchanged</span>{' '}
@@ -348,13 +348,13 @@ function capitalize(slug: string): string {
 
 function formatDate(iso: string): string {
   const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return '—';
+  if (Number.isNaN(t)) return '-';
   return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function formatRelative(iso: string): string {
   const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '—';
+  if (Number.isNaN(then)) return '-';
   const diffMs = then - Date.now();
   const absSeconds = Math.abs(diffMs) / 1000;
   const isFuture = diffMs > 0;

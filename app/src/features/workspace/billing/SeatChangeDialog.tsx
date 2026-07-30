@@ -13,12 +13,14 @@ export interface SeatChangeDialogProps {
   currentSeats: number;
   /** Formatted per-seat price, e.g. "₹449/mo". */
   seatPriceLabel: string;
+  /** Selected agent id: scopes the seat change to that agent's subscription (null = account). */
+  botId?: number | null;
   /** Fired after a successful change with a status message. */
   onSuccess: (message: string) => void;
 }
 
 /**
- * SeatChangeDialog — confirms an operator-seat add/remove BEFORE touching the
+ * SeatChangeDialog - confirms an operator-seat add/remove BEFORE touching the
  * subscription, so the customer sees the price + payment provider first. Ported
  * from the legacy `confirmSeatChange`: on a first seat purchase the backend
  * returns `requires_authorization` + a `checkout` payload, so we open Razorpay
@@ -31,6 +33,7 @@ export function SeatChangeDialog({
   delta,
   currentSeats,
   seatPriceLabel,
+  botId = null,
   onSuccess,
 }: SeatChangeDialogProps): ReactElement | null {
   const [busy, setBusy] = useState(false);
@@ -45,7 +48,7 @@ export function SeatChangeDialog({
     setError('');
     setNotice('');
     try {
-      const result = (await changeOperatorSeats(delta)) as Record<string, unknown>;
+      const result = (await changeOperatorSeats(delta, botId)) as Record<string, unknown>;
 
       if (result?.requires_authorization && result?.checkout) {
         const c = result.checkout as Record<string, unknown>;
@@ -60,12 +63,12 @@ export function SeatChangeDialog({
           });
         } catch (err: unknown) {
           if ((err as { code?: string })?.code === 'dismissed') {
-            setNotice('Seat purchase cancelled — you were not charged.');
+            setNotice('Seat purchase cancelled - you were not charged.');
             return;
           }
           throw err;
         }
-        onSuccess('Seat add-on authorised — your seats will activate in a moment.');
+        onSuccess('Seat add-on authorised - your seats will activate in a moment.');
         onClose();
         return;
       }

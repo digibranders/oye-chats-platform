@@ -9,7 +9,7 @@ const HIGHLIGHTS: { icon: LucideIcon; title: string; body: string }[] = [
 ];
 
 /**
- * Step 1 — Welcome. A calm intro that sets expectations before any input.
+ * Step 1 - Welcome. A calm intro that sets expectations before any input.
  * (New vs. legacy, which dropped users straight into a URL field.)
  */
 export function WelcomeStep(props: StepProps) {

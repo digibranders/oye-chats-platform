@@ -5,7 +5,7 @@
  * codes); display names come from the browser's own `Intl.DisplayNames`
  * so we don't ship a 250-entry name table, and flags are derived from the
  * code's regional-indicator pair. The option `value` is always the bare
- * 2-letter code — exactly what the backend's `billing_country` column
+ * 2-letter code - exactly what the backend's `billing_country` column
  * stores.
  */
 
@@ -72,7 +72,7 @@ export const COUNTRY_OPTIONS = ISO_3166_ALPHA2.filter((code) => !EXCLUDED_CODES.
 
 const LABEL_BY_CODE = Object.fromEntries(COUNTRY_OPTIONS.map((opt) => [opt.value, opt.label]));
 
-/** Display label for a stored code — falls back to the raw code for anything unknown. */
+/** Display label for a stored code - falls back to the raw code for anything unknown. */
 export function countryLabel(code) {
   const normalized = (code || '').trim().toUpperCase();
   return LABEL_BY_CODE[normalized] || normalized;

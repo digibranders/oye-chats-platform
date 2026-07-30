@@ -12,7 +12,7 @@ const CurrencyContext = createContext(null);
  * sees matches what Razorpay debits.
  *
  * Fed by GET /subscriptions/geo, which already derives display_currency from
- * the confirmed billing country. MUST wrap the AUTHENTICATED tree — /geo
+ * the confirmed billing country. MUST wrap the AUTHENTICATED tree - /geo
  * requires client auth.
  */
 export function CurrencyProvider({ children }) {
@@ -29,7 +29,7 @@ export function CurrencyProvider({ children }) {
         setCurrency(String(geo?.display_currency || 'USD').toLowerCase());
       })
       .catch(() => {
-        /* keep the USD default on failure — never block the UI on geo */
+        /* keep the USD default on failure - never block the UI on geo */
       })
       .finally(() => {
         if (alive) setLoading(false);

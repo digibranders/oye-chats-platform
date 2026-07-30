@@ -2,7 +2,7 @@
  * Whole days left until an ISO-8601 trial-end timestamp, rounded UP.
  *
  * The single source of truth for every "N days left" surface (top banner,
- * billing badge) so they can never disagree. `ceil` — a trial ending in 2
+ * billing badge) so they can never disagree. `ceil` - a trial ending in 2
  * hours still reads "1 day left", matching how customers count remaining
  * time and the backend's `trial_days_remaining` helper / day-N reminder cron.
  * A truncating diff would under-count by one for any partial day (10.4 days

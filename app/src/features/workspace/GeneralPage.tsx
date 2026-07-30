@@ -5,9 +5,7 @@ import {
   CheckCircle2,
   Clock,
   Globe,
-  Lock,
   Pencil,
-  Sparkles,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -24,8 +22,6 @@ import {
 } from '../../design-system';
 import { getBots, getCurrentUser, updateBot, updateClientProfile } from '../../services/api';
 import { useWorkspace } from '../../context/WorkspaceContext';
-import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot, type CurrentUser } from '../../types/domain';
 import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
 
@@ -60,7 +56,7 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
         {label}
       </span>
       <span className="min-w-0 truncate text-right text-[13px] font-medium text-[var(--ds-text)]">
-        {value || '—'}
+        {value || '-'}
       </span>
     </div>
   );
@@ -70,8 +66,6 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
 
 export function GeneralPage(): ReactElement {
   const { currentWorkspaceId, currentWorkspaceName, currentRole, workspaces, refresh: refreshWorkspace } = useWorkspace();
-  const { hasFeature } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
 
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -90,12 +84,6 @@ export function GeneralPage(): ReactElement {
   const [hoursDraft, setHoursDraft] = useState<BusinessHours | null>(null);
   const [isSavingHours, setIsSavingHours] = useState(false);
   const [hoursNotice, setHoursNotice] = useState<string | null>(null);
-
-  // ── Branding Footer State ────────────────────────────────────────────────
-  const [isSavingBranding, setIsSavingBranding] = useState(false);
-  const [brandingNotice, setBrandingNotice] = useState<string | null>(null);
-
-  const canRemoveBranding = hasFeature('branding_removable');
 
   // Load user data and workspace bots
   useEffect(() => {
@@ -224,41 +212,10 @@ export function GeneralPage(): ReactElement {
     }
   };
 
-  // Toggle Branding Footer
-  const handleToggleBranding = async (hideBranding: boolean): Promise<void> => {
-    if (!canRemoveBranding) {
-      openUpgradeModal('branding_removable');
-      return;
-    }
-    if (!primaryBot) return;
-
-    setIsSavingBranding(true);
-    setBrandingNotice(null);
-    try {
-      await updateBot(primaryBot.id, { show_branding: !hideBranding });
-      setPhase((prev) => {
-        if (prev.status !== 'ready') return prev;
-        const updatedBots = prev.bots.map((b) =>
-          b.id === primaryBot.id ? { ...b, show_branding: !hideBranding } : b,
-        );
-        return { ...prev, bots: updatedBots };
-      });
-      setBrandingNotice('Branding setting updated successfully.');
-    } catch (error) {
-      setBrandingNotice(toMessage(error, 'Failed to update branding settings.'));
-    } finally {
-      setIsSavingBranding(false);
-    }
-  };
-
-  const isBrandingVisible = primaryBot ? primaryBot.show_branding !== false : true;
   const primaryBotHours = primaryBot?.business_hours as unknown as BusinessHours | null;
 
   return (
-    <PageContainer
-      title="General"
-      description="How this workspace is set up — shared identity and the defaults new agents inherit."
-    >
+    <PageContainer>
       {phase.status === 'loading' && <LoadingState />}
 
       {phase.status === 'error' && (
@@ -441,53 +398,6 @@ export function GeneralPage(): ReactElement {
                   {primaryBotHours && primaryBotHours.enabled ? 'Schedule Active' : '24/7 Mode'}
                 </StatusBadge>
               </div>
-            </Card>
-
-            {/* Branding footer management */}
-            <Card className="p-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ds-text)]">
-                    <Sparkles size={16} aria-hidden="true" className="text-[var(--ds-accent-text)]" />
-                    Branding footer
-                  </p>
-                  <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
-                    The small “Powered by OyeChats” line shown under the chat widget. Removing it is
-                    available on eligible plans.
-                  </p>
-                </div>
-                {canRemoveBranding ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={isSavingBranding}
-                    onClick={() => void handleToggleBranding(isBrandingVisible)}
-                    className="shrink-0"
-                  >
-                    {isBrandingVisible ? 'Hide branding' : 'Show branding'}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openUpgradeModal('branding_removable')}
-                    className="shrink-0"
-                  >
-                    <Lock size={13} className="mr-1.5" aria-hidden="true" />
-                    Upgrade to remove
-                  </Button>
-                )}
-              </div>
-
-              {brandingNotice && (
-                <p className="mt-3 text-[12px] text-[var(--ds-accent-text)]">{brandingNotice}</p>
-              )}
-
-              {isBrandingVisible && (
-                <div className="mt-4 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2 text-center text-[12px] text-[var(--ds-text-subtle)]">
-                  ⚡ Powered by OyeChats
-                </div>
-              )}
             </Card>
           </section>
 

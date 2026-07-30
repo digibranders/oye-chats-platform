@@ -20,7 +20,7 @@ function loginUrlWithNext(pathname: string, search: string): string {
 }
 
 /**
- * ProtectedLayout — the authenticated boundary for the new app.
+ * ProtectedLayout - the authenticated boundary for the new app.
  *
  * Gates on the presence of an auth token (reusing the legacy `authStorage`), and
  * mounts the reused data providers around everything below. The three data
@@ -28,11 +28,11 @@ function loginUrlWithNext(pathname: string, search: string): string {
  * + the API client and coordinate via window events), so this is the minimum
  * correct tree to reuse the backend layer. `NotificationProvider` (the TopBar
  * bell's data source) is nested innermost, after Workspace/Currency, since it
- * needs the authenticated + workspace-scoped context to be established first —
+ * needs the authenticated + workspace-scoped context to be established first -
  * it listens for `oyechats:workspace-switched` to re-hydrate on workspace switch.
  * `EntitlementsProvider` (plan/limit/feature gating) and `UpgradeModalProvider`
  * (the upsell dialog it opens) are mounted innermost of all, after
- * Workspace/Currency/Notification — entitlements are workspace-scoped and
+ * Workspace/Currency/Notification - entitlements are workspace-scoped and
  * re-fetch on the same `oyechats:workspace-switched` signal. Other chrome-only
  * providers (Toast/Push/…) are added per-surface as migrated pages need them.
  */

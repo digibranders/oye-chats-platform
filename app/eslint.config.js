@@ -5,8 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 // Two lint domains coexist during the strangler-fig migration:
-//   • Legacy `.js/.jsx` — unchanged rules, so migration doesn't churn old files.
-//   • New `.ts/.tsx`     — typescript-eslint recommended + react-hooks, with
+//   • Legacy `.js/.jsx` - unchanged rules, so migration doesn't churn old files.
+//   • New `.ts/.tsx`     - typescript-eslint recommended + react-hooks, with
 //     react-refresh scoped to `.tsx` component files only.
 export default tseslint.config(
   { ignores: ['dist'] },

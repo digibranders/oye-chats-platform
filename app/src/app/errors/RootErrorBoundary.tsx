@@ -5,13 +5,13 @@ import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
 
 /**
- * RootErrorBoundary — the app-wide, full-screen error surface.
+ * RootErrorBoundary - the app-wide, full-screen error surface.
  *
  * Wired as the `errorElement` on the router root (and the shell route), so it
  * catches anything the in-shell {@link PageErrorBoundary} does not: crashes in
  * the shell itself, in the provider tree, or in a route that renders outside the
- * shell (e.g. Launch Studio). It is intentionally self-contained — it must
- * render correctly even when the tree below it has failed — leaning only on
+ * shell (e.g. Launch Studio). It is intentionally self-contained - it must
+ * render correctly even when the tree below it has failed - leaning only on
  * design-system tokens, which stay valid via the `.dark` class on `<html>`.
  */
 export function RootErrorBoundary() {

@@ -17,7 +17,7 @@ interface FeedbackRowProps {
 }
 
 /**
- * FeedbackRow — one expandable feedback card: 👍/👎, truncated question,
+ * FeedbackRow - one expandable feedback card: 👍/👎, truncated question,
  * formatted date, anonymized user; expands to the full Q&A and, for
  * negatives, a "Copy issue to clipboard" action. Restyled port of the legacy
  * card (`pages/Feedback.jsx:301-375`).

@@ -1,5 +1,5 @@
 /**
- * usePushNotifications — manages a single operator's Web Push subscription
+ * usePushNotifications - manages a single operator's Web Push subscription
  * for the OyeChats admin dashboard.
  *
  * Lifecycle the hook owns end-to-end:
@@ -22,7 +22,7 @@
  *
  * Key contracts the hook honours:
  *   - Never prompts for permission automatically. The prompt only fires when
- *     the caller invokes `request()` — typically from a banner button click,
+ *     the caller invokes `request()` - typically from a banner button click,
  *     which is required by browsers anyway (user-gesture rule).
  *   - Survives re-renders: the registration + subscription work runs once
  *     per (authType, permission) tuple. No infinite-loop hazards.
@@ -85,18 +85,18 @@ export default function usePushNotifications() {
   const subscribingRef = useRef(false);
 
   const authType = getAuthItem('auth_type');
-  // Push is available to *any* authenticated dashboard user — both operators
+  // Push is available to *any* authenticated dashboard user - both operators
   // and workspace owners (client logins). The backend's subscribe route looks
   // at the auth header and stores either operator_id or client_id accordingly.
   // Anonymous / unauthenticated visits skip the whole pipeline.
   const isAuthenticated = authType === 'operator' || authType === 'client';
   // Kept in the return value for backwards compatibility with the banner
-  // which used to render differently for operators — now both render the
+  // which used to render differently for operators - now both render the
   // same thing.
   const isOperator = authType === 'operator';
 
   // Register the service worker exactly once per mount. We don't unregister
-  // on unmount — the SW outlives the React tree and may handle a push that
+  // on unmount - the SW outlives the React tree and may handle a push that
   // arrives while no dashboard tab is loaded.
   useEffect(() => {
     if (!SUPPORTED || !isAuthenticated) return;
@@ -110,7 +110,7 @@ export default function usePushNotifications() {
   // already granted permission previously (returning user), AND immediately
   // after `request()` flips the state.
   useEffect(() => {
-    // Unsupported / anonymous users have no pipeline to wait for — drop the
+    // Unsupported / anonymous users have no pipeline to wait for - drop the
     // initializing flag immediately so the banner doesn't get stuck hidden
     // for them (it would have returned null anyway, but explicit is better).
     if (!SUPPORTED || !isAuthenticated) {
@@ -118,7 +118,7 @@ export default function usePushNotifications() {
       return;
     }
     if (permission !== 'granted') {
-      // Permission is 'default' or 'denied' — there's nothing to subscribe to
+      // Permission is 'default' or 'denied' - there's nothing to subscribe to
       // until the user clicks "Enable". Surface the banner now; ``initializing``
       // is no longer holding it back.
       setSubscribed(false);
@@ -136,7 +136,7 @@ export default function usePushNotifications() {
 
         if (!subscription) {
           // Fetch the server VAPID key only when we actually need to
-          // subscribe — saves one HTTP call on re-renders for already-
+          // subscribe - saves one HTTP call on re-renders for already-
           // subscribed operators.
           const { public_key: publicKey, enabled } = await getVapidPublicKey();
           if (!enabled || !publicKey) {
@@ -157,7 +157,7 @@ export default function usePushNotifications() {
         setError(err?.message || 'Could not enable push notifications.');
       } finally {
         subscribingRef.current = false;
-        // First-pass complete — banner may now show whatever final state we
+        // First-pass complete - banner may now show whatever final state we
         // settled into (subscribed = hidden, error = retry, etc.).
         setInitializing(false);
       }
@@ -167,7 +167,7 @@ export default function usePushNotifications() {
 
   /**
    * Prompt the user for notification permission. Must be called from a
-   * user-gesture handler — browsers ignore the request otherwise.
+   * user-gesture handler - browsers ignore the request otherwise.
    */
   const request = useCallback(async () => {
     if (!SUPPORTED) return 'unsupported';
@@ -201,7 +201,7 @@ export default function usePushNotifications() {
             auth: json.keys?.auth,
           });
         } catch {
-          // best-effort — still unsubscribe locally
+          // best-effort - still unsubscribe locally
         }
         await subscription.unsubscribe();
       }

@@ -87,9 +87,44 @@ def test_classify_status_covers_all_outcomes():
     assert recrawl_service._classify_status(changed=0, failed=0, total=3) == "success"
 
 
-def test_compute_next_recrawl_at_is_seven_days():
+def test_compute_next_recrawl_at_is_seven_days(monkeypatch):
+    """Weekly cadence still holds when jitter is disabled — the +7d contract
+    is what the sweep query relies on. Disable jitter via the module var so
+    this test stays deterministic without seeding ``random``."""
+    monkeypatch.setattr(recrawl_service, "RECRAWL_JITTER_HOURS", 0.0)
     now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
     assert recrawl_service.compute_next_recrawl_at(now) == now + timedelta(days=7)
+
+
+def test_compute_next_recrawl_at_applies_jitter_within_configured_window(monkeypatch):
+    """With jitter enabled, the result lands inside ``[now+7d, now+7d+Nh]``.
+    Seeded ``random`` gives a deterministic offset so this test doesn't flake."""
+    import random as _random
+
+    monkeypatch.setattr(recrawl_service, "RECRAWL_JITTER_HOURS", 24.0)
+    _random.seed(1234)  # module-level `random` — same reference recrawl_service uses
+    now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    result = recrawl_service.compute_next_recrawl_at(now)
+    delta = result - now
+    assert timedelta(days=7) <= delta <= timedelta(days=7, hours=24)
+    # Guard against the jitter accidentally being zero (would silently
+    # disable A). A seeded uniform(0, 24) never returns exactly 0.
+    assert delta > timedelta(days=7)
+
+
+def test_compute_next_recrawl_at_disperses_a_cohort(monkeypatch):
+    """The real-world win: 10 bots toggled at the same instant land on 10
+    different ``next_recrawl_at`` values spread across the jitter window."""
+    import random as _random
+
+    monkeypatch.setattr(recrawl_service, "RECRAWL_JITTER_HOURS", 24.0)
+    _random.seed(42)
+    now = datetime(2026, 7, 14, 10, 0, tzinfo=UTC)
+    schedule = [recrawl_service.compute_next_recrawl_at(now) for _ in range(10)]
+    assert len(set(schedule)) == 10  # every bot got a distinct timestamp
+    # And the spread is meaningful — first-to-last > 1 hour, so a sweep
+    # tick catches at most a handful of them, not the entire cohort.
+    assert max(schedule) - min(schedule) > timedelta(hours=1)
 
 
 def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
@@ -116,7 +151,12 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
     monkeypatch.setattr(
         recrawl_service,
         "batch_web_ingestion",
-        lambda client_id, pages, **kw: {"chunks": 4, "pages_charged": 1, "credits_deducted": 0},
+        lambda client_id, pages, **kw: {
+            "chunks": 4,
+            "pages_changed": 1,
+            "pages_charged": 0,
+            "credits_deducted": 0,
+        },
     )
 
     before = datetime.now(UTC)
@@ -136,6 +176,101 @@ def test_recrawl_bot_persists_summary_and_advances_schedule(db, monkeypatch):
     # The schedule MUST advance ~7 days or the hourly sweep re-matches forever.
     assert bot.next_recrawl_at >= before + timedelta(days=7) - timedelta(minutes=1)
     assert bot.recrawl_history[0]["status"] == "partial"
+
+
+def test_recrawl_bot_reports_accurate_changed_count_when_every_page_changed(db, monkeypatch):
+    """Prior to the fix, ``recrawl_service`` fell back to ``changed_pages = 1``
+    whenever any chunks landed — because the paid-crawl path leans on
+    ``pages_charged`` for the count and ``cost_per_page`` is 0 on auto-recrawl,
+    that fallback was the only signal. If a customer redesigned their whole
+    site and 5 pages all changed, the summary reported ``1 changed, 4
+    unchanged`` — a 4-page lie.
+
+    ``batch_web_ingestion`` now returns an accurate ``pages_changed``; the
+    stub below mimics the "all 5 fetched pages actually changed" case and
+    the summary must reflect it exactly."""
+    c = _mk_client(db, "rc-allchanged@test.example")
+    bot = _mk_bot(
+        db,
+        c.id,
+        "bot-rc-allchanged",
+        recrawl_enabled=True,
+        next_recrawl_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    urls = [f"https://a.test/p{i}" for i in range(5)]
+    for u in urls:
+        _mk_doc(db, bot.id, c.id, u)
+    db.commit()
+
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
+
+    async def _fake_fetch(fetch_urls_arg, **kw):
+        return {"results": [{"url": u, "text": f"fresh body {u}"} for u in fetch_urls_arg]}
+
+    monkeypatch.setattr(recrawl_service, "fetch_urls", _fake_fetch)
+    monkeypatch.setattr(
+        recrawl_service,
+        "batch_web_ingestion",
+        lambda client_id, pages, **kw: {
+            "chunks": 40,  # ~8 chunks per page × 5 pages
+            "pages_changed": 5,  # all five made it past hash-skip and committed
+            "pages_charged": 0,  # cost_per_page=0 on auto-recrawl
+            "credits_deducted": 0,
+        },
+    )
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(bot.id))
+
+    assert summary["status"] == "success"
+    assert summary["total_urls"] == 5
+    assert summary["changed_pages"] == 5, "must NOT fall back to 1 when all 5 pages changed"
+    assert summary["unchanged_pages"] == 0
+    assert summary["failed"] == 0
+    assert summary["chunks_updated"] == 40
+
+
+def test_recrawl_bot_reports_accurate_mixed_change_count(db, monkeypatch):
+    """The mixed case: 5 URLs, 2 changed, 3 unchanged, 0 failed. Confirms the
+    summary math (unchanged = fetched - changed) still holds when the ingest
+    stub reports a partial change rather than everything-or-nothing."""
+    c = _mk_client(db, "rc-mixed@test.example")
+    bot = _mk_bot(
+        db,
+        c.id,
+        "bot-rc-mixed",
+        recrawl_enabled=True,
+        next_recrawl_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    urls = [f"https://a.test/m{i}" for i in range(5)]
+    for u in urls:
+        _mk_doc(db, bot.id, c.id, u)
+    db.commit()
+
+    monkeypatch.setattr(recrawl_service, "get_session", lambda: _ctx(db))
+
+    async def _fake_fetch(fetch_urls_arg, **kw):
+        return {"results": [{"url": u, "text": f"body {u}"} for u in fetch_urls_arg]}
+
+    monkeypatch.setattr(recrawl_service, "fetch_urls", _fake_fetch)
+    monkeypatch.setattr(
+        recrawl_service,
+        "batch_web_ingestion",
+        lambda client_id, pages, **kw: {
+            "chunks": 16,  # e.g. 8 chunks × 2 changed pages
+            "pages_changed": 2,
+            "pages_charged": 0,
+            "credits_deducted": 0,
+        },
+    )
+
+    summary = asyncio.run(recrawl_service.recrawl_bot(bot.id))
+
+    assert summary["total_urls"] == 5
+    assert summary["changed_pages"] == 2
+    assert summary["unchanged_pages"] == 3, "5 fetched - 2 changed = 3 unchanged"
+    assert summary["failed"] == 0
+    assert summary["chunks_updated"] == 16
+    assert summary["status"] == "success"
 
 
 def test_recrawl_bot_empty_still_advances_schedule(db, monkeypatch):
@@ -215,6 +350,54 @@ def test_sweep_enqueues_only_due_enabled_active_bots(db, monkeypatch):
             {"_job_id": f"auto_recrawl:{due.id}:{datetime.now(UTC).strftime('%Y%m%d%H')}"},
         )
     ]
+
+
+def test_sweep_caps_enqueues_per_tick_and_picks_oldest_first(db, monkeypatch):
+    """B — the per-hour cap. Ten bots come due in the same tick; with the
+    module-level ``_SWEEP_HOURLY_CAP`` at 3 the sweep enqueues exactly 3,
+    and they are the three whose ``next_recrawl_at`` is oldest (fairness).
+    The other seven stay past-due and get picked up on subsequent hourly
+    ticks."""
+    import app.db.session as db_session_mod
+    import app.worker.enqueue as enqueue_mod
+    from app.worker import tasks as worker_tasks
+
+    monkeypatch.setattr(worker_tasks, "_SWEEP_HOURLY_CAP", 3)
+
+    c = _mk_client(db, "rc-sweep-cap@test.example")
+    now = datetime.now(UTC)
+    # Ten due bots, each with a distinct next_recrawl_at 1..10 minutes ago.
+    # Enumerated in reverse so the oldest-due (10 min ago) is created last
+    # — proves the ordering comes from the SQL, not from insertion order.
+    bots = []
+    for offset_min in range(1, 11):
+        b = _mk_bot(
+            db,
+            c.id,
+            f"bot-cap-{offset_min:02d}",
+            recrawl_enabled=True,
+            next_recrawl_at=now - timedelta(minutes=offset_min),
+        )
+        bots.append((offset_min, b))
+    db.commit()
+
+    expected_first_three_ids = {b.id for offset_min, b in bots if offset_min in (8, 9, 10)}
+
+    monkeypatch.setattr(db_session_mod, "get_session", lambda: _ctx(db))
+
+    enqueued: list[tuple[str, tuple, dict]] = []
+
+    async def _fake_enqueue(name, *args, **kwargs):
+        enqueued.append((name, args, kwargs))
+        return SimpleNamespace(job_id="j1")
+
+    monkeypatch.setattr(enqueue_mod, "enqueue", _fake_enqueue)
+
+    count = asyncio.run(worker_tasks.task_auto_recrawl_sweep({}))
+
+    assert count == 3, "cap must clamp the tick's enqueue count"
+    actual_ids = {args[0] for _, args, _ in enqueued}
+    assert actual_ids == expected_first_three_ids, "sweep must pick the oldest-due bots first"
 
 
 def test_per_bot_task_force_disables_on_plan_downgrade(db, monkeypatch):

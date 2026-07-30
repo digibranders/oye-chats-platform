@@ -1,7 +1,7 @@
 import { type StatusBadgeProps } from '../../design-system';
 
 /**
- * Pure presentation helpers for the Inbox. No React, no side effects — kept
+ * Pure presentation helpers for the Inbox. No React, no side effects - kept
  * separate so the panels stay declarative and these stay unit-testable.
  */
 
@@ -68,7 +68,7 @@ const POSITIVE_WORDS = [
 
 /**
  * Best-effort sentiment for a message body. Lightweight keyword heuristic (ported
- * from the legacy inbox) — a display cue to help operators triage, never a
+ * from the legacy inbox) - a display cue to help operators triage, never a
  * source of truth.
  */
 export function detectSentiment(text: string | null | undefined): Sentiment {

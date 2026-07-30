@@ -14,7 +14,7 @@ export function cn(...inputs) {
  * `ChatSession.location` is stamped by the backend in two stages: the raw
  * visitor IP immediately (`"IP: <ip>"`), then overwritten in the background
  * once a geolocation lookup resolves to `"<city>, <country> | <ip>"`. If the
- * lookup hasn't finished yet — or the outbound geo API call failed — the
+ * lookup hasn't finished yet - or the outbound geo API call failed - the
  * field is still the raw IP stamp. Render this instead of `location`
  * directly anywhere visitor-facing IP would otherwise leak into the UI.
  * Returns '' when there's nothing resolved to show yet.

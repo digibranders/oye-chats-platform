@@ -1,5 +1,6 @@
 import { Bot, ImagePlus, Loader2, Sparkles, Trash2, Upload } from 'lucide-react';
 import { cn } from '../../../design-system';
+import PremiumOrb from '../../../components/PremiumOrb';
 import { ColorField } from './ColorField';
 
 export type AvatarType = 'upload' | 'orb' | 'mascot';
@@ -12,7 +13,7 @@ export interface AvatarPreviewProps {
   size?: number;
 }
 
-/** AvatarPreview — renders the chosen avatar as a circle (reused in the step preview). */
+/** AvatarPreview - renders the chosen avatar as a circle (reused in the step preview). */
 export function AvatarPreview({
   avatarType,
   botLogo,
@@ -33,13 +34,9 @@ export function AvatarPreview({
     );
   }
   if (avatarType === 'orb') {
-    const color = orbColor || primaryColor;
-    return (
-      <div
-        className="rounded-full"
-        style={{ ...dimension, background: `radial-gradient(circle at 30% 30%, #ffffffcc, ${color})` }}
-      />
-    );
+    // The real product orb - the same WebGL renderer the embeddable widget uses
+    // (falls back to a CSS gradient where WebGL is unavailable).
+    return <PremiumOrb color={orbColor || primaryColor} size={size} />;
   }
   // mascot, or upload with no logo yet
   return (
@@ -71,7 +68,7 @@ const TYPES: { key: AvatarType; label: string; icon: typeof Bot }[] = [
   { key: 'mascot', label: 'Mascot', icon: Bot },
 ];
 
-/** AvatarPicker — choose the widget avatar (photo / orb / mascot) and its data. */
+/** AvatarPicker - choose the widget avatar (photo / orb / mascot) and its data. */
 export function AvatarPicker({
   avatarType,
   orbColor,
@@ -163,23 +160,32 @@ export function AvatarPicker({
       )}
 
       {avatarType === 'orb' && (
-        <div className="space-y-3">
-          <label className="flex items-center gap-2 text-[13px] text-[var(--ds-text)]">
-            <input
-              type="checkbox"
-              checked={orbColor === ''}
-              onChange={(event) => onChangeOrbColor(event.target.checked ? '' : primaryColor)}
-            />
-            Use brand colour
-          </label>
-          {orbColor !== '' && (
-            <ColorField
-              label="Orb colour"
-              value={orbColor}
-              onChange={onChangeOrbColor}
-              swatches={swatches}
-            />
-          )}
+        <div className="flex items-start gap-4">
+          <AvatarPreview
+            avatarType="orb"
+            botLogo={null}
+            orbColor={orbColor}
+            primaryColor={primaryColor}
+            size={56}
+          />
+          <div className="min-w-0 flex-1 space-y-3">
+            <label className="flex items-center gap-2 text-[13px] text-[var(--ds-text)]">
+              <input
+                type="checkbox"
+                checked={orbColor === ''}
+                onChange={(event) => onChangeOrbColor(event.target.checked ? '' : primaryColor)}
+              />
+              Use brand colour
+            </label>
+            {orbColor !== '' && (
+              <ColorField
+                label="Orb colour"
+                value={orbColor}
+                onChange={onChangeOrbColor}
+                swatches={swatches}
+              />
+            )}
+          </div>
         </div>
       )}
 

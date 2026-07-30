@@ -26,7 +26,7 @@ export interface ActivityTrendProps {
 }
 
 /**
- * ActivityTrend — a compact, dependency-free bar chart of daily message volume.
+ * ActivityTrend - a compact, dependency-free bar chart of daily message volume.
  * Bars are scaled to the busiest day. The whole chart is exposed to assistive
  * tech as a labelled figure summarising the total; individual bars carry a
  * native tooltip. Renders an empty state when there's no traffic yet.

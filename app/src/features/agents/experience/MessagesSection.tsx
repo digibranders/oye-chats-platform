@@ -57,7 +57,7 @@ function Field({
 }
 
 /**
- * MessagesSection — the visitor-facing copy shown before and during a chat: the
+ * MessagesSection - the visitor-facing copy shown before and during a chat: the
  * welcome greeting, subtitle, quick-action prompts (with a horizontal/vertical
  * layout choice), and the input placeholder. Mirrors the fields the shipped
  * widget reads from `widget_messages`.
@@ -84,7 +84,7 @@ export function MessagesSection({ draft, onChange }: MessagesSectionProps): Reac
         />
         <Field
           label="Display name"
-          hint="Shown in the widget header — also your agent's name across the dashboard."
+          hint="Shown in the widget header - also your agent's name across the dashboard."
           value={draft.displayName}
           maxLength={FIELD_LIMITS.displayName}
           placeholder="e.g. Acme Assistant"
@@ -116,7 +116,7 @@ export function MessagesSection({ draft, onChange }: MessagesSectionProps): Reac
           label="Subtitle"
           hint="A short line of context under the greeting."
           value={draft.welcomeSubtitle}
-          placeholder="Ask me anything — I answer from your knowledge base."
+          placeholder="Ask me anything - I answer from your knowledge base."
           onChange={(v) => onChange({ welcomeSubtitle: v })}
         />
       </section>

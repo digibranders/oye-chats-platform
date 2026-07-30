@@ -1,10 +1,10 @@
 /**
- * TrialBanner — storage helpers.
+ * TrialBanner - storage helpers.
  *
  * Lives in its own module so the component file
  * (``src/components/TrialBanner.jsx``) stays "components only", which
  * is the contract Vite's fast-refresh enforces. Same prefix the banner
- * writes — kept here as the canonical source so login / logout paths
+ * writes - kept here as the canonical source so login / logout paths
  * can scrub dismissals without having to know the key shape.
  */
 
@@ -35,7 +35,7 @@ export function markBannerDismissed(status) {
     try {
         sessionStorage.setItem(bannerDismissKey(status), '1');
     } catch {
-        // Ignore — banner still hides for this render via component state.
+        // Ignore - banner still hides for this render via component state.
     }
 }
 
@@ -54,6 +54,6 @@ export function clearTrialBannerDismissals() {
         const keys = Object.keys(sessionStorage).filter((k) => k.startsWith(DISMISS_STORAGE_PREFIX));
         keys.forEach((k) => sessionStorage.removeItem(k));
     } catch {
-        // Ignore — degrades to "banner shows unless re-dismissed", the safe direction.
+        // Ignore - degrades to "banner shows unless re-dismissed", the safe direction.
     }
 }

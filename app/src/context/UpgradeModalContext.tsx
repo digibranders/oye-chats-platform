@@ -18,7 +18,7 @@ export interface UpgradeModalReason {
 export type { UpgradeIntent, UpgradeIntentKey, AddBotIntentParams };
 
 /**
- * UpgradeModalContext — the global trigger for the premium upsell dialog.
+ * UpgradeModalContext - the global trigger for the premium upsell dialog.
  *
  * Ported from the legacy `context/UpgradeModalContext.jsx` intent registry
  * (see `upgradeIntents.ts`) onto the new design system. Callers get a
@@ -29,11 +29,11 @@ export type { UpgradeIntent, UpgradeIntentKey, AddBotIntentParams };
  *
  * A known `UpgradeIntentKey` resolves to its registry copy; anything else
  * (a plain `UpgradeModalReason` object) is the escape hatch for copy that
- * doesn't justify a registry entry. Unknown string keys fail open — dev
- * console warning plus a generic-but-honest fallback — rather than silently
+ * doesn't justify a registry entry. Unknown string keys fail open - dev
+ * console warning plus a generic-but-honest fallback - rather than silently
  * dropping the click.
  *
- * The provider keeps a single piece of state (`content`) — non-null means the
+ * The provider keeps a single piece of state (`content`) - non-null means the
  * modal is open. We deliberately do NOT queue: only one upsell is shown at a
  * time, the most recent request wins, so a user who trips two gates in the
  * same flow doesn't see a modal stack.
@@ -68,7 +68,7 @@ function reasonToIntent(reason: UpgradeModalReason): UpgradeIntent {
   };
 }
 
-/** Fail-open fallback for an unrecognized intent key — still surfaces
+/** Fail-open fallback for an unrecognized intent key - still surfaces
  * something rather than silently dropping the click. */
 function genericFallback(): UpgradeIntent {
   return {

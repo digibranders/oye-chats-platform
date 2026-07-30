@@ -60,13 +60,13 @@ export interface BotConfigSectionProps {
 }
 
 /**
- * BotConfigSection — the Experience surfaces backed directly by the `Bot`
+ * BotConfigSection - the Experience surfaces backed directly by the `Bot`
  * record rather than the shared appearance draft: live-chat handoff and the
  * pre-chat lead form (`variant="handoff"`), or the services answer-scope and
  * the remaining widget copy (`variant="content"`).
  *
  * It loads the bot once via `getBot`, edits locally, and persists each card's
- * slice independently via `updateBot` — so a change to the lead form never
+ * slice independently via `updateBot` - so a change to the lead form never
  * forces a save of live-chat copy. Every slice tracks its own dirty / saving /
  * saved / error state and surfaces feedback inline.
  */
@@ -648,7 +648,7 @@ function ServicesCard({
       <Card>
         {services.length === 0 ? (
           <p className="rounded-[var(--ds-radius-lg)] border border-dashed border-[var(--ds-border)] px-3 py-4 text-[13px] text-[var(--ds-text-subtle)]">
-            No services listed — the bot answers about anything in your knowledge base. Add one or more to
+            No services listed - the bot answers about anything in your knowledge base. Add one or more to
             scope its answers.
           </p>
         ) : (
@@ -725,7 +725,7 @@ function WidgetCopyCard({
     <section className="space-y-5">
       <SectionHeader
         title="More widget copy"
-        description="The remaining visitor-facing strings — the live-chat button, greeting bubble, offline banner and post-chat prompts."
+        description="The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts."
       />
       <Card>
         <TextField

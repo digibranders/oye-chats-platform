@@ -76,25 +76,9 @@ function trendFromChange(change: number | null): { delta?: string; trend?: Metri
 function deriveInsight(
   data: WorkspaceAnalytics,
 ): { tone: InsightTone; title: string; body: string } | null {
-  const { totals, ratings, leads } = data;
+  const { totals, leads } = data;
 
   if (totals.totalConversations === 0) return null;
-
-  if (totals.positiveFeedbackRate > 0 && totals.positiveFeedbackRate < 60) {
-    return {
-      tone: 'warning',
-      title: `${Math.round(totals.positiveFeedbackRate)}% of rated answers got a thumbs-up`,
-      body: 'A lower positive-feedback rate often points to gaps in your knowledge base. Adding more content usually lifts it.',
-    };
-  }
-
-  if (totals.positiveFeedbackRate >= 80) {
-    return {
-      tone: 'success',
-      title: `${Math.round(totals.positiveFeedbackRate)}% of rated answers got a thumbs-up`,
-      body: 'Visitors are happy with the answers your AI is giving. Keep your knowledge fresh to hold this level.',
-    };
-  }
 
   if (leads.sql > 0) {
     return {
@@ -104,21 +88,13 @@ function deriveInsight(
     };
   }
 
-  if (ratings.total > 0) {
-    return {
-      tone: ratings.average >= 4 ? 'success' : 'info',
-      title: `Visitors rate their experience ${ratings.average.toFixed(1)} out of 5`,
-      body: `Based on ${ratings.total.toLocaleString()} post-chat ${ratings.total === 1 ? 'rating' : 'ratings'} across your agents.`,
-    };
-  }
-
   return null;
 }
 
 /**
  * Segmented control for picking the trend window. A one-of-N choice, so it is
  * modelled as a WAI-ARIA radio group (`role="radiogroup"` + `role="radio"` /
- * `aria-checked`) with roving `tabIndex` and arrow / Home / End navigation —
+ * `aria-checked`) with roving `tabIndex` and arrow / Home / End navigation -
  * this reads as a mutually-exclusive selection to assistive tech rather than a
  * row of independent toggles.
  */
@@ -229,14 +205,17 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 /**
- * AnalyticsPage — the workspace performance surface (route `/analytics`).
+ * AnalyticsPage - the workspace performance surface (route `/analytics`).
  * Answers one question: "How is my workspace performing?" It aggregates every
  * agent (no bot filter) into headline metrics, a message-volume trend, and
  * three progressive-disclosure tabs (Conversations · Leads · Satisfaction).
  */
 export function AnalyticsPage(): ReactElement {
-  const { bots, loading: botsLoading } = useBotContext();
-  const { status, data, error, refreshing, reload } = useWorkspaceAnalytics();
+  const { bots, selectedBot, loading: botsLoading } = useBotContext();
+  // When the shell BotSwitcher is set to a specific agent, scope the whole
+  // page to that bot; when it's on "All agents" (`selectedBot === null`), fall
+  // back to workspace-aggregated across every agent.
+  const { status, data, error, refreshing, reload } = useWorkspaceAnalytics(selectedBot?.id ?? null);
   const [tab, setTab] = useState<AnalyticsTab>('conversations');
   const [range, setRange] = useState<TrendRange>('all');
 
@@ -467,7 +446,7 @@ export function AnalyticsPage(): ReactElement {
               tabIndex={0}
               className="focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
-              <FeedbackPanel />
+              <FeedbackPanel agentId={selectedBot ? String(selectedBot.id) : undefined} />
             </div>
           )}
         </>

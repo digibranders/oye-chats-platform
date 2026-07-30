@@ -17,7 +17,7 @@ export interface PagesDrawerProps {
 }
 
 /**
- * PagesDrawer — a right slide-over listing ALL crawled pages for a source
+ * PagesDrawer - a right slide-over listing ALL crawled pages for a source
  * (fresh TS on the new DS; mirrors the legacy SourcePagesDrawer content).
  */
 export function PagesDrawer({ source, pages, onClose }: PagesDrawerProps) {

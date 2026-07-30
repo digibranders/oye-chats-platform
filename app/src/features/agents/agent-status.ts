@@ -6,11 +6,11 @@ import { type AgentCardMetric, type AgentCardStatus } from '../../design-system/
  * object (no extra network calls). This is the single source of truth the list
  * page and its summary tiles read, so status language stays consistent.
  *
- *   live       — trained AND the widget is installed on the customer's site.
- *   ready      — trained, but not yet deployed anywhere.
- *   training   — a crawl is in progress right now.
- *   attention  — the last crawl failed or found no usable content.
- *   draft      — created but never trained.
+ *   live       - trained AND the widget is installed on the customer's site.
+ *   ready      - trained, but not yet deployed anywhere.
+ *   training   - a crawl is in progress right now.
+ *   attention  - the last crawl failed or found no usable content.
+ *   draft      - created but never trained.
  */
 export type AgentHealth = 'live' | 'ready' | 'training' | 'attention' | 'draft';
 
@@ -74,7 +74,7 @@ export interface AgentPortfolioSummary {
   /** Agents with a crawl in progress. */
   training: number;
   /**
-   * Agents not yet serving visitors — i.e. every non-live, non-training agent:
+   * Agents not yet serving visitors - i.e. every non-live, non-training agent:
    * draft (never trained), ready (trained but not deployed), or attention
    * (crawl failed / no content). Deliberately inclusive so the tile total plus
    * live plus training reconciles with the agent count.

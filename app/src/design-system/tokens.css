@@ -1,9 +1,9 @@
 /**
- * Design System — Semantic Tokens (Admin Platform 2.0)
+ * Design System - Semantic Tokens (Admin Platform 2.0)
  * =====================================================
  * A semantic layer on top of the existing Tailwind `@theme` palette in
  * `index.css` (Voltage Paper). Per the rebuild mandate, violet
- * (#7C3AED) is used as an ACCENT only — surfaces, nav, and chrome are
+ * (#7C3AED) is used as an ACCENT only - surfaces, nav, and chrome are
  * warm-neutral (paper / ink). Components read these vars via
  * `bg-[var(--ds-*)]` / `text-[var(--ds-*)]` so the whole shell recolors
  * from one place and light/dark stay in lockstep.
@@ -14,12 +14,12 @@
  */
 
 :root {
-  /* Backgrounds — warm paper, ink on top */
+  /* Backgrounds - warm paper, ink on top */
   --ds-bg-canvas: #fafaf7;   /* app background */
   --ds-bg-surface: #ffffff;  /* cards / raised */
   --ds-bg-sunken: #f4f3ef;   /* rails / insets */
   --ds-bg-hover: #f4f3ef;    /* neutral hover */
-  --ds-sidebar-bg: #f7f6f2;  /* nav rail — NEUTRAL, never violet */
+  --ds-sidebar-bg: #f7f6f2;  /* nav rail - NEUTRAL, never violet */
 
   /* Borders */
   --ds-border: #e7e5de;
@@ -31,14 +31,14 @@
   --ds-text-subtle: #a1a1aa;
   --ds-text-invert: #fafafa;
 
-  /* Accent — violet, used sparingly (primary actions, active state) */
+  /* Accent - violet, used sparingly (primary actions, active state) */
   --ds-accent: #7C3AED;
   --ds-accent-hover: #6D28D9;
   --ds-accent-fg: #ffffff;
   --ds-accent-soft: rgba(124, 58, 237, 0.08);
   --ds-accent-text: #5B21B6;
 
-  /* Semantic status — single source for success/warning/danger/info chrome */
+  /* Semantic status - single source for success/warning/danger/info chrome */
   --ds-success: #059669;
   --ds-success-soft: #ecfdf5;
   --ds-warning: #d97706;
@@ -68,8 +68,8 @@
   --ds-radius-2xl: 20px;
   --ds-radius-full: 9999px;
 
-  /* Forward contract — spacing/type/motion scale; adopt incrementally. */
-  /* Spacing — 4px base scale */
+  /* Forward contract - spacing/type/motion scale; adopt incrementally. */
+  /* Spacing - 4px base scale */
   --ds-space-1: 4px;
   --ds-space-2: 8px;
   --ds-space-3: 12px;

@@ -1,5 +1,5 @@
 /**
- * liveChatProtocol — the operator ⇄ backend WebSocket contract.
+ * liveChatProtocol - the operator ⇄ backend WebSocket contract.
  *
  * Source of truth: `api/app/api/ws_routes.py` (endpoint `/ws/operator`) and
  * `api/app/services/live_chat_service.py` (ConnectionManager outbound payloads).
@@ -7,7 +7,7 @@
  * to an operator socket; every outbound builder matches a branch of the operator
  * `receive_json()` loop. Keep this file in lock-step with those two modules.
  *
- * Pure types + helpers only — no React, no side effects.
+ * Pure types + helpers only - no React, no side effects.
  */
 
 // ── Connection status ────────────────────────────────────────────────────────
@@ -17,11 +17,11 @@ export type ConnectionStatus =
   | 'connecting' // first handshake in flight
   | 'connected' // socket open
   | 'reconnecting' // dropped, backing off before retry
-  | 'duplicate'; // closed 4001 — another tab owns the operator channel
+  | 'duplicate'; // closed 4001 - another tab owns the operator channel
 
 /** WS close code the backend uses when a second tab connects for the operator. */
 export const DUPLICATE_TAB_CLOSE_CODE = 4001;
-/** WS close code for auth failure — do not hammer-reconnect on this. */
+/** WS close code for auth failure - do not hammer-reconnect on this. */
 export const AUTH_FAILED_CLOSE_CODE = 4003;
 
 // ── Local view models (normalised from inbound payloads / REST) ───────────────
@@ -64,7 +64,7 @@ export type VisitorPresence = 'online' | 'disconnected';
 export interface OperatorMessage {
   /** Stable client key for React lists. */
   key: string;
-  /** Server DB id when known — drives read-receipt high-water mark + dedupe. */
+  /** Server DB id when known - drives read-receipt high-water mark + dedupe. */
   dbId: number | null;
   role: 'user' | 'bot' | 'operator' | 'system';
   content: string;
@@ -297,7 +297,7 @@ export function deriveWsUrl(apiBaseUrl: string): string {
 }
 
 /**
- * Build the `Sec-WebSocket-Protocol` value carrying the operator's credential —
+ * Build the `Sec-WebSocket-Protocol` value carrying the operator's credential -
  * `operator-key.<token>` for operator logins, `api-key.<token>` for the owner.
  * Passing auth via subprotocol (not query param) keeps it out of access logs.
  */
@@ -311,7 +311,7 @@ export function reconnectDelay(attempt: number): number {
   return base + Math.floor(Math.random() * 1000);
 }
 
-/** Heartbeat cadence — tighter when the tab is visible, looser when hidden. */
+/** Heartbeat cadence - tighter when the tab is visible, looser when hidden. */
 export function heartbeatInterval(visible: boolean): number {
   return visible ? 25000 : 50000;
 }

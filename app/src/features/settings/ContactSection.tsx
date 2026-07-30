@@ -9,8 +9,8 @@ const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Custom req
 // ── Section ──────────────────────────────────────────────────────────────────
 
 /**
- * ContactSection — "Need something custom?" surface. A direct line to the team
- * for bespoke integrations, custom pricing, or white-glove onboarding — things
+ * ContactSection - "Need something custom?" surface. A direct line to the team
+ * for bespoke integrations, custom pricing, or white-glove onboarding - things
  * that don't fit a self-serve flow. One copy-to-clipboard affordance and one
  * mailto, no ticket taxonomy.
  *
@@ -43,7 +43,7 @@ export function ContactSection(): ReactElement {
         resetTimer.current = null;
       }, 2000);
     } catch {
-      setCopyError('Couldn’t copy — select the address above and copy it manually.');
+      setCopyError('Couldn’t copy - select the address above and copy it manually.');
     }
   }, []);
 

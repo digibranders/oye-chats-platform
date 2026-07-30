@@ -1,5 +1,5 @@
 /**
- * Billing-details form logic — ported verbatim from the legacy
+ * Billing-details form logic - ported verbatim from the legacy
  * `components/billing/BillingDetailsCard.jsx` so the redesigned form issues the
  * exact same PATCH the backend expects (only changed fields; explicit null to
  * clear; GSTIN uppercased; state server-derived from the GSTIN when set).
@@ -85,7 +85,7 @@ export type BillingDetailsErrors = Partial<Record<BillingDetailsErrorField, stri
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Validate the form BEFORE building a PATCH — mirrors the backend's rules
+ * Validate the form BEFORE building a PATCH - mirrors the backend's rules
  * (`subscription_routes.update_billing_details`) so obvious mistakes surface
  * inline instead of as a 422. Only rules the backend also enforces are hard
  * errors; the sole product-level addition is requiring a legal name, since a
@@ -93,7 +93,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  *
  * Cross-field GSTIN/country/state conflicts can't be assembled from this UI
  * (GSTIN is disabled for a foreign country, and the state field is hidden once
- * a GSTIN is present), so they need no client check — the backend still guards
+ * a GSTIN is present), so they need no client check - the backend still guards
  * them for direct-API callers.
  */
 export function validateBillingDetailsForm(form: BillingDetailsForm): BillingDetailsErrors {
@@ -102,7 +102,7 @@ export function validateBillingDetailsForm(form: BillingDetailsForm): BillingDet
   const foreign = isForeignCountry(form.billing_country);
 
   if (!trim(form.legal_name)) {
-    errors.legal_name = 'Legal name is required — it’s printed on your invoices.';
+    errors.legal_name = 'Legal name is required - it’s printed on your invoices.';
   }
 
   const email = trim(form.billing_email);

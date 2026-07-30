@@ -7,7 +7,7 @@ interface ActionCardBaseProps {
   title: string;
   /** One line on what happens / why it matters. */
   description: string;
-  /** Leading glyph (required — an action always has a visual anchor). */
+  /** Leading glyph (required - an action always has a visual anchor). */
   icon: LucideIcon;
   /** Optional explicit call-to-action label. Defaults to `title`. */
   cta?: string;
@@ -16,13 +16,13 @@ interface ActionCardBaseProps {
 
 /**
  * ActionCard requires exactly one navigation target: an in-app route (`to`)
- * OR a click handler (`onClick`) — never both, never neither.
+ * OR a click handler (`onClick`) - never both, never neither.
  */
 export type ActionCardProps = ActionCardBaseProps &
   ({ to: string; onClick?: never } | { onClick: () => void; to?: never });
 
 /**
- * ActionCard — a clickable "next action" tile (mandate shared component). The
+ * ActionCard - a clickable "next action" tile (mandate shared component). The
  * whole surface is the target. Renders as a router `<Link>` when `to` is given,
  * otherwise a `<button>`.
  */

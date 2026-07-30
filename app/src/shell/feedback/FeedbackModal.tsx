@@ -64,7 +64,7 @@ export interface FeedbackModalProps {
   highlightId?: number | null;
 }
 
-/** An attachment being composed on the Send tab — local until uploaded. */
+/** An attachment being composed on the Send tab - local until uploaded. */
 interface ComposeAttachment {
   readonly id: number;
   name: string;
@@ -291,7 +291,7 @@ function buildContext(pathname: string, search: string, planName: string): Recor
 }
 
 /**
- * FeedbackModal — the admin → OyeChats product-feedback dialog (mandate DS
+ * FeedbackModal - the admin → OyeChats product-feedback dialog (mandate DS
  * component, built on the `Modal` primitive). Two tabs: compose new feedback
  * (type/area/severity/message/screenshots) and track the status of feedback
  * already sent. Ported 1:1 in behavior from the legacy `components/FeedbackModal.jsx`.
@@ -314,7 +314,7 @@ export function FeedbackModal({
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Mirror the latest attachments in a ref so the unmount-only cleanup effect
-  // revokes the URLs actually held at unmount — not the empty mount-render
+  // revokes the URLs actually held at unmount - not the empty mount-render
   // array it would otherwise close over (leaking every preview URL on a
   // close-without-submit).
   const attachmentsRef = useRef(attachments);

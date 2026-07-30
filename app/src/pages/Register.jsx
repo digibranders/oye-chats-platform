@@ -10,7 +10,7 @@ import GoogleAuthButton from '../components/GoogleAuthButton';
 import { COUNTRY_OPTIONS } from '../lib/countries';
 import Select from '../components/ui/Select';
 
-// Billing-country choices for the custom Select — the plain ISO country list.
+// Billing-country choices for the custom Select - the plain ISO country list.
 // The field auto-detects the visitor's country on load (see the effect below)
 // and preselects it; the user can still search/override. Built once at module
 // load (COUNTRY_OPTIONS is static).
@@ -25,7 +25,7 @@ const features = [
 
 export default function Register() {
   const [initialSearchParams] = useSearchParams();
-  // Pre-fill from URL — the invite airlock routes new invitees here as
+  // Pre-fill from URL - the invite airlock routes new invitees here as
   // ``/register?next=/invite/<token>&email=<invite_email>``. We pre-fill
   // but DON'T lock the field: the invitee might genuinely want to sign up
   // under a different email (e.g. work vs personal), and the airlock's
@@ -41,12 +41,12 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  // Email/password is the secondary signup path — revealed behind a "Continue
+  // Email/password is the secondary signup path - revealed behind a "Continue
   // with email" disclosure so Google SSO stays the primary call-to-action.
   // Auto-expanded when an email is pre-filled (invite airlock round-trip).
   const [showEmailForm, setShowEmailForm] = useState(Boolean(_initialEmail));
   const navigate = useNavigate();
-  // Affiliate invite round-trip — see Login.jsx for the rationale. New
+  // Affiliate invite round-trip - see Login.jsx for the rationale. New
   // sign-ups arrived from the Partners invite landing get routed back
   // there so the accept-existing endpoint can wire the affiliate row.
   const [searchParams] = useSearchParams();
@@ -56,7 +56,7 @@ export default function Register() {
   // signup lands back on the airlock to auto-accept. Also honoured by the
   // Google button below so OAuth signup survives the same round-trip.
   const rawNext = searchParams.get('next') || '';
-  // Same open-redirect guard as Login.jsx — only relative same-origin paths.
+  // Same open-redirect guard as Login.jsx - only relative same-origin paths.
   const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
 
   // Auto-detect the visitor's billing country on load and preselect it. The
@@ -110,7 +110,7 @@ export default function Register() {
         billingCountry || null,
       );
 
-      // Register defaults to ``persistent=true`` — newly signed-up
+      // Register defaults to ``persistent=true`` - newly signed-up
       // customers should stay logged in across browser restarts unless
       // they explicitly opt out via Login → Remember me.
       setAuthBundle({
@@ -126,14 +126,14 @@ export default function Register() {
       });
       sessionStorage.setItem('login_toast', 'registered');
 
-      // Mirror Login.jsx — clear any stale trial-banner dismissals from a
+      // Mirror Login.jsx - clear any stale trial-banner dismissals from a
       // prior session on this device so the freshly-registered client sees
       // the trial banner immediately instead of inheriting a "dismissed"
       // flag set by a previous account.
       clearTrialBannerDismissals();
 
       // Email/password signups MUST verify their email before entering the
-      // product — this closes the abuse vector where fake/nonexistent emails
+      // product - this closes the abuse vector where fake/nonexistent emails
       // farm free trial credits + crawl compute (the backend now also 403s
       // create-bot/crawl/ingest for unverified workspaces). Google SSO is
       // exempt: those emails are provider-verified at the source. We route to
@@ -146,7 +146,7 @@ export default function Register() {
       // Detect the "email already registered" backend rejection so we can
       // offer a one-click redirect to Login with the current query params
       // preserved (invite ``next``, invited ``email``, etc.). Common flow
-      // for an invitee who forgot they already have an OyeChats account —
+      // for an invitee who forgot they already have an OyeChats account -
       // without this hint they'd stall on the register page with a generic
       // error and no obvious next step. Server surfaces this as a 409 with
       // a message containing "already"; we broaden slightly for resilience.
@@ -168,12 +168,12 @@ export default function Register() {
     }
   };
 
-  // Already-authenticated redirect — mirrors Login.jsx so a browser with a
+  // Already-authenticated redirect - mirrors Login.jsx so a browser with a
   // live session opening /register lands in the app instead of the signup form.
   // Gated on ``!isSessionExpired()`` on purpose: a *lapsed* session still
   // renders the form. The old guard keyed off mere token PRESENCE, so a
   // stale/expired token (common after a session lapse) sent the visitor to
-  // "/", which 401'd and bounced them to /login — trapping the sign-up flow.
+  // "/", which 401'd and bounced them to /login - trapping the sign-up flow.
   // Checking the client-side expiry first keeps genuinely logged-in users
   // moving while letting lapsed-token and brand-new visitors reach the form.
   // Deep-link ``next`` and affiliate round-trips win over the default, exactly
@@ -199,7 +199,7 @@ export default function Register() {
 
   return (
     <div className="min-h-screen flex bg-surface-50">
-      {/* Left Panel — Branding */}
+      {/* Left Panel - Branding */}
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden bg-gradient-to-br from-[#17121f] via-[#14101e] to-[#0f0b15] text-white">
         <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(162,28,175,0.18) 0%, rgba(162,28,175,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
@@ -278,7 +278,7 @@ export default function Register() {
         </motion.div>
       </div>
 
-      {/* Right Panel — Form */}
+      {/* Right Panel - Form */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50 overflow-y-auto">
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -307,7 +307,7 @@ export default function Register() {
             </motion.div>
           )}
 
-          {/* Google OAuth signup — backend uses the same endpoint as login;
+          {/* Google OAuth signup - backend uses the same endpoint as login;
               it decides "new account" vs "returning" by looking up the
               provider subject + email. Hidden when the server reports
               Google OAuth is not configured. */}
@@ -323,7 +323,7 @@ export default function Register() {
             />
           </div>
 
-          {/* Implicit consent — the industry-standard pattern (Google, Stripe,
+          {/* Implicit consent - the industry-standard pattern (Google, Stripe,
               Vercel, Linear, Notion): one statement covering BOTH signup
               methods, no checkbox, buttons never disabled. Signing up is the
               consenting action; this notice sits under the primary CTA so it's
@@ -421,7 +421,7 @@ export default function Register() {
                     onBlur={(e) => {
                       // Auto-prepend https:// so a bare host (e.g. www.oyechats.com)
                       // passes the native URL validation instead of erroring. We
-                      // only add the protocol — no validation/clearing — so partial
+                      // only add the protocol - no validation/clearing - so partial
                       // input the user is still working on is never discarded.
                       const v = e.target.value.trim();
                       if (v && !/^https?:\/\//i.test(v)) setWebsite(`https://${v}`);

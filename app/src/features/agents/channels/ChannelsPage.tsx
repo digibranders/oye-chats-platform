@@ -18,12 +18,13 @@ import { type Bot } from '../../../types/domain';
 import { ChannelCard } from './ChannelCard';
 import { WebsiteInstall } from './WebsiteInstall';
 import { DomainRestrictionsSection } from './DomainRestrictionsSection';
+import { SubdomainSessionSection } from './SubdomainSessionSection';
 import { COMING_SOON_CHANNELS } from './channels.data';
 
 /**
  * The full agent record includes channel fields the lightweight list `Bot`
  * omits. `getBot` returns the complete row; we read those extra fields through
- * this local widening of the shared `Bot` type (all optional — the backend may
+ * this local widening of the shared `Bot` type (all optional - the backend may
  * not set them). See `pages/Integrations.jsx` for the source of truth on these
  * meeting fields.
  */
@@ -36,6 +37,7 @@ interface ChannelBot extends Bot {
   notification_emails?: { default?: string[] } | null;
   allowed_domains?: string[] | null;
   domain_check_enabled?: boolean | null;
+  session_share_domain?: string | null;
 }
 
 const MEETING_PROVIDER_LABELS: Record<string, string> = {
@@ -61,7 +63,7 @@ function ChannelsSkeleton(): ReactElement {
 }
 
 /**
- * ChannelsPage — the agent's "Channels" tab. Answers one question: *where is my
+ * ChannelsPage - the agent's "Channels" tab. Answers one question: *where is my
  * AI connected?* It surfaces the live Website channel (with the full install
  * flow), the Meetings and Email channels, and the roadmap of channels still to
  * come. Data is loaded fresh via `getBot`; the Meetings channel can be toggled
@@ -116,7 +118,7 @@ export function ChannelsPage(): ReactElement {
     setSavingMeetings(true);
     setMeetingsError(null);
     try {
-      // PATCH /bots/{id} returns { message }, NOT the bot — so merge the single
+      // PATCH /bots/{id} returns { message }, NOT the bot - so merge the single
       // changed field into the current record instead of overwriting it (which
       // would blank out bot_key, website, install status, etc.).
       await updateBot(numericId, { meeting_booking_enabled: next });
@@ -175,19 +177,9 @@ export function ChannelsPage(): ReactElement {
 
     return (
       <div className="space-y-8">
-        {/* Status summary */}
-        {installed ? (
-          <InsightCard
-            tone="success"
-            icon={Globe}
-            title="Your agent is live on your website"
-            body={
-              website
-                ? `Visitors on ${website} can chat with your agent right now.`
-                : 'Visitors can chat with your agent on your website right now.'
-            }
-          />
-        ) : (
+        {/* Status summary - only the actionable "not live yet" nudge; the
+            celebratory "live" card is intentionally omitted. */}
+        {!installed && (
           <InsightCard
             tone="warning"
             icon={PlugZap}
@@ -203,7 +195,7 @@ export function ChannelsPage(): ReactElement {
             description="Places your agent can answer people today."
           />
 
-          {/* Website — the primary channel, with the full install flow */}
+          {/* Website - the primary channel, with the full install flow */}
           <ChannelCard
             icon={Globe}
             iconTone="accent"
@@ -244,6 +236,19 @@ export function ChannelsPage(): ReactElement {
                     }
                   />
                 )}
+                {numericId != null && (
+                  <SubdomainSessionSection
+                    key={`session-${numericId}`}
+                    botId={numericId}
+                    website={website}
+                    initialShareDomain={record.session_share_domain ?? null}
+                    onSaved={(next) =>
+                      setFetched((prev) =>
+                        prev && prev.token === token ? { token, bot: { ...prev.bot, ...next } } : prev,
+                      )
+                    }
+                  />
+                )}
               </>
             ) : (
               <p className="text-[13px] text-[var(--ds-text-muted)]">
@@ -252,7 +257,7 @@ export function ChannelsPage(): ReactElement {
             )}
           </ChannelCard>
 
-          {/* Meetings — bookings inside the chat. Requires the paid `integrations: 'all'` tier. */}
+          {/* Meetings - bookings inside the chat. Requires the paid `integrations: 'all'` tier. */}
           <ChannelCard
             icon={premiumIntegrationsLocked ? Lock : Calendar}
             iconTone={premiumIntegrationsLocked ? 'neutral' : 'info'}
@@ -325,7 +330,7 @@ export function ChannelsPage(): ReactElement {
             }
           />
 
-          {/* Email — always-on fallback capture */}
+          {/* Email - always-on fallback capture */}
           <ChannelCard
             icon={Mail}
             iconTone="success"
@@ -379,10 +384,7 @@ export function ChannelsPage(): ReactElement {
   };
 
   return (
-    <PageContainer
-      title="Channels"
-      description="Where your AI chatbot is connected and talking to people."
-    >
+    <PageContainer>
       {body()}
     </PageContainer>
   );

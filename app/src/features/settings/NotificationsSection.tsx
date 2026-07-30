@@ -25,7 +25,7 @@ const PUSH_SUPPORTED =
   'PushManager' in window &&
   'Notification' in window;
 
-/** The service worker this app ships (public/sw.js) — it owns the `push` handler. */
+/** The service worker this app ships (public/sw.js) - it owns the `push` handler. */
 const SERVICE_WORKER_URL = '/sw.js';
 
 function toMessage(error: unknown, fallback: string): string {
@@ -82,13 +82,13 @@ async function mintSubscription(registration: ServiceWorkerRegistration): Promis
   return { status: 'subscribed' };
 }
 
-/** Pure, synchronous read of the starting phase — no side effects, so it's a safe lazy initializer. */
+/** Pure, synchronous read of the starting phase - no side effects, so it's a safe lazy initializer. */
 function initialPushPhase(): PushPhase {
   if (!PUSH_SUPPORTED) return { status: 'unsupported' };
   const permission = Notification.permission;
   if (permission === 'denied') return { status: 'denied' };
   // Both 'granted' and 'default' need an async check (is there already a
-  // subscription on this device?) before we can settle — start in `checking`.
+  // subscription on this device?) before we can settle - start in `checking`.
   return { status: 'checking' };
 }
 
@@ -102,7 +102,7 @@ function NotificationsCard(): ReactElement {
 
   // Resolve the true state: register the SW, then look for an existing
   // subscription. First `setState` always follows an await, so the `checking`
-  // phase is a genuine derived state — never a synchronous set in the effect body.
+  // phase is a genuine derived state - never a synchronous set in the effect body.
   useEffect(() => {
     if (!PUSH_SUPPORTED) return;
     let active = true;
@@ -123,7 +123,7 @@ function NotificationsCard(): ReactElement {
           try {
             await subscribePush(existing);
           } catch {
-            // Ignore — still reflect the browser truth below.
+            // Ignore - still reflect the browser truth below.
           }
           if (!active) return;
           setPhase({ status: 'subscribed' });
@@ -168,10 +168,10 @@ function NotificationsCard(): ReactElement {
         return;
       }
       if (result !== 'granted') {
-        // Dismissed — permission stays 'default'; nothing changed.
+        // Dismissed - permission stays 'default'; nothing changed.
         return;
       }
-      // Granted — reuse an existing device subscription, else mint one with the
+      // Granted - reuse an existing device subscription, else mint one with the
       // server VAPID key.
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
@@ -202,12 +202,12 @@ function NotificationsCard(): ReactElement {
           try {
             await unsubscribePush(endpoint, { p256dh: json.keys?.p256dh, auth: json.keys?.auth });
           } catch {
-            // Best-effort backend removal — still unsubscribe locally below.
+            // Best-effort backend removal - still unsubscribe locally below.
           }
         }
         await subscription.unsubscribe();
       }
-      // Permission is still 'granted' but there's no deliverable subscription —
+      // Permission is still 'granted' but there's no deliverable subscription -
       // that's exactly the honest `incomplete` state.
       setPhase({ status: 'incomplete' });
     } catch (error) {
@@ -340,7 +340,7 @@ function NotificationsCard(): ReactElement {
                   Notifications are allowed in your browser
                 </p>
                 <p className="mt-1 leading-relaxed">
-                  But web push isn’t fully set up for this dashboard yet — delivering alerts needs the
+                  But web push isn’t fully set up for this dashboard yet - delivering alerts needs the
                   push service key enabled on the server, which isn’t available to the app here. There’s
                   nothing more to do on this device until that’s switched on.
                 </p>
@@ -359,7 +359,7 @@ function NotificationsCard(): ReactElement {
                 <p className="font-medium text-[var(--ds-text)]">Push notifications aren’t enabled yet</p>
                 <p className="mt-1 leading-relaxed">
                   Your browser is ready, but web push is currently turned off on the server, so alerts can’t
-                  be delivered. It’ll start working here automatically once it’s switched on — nothing more to
+                  be delivered. It’ll start working here automatically once it’s switched on - nothing more to
                   do on this device.
                 </p>
               </div>
@@ -387,7 +387,7 @@ function NotificationsCard(): ReactElement {
 
 // ── Install-as-app (PWA) ─────────────────────────────────────────────────────
 
-/** The `beforeinstallprompt` event isn't in the standard DOM lib — model just what we use. */
+/** The `beforeinstallprompt` event isn't in the standard DOM lib - model just what we use. */
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
@@ -407,12 +407,12 @@ function isIOS(): boolean {
 }
 
 /**
- * InstallAsAppCard — a PWA install affordance for Settings.
+ * InstallAsAppCard - a PWA install affordance for Settings.
  *
  * Honest by construction: we only render a real "Install" button when the
  * browser has actually fired `beforeinstallprompt` (so a click leads to a real
- * native prompt). When that event isn't available — iOS Safari, or a browser
- * that never offers programmatic install — we show platform-appropriate manual
+ * native prompt). When that event isn't available - iOS Safari, or a browser
+ * that never offers programmatic install - we show platform-appropriate manual
  * guidance instead of a dead button.
  */
 function InstallAsAppCard(): ReactElement {
@@ -444,7 +444,7 @@ function InstallAsAppCard(): ReactElement {
     try {
       await deferredPrompt.prompt();
       const choice = await deferredPrompt.userChoice;
-      // The prompt can only be used once — drop it either way.
+      // The prompt can only be used once - drop it either way.
       setDeferredPrompt(null);
       if (choice.outcome === 'accepted') setInstalled(true);
     } finally {
@@ -513,7 +513,7 @@ function InstallAsAppCard(): ReactElement {
 // ── Section ──────────────────────────────────────────────────────────────────
 
 /**
- * NotificationsSection — the Settings ▸ Notifications surface: manage browser
+ * NotificationsSection - the Settings ▸ Notifications surface: manage browser
  * web-push honestly (real permission state, subscribe/unsubscribe when the
  * platform genuinely allows it) plus a PWA "Install as app" affordance.
  */

@@ -92,7 +92,7 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
 }
 
 /**
- * AgentAnalyticsPage — the "How is my AI performing?" tab for a single agent.
+ * AgentAnalyticsPage - the "How is my AI performing?" tab for a single agent.
  * A headline insight and KPI row answer the question at a glance; the tabbed
  * sections below let owners drill into engagement, questions, leads, and
  * satisfaction without leaving the page.
@@ -107,7 +107,7 @@ export function AgentAnalyticsPage(): ReactElement {
     [state.data],
   );
 
-  // Agent list still resolving — hold the layout with skeletons.
+  // Agent list still resolving - hold the layout with skeletons.
   if (agentLoading && !agent) {
     return (
       <PageContainer title="Analytics" description="How your AI is performing.">
@@ -169,7 +169,7 @@ export function AgentAnalyticsPage(): ReactElement {
 
   // "Leads" means captured/qualified leads, not raw conversations. The server's
   // `leads.total` is len(sessions) (every visitor who chatted, incl. tier
-  // 'unqualified'), so sum the mutually-exclusive qualified tiers instead — this
+  // 'unqualified'), so sum the mutually-exclusive qualified tiers instead - this
   // matches the funnel's "Marketing-qualified" stage in LeadsBreakdown.
   const qualifiedLeads = analytics.leads
     ? analytics.leads.mql + analytics.leads.sal + analytics.leads.sql
@@ -177,27 +177,27 @@ export function AgentAnalyticsPage(): ReactElement {
 
   return (
     <PageContainer title="Analytics" description="How your AI is performing.">
-      {/* KPI row — the four numbers that summarise agent health. */}
+      {/* KPI row - the four numbers that summarise agent health. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard
           icon={MessageSquare}
           label="Messages"
-          value={loading ? '—' : totalMessages.toLocaleString()}
+          value={loading ? '-' : totalMessages.toLocaleString()}
         />
         <MetricCard
           icon={Users}
           label="Leads"
-          value={loading ? '—' : qualifiedLeads.toLocaleString()}
+          value={loading ? '-' : qualifiedLeads.toLocaleString()}
         />
         <MetricCard
           icon={CheckCircle2}
           label="Resolution rate"
-          value={loading || analytics.resolution.rate === null ? '—' : `${analytics.resolution.rate}%`}
+          value={loading || analytics.resolution.rate === null ? '-' : `${analytics.resolution.rate}%`}
         />
         <MetricCard
           icon={Star}
           label="Avg. rating"
-          value={loading || analytics.ratings.avg === null ? '—' : `${analytics.ratings.avg} / 5`}
+          value={loading || analytics.ratings.avg === null ? '-' : `${analytics.ratings.avg} / 5`}
         />
       </div>
 

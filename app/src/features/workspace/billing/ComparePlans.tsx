@@ -13,12 +13,12 @@ export interface ComparePlansProps {
   /** Controlled disclosure state so a parent affordance can open it. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Current subscription status — forwarded so the matrix can offer activation. */
+  /** Current subscription status - forwarded so the matrix can offer activation. */
   currentStatus?: string | null;
 }
 
 /**
- * ComparePlans — a disclosure, collapsed by default, that reveals the full
+ * ComparePlans - a disclosure, collapsed by default, that reveals the full
  * feature-by-feature {@link PlanMatrix} in-app. A subscription-management page
  * leads with the premium plan cards (the fast switch surface); the exhaustive
  * comparison lives one click away rather than an external redirect, so a

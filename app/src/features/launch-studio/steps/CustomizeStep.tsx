@@ -26,7 +26,7 @@ function asAvatarType(value: unknown): AvatarType {
 }
 
 /**
- * Step 7 — Customize Widget. The full appearance editor (fresh TS on the new DS):
+ * Step 7 - Customize Widget. The full appearance editor (fresh TS on the new DS):
  * brand + user-bubble colour (real picker + recommended colours) and avatar
  * (photo / orb / mascot). Drives the shared live preview shown in the right pane
  * and persists via updateClientSettings.
@@ -121,7 +121,7 @@ export function CustomizeStep(props: StepProps) {
   return (
     <StepShell
       title="Make it yours"
-      description="Choose your agent's colours and avatar — watch it update on the right."
+      description="Choose your agent's colours and avatar - watch it update on the right."
       onBack={props.onBack}
       onContinue={handleContinue}
       isFirst={props.isFirst}

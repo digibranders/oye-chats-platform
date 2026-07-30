@@ -38,22 +38,22 @@ export interface AddKnowledgePanelProps {
   /** The agent whose knowledge base is being extended. */
   agentId: number;
   agentName: string;
-  /** Existing sources — used to warn when a site is already added. */
+  /** Existing sources - used to warn when a site is already added. */
   existingSources: readonly KnowledgeSource[];
   /** Called after a source is added so the parent can refresh its list. */
   onChanged: () => void | Promise<void>;
   /** Softer heading when the agent has no knowledge yet. */
   isEmpty?: boolean;
-  /** True when the workspace is at/over its `documents` plan limit — the
+  /** True when the workspace is at/over its `documents` plan limit - the
    * upload sub-flow is replaced with an upgrade prompt instead of the dropzone. */
   documentsLocked?: boolean;
-  /** True when the workspace is at/over its `page_scraping` plan limit — the
+  /** True when the workspace is at/over its `page_scraping` plan limit - the
    * website sub-flow is replaced with an upgrade prompt instead of the crawl form. */
   pagesLocked?: boolean;
 }
 
 /**
- * AddKnowledgePanel — the single "teach your AI more" surface. Two ways in:
+ * AddKnowledgePanel - the single "teach your AI more" surface. Two ways in:
  * crawl a website (discover page count, then ingest) or upload documents. Live
  * crawl progress is read from the shared CrawlContext so it stays in sync with
  * the global crawl indicator.
@@ -100,8 +100,8 @@ export function AddKnowledgePanel({
   const crawlIsOurs = crawl.botId === agentId;
 
   // Clear the website inputs once our crawl finishes cleanly, so the field is
-  // ready for the next site. Reacts to a status transition — not a render-time
-  // derivation — and is guarded so it can't loop.
+  // ready for the next site. Reacts to a status transition - not a render-time
+  // derivation - and is guarded so it can't loop.
   useEffect(() => {
     if (crawlIsOurs && crawl.status === 'done') {
       setSiteUrl('');
@@ -130,7 +130,7 @@ export function AddKnowledgePanel({
       const result = await discoverCrawlUrls(normalizeUrl(trimmed), agentId);
       setEstimate(result);
     } catch (err) {
-      // Discovery is best-effort — the user can still crawl. Surface a gentle
+      // Discovery is best-effort - the user can still crawl. Surface a gentle
       // note and fall back to a zero-count estimate that means "follow links".
       setEstimate({ total_found: 0, capped: false });
       setWebsiteError(
@@ -292,7 +292,7 @@ export function AddKnowledgePanel({
               )}
             </div>
 
-            {/* JavaScript-mode toggle — renders SPA sites before extracting text. */}
+            {/* JavaScript-mode toggle - renders SPA sites before extracting text. */}
             <button
               type="button"
               role="switch"
@@ -430,7 +430,7 @@ export function AddKnowledgePanel({
               </div>
             ) : crawlIsOurs && crawl.status === 'done' ? (
               <StatusNote tone="success" icon={CheckCircle2}>
-                Finished — your AI learned {crawl.pagesCrawled} page
+                Finished - your AI learned {crawl.pagesCrawled} page
                 {crawl.pagesCrawled === 1 ? '' : 's'}.
               </StatusNote>
             ) : crawlIsOurs && (crawl.status === 'failed' || crawl.status === 'no_content') ? (

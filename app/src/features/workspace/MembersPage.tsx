@@ -143,7 +143,7 @@ function PresenceBadge({ online }: { online: boolean }): ReactElement {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 /**
- * MembersPage — the Workspace ▸ Members surface. One job: answer
+ * MembersPage - the Workspace ▸ Members surface. One job: answer
  * "Who is on my team?". Shows the roster (roles, presence, department),
  * pending invitations, and the departments that group members. Invite,
  * edit-role, remove, and department create/delete are wired against the
@@ -157,7 +157,7 @@ export function MembersPage(): ReactElement {
   const canManage = currentRole !== 'operator';
   const selectedBotId = selectedBot?.id ?? null;
 
-  const { entitlements, isFree, limitFor, withinLimit } = useEntitlements();
+  const { isFree, limitFor, withinLimit } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   const seatLimit = limitFor('operators');
 
@@ -174,7 +174,7 @@ export function MembersPage(): ReactElement {
     phaseRef.current = phase;
   }, [phase]);
 
-  // Feedback is scoped to the selected agent's roster — drop it the moment the
+  // Feedback is scoped to the selected agent's roster - drop it the moment the
   // agent changes so a stale message never bleeds across contexts. Render-time
   // state adjustment (the React-sanctioned reset pattern), guarded to run once
   // per change so it can't loop.
@@ -234,9 +234,9 @@ export function MembersPage(): ReactElement {
   const [editDeptBusy, setEditDeptBusy] = useState(false);
   const [editDeptError, setEditDeptError] = useState('');
 
-  // Load / reload. No synchronous setState in the effect body — the first
+  // Load / reload. No synchronous setState in the effect body - the first
   // setState always follows an await, so `loading` is a genuine derived phase.
-  // Free-plan workspaces never issue this fetch — the page renders the
+  // Free-plan workspaces never issue this fetch - the page renders the
   // upgrade teaser below instead, so there's no roster to load in the first
   // place. Re-runs (and starts fetching) the moment `isFree` flips false.
   useEffect(() => {
@@ -273,7 +273,7 @@ export function MembersPage(): ReactElement {
             tone: 'error',
             message: toMessage(
               error,
-              'We couldn’t refresh your team — showing the last loaded data.',
+              'We couldn’t refresh your team - showing the last loaded data.',
             ),
           });
         } else {
@@ -297,14 +297,6 @@ export function MembersPage(): ReactElement {
 
   const data = phase.status === 'ready' ? phase.data : null;
 
-  // Workspace-wide seat usage. `getOperators()` (above) already fetches every
-  // active operator for the client — not just this bot's roster — so its
-  // length matches what `entitlements.usage.operators` counts server-side.
-  // Prefer the entitlements value (authoritative, workspace-scoped); fall
-  // back to what the page already loaded only if it's ever absent.
-  const seatsUsed = entitlements.usage.operators ?? data?.operators.length ?? 0;
-  const atSeatLimit = !withinLimit('operators', seatsUsed);
-
   // Derived, bot-scoped rosters. Operators and invites are bound to a single
   // bot; departments are workspace-level and shown in full.
   const botOperators = useMemo(
@@ -314,6 +306,14 @@ export function MembersPage(): ReactElement {
         : [],
     [data, selectedBotId],
   );
+
+  // Per-bot seat usage. Seats are allocated per agent - the plan's operator
+  // limit applies to each bot independently - so the meter and the invite gate
+  // count only the selected bot's operators. Switching bots shows that bot's
+  // own seat count. Mirrors the backend per-bot enforcement in
+  // invite_service._require_seat_available.
+  const seatsUsed = botOperators.length;
+  const atSeatLimit = !withinLimit('operators', seatsUsed);
   const botInvites = useMemo(
     () =>
       data && selectedBotId
@@ -324,7 +324,7 @@ export function MembersPage(): ReactElement {
   const departments = data?.departments ?? [];
 
   const departmentName = (id: number | null | undefined): string =>
-    departments.find((department) => department.id === id)?.name ?? '—';
+    departments.find((department) => department.id === id)?.name ?? '-';
 
   // The current owner acting as an operator on the selected bot, if any.
   const selfOperator = useMemo(() => {
@@ -626,8 +626,8 @@ export function MembersPage(): ReactElement {
   const canInvite = canManage && !!selectedBotId;
 
   const handleInviteClick = (): void => {
-    // `atSeatLimit` is only ever true for a finite limit — `withinLimit`
-    // returns true for the unlimited (-1) sentinel — so the copy can assume a
+    // `atSeatLimit` is only ever true for a finite limit - `withinLimit`
+    // returns true for the unlimited (-1) sentinel - so the copy can assume a
     // real seat count here.
     if (atSeatLimit) {
       openUpgradeModal('add_operator');
@@ -649,10 +649,10 @@ export function MembersPage(): ReactElement {
       description="Everyone who can see conversations and answer visitors in this workspace."
       actions={pageActions}
     >
-      {/* Seats used against the plan's operator limit — workspace-wide. */}
-      {phase.status === 'ready' && (
+      {/* Seats used on the selected agent against the plan's per-bot operator limit. */}
+      {phase.status === 'ready' && selectedBotId && (
         <div className="max-w-xs">
-          <QuotaMeter label="Seats" used={seatsUsed} limit={seatLimit} />
+          <QuotaMeter label="Seats on this agent" used={seatsUsed} limit={seatLimit} />
         </div>
       )}
 
@@ -693,7 +693,7 @@ export function MembersPage(): ReactElement {
 
       {phase.status === 'ready' && (
         <>
-          {/* Metrics — a quick read on team size and availability. */}
+          {/* Metrics - a quick read on team size and availability. */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <MetricCard label="Operators" value={botOperators.length} icon={Users} />
             <MetricCard label="Online now" value={onlineCount} icon={Headphones} />
@@ -743,7 +743,7 @@ export function MembersPage(): ReactElement {
                 </div>
               )}
 
-              {/* Invite form — progressive disclosure from the header button. */}
+              {/* Invite form - progressive disclosure from the header button. */}
               {inviteOpen && canInvite && (
                 <form
                   onSubmit={handleInvite}
@@ -1157,7 +1157,7 @@ export function MembersPage(): ReactElement {
                 </ul>
               )}
 
-              {/* Edit department — name, description, and per-department hours. */}
+              {/* Edit department - name, description, and per-department hours. */}
               <Modal
                 open={editingDept !== null}
                 onClose={() => setEditingDept(null)}

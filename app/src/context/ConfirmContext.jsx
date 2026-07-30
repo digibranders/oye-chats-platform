@@ -9,7 +9,7 @@ import Dialog, {
 import { Button } from '../components/ui/Button';
 
 /**
- * ConfirmContext — a promise-based replacement for the native `window.confirm`.
+ * ConfirmContext - a promise-based replacement for the native `window.confirm`.
  *
  * Native `confirm()`/`alert()` render unstyled browser chrome that ignores the
  * app's design language, can't be themed, isn't translatable, and blocks the

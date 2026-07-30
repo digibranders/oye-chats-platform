@@ -41,7 +41,7 @@ function slugify(value: string): string {
 }
 
 /**
- * ChannelCard — one connection surface on the Channels tab. Presentational
+ * ChannelCard - one connection surface on the Channels tab. Presentational
  * only: a glyph, the channel name + description, an optional status pill, an
  * optional action row, and optional detail content. Rendered as a `<section>`
  * named by its heading via `aria-labelledby`, so each channel is a genuine

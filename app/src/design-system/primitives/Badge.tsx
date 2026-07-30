@@ -26,7 +26,7 @@ export interface StatusBadgeProps
   dot?: boolean;
 }
 
-/** StatusBadge — compact labelled status pill (mandate shared component). */
+/** StatusBadge - compact labelled status pill (mandate shared component). */
 export const StatusBadge = forwardRef<HTMLSpanElement, StatusBadgeProps>(
   ({ className, tone, dot = false, children, ...props }, ref) => (
     <span ref={ref} className={cn(badge({ tone }), className)} {...props}>

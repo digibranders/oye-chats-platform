@@ -2,7 +2,7 @@
  * Workspace access-denied dialog.
  *
  * Renders when the backend returns 403 ``workspace_access_denied`` for the
- * workspace the caller has active in ``X-Workspace-Id`` — usually because
+ * workspace the caller has active in ``X-Workspace-Id`` - usually because
  * the workspace owner revoked their linked-operator role, or their identity
  * was pruned during a workspace deletion, or the workspace itself is gone.
  *
@@ -13,7 +13,7 @@
  *
  * The interceptor in ``services/api.js`` fires ``oyechats:workspace-access-denied``
  * on any such 403; ``WorkspaceContext`` catches that event, drops the offending
- * workspace from storage, and populates ``accessDeniedForWorkspaceId`` — which
+ * workspace from storage, and populates ``accessDeniedForWorkspaceId`` - which
  * is what this dialog reads to decide whether to show itself.
  */
 

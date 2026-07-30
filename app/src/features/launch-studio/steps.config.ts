@@ -30,11 +30,11 @@ export interface LaunchStep {
 }
 
 /**
- * Launch Studio — the 8-step onboarding. Rebuilt from first principles; the
+ * Launch Studio - the 8-step onboarding. Rebuilt from first principles; the
  * legacy 4-milestone Build Studio is a logic reference only. Opens with a
  * Welcome intro + explicit "Create Agent"; "Knowledge" is one state-driven step
  * that shows live training progress then becomes the source/page review. Users
- * complete this once, then it's gone — never navigation.
+ * complete this once, then it's gone - never navigation.
  */
 export const LAUNCH_STEPS: LaunchStep[] = [
   { key: 'welcome', path: 'welcome', label: 'Welcome', hint: "Let's get you set up", icon: PartyPopper },

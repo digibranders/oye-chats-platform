@@ -16,14 +16,14 @@ export interface PreviewState {
   botLogo: string | null;
   /** Live conversation (Test step). Empty → the widget shows its welcome screen. */
   messages: PreviewMessage[];
-  /** Bot is answering — shows the typing indicator. */
+  /** Bot is answering - shows the typing indicator. */
   pending: boolean;
 }
 
 export interface PreviewContextValue {
   preview: PreviewState;
   setPreview: (patch: Partial<PreviewState>) => void;
-  /** Ask the agent a question — streams the answer into the widget preview. */
+  /** Ask the agent a question - streams the answer into the widget preview. */
   ask: (question: string) => void;
 }
 

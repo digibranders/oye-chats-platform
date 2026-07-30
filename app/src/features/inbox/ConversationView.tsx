@@ -175,12 +175,12 @@ function MessageBubble({
 }
 
 /**
- * ConversationView — the centre pane: live message thread, visitor typing
+ * ConversationView - the centre pane: live message thread, visitor typing
  * indicator, read receipt, and the operator composer.
  *
  * Composer superpowers:
  *  - Type `/` to open a canned-response slash menu (arrow keys + Enter to insert).
- *  - Attach a file/image via the paperclip or by pasting an image — both open a
+ *  - Attach a file/image via the paperclip or by pasting an image - both open a
  *    preview + optional caption before sending.
  *  - Click any image bubble to open it in a full-screen lightbox.
  *
@@ -242,7 +242,7 @@ export function ConversationView({
   const menuOpen = suggestions.length > 0;
   const clampedIndex = Math.min(activeIndex, Math.max(suggestions.length - 1, 0));
 
-  // Keep the thread pinned to the newest message — except when older history is
+  // Keep the thread pinned to the newest message - except when older history is
   // prepended (the first message key changes), where we hold the viewport steady
   // on the same message the operator was reading.
   useLayoutEffect(() => {
@@ -261,7 +261,7 @@ export function ConversationView({
   }, [messages, visitorTyping]);
 
   // Focus the composer on mount. The parent keys this component by session id, so
-  // switching conversations remounts it — the draft resets via initial state.
+  // switching conversations remounts it - the draft resets via initial state.
   useEffect(() => {
     composerRef.current?.focus();
   }, []);
@@ -488,7 +488,7 @@ export function ConversationView({
         )}
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center text-[13px] text-[var(--ds-text-subtle)]">
-            No messages yet — say hello.
+            No messages yet - say hello.
           </div>
         ) : (
           messages.map((m) => <MessageBubble key={m.key} message={m} onOpenImage={openImage} />)
@@ -516,7 +516,7 @@ export function ConversationView({
         {!connected && (
           <div className="mb-2 flex items-center gap-2 rounded-md bg-[var(--ds-warning-soft)] px-2.5 py-1.5 text-[12px] text-[var(--ds-warning)]">
             <WifiOff size={13} aria-hidden="true" />
-            Reconnecting — messages can’t be sent until the connection is restored.
+            Reconnecting - messages can’t be sent until the connection is restored.
           </div>
         )}
         <div className="relative flex items-end gap-2">

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 /**
- * Advanced tab — configuration model + constants.
+ * Advanced tab - configuration model + constants.
  *
  * The technical knobs surfaced here map to reused Bot fields:
  *  - `relevance_threshold`      → answering-scope strictness (RAG relevance gate)
@@ -112,9 +112,9 @@ export const DEFAULT_FEATURE_FLAGS: Readonly<Record<string, boolean>> = Object.f
 
 /**
  * How a knob is displayed and stored:
- *  - `seconds` — stored as ms, edited in seconds (÷1000 / ×1000)
- *  - `ms`      — stored and edited in milliseconds
- *  - `count`   — a plain integer (e.g. a number of messages)
+ *  - `seconds` - stored as ms, edited in seconds (÷1000 / ×1000)
+ *  - `ms`      - stored and edited in milliseconds
+ *  - `count`   - a plain integer (e.g. a number of messages)
  */
 export type ConfigUnit = 'seconds' | 'ms' | 'count';
 
@@ -172,8 +172,8 @@ export const CONFIG_GROUPS: readonly ConfigGroupDef[] = [
     fields: [
       { key: 'max_reconnect_attempts', label: 'Max reconnection attempts', help: 'How many times to retry before giving up.', unit: 'count', defaultValue: 15, step: 1, min: 1 },
       { key: 'max_reconnect_delay_ms', label: 'Max reconnection delay', help: 'Longest wait between retries (exponential backoff).', unit: 'seconds', defaultValue: 30000, step: 1, min: 0 },
-      { key: 'heartbeat_visible_ms', label: 'Heartbeat — widget open', help: 'How often to ping the server while the widget is visible.', unit: 'seconds', defaultValue: 25000, step: 1, min: 1 },
-      { key: 'heartbeat_hidden_ms', label: 'Heartbeat — widget hidden', help: 'How often to ping the server while the widget is hidden.', unit: 'seconds', defaultValue: 50000, step: 1, min: 1 },
+      { key: 'heartbeat_visible_ms', label: 'Heartbeat - widget open', help: 'How often to ping the server while the widget is visible.', unit: 'seconds', defaultValue: 25000, step: 1, min: 1 },
+      { key: 'heartbeat_hidden_ms', label: 'Heartbeat - widget hidden', help: 'How often to ping the server while the widget is hidden.', unit: 'seconds', defaultValue: 50000, step: 1, min: 1 },
     ],
   },
   {

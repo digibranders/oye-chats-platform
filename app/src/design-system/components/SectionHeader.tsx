@@ -10,7 +10,7 @@ export interface SectionHeaderProps {
 }
 
 /**
- * SectionHeader — a titled section boundary within a page (mandate shared
+ * SectionHeader - a titled section boundary within a page (mandate shared
  * component). For the page-level title, use `PageContainer`'s header instead.
  */
 export function SectionHeader({ title, description, actions, className }: SectionHeaderProps) {

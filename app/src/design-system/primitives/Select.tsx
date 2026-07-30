@@ -20,7 +20,7 @@ export interface SelectOption {
 }
 
 export interface SelectProps {
-  /** id for the trigger button — pair with a `<label htmlFor>`. */
+  /** id for the trigger button - pair with a `<label htmlFor>`. */
   id?: string;
   /** Currently selected option value (`''` = nothing selected). */
   value: string;
@@ -44,14 +44,14 @@ export interface SelectProps {
 }
 
 /**
- * Select — the custom listbox that replaces the browser-default `<select>`.
+ * Select - the custom listbox that replaces the browser-default `<select>`.
  *
  * Keeps the native select interaction contract (click or ArrowDown/Enter/Space
  * to open, arrows + Home/End to move, type-ahead on option text, Enter/Space to
  * pick, Escape/Tab/outside-click to close) but renders with the design-system
  * `--ds-*` tokens so it matches `Input`, `Textarea`, and `Modal` in both themes.
  *
- * With `searchable`, the open panel gains a filter box (focused on open) —
+ * With `searchable`, the open panel gains a filter box (focused on open) -
  * typing narrows the list against each option's `search` string (falling back
  * to its label). Plain mode already type-aheads for short lists.
  */
@@ -256,7 +256,7 @@ export function Select({
               <li className="px-3 py-2 text-sm text-[var(--ds-text-subtle)]">No matches</li>
             )}
             {visible.map((opt, index) => {
-              // Options take pointer, not keyboard, interaction — the trigger
+              // Options take pointer, not keyboard, interaction - the trigger
               // button (or search box) keeps focus and owns all key handling.
               const isSelected = opt.value === value;
               const isActive = index === activeIndex;
