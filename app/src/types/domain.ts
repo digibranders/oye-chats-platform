@@ -3,8 +3,8 @@
  *
  * These describe the shapes returned by the legacy JS API/contexts, so new
  * TypeScript code gets real types when it consumes them (via the `.d.ts` shims
- * next to those JS modules). Kept intentionally minimal — only the fields the
- * new app reads — and widened as more surfaces are migrated.
+ * next to those JS modules). Kept intentionally minimal - only the fields the
+ * new app reads - and widened as more surfaces are migrated.
  */
 
 /**
@@ -62,11 +62,11 @@ export interface CurrentUser {
   /** True when the client is ONLY an affiliate (no customer subscription). */
   is_affiliate_only?: boolean;
   is_superadmin?: boolean;
-  /** ISO timestamp the account was created — rendered as "Joined {date}" in the profile menu. */
+  /** ISO timestamp the account was created - rendered as "Joined {date}" in the profile menu. */
   created_at?: string;
   /** True when the caller is currently marked online (operators only). */
   is_online?: boolean;
-  /** 'client' | 'operator' — clients have `role: null`. */
+  /** 'client' | 'operator' - clients have `role: null`. */
   kind?: string;
   /** Operator role (owner | admin | operator) when `kind === 'operator'`. */
   role?: string | null;
@@ -74,7 +74,7 @@ export interface CurrentUser {
 
 /**
  * Numeric plan ceilings. `-1` is the UNLIMITED sentinel (see
- * `plan_entitlements_service.py::UNLIMITED`) — never a real count.
+ * `plan_entitlements_service.py::UNLIMITED`) - never a real count.
  */
 export type LimitKey =
   | 'credits'
@@ -116,7 +116,7 @@ export interface EntitlementFeatures {
 
 /**
  * Current-period usage counters. The backend's `_build_usage` only populates
- * `bots` / `operators` / `documents` / `leads` today — `credits`,
+ * `bots` / `operators` / `documents` / `leads` today - `credits`,
  * `page_scraping`, and `chat_history_days` are reserved keys the service
  * comments as "left to callers that need them" and are NOT currently sent.
  * Typed as a partial map so callers can't assume every `LimitKey` is present.
@@ -149,11 +149,16 @@ export interface Entitlements {
 export interface Workspace {
   id: number;
   name: string;
+  /** Top-level membership kind: `owner` for the caller's own workspace,
+   *  `operator` for every linked-operator membership in another workspace. */
   role: string;
+  /** For `role === 'operator'` memberships, the granular seat role granted in
+   *  that workspace (`admin` | `operator`). Absent on the owner entry. */
+  operator_role?: string | null;
   bot_count?: number;
 }
 
-/** A knowledge source as returned by getDocuments — grouped by website or file. */
+/** A knowledge source as returned by getDocuments - grouped by website or file. */
 export interface KnowledgeSource {
   /** URL (website) or filename (document). */
   name: string;
@@ -176,7 +181,7 @@ export interface SourcePagesResult {
   pages: SourcePage[];
 }
 
-/** Result of discoverCrawlUrls — page count + server-computed credit estimate. */
+/** Result of discoverCrawlUrls - page count + server-computed credit estimate. */
 export interface CrawlDiscovery {
   url?: string;
   total_found: number;
@@ -351,7 +356,7 @@ export interface OperatorInvite {
   revoked_at: string | null;
 }
 
-/** Result of createOperatorInvite — includes a copyable accept URL. */
+/** Result of createOperatorInvite - includes a copyable accept URL. */
 export interface OperatorInviteCreated {
   invite: OperatorInvite;
   accept_url?: string;
@@ -396,7 +401,7 @@ export interface WebhookDeliveriesResult {
   limit: number;
 }
 
-// ── Analytics (loosely typed — server shapes vary by widget) ─────────────────
+// ── Analytics (loosely typed - server shapes vary by widget) ─────────────────
 
 /** One point on the message-activity timeline, from getActivityStats. */
 export interface ActivityPoint {

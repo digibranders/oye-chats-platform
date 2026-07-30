@@ -369,7 +369,20 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
         entitlements = get_entitlements(client_id, db, include_usage=True)
         operator_limit = entitlements.limit_for("operators")
         if operator_limit != UNLIMITED:
-            current_operators = int(entitlements.usage.get("operators", 0))
+            # Seats are per-bot: count only the operators already bound to the
+            # target bot, not the workspace-wide total, so each bot has its own
+            # allowance. (Bot ownership is validated in the create block below;
+            # a bogus bot_id simply counts 0 here and 404s there.)
+            current_operators = int(
+                db.execute(
+                    select(func.count(Operator.id)).where(
+                        Operator.client_id == client_id,
+                        Operator.bot_id == request.bot_id,
+                        Operator.is_active.is_(True),
+                    )
+                ).scalar_one()
+                or 0
+            )
             if current_operators >= operator_limit:
                 raise HTTPException(
                     status_code=403,
@@ -380,7 +393,7 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
                         "max": operator_limit,
                         "current_plan": entitlements.plan_slug,
                         "message": (
-                            f"You've reached your plan's operator limit "
+                            f"You've reached this agent's operator limit "
                             f"({current_operators}/{operator_limit}). "
                             f"Upgrade or purchase a seat to add more."
                         ),

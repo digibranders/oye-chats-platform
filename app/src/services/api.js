@@ -49,7 +49,7 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
     }
 
     // Structured FastAPI errors (e.g. 402 insufficient_credits) put a
-    // human-readable string under detail.message — surface that instead of
+    // human-readable string under detail.message - surface that instead of
     // letting axios's "Request failed with status code 402" leak through.
     let message;
     if (typeof detail === 'string') {
@@ -57,10 +57,10 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
     } else if (detail && typeof detail === 'object' && typeof detail.message === 'string') {
         message = detail.message;
     } else if (status === 429) {
-        // SlowAPI uses {"error": "Rate limit exceeded: ..."} — not FastAPI's {"detail": "..."}
+        // SlowAPI uses {"error": "Rate limit exceeded: ..."} - not FastAPI's {"detail": "..."}
         message = (typeof data?.error === 'string' && data.error)
             ? data.error
-            : 'Too many requests — please wait a moment and try again.';
+            : 'Too many requests - please wait a moment and try again.';
     } else {
         message = error.message || fallbackMessage;
     }
@@ -76,7 +76,7 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
 // request opts in to being cancelled on workspace switch via ``config.signal``
 // unless the caller supplied their own signal. The controller is rotated by
 // ``WorkspaceContext.switchWorkspace`` so all in-flight requests scoped to
-// the previous workspace abort atomically — this prevents cross-tenant data
+// the previous workspace abort atomically - this prevents cross-tenant data
 // leaks where a slow response for workspace A lands after the UI switched
 // to workspace B.
 let currentWorkspaceAbortController = null;
@@ -116,7 +116,7 @@ api.interceptors.request.use(
                 config.headers['X-Operator-Key'] = token;
             } else {
                 config.headers['X-API-Key'] = token;
-                // Only client auth benefits from X-Workspace-Id — legacy operator
+                // Only client auth benefits from X-Workspace-Id - legacy operator
                 // keys are implicitly scoped to their one workspace and the
                 // backend ignores the header on that auth path.
                 const workspaceId = getAuthItem('current_workspace_id');
@@ -128,8 +128,8 @@ api.interceptors.request.use(
                 // like ``GET /bots`` and ``GET /offline-messages`` to the
                 // caller's self-operator bot when they've added themselves
                 // as an operator in their OWN workspace (auth resolves as
-                // ``client`` there — no X-Workspace-Id is sent because it's
-                // their own workspace — so without this hint we can't tell
+                // ``client`` there - no X-Workspace-Id is sent because it's
+                // their own workspace - so without this hint we can't tell
                 // "owner viewing their workspace as owner" from "owner
                 // viewing their workspace as operator").
                 const workspaceRole = getAuthItem('current_workspace_role');
@@ -155,7 +155,7 @@ api.interceptors.response.use(
     (error) => {
         // Requests aborted by a workspace switch (via ``rotateWorkspaceAbort``)
         // arrive here as ``ERR_CANCELED`` from axios. Suppress the auto-logout
-        // path and don't rethrow noisily — callers should filter these via
+        // path and don't rethrow noisily - callers should filter these via
         // ``axios.isCancel(err)`` and simply not update state.
         if (axios.isCancel?.(error) || error.code === 'ERR_CANCELED') {
             return Promise.reject(error);
@@ -174,7 +174,7 @@ api.interceptors.response.use(
         // A 403 with error code ``workspace_access_denied`` means the caller
         // still holds a valid Client identity but has lost access to the
         // workspace they had cached in ``current_workspace_id`` (revoked,
-        // deleted, or otherwise). Don't nuke the whole session — surface the
+        // deleted, or otherwise). Don't nuke the whole session - surface the
         // signal so the frontend can drop the workspace, refresh the list,
         // and land the user on a workspace they still belong to.
         if (status === 403 && detailErrorCode === 'workspace_access_denied') {
@@ -188,7 +188,7 @@ api.interceptors.response.use(
         // 401 from a speculative call (entitlements fired at app root, an
         // authed hook that happens to be mounted) would bounce an
         // unauthenticated visitor OFF the invite airlock, register form,
-        // or verify-email page — turning legitimate public-page visits
+        // or verify-email page - turning legitimate public-page visits
         // into infinite login redirects. The 401 still propagates as a
         // rejected promise so callers can handle it; we just skip the
         // catastrophic side-effect.
@@ -209,13 +209,13 @@ api.interceptors.response.use(
             // logs-out doesn't leave a stale localStorage shadow (or
             // vice versa).
             clearAuthStorage();
-            // Banner dismissals are scoped to the session, not to a user —
+            // Banner dismissals are scoped to the session, not to a user -
             // wipe them on auto-logout so the next account sees a fresh
             // trial banner.
             clearTrialBannerDismissals();
             // Only force the user to /login from a PROTECTED page. On public
             // auth pages (notably /register from the "Start free" CTA) a stale
-            // token's 401 must not hijack the page — clear it and stay put.
+            // token's 401 must not hijack the page - clear it and stay put.
             if (!isOnPublicAuthPath()) {
                 window.location.href = '/login';
             }
@@ -233,14 +233,14 @@ api.interceptors.response.use(
 /**
  * Resolved plan entitlements for the authenticated workspace. Returns the
  * dataclass payload from /auth/me/entitlements with derived helper booleans.
- * Used by useEntitlements() — components should NOT call this directly.
+ * Used by useEntitlements() - components should NOT call this directly.
  */
 export const getEntitlements = async () => {
     try {
         const response = await api.get('/auth/me/entitlements');
         return response.data;
     } catch (error) {
-        // Fail open on the client — caller falls back to "Free" defaults
+        // Fail open on the client - caller falls back to "Free" defaults
         // baked into the hook so the UI never crashes if the endpoint is down.
         console.warn('[OyeChats] getEntitlements failed:', error?.message);
         throw error;
@@ -288,7 +288,7 @@ export const registerClient = async (
 /**
  * Resolve the visitor's country (ISO 3166-1 alpha-2) from the request edge
  * headers, so the signup form can preselect it. Public endpoint, no auth.
- * Returns `null` when no edge signal is present (e.g. local dev) — never throws.
+ * Returns `null` when no edge signal is present (e.g. local dev) - never throws.
  * @returns {Promise<string|null>} 2-letter country code, or null.
  */
 export const detectCountry = async () => {
@@ -332,13 +332,13 @@ export const resendVerification = async (email) => {
 /**
  * Apply a referral code for the currently-authenticated customer.
  * Called from the checkout modal before the user pays. Returns
- * { attributed: bool, message: string } — always resolves (never throws
+ * { attributed: bool, message: string } - always resolves (never throws
  * for invalid codes; only throws on network error).
  * @param {string} code
  */
 /**
  * Standing referral attribution for the authenticated account. Drives the
- * permanent-discount badge in the checkout modal — attribution is first-touch
+ * permanent-discount badge in the checkout modal - attribution is first-touch
  * and cannot be removed, so the UI must never render it as an editable field.
  */
 export const getReferralStatus = async () => {
@@ -346,7 +346,7 @@ export const getReferralStatus = async () => {
         const response = await api.get('/affiliate/referral-status');
         return response.data;
     } catch {
-        // Non-fatal — the modal just falls back to the empty input; the
+        // Non-fatal - the modal just falls back to the empty input; the
         // server still applies any standing discount at checkout.
         return { attributed: false, code: null, discount_pct: null };
     }
@@ -421,7 +421,7 @@ export const uploadDocuments = async (files, botId) => {
 
 /**
  * Poll the current crawl progress (URLs discovered so far).
- * Lightweight — Redis read on the server, no DB.
+ * Lightweight - Redis read on the server, no DB.
  * Returns the full progress payload: status, urls, pages_crawled,
  * max_pages, current_url, started_at, cancellable, result (when done) or
  * error (when failed). Falls back to `{status: 'idle', urls: []}` on any
@@ -594,7 +594,7 @@ export const deleteDocument = async (documentName, botId) => {
 // available on Standard + Professional plans; Free / Starter clients get a
 // 403 on PATCH with { error: 'feature_locked', current_plan, upgrade_url }
 // that the admin UI surfaces via the existing FeatureGate / UpgradeModal
-// flow. The ARQ sweep fires on schedule — there is no manual trigger.
+// flow. The ARQ sweep fires on schedule - there is no manual trigger.
 
 /** Get the current auto-recrawl state and last-run summary for a bot. */
 export const getRecrawlStatus = async (botId) => {
@@ -766,7 +766,7 @@ export const getTopQuestions = async (botId) => {
 /**
  * Fetches the authenticated client's profile (name, email, joined date,
  * bot count). Used by the TopBar profile dropdown. Cached per session by
- * the caller — re-fetched on menu open so bot_count stays fresh.
+ * the caller - re-fetched on menu open so bot_count stays fresh.
  *
  * @returns {Promise<Object>} { id, name, email, company_name, website,
  *   created_at, bot_count, is_superadmin }
@@ -789,7 +789,7 @@ export const getClientSettings = async (botId) => {
             // Pass the full bot payload through, then layer the legacy-name
             // mapping (``name`` → ``bot_name``) and service normalization on
             // top. Spreading first keeps fields like ``widget_messages`` and
-            // ``widget_config`` intact — listing them explicitly previously
+            // ``widget_config`` intact - listing them explicitly previously
             // dropped customizations (e.g. welcome suggestions) on reload.
             return {
                 ...bot,
@@ -1135,11 +1135,11 @@ export const createBot = async (data) => {
 };
 
 /**
- * Fetch the onboarding "seed questions" for a bot — LLM-proposed and
+ * Fetch the onboarding "seed questions" for a bot - LLM-proposed and
  * retrieval-verified as answerable from the bot's content (see the backend
  * seed_questions_service). Returns an array of 0–3 question strings; an empty
  * array is normal ("show only the open input"), so this resolves to `[]` on any
- * error rather than throwing — the Prove step must never be blocked by it.
+ * error rather than throwing - the Prove step must never be blocked by it.
  * @param {number} botId
  * @returns {Promise<string[]>}
  */
@@ -1168,13 +1168,13 @@ export const recordActivationEvent = async (eventType, { botId = null, eventData
             event_data: eventData,
         });
     } catch (error) {
-        // Instrumentation is fire-and-forget — swallow failures.
+        // Instrumentation is fire-and-forget - swallow failures.
         console.warn('Activation event failed (non-fatal):', eventType, error?.message);
     }
 };
 
 /**
- * Free, origin-exempt preview chat against one of the client's OWN bots — used
+ * Free, origin-exempt preview chat against one of the client's OWN bots - used
  * by the Build Studio "Test & trust" milestone. Authenticated via the admin
  * X-API-Key (auto-attached); the backend `?preview=true` path skips credits and
  * the domain allowlist. Returns `{ answer, sources, session_id, ... }`.
@@ -1183,7 +1183,7 @@ export const recordActivationEvent = async (eventType, { botId = null, eventData
  * @param {string} [sessionId]
  */
 export const previewChat = async (botId, question, sessionId) => {
-    // AI replies (cold LLM + RAG) can take well over the default timeout — give
+    // AI replies (cold LLM + RAG) can take well over the default timeout - give
     // the preview a generous 60s window before surfacing a timeout error.
     const { data } = await api.post(
         `/chat?preview=true&bot_id=${botId}`,
@@ -1212,10 +1212,10 @@ function previewStreamHeaders() {
 }
 
 /**
- * Streaming owner-preview chat for the Build Studio Prove step — the same SSE
+ * Streaming owner-preview chat for the Build Studio Prove step - the same SSE
  * path the real widget uses (`/chat/stream`, owner-preview mode: free, no credit
- * deduction). Streaming makes the aha feel instant and faithful, and — unlike
- * the old blocking POST — a slow-but-OK model streams tokens instead of tripping
+ * deduction). Streaming makes the aha feel instant and faithful, and - unlike
+ * the old blocking POST - a slow-but-OK model streams tokens instead of tripping
  * a timeout that read as a false "couldn't answer".
  *
  * Protocol: `METADATA:{json}` → text chunks → `FINAL_METADATA:{json}`.
@@ -1294,7 +1294,7 @@ export const previewChatStream = async (botId, question, sessionId, { onChunk, o
 };
 
 /**
- * Marks the account's guided onboarding (Build Studio) as complete. Best-effort —
+ * Marks the account's guided onboarding (Build Studio) as complete. Best-effort -
  * never throws, so finishing the flow can't be blocked by a transient failure.
  */
 export const completeOnboarding = async () => {
@@ -1653,7 +1653,7 @@ export const toggleOperatorStatus = async ({ isOnline, botId } = {}) => {
         const body = {};
         if (typeof isOnline === 'boolean') body.is_online = isOnline;
         if (botId) body.bot_id = botId;
-        // Only send a body when the caller actually populated a field —
+        // Only send a body when the caller actually populated a field -
         // preserves the legacy no-body toggle semantics the backend still
         // supports for older callers.
         const response = Object.keys(body).length > 0
@@ -1951,9 +1951,11 @@ export const verifyBotCheckout = async ({
     }
 };
 
-export const getCurrentSubscription = async () => {
+export const getCurrentSubscription = async (botId) => {
     try {
-        const response = await api.get('/subscriptions/current');
+        const params = {};
+        if (botId != null) params.bot_id = botId;
+        const response = await api.get('/subscriptions/current', { params });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load subscription');
@@ -1969,9 +1971,11 @@ export const getSubscriptionUsage = async () => {
     }
 };
 
-export const getInvoices = async () => {
+export const getInvoices = async (botId) => {
     try {
-        const response = await api.get('/subscriptions/invoices');
+        const params = {};
+        if (botId != null) params.bot_id = botId;
+        const response = await api.get('/subscriptions/invoices', { params });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load invoices');
@@ -2008,7 +2012,7 @@ export const updateBillingDetails = async (patch) => {
 };
 
 /**
- * Honest pre-checkout quote — the single source of truth for what the pay
+ * Honest pre-checkout quote - the single source of truth for what the pay
  * button will charge, before any payment surface opens. Returns the resolved
  * currency, amount (minor units + display string), payment methods, and
  * whether checkout is supported at all (`checkout_supported: false` with a
@@ -2051,11 +2055,11 @@ export const createCheckoutSession = async (planId, billingCycle = 'monthly', bi
  * Start the paid plan's configured free trial (currently Standard, 7 days).
  *
  * The customer must be on the free tier (or have no subscription) and must
- * not have used a trial before — one free trial per client, lifetime, across
+ * not have used a trial before - one free trial per client, lifetime, across
  * every trial-eligible plan. The backend cancels their
  * existing free subscription, creates a trialing one on the new plan, and
  * grants the plan's full monthly credit allowance. No card is collected
- * — the conversion path runs through createCheckoutSession on day 14.
+ * - the conversion path runs through createCheckoutSession on day 14.
  */
 export const startTrial = async (planSlug) => {
     try {
@@ -2087,9 +2091,11 @@ export const cancelScheduledChange = async () => {
     }
 };
 
-export const cancelSubscription = async (reason = null) => {
+export const cancelSubscription = async (reason = null, botId = null) => {
     try {
-        const response = await api.post('/subscriptions/cancel', { reason });
+        const body = { reason };
+        if (botId != null) body.bot_id = botId;
+        const response = await api.post('/subscriptions/cancel', body);
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to cancel subscription');
@@ -2116,9 +2122,11 @@ export const getCreditBalance = async () => {
     }
 };
 
-export const getCreditHistory = async ({ page = 1, limit = 50 } = {}) => {
+export const getCreditHistory = async ({ page = 1, limit = 50, botId } = {}) => {
     try {
-        const response = await api.get('/credits/history', { params: { page, limit } });
+        const params = { page, limit };
+        if (botId != null) params.bot_id = botId;
+        const response = await api.get('/credits/history', { params });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load credit history');
@@ -2130,9 +2138,11 @@ export const getCreditHistory = async ({ page = 1, limit = 50 } = {}) => {
  * credits_used }] }`. The series is zero-filled and ascending (one entry per
  * day in the window), summing only metered consumption debits.
  */
-export const getCreditDaily = async ({ days = 30 } = {}) => {
+export const getCreditDaily = async ({ days = 30, botId } = {}) => {
     try {
-        const response = await api.get('/credits/daily', { params: { days } });
+        const params = { days };
+        if (botId != null) params.bot_id = botId;
+        const response = await api.get('/credits/daily', { params });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to load consumption trend');
@@ -2169,7 +2179,7 @@ export const initiateTopup = async (amount, { botId } = {}) => {
 
 /**
  * Server-verify the Razorpay Checkout success callback.
- * Required for defence-in-depth — never trust the modal-only success path.
+ * Required for defence-in-depth - never trust the modal-only success path.
  */
 export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
     try {
@@ -2188,7 +2198,7 @@ export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_i
 /**
  * Subscription billing geo / currency profile. Returns the country and
  * ``display_currency`` (always "USD"), and whether checkout is wired
- * (Razorpay enabled). Cached at call sites — geo doesn't change mid-session.
+ * (Razorpay enabled). Cached at call sites - geo doesn't change mid-session.
  */
 export const getBillingGeo = async (overrideCountry) => {
     try {
@@ -2204,7 +2214,7 @@ export const getBillingGeo = async (overrideCountry) => {
  * Server-verify the Razorpay subscription Checkout success callback.
  * Mirrors verifyTopupPayment's responsibility but for the subscription
  * signature (``payment_id|subscription_id`` HMAC variant). The webhook is
- * still the authoritative reconciler — this endpoint exists so the modal
+ * still the authoritative reconciler - this endpoint exists so the modal
  * can flip to a success state instantly instead of polling.
  */
 export const verifyRazorpaySubscription = async ({
@@ -2225,9 +2235,11 @@ export const verifyRazorpaySubscription = async ({
 };
 
 
-export const changeOperatorSeats = async (delta) => {
+export const changeOperatorSeats = async (delta, botId = null) => {
     try {
-        const response = await api.post('/subscriptions/seats', { delta });
+        const body = { delta };
+        if (botId != null) body.bot_id = botId;
+        const response = await api.post('/subscriptions/seats', body);
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to update operator seats');
@@ -2239,11 +2251,11 @@ export const changeOperatorSeats = async (delta) => {
 // ─── Affiliate Program v1 ────────────────────────────────────────────────
 // Money-free referral codes + attribution. Endpoints mirror
 // app/api/affiliate_routes.py:
-//   GET    /affiliate/me           — affiliate's own meta
-//   GET    /affiliate/codes        — codes + per-row stats
-//   POST   /affiliate/codes        — create a code
-//   PATCH  /affiliate/codes/{id}   — update label / toggle active
-//   GET    /affiliate/stats        — aggregate metrics for the header card
+//   GET    /affiliate/me           - affiliate's own meta
+//   GET    /affiliate/codes        - codes + per-row stats
+//   POST   /affiliate/codes        - create a code
+//   PATCH  /affiliate/codes/{id}   - update label / toggle active
+//   GET    /affiliate/stats        - aggregate metrics for the header card
 // All require X-API-Key + an active affiliates row (backend enforces 403).
 
 /** Return the logged-in affiliate's profile + cap. */
@@ -2282,7 +2294,7 @@ export const getAffiliateCodeReferrals = async (codeId) => {
 
 /**
  * Same endpoint, super-admin scope: emails unmasked, platform_pct populated.
- * Returns 404 when ``codeId`` isn't owned by ``affiliateId`` — the backend
+ * Returns 404 when ``codeId`` isn't owned by ``affiliateId`` - the backend
  * scopes to prevent global-namespace probing.
  */
 export const getSuperadminCodeReferrals = async (affiliateId, codeId) => {
@@ -2301,7 +2313,7 @@ export const getSuperadminCodeReferrals = async (affiliateId, codeId) => {
  * @param {string} code
  * @param {string|null} label
  * @param {{ affiliateCommissionPct?: number, customerDiscountPct?: number }} split
- *   — per-code commission split. Each is 0–100 (whole percent). Their sum
+ *   - per-code commission split. Each is 0–100 (whole percent). Their sum
  *     must not exceed the affiliate's pool (set by super-admin).
  */
 export const createAffiliateCode = async (
@@ -2322,11 +2334,11 @@ export const createAffiliateCode = async (
 
 /**
  * Update an existing code. Every field is an optional patch:
- *   - ``code``                       — rename (breaks old ?ref= URL)
- *   - ``label``                      — internal label (empty string clears)
- *   - ``active``                     — toggle deactivation/reactivation
- *   - ``affiliateCommissionPct``     — what the affiliate keeps (0–100)
- *   - ``customerDiscountPct``        — what the referred customer gets
+ *   - ``code``                       - rename (breaks old ?ref= URL)
+ *   - ``label``                      - internal label (empty string clears)
+ *   - ``active``                     - toggle deactivation/reactivation
+ *   - ``affiliateCommissionPct``     - what the affiliate keeps (0–100)
+ *   - ``customerDiscountPct``        - what the referred customer gets
  *
  * The split pair is validated together: their sum must not exceed the
  * affiliate's commission pool.
@@ -2376,8 +2388,8 @@ export const listSuperadminAffiliates = async () => {
 /**
  * Invite an existing customer OR send a magic-link to a stranger.
  * @param {string} email
- * @param {number|null} maxActiveCodes — optional override of the 10-code default
- * @param {number|null} commissionPct — optional commission % (0–100). Defaults to 0.
+ * @param {number|null} maxActiveCodes - optional override of the 10-code default
+ * @param {number|null} commissionPct - optional commission % (0–100). Defaults to 0.
  */
 export const inviteSuperadminAffiliate = async (
     email,
@@ -2502,7 +2514,7 @@ export const revokeSuperadminAffiliateInvite = async (inviteId) => {
 /**
  * HARD-DELETE an affiliate. Removes the affiliate row, all their codes,
  * and the entire click history. Referred clients keep existing but lose
- * their referral_code_id (set to NULL). Irreversible — UI must require
+ * their referral_code_id (set to NULL). Irreversible - UI must require
  * explicit confirmation.
  */
 export const deleteSuperadminAffiliate = async (affiliateId) => {
@@ -2536,7 +2548,7 @@ export const getVapidPublicKey = async () => {
 /** Register a PushSubscription with the backend. */
 export const subscribePush = async (subscription) => {
     // PushSubscription.toJSON() returns { endpoint, expirationTime, keys: { p256dh, auth } }
-    // — exactly the shape the backend expects, minus expirationTime which we drop.
+    // - exactly the shape the backend expects, minus expirationTime which we drop.
     const json = subscription.toJSON();
     try {
         await api.post('/operators/push/subscribe', {
@@ -2564,7 +2576,7 @@ export const listNotifications = async ({ limit = 30, beforeId, unreadOnly = fal
     }
 };
 
-/** Cheap polling endpoint — returns ``{unread_count}``. */
+/** Cheap polling endpoint - returns ``{unread_count}``. */
 export const getUnreadNotificationCount = async () => {
     try {
         const response = await api.get('/notifications/unread-count');
@@ -2622,7 +2634,7 @@ export const unsubscribePush = async (endpoint, keys) => {
         });
         return true;
     } catch (error) {
-        // Treat 4xx as best-effort cleanup — the subscription may already be
+        // Treat 4xx as best-effort cleanup - the subscription may already be
         // gone server-side (different device or 410 prune), and we still want
         // the local unsubscribe to proceed.
         if (error?.status >= 400 && error?.status < 500) {
@@ -2760,7 +2772,7 @@ export const regenerateClientApiKey = async () => {
 /**
  * Send an operator invite to the given email. Called from Team → Invite modal.
  * ``role`` is one of ``operator | admin`` (v1). ``departmentId`` is optional.
- * Returns ``{ invite, accept_url }`` — the URL is included so a copy-to-clipboard
+ * Returns ``{ invite, accept_url }`` - the URL is included so a copy-to-clipboard
  * affordance is possible; the email is fired backend-side.
  */
 export const createOperatorInvite = async ({ email, botId, role = 'operator', departmentId = null }) => {
@@ -2801,7 +2813,7 @@ export const resendOperatorInvite = async (inviteId) => {
     }
 };
 
-/** Revoke a pending invite. Idempotent — resolved invites are no-ops. */
+/** Revoke a pending invite. Idempotent - resolved invites are no-ops. */
 export const revokeOperatorInvite = async (inviteId) => {
     try {
         await api.delete(`/invites/${inviteId}`);
@@ -2812,7 +2824,7 @@ export const revokeOperatorInvite = async (inviteId) => {
 };
 
 /**
- * Unauthenticated — used by the ``/invite/{token}`` airlock page BEFORE login
+ * Unauthenticated - used by the ``/invite/{token}`` airlock page BEFORE login
  * to render workspace name + inviter + status so the invitee can decide
  * whether to sign up or log in.
  */
@@ -2847,7 +2859,7 @@ export const acceptInvitePublic = async (token) => {
  */
 export const getMyWorkspaces = async () => {
     try {
-        // Ignore the workspace-scoped AbortController for THIS call — otherwise
+        // Ignore the workspace-scoped AbortController for THIS call - otherwise
         // a switch mid-flight would cancel the list refresh we just triggered.
         const response = await api.get('/me/workspaces', { signal: undefined });
         return response.data;
@@ -2858,7 +2870,7 @@ export const getMyWorkspaces = async () => {
 
 /**
  * Add the calling Client (workspace owner) as an operator in their own
- * workspace. Idempotent — reactivates a previously-left row if one exists.
+ * workspace. Idempotent - reactivates a previously-left row if one exists.
  * The self-operator does NOT consume a paid seat.
  *
  * Returns ``{ operator_id, role, is_active, was_existing }``. UI can toast
@@ -2875,7 +2887,7 @@ export const addSelfAsOperator = async (botId) => {
 
 /**
  * Deactivate the caller's self-operator row (owner leaves live chat).
- * Sets ``is_active=False`` — historical chats stay linked, in-flight chats
+ * Sets ``is_active=False`` - historical chats stay linked, in-flight chats
  * complete naturally. Idempotent.
  */
 export const removeSelfAsOperator = async () => {

@@ -1,7 +1,7 @@
 import { type AvatarType } from '../../launch-studio/customize/AvatarPicker';
 
 /**
- * The editable "Experience" model — everything that shapes what a visitor sees
+ * The editable "Experience" model - everything that shapes what a visitor sees
  * in the chat widget, flattened from the raw bot/client settings into a single
  * typed draft the page can diff for unsaved-changes detection.
  *
@@ -16,7 +16,7 @@ export interface ExperienceDraft {
   avatarType: AvatarType;
   orbColor: string;
   botLogo: string | null;
-  /** `feature_flags.show_branding` — true shows the "Powered by OyeChats"
+  /** `feature_flags.show_branding` - true shows the "Powered by OyeChats"
    * footer. Only a workspace with the `branding_removable` plan feature can
    * turn this off; the backend force-sets it back to `true` on save
    * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
@@ -30,18 +30,18 @@ export interface ExperienceDraft {
   inputPlaceholder: string;
 
   // ── Widget identity (bot.*) ─────────────────────────────────────────────────
-  /** `bot.name` — the display name shown in the widget header. The shipped
+  /** `bot.name` - the display name shown in the widget header. The shipped
    * widget reads its header/launcher name straight from `bot.name` (see the
    * `/bots/{id}/config` response in `bot_routes.py`, which returns
    * `"bot_name": bot.name`), so this doubles as the agent name. */
   displayName: string;
-  /** `bot.launcher_name` — the "Have Questions?" tooltip beside the launcher. */
+  /** `bot.launcher_name` - the "Have Questions?" tooltip beside the launcher. */
   launcherName: string;
 
   // ── Personality (bot.*) ─────────────────────────────────────────────────────
   systemPrompt: string;
   brandTone: string;
-  /** `bot.brand_tone_preset` — the active tone-preset key, `'custom'`, or null. */
+  /** `bot.brand_tone_preset` - the active tone-preset key, `'custom'`, or null. */
   brandTonePreset: string | null;
   companyName: string;
   companyDescription: string;
@@ -73,7 +73,7 @@ const DEFAULTS = {
   orbColor: '',
   launcherName: 'Have Questions?',
   welcomeGreeting: 'Hi there, how can I help you today?',
-  welcomeSubtitle: 'Ask me anything — I answer from your knowledge base.',
+  welcomeSubtitle: 'Ask me anything - I answer from your knowledge base.',
   inputPlaceholder: 'Write a message…',
 } as const;
 
@@ -81,9 +81,9 @@ const DEFAULTS = {
  * Keys inside `widget_messages` that the Experience page owns, so they must NOT
  * ride the appearance/messages passthrough (`extraWidgetMessages`). Two groups:
  *
- * 1. Appearance-owned — `settingsFromDraft` (this file) re-writes these on every
+ * 1. Appearance-owned - `settingsFromDraft` (this file) re-writes these on every
  *    save from the current draft.
- * 2. Copy-owned — the WidgetCopyCard (`BotConfigSection`) is their SOLE writer,
+ * 2. Copy-owned - the WidgetCopyCard (`BotConfigSection`) is their SOLE writer,
  *    persisting them via its own `copyPatch` slice. They are excluded here only
  *    so the appearance save never re-sends a stale page-load snapshot of them;
  *    the backend deep-merges `widget_messages`, so leaving them out of the
@@ -185,7 +185,7 @@ export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknow
 
   return {
     // The widget header/launcher name is `bot.name`; persist it here. Guarded so
-    // a momentarily-empty field can never blank the agent name server-side — the
+    // a momentarily-empty field can never blank the agent name server-side - the
     // editor also enforces non-empty, but this is the durable safeguard.
     ...(displayName.length > 0 ? { name: displayName } : {}),
     launcher_name: draft.launcherName,
@@ -197,7 +197,7 @@ export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknow
     orb_color: draft.orbColor || null,
     bot_logo: draft.botLogo,
     launcher_logo: draft.botLogo,
-    // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) — other
+    // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) - other
     // stored feature flags (managed on the Advanced tab) are untouched.
     feature_flags: { show_branding: draft.showBranding },
 

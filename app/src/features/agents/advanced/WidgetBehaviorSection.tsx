@@ -10,7 +10,7 @@ interface WidgetBehaviorSectionProps {
 }
 
 /**
- * Widget behaviour — per-agent feature toggles bound to the reused
+ * Widget behaviour - per-agent feature toggles bound to the reused
  * `feature_flags` Bot field. Plan-based locking is enforced server-side
  * (bot_routes.py), so this surface always reflects the saved values.
  */

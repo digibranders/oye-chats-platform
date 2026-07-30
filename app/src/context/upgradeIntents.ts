@@ -1,10 +1,10 @@
 /**
- * Upgrade-intent registry — the per-feature copy shown by the rich upgrade
+ * Upgrade-intent registry - the per-feature copy shown by the rich upgrade
  * modal (`design-system/components/UpgradeModal.tsx`).
  *
  * Ported VERBATIM from the legacy `context/UpgradeModalContext.jsx`
  * `UPGRADE_INTENTS` map (see `git show 75c2197~1:app/src/context/UpgradeModalContext.jsx`)
- * so every gate keeps its exact wording after the redesign — only the
+ * so every gate keeps its exact wording after the redesign - only the
  * presentation changed, not the substance. All 17 legacy intents are here,
  * plus one new entry (`live_chat`) that did not exist in the legacy registry:
  * the legacy app only had `live_chat_appearance` (the handoff/appearance
@@ -12,8 +12,8 @@
  * fell through to generic fallback copy. `live_chat` reuses the
  * `live_chat_appearance` copy so that gate gets specific copy too.
  *
- * Each key resolves to a *builder* — a function returning a fresh
- * `UpgradeIntent` — exactly like the legacy registry (which stored every
+ * Each key resolves to a *builder* - a function returning a fresh
+ * `UpgradeIntent` - exactly like the legacy registry (which stored every
  * entry as a function, even the parameter-less ones). Only `add_bot` reads
  * its params; every other builder ignores the argument, which is what makes
  * a single `Record<UpgradeIntentKey, UpgradeIntentBuilder>` type-check
@@ -55,7 +55,7 @@ export interface UpgradeIntent {
   recommendedPlan: string;
 }
 
-/** Params accepted by the `add_bot` builder — the only intent that needs live values. */
+/** Params accepted by the `add_bot` builder - the only intent that needs live values. */
 export interface AddBotIntentParams {
   /** How many bots/agents the workspace already has. */
   current: number;
@@ -65,7 +65,7 @@ export interface AddBotIntentParams {
 
 /**
  * Every builder has this shape so `UPGRADE_INTENTS` can be a single,
- * uniformly-typed `Record` — builders that don't need params simply ignore
+ * uniformly-typed `Record` - builders that don't need params simply ignore
  * the argument (a function of fewer parameters is assignable to a function
  * type requiring more, so this type-checks without a union or overloads).
  */
@@ -76,7 +76,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     const current = params?.current ?? 1;
     const plan = params?.planName || 'Free';
     // Per-bot billing: every chatbot needs its own subscription, so the
-    // modal narrative is uniform regardless of current plan — "subscribe
+    // modal narrative is uniform regardless of current plan - "subscribe
     // again to add another bot".
     return {
       eyebrow: `You already have ${current} AI Chatbot${current === 1 ? '' : 's'} on ${plan}`,
@@ -85,7 +85,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
         'Each AI Chatbot is its own subscription with its own credits, knowledge base, and branding. ' +
         'Pick a plan for this new AI Chatbot to spin it up.',
       highlights: [
-        'Isolated credits per AI Chatbot — a busy chatbot never drains a quieter one',
+        'Isolated credits per AI Chatbot - a busy chatbot never drains a quieter one',
         'Per-chatbot knowledge base, branding, and embed key',
         'Separate analytics and billing for every AI Chatbot',
       ],
@@ -108,7 +108,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Departments power smart routing',
     title: 'Organize teams with departments',
     description:
-      'Group operators by team — Sales, Support, Billing — and route visitors to the right people. Available on plans with live chat.',
+      'Group operators by team - Sales, Support, Billing - and route visitors to the right people. Available on plans with live chat.',
     highlights: [
       'Route visitors to the right team',
       'Per-department business hours',
@@ -155,7 +155,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Lead capture form is a paid feature',
     title: 'Capture leads inside the chat',
     description:
-      'Turn the chat widget into a lead-capture funnel — collect name, email, phone, and custom fields right inside the conversation.',
+      'Turn the chat widget into a lead-capture funnel - collect name, email, phone, and custom fields right inside the conversation.',
     highlights: [
       'Required & optional custom fields',
       'Auto-route to your CRM via webhooks',
@@ -227,7 +227,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Advanced widget tuning is a paid feature',
     title: 'Fine-tune your widget',
     description:
-      'Greeting delays, frustration thresholds, reconnect behavior, typing timeouts — the knobs that take a good AI Chatbot from "works" to "feels right" on your site.',
+      'Greeting delays, frustration thresholds, reconnect behavior, typing timeouts - the knobs that take a good AI Chatbot from "works" to "feels right" on your site.',
     highlights: [
       'Custom greeting + handoff timing',
       'Reconnect & heartbeat strategy',
@@ -275,7 +275,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     eyebrow: 'Live chat is a paid feature',
     title: 'Configure live chat handoff',
     description:
-      'Customize when and how the AI Chatbot offers a real human, route to the right team, and set wait-time copy — the full visitor request flow.',
+      'Customize when and how the AI Chatbot offers a real human, route to the right team, and set wait-time copy - the full visitor request flow.',
     highlights: [
       'Inline "Talk to a human" CTA',
       'Per-bot handoff timing',
@@ -283,7 +283,7 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     ],
     recommendedPlan: 'Starter',
   }),
-  // NEW — not in the legacy registry. The legacy app only shipped
+  // NEW - not in the legacy registry. The legacy app only shipped
   // `live_chat_appearance` (the handoff-config screen); a bare "this whole
   // surface needs live chat" gate (e.g. Inbox's Live chat tab) had no
   // matching intent and silently fell through to the generic fallback copy.

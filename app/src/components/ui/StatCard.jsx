@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 import { Skeleton } from './SkeletonLoader';
 
 /**
- * StatCard — premium KPI tile (Shopeers-grade composition):
+ * StatCard - premium KPI tile (Shopeers-grade composition):
  *   [ label ................... icon-tile ]
  *   [ value  ▲delta ]
  *   [ caption ]                 [ sparkline ]

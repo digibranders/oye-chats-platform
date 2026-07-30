@@ -24,7 +24,7 @@ export interface ConversationCardProps {
   /** Click handler (used when `to` is not supplied). */
   onClick?: () => void;
   /**
-   * Marks the row as the active conversation for assistive tech — forwarded to
+   * Marks the row as the active conversation for assistive tech - forwarded to
    * `aria-current` on the underlying link/button. Use `"page"` (or `true`) when
    * this row's conversation is the one currently open in the detail pane.
    */
@@ -33,7 +33,7 @@ export interface ConversationCardProps {
 }
 
 /**
- * ConversationCard — one conversation as a row in an inbox list (mandate shared
+ * ConversationCard - one conversation as a row in an inbox list (mandate shared
  * component). Renders as a router `<Link>` when `to` is given, a `<button>`
  * when `onClick` is given, otherwise a static row.
  */

@@ -5,7 +5,7 @@ import { ErrorDetails } from './ErrorDetails';
 import { parseRouteError, useReportRouteError } from './parseRouteError';
 
 /**
- * PageErrorBoundary — the in-shell error surface for a single routed page.
+ * PageErrorBoundary - the in-shell error surface for a single routed page.
  *
  * Wired as the `errorElement` on the pathless layout that wraps every page
  * inside the app shell. Because it renders through the shell's `<Outlet />`, a

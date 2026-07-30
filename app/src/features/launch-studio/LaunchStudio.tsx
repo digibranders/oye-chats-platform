@@ -31,7 +31,7 @@ const STEP_COMPONENTS: Record<string, ComponentType<StepProps>> = {
 
 const LAST_INDEX = LAUNCH_STEPS.length - 1;
 
-// Static — the step list never changes, so build the stepper items once.
+// Static - the step list never changes, so build the stepper items once.
 const STEPPER_ITEMS = LAUNCH_STEPS.map((s) => ({ key: s.key, label: s.label, description: s.hint }));
 
 function readProgress(): number {
@@ -41,7 +41,7 @@ function readProgress(): number {
 }
 
 /**
- * LaunchStudio — the onboarding state machine. Reads the current step from the
+ * LaunchStudio - the onboarding state machine. Reads the current step from the
  * URL (`/launch/:step`), enforces forward-gating (you can revisit reached steps
  * but not skip ahead), and persists progress so the flow resumes after a reload.
  * On completion it redirects to the dashboard and never returns.
@@ -74,12 +74,12 @@ export function LaunchStudio() {
     if (currentIndex === LAST_INDEX) {
       // Onboarding complete → mark it server-side, clear local progress, go home.
       void completeOnboarding().catch(() => {
-        /* non-blocking — the dashboard still loads if this fails */
+        /* non-blocking - the dashboard still loads if this fails */
       });
       try {
         localStorage.removeItem(LAUNCH_PROGRESS_KEY);
       } catch {
-        /* localStorage unavailable — ignore */
+        /* localStorage unavailable - ignore */
       }
       navigate('/');
       return;

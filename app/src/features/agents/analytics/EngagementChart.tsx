@@ -28,13 +28,13 @@ interface EngagementChartProps {
 }
 
 /**
- * EngagementChart — daily message volume over a selectable window. The window
+ * EngagementChart - daily message volume over a selectable window. The window
  * only slices the already-fetched series (client-side), so switching ranges is
  * instant and never refetches.
  */
 export function EngagementChart({ data, loading }: EngagementChartProps): ReactElement {
   // Default to the full (already-capped) window so the headline "Messages" KPI
-  // — which sums the whole series — reconciles with the chart's own total.
+  // - which sums the whole series - reconciles with the chart's own total.
   const [range, setRange] = useState<Range>('all');
 
   const windowed = useMemo(() => {

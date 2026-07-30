@@ -41,7 +41,7 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
         return undefined;
     }, [open]);
 
-    // ESC closes — matches the existing modal pattern across the admin app.
+    // ESC closes - matches the existing modal pattern across the admin app.
     useEffect(() => {
         if (!open) return undefined;
         const handler = (e) => {
@@ -135,7 +135,7 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
                                         Create referral code
                                     </h2>
                                     <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">
-                                        Pick a memorable code — customers enter it at checkout.
+                                        Pick a memorable code - customers enter it at checkout.
                                     </p>
                                 </div>
                             </div>

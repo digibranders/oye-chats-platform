@@ -1,13 +1,10 @@
 import { type ReactElement, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowUpRight,
   CalendarClock,
   FileText,
   Globe,
   ListOrdered,
-  Mail,
   MessageSquare,
   Wallet,
   Zap,
@@ -15,18 +12,22 @@ import {
 } from 'lucide-react';
 import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton, cn } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
-import { InsightCard } from '../../design-system/components/InsightCard';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import {
+  aggregatePool,
   formatCredits,
   formatDate,
   formatTime,
+  resolveScopedPool,
   type LedgerRow,
   type LedgerTone,
+  type PoolCredit,
+  type UsageBuckets,
 } from './usage-model';
+import { useBotContext } from '../../context/BotContext';
 import { useUsageData } from './useUsageData';
 import { TopupModal } from './billing/TopupModal';
-import { UsageHero } from './usage/UsageHero';
+import { AgentCreditHero } from './usage/AgentCreditHero';
 import { CreditBreakdown } from './usage/CreditBreakdown';
 import { ConsumptionTrend } from './usage/ConsumptionTrend';
 import { BotCreditsSection, type TopupTarget } from './usage/BotCreditsSection';
@@ -42,14 +43,14 @@ function formatLimit(limit: number, unit: string): string {
 interface PlanLimitStatProps {
   readonly label: string;
   readonly icon: LucideIcon;
-  /** Formatted value — the limit alone, no "used" fraction, for the two limit
+  /** Formatted value - the limit alone, no "used" fraction, for the two limit
    * keys the backend doesn't report usage for (`page_scraping`,
    * `chat_history_days`), so this stays honest instead of implying a fill. */
   readonly value: string;
   readonly caption: string;
 }
 
-/** An informational limit tile — a ceiling with no matching usage count. */
+/** An informational limit tile - a ceiling with no matching usage count. */
 function PlanLimitStat({ label, icon: Icon, value, caption }: PlanLimitStatProps): ReactElement {
   return (
     <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
@@ -68,14 +69,49 @@ function PlanLimitStat({ label, icon: Icon, value, caption }: PlanLimitStatProps
 }
 
 /**
- * PlanLimitsSection — the plan's numeric ceilings. `bots` / `operators` /
+ * PlanLimitsSection - the plan's numeric ceilings. `bots` / `operators` /
  * `documents` / `leads` are usage-populated keys, so they render as real
  * used/limit meters. `page_scraping` and `chat_history_days` have no per-page
  * usage on this workspace-wide view, so they render as honest limit-only stats.
  */
-function PlanLimitsSection(): ReactElement {
+function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement {
   const { entitlements, limitFor } = useEntitlements();
 
+  // Per-agent scope: read ceilings from the selected agent's own plan and pair
+  // them with that agent's usage. Drops "Agents" (a workspace-level count with
+  // no per-agent meaning).
+  if (pool && pool.planLimits && pool.limitUsage) {
+    const limits = pool.planLimits;
+    const usage = pool.limitUsage;
+    const lim = (key: string): number => limits[key] ?? 0;
+    return (
+      <section aria-label="Plan limits" className="space-y-4">
+        <SectionHeader
+          title="Plan limits"
+          description={`The ceilings on ${pool.name}'s plan, alongside what this agent has used.`}
+        />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+          <QuotaMeter label="Members" used={usage.operators} limit={lim('operators')} />
+          <QuotaMeter label="Documents" used={usage.documents} limit={lim('documents')} />
+          <QuotaMeter label="Leads" used={usage.leads} limit={lim('leads')} />
+          <PlanLimitStat
+            label="Page scraping"
+            icon={Globe}
+            value={formatLimit(lim('page_scraping'), 'pages')}
+            caption="Pages this plan allows crawling per period."
+          />
+          <PlanLimitStat
+            label="Chat history retention"
+            icon={CalendarClock}
+            value={formatLimit(lim('chat_history_days'), 'days')}
+            caption="How far back conversation history is kept."
+          />
+        </div>
+      </section>
+    );
+  }
+
+  // Account-wide scope ("All agents"): plan ceilings + workspace-wide usage.
   return (
     <section aria-label="Plan limits" className="space-y-4">
       <SectionHeader
@@ -83,7 +119,6 @@ function PlanLimitsSection(): ReactElement {
         description="The ceilings on your current plan, alongside what your workspace has used."
       />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <QuotaMeter label="Agents" used={entitlements.usage.bots ?? 0} limit={limitFor('bots')} />
         <QuotaMeter label="Members" used={entitlements.usage.operators ?? 0} limit={limitFor('operators')} />
         <QuotaMeter label="Documents" used={entitlements.usage.documents ?? 0} limit={limitFor('documents')} />
         <QuotaMeter label="Leads" used={entitlements.usage.leads ?? 0} limit={limitFor('leads')} />
@@ -156,12 +191,12 @@ interface CreditCostRow {
 
 /**
  * Per-action credit costs. Ported as static values from the legacy Billing.jsx
- * `COST_ROWS` defaults (`ai_chat: 1, document_upload: 3, url_scan: 5` —
+ * `COST_ROWS` defaults (`ai_chat: 1, document_upload: 3, url_scan: 5` -
  * Billing.jsx:408): there is no typed pricing endpoint in `services/api.d.ts`
  * to read these from, and the credit-balance payload this page consumes doesn't
  * carry the per-action costs. Super-admins can override them via PricingConfig,
  * but these match the shipped backend defaults. Keep in sync if the defaults
- * change. `email_send` is intentionally omitted — the legacy COST_ROWS kept it
+ * change. `email_send` is intentionally omitted - the legacy COST_ROWS kept it
  * commented out as a not-yet-surfaced activity.
  */
 const CREDIT_COSTS: readonly CreditCostRow[] = [
@@ -186,7 +221,7 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
 ];
 
 /**
- * CreditCostReference — a compact "what each action costs" card. Lives on the
+ * CreditCostReference - a compact "what each action costs" card. Lives on the
  * Usage page because it's about consumption, giving the metered activity tiles
  * above their price context.
  */
@@ -304,7 +339,7 @@ function isPurchasedTopup(row: LedgerRow): boolean {
 }
 
 /**
- * RecentTopups — a compact receipt of the last few credit purchases, restoring
+ * RecentTopups - a compact receipt of the last few credit purchases, restoring
  * the legacy TopupsTab's at-a-glance list. Rendered only when the ledger holds
  * genuine purchases; the full itemized ledger below carries everything else.
  */
@@ -348,30 +383,60 @@ function RecentTopups({ rows }: { rows: LedgerRow[] }): ReactElement | null {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 /**
- * UsagePage — the Workspace ▸ Usage analytics surface. One job: answer "how
+ * UsagePage - the Workspace ▸ Usage analytics surface. One job: answer "how
  * much have I used?". A hero credit position leads; metered activity, a
  * where-credits-go breakdown, and a 30-day trend give the shape of consumption;
  * a grouped ledger gives the detail. Buying credits happens inline; upgrading
  * routes to Billing.
  */
 export function UsagePage(): ReactElement {
-  const { phase, retry } = useUsageData();
-  const navigate = useNavigate();
+  const { selectedBot } = useBotContext();
+  const { phase, retry } = useUsageData(selectedBot?.id ?? null);
+  const balance = phase.status === 'ready' ? phase.balance : null;
+  // The credit pool for the current scope: the selected agent's own-plan pool,
+  // the shared pool it draws from, or - as a last resort - the account balance
+  // surfaced as a shared pool so the scoped hero always has something to show.
+  // Shared with the Billing credits card via `resolveScopedPool` so the two
+  // surfaces always agree for the same scope.
+  const selectedPool = useMemo<PoolCredit | null>(() => {
+    if (!balance || !selectedBot) return null;
+    return resolveScopedPool(balance, selectedBot.id);
+  }, [balance, selectedBot]);
+  // Metered consumption for the current scope: the selected agent's pool, or the
+  // whole-workspace aggregate on "All agents". Drives the activity tiles, the
+  // "Credits used" total, and the "Where credits go" breakdown.
+  const emptyBucket = { creditsUsed: 0, eventCount: 0 };
+  const scopedActivity: UsageBuckets =
+    selectedBot && selectedPool
+      ? selectedPool.activity
+      : balance
+        ? {
+            aiChat: balance.aiChat,
+            documentUpload: balance.documentUpload,
+            urlScan: balance.urlScan,
+            emailSend: balance.emailSend,
+          }
+        : { aiChat: emptyBucket, documentUpload: emptyBucket, urlScan: emptyBucket, emailSend: emptyBucket };
+  const scopedPeriodUsed =
+    selectedBot && selectedPool ? selectedPool.periodCreditsUsed : balance?.periodCreditsUsed ?? 0;
   // `null` = closed. A target carries the pool the top-up is scoped to: the
   // shared account balance (`botId: null`) or one agent's isolated balance.
   const [topupTarget, setTopupTarget] = useState<TopupTarget | null>(null);
-  const openAccountTopup = (): void => setTopupTarget({ botId: null, botName: null });
-
-  const goToBilling = (): void => {
-    void navigate('/workspace/billing');
-  };
+  // The page-level "Buy credits" tops up the current scope: the selected agent's
+  // pool when one is active, otherwise the shared account balance.
+  const openScopedTopup = (): void =>
+    setTopupTarget(
+      selectedBot && selectedPool
+        ? { botId: selectedPool.botId, botName: selectedPool.botId === null ? null : selectedPool.name }
+        : { botId: null, botName: null },
+    );
 
   return (
     <PageContainer
       title="Usage"
-      description="Everything your workspace is consuming this period — credits, AI chats, documents, crawled pages, and customer emails."
+      description="Everything your workspace is consuming this period - credits, AI chats, documents, and crawled pages."
       actions={
-        <Button variant="outline" onClick={openAccountTopup}>
+        <Button variant="outline" onClick={openScopedTopup}>
           <Wallet size={16} aria-hidden="true" />
           Buy credits
         </Button>
@@ -390,40 +455,18 @@ export function UsagePage(): ReactElement {
 
       {phase.status === 'ready' && (
         <>
-          {phase.balance.lowBalance && (
-            <InsightCard
-              tone="warning"
-              icon={AlertTriangle}
-              title="You’re running low on credits"
-              body={
-                <>
-                  Only {formatCredits(phase.balance.totalRemaining)} credits remain of your{' '}
-                  {formatCredits(phase.balance.monthlyGrant)} monthly allowance. When they reach zero your AI
-                  stops replying to visitors.
-                </>
-              }
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={openAccountTopup}>
-                    <Wallet size={16} aria-hidden="true" />
-                    Buy credits
-                  </Button>
-                  <Button variant="ghost" onClick={goToBilling}>
-                    <ArrowUpRight size={16} aria-hidden="true" />
-                    Upgrade plan
-                  </Button>
-                </div>
-              }
+          {/* Credits are scoped to the agent picked in the shell switcher.
+              A selected agent shows its own pool; "All agents" shows every
+              agent's pool side by side (or the shared pool when the workspace
+              still runs a single balance). The account-wide aggregate hero is
+              intentionally gone - credits belong to an agent, not the account. */}
+          {selectedBot && selectedPool ? (
+            <AgentCreditHero
+              pool={selectedPool}
+              agentName={selectedBot.name}
+              onTopup={setTopupTarget}
             />
-          )}
-
-          <UsageHero balance={phase.balance} onBuyCredits={openAccountTopup} />
-
-          {/* Per-agent credit breakdown — only when the account runs more than
-              one pool (an agent on its own subscription keeps an isolated
-              balance). Lets a customer see and top up a single agent's credits,
-              which the aggregate hero above can't. */}
-          {phase.balance.botCredits.length > 0 && (
+          ) : phase.balance.botCredits.length > 0 ? (
             <BotCreditsSection
               pools={[
                 ...(phase.balance.accountPool ? [phase.balance.accountPool] : []),
@@ -431,50 +474,50 @@ export function UsagePage(): ReactElement {
               ]}
               onTopup={setTopupTarget}
             />
+          ) : (
+            <AgentCreditHero
+              pool={aggregatePool(phase.balance)}
+              agentName="All agents"
+              onTopup={setTopupTarget}
+            />
           )}
 
-          {/* Metered consumption this period. */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          {/* Metered consumption this period - scoped to the selected agent. */}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <ActivityCard
               label="AI chat replies"
               icon={MessageSquare}
-              eventCount={phase.balance.aiChat.eventCount}
-              creditsUsed={phase.balance.aiChat.creditsUsed}
+              eventCount={scopedActivity.aiChat.eventCount}
+              creditsUsed={scopedActivity.aiChat.creditsUsed}
             />
             <ActivityCard
               label="Documents uploaded"
               icon={FileText}
-              eventCount={phase.balance.documentUpload.eventCount}
-              creditsUsed={phase.balance.documentUpload.creditsUsed}
+              eventCount={scopedActivity.documentUpload.eventCount}
+              creditsUsed={scopedActivity.documentUpload.creditsUsed}
             />
             <ActivityCard
               label="Pages crawled"
               icon={Globe}
-              eventCount={phase.balance.urlScan.eventCount}
-              creditsUsed={phase.balance.urlScan.creditsUsed}
+              eventCount={scopedActivity.urlScan.eventCount}
+              creditsUsed={scopedActivity.urlScan.creditsUsed}
             />
-            <ActivityCard
-              label="Customer emails"
-              icon={Mail}
-              eventCount={phase.balance.emailSend.eventCount}
-              creditsUsed={phase.balance.emailSend.creditsUsed}
-            />
-            <MetricCard label="Credits used" value={formatCredits(phase.balance.periodCreditsUsed)} icon={Zap} />
+            <MetricCard label="Credits used" value={formatCredits(scopedPeriodUsed)} icon={Zap} />
           </div>
 
-          {/* Breakdown + trend — the shape of consumption. */}
+          {/* Breakdown + trend - the shape of consumption. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <CreditBreakdown balance={phase.balance} />
+            <CreditBreakdown activity={scopedActivity} />
             {phase.trend.status === 'ready' && <ConsumptionTrend points={phase.trend.points} />}
           </div>
 
-          {/* Per-action credit costs — price context for the metered tiles above. */}
+          {/* Per-action credit costs - price context for the metered tiles above. */}
           <CreditCostReference />
 
-          {/* Plan limits — entitlement-driven quota meters (grafted from design). */}
-          <PlanLimitsSection />
+          {/* Plan limits - the selected agent's plan when scoped, else workspace-wide. */}
+          <PlanLimitsSection pool={selectedBot ? selectedPool : null} />
 
-          {/* Recent credit purchases — a quick receipt above the full ledger. */}
+          {/* Recent credit purchases - a quick receipt above the full ledger. */}
           {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} />}
 
           {/* Itemized ledger, grouped by day. */}

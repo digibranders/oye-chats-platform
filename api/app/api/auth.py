@@ -606,6 +606,7 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "recommended_colors": bot.recommended_colors,
         "allowed_domains": list(bot.allowed_domains or []),
         "domain_check_enabled": bool(bot.domain_check_enabled),
+        "session_share_domain": getattr(bot, "session_share_domain", None),
         "created_at": bot.created_at.isoformat() if bot.created_at else None,
     }
 

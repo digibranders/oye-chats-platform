@@ -13,10 +13,10 @@ export interface LaunchStudioLayoutProps {
 }
 
 /**
- * LaunchStudioLayout — the full-screen onboarding shell. Deliberately renders
+ * LaunchStudioLayout - the full-screen onboarding shell. Deliberately renders
  * OUTSIDE the app chrome (no sidebar / top bar): Launch Studio is a temporary
  * workflow, not a destination. Three regions: the step rail (left), the active
- * step (center), and a persistent live-preview panel (right) — the preview is
+ * step (center), and a persistent live-preview panel (right) - the preview is
  * where the user watches their agent come to life.
  */
 export function LaunchStudioLayout({
@@ -28,7 +28,7 @@ export function LaunchStudioLayout({
 }: LaunchStudioLayoutProps) {
   return (
     <div className="flex h-screen flex-col bg-[var(--ds-bg-canvas)] text-[var(--ds-text)]">
-      {/* Top bar — brand + exit */}
+      {/* Top bar - brand + exit */}
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-[var(--ds-border)] px-4 md:px-6">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]">
@@ -45,7 +45,7 @@ export function LaunchStudioLayout({
         </Link>
       </header>
 
-      {/* Mobile progress — the step rail is hidden below lg, so keep the user
+      {/* Mobile progress - the step rail is hidden below lg, so keep the user
           oriented with a compact "Step N of M" bar. */}
       <div className="border-b border-[var(--ds-border)] px-4 py-3 lg:hidden">
         <div className="mb-1.5 flex items-center justify-between text-[12px]">

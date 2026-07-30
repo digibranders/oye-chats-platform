@@ -29,7 +29,7 @@ function stepState(index: number, currentIndex: number, maxReachedIndex: number)
 }
 
 /**
- * ProgressStepper — vertical multi-step progress rail (mandate shared
+ * ProgressStepper - vertical multi-step progress rail (mandate shared
  * component). Shows done / current / reachable / locked states and lets the
  * user jump back to any already-reached step. Used by Launch Studio and any
  * future guided flow.

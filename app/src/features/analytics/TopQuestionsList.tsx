@@ -8,7 +8,7 @@ interface TopQuestionsListProps {
 }
 
 /**
- * TopQuestionsList — the most-asked visitor questions across every agent,
+ * TopQuestionsList - the most-asked visitor questions across every agent,
  * ranked, each with a proportional volume bar. Semantic ordered list so the
  * ranking is announced to screen readers.
  */

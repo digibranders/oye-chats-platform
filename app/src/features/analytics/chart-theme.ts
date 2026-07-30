@@ -3,7 +3,7 @@ import { useTheme } from '../../design-system';
 /**
  * Concrete colors for Recharts, which can't read CSS custom properties. Values
  * mirror the design-system tokens (`tokens.css`) for each theme so the chart
- * stays consistent with the rest of the surface — volt-violet accent, warm
+ * stays consistent with the rest of the surface - volt-violet accent, warm
  * neutral grid/axis.
  */
 export interface ChartPalette {

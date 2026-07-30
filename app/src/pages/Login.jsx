@@ -17,7 +17,7 @@ const features = [
 
 export default function Login() {
   // Read the initial email from the URL up front so ``useState``'s lazy
-  // initializer captures it before the first render — the invite airlock
+  // initializer captures it before the first render - the invite airlock
   // routes here as ``/login?next=/invite/<token>&email=<invited_email>``
   // and pre-filling saves the invitee from retyping their own email. Not
   // locked so someone using their own credentials with a different email
@@ -31,7 +31,7 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  // Email/password is the secondary sign-in path — kept behind a "Continue
+  // Email/password is the secondary sign-in path - kept behind a "Continue
   // with email" disclosure so Google SSO stays the primary call-to-action.
   // Auto-expanded when an email is pre-filled (invite airlock round-trip) so
   // invitees see the form directly instead of an extra click.
@@ -39,7 +39,7 @@ export default function Login() {
   const navigate = useNavigate();
   // Affiliate invite round-trip: if the user arrived via the Partners
   // invite landing page, we route them back there after login so the
-  // accept-existing flow can fire. The token stays in the URL — never
+  // accept-existing flow can fire. The token stays in the URL - never
   // touches localStorage, so a stale token can't haunt later logins.
   const [searchParams] = useSearchParams();
   const affiliateToken = searchParams.get('affiliate_token') || '';
@@ -48,7 +48,7 @@ export default function Login() {
   // context. ProtectedRoute appends `?next=` when redirecting unauthenticated
   // users here so we can navigate to the original target after login.
   const rawNext = searchParams.get('next') || '';
-  // Only honour same-origin relative paths — anything starting with `//`,
+  // Only honour same-origin relative paths - anything starting with `//`,
   // a protocol, or an external host is rejected to prevent open-redirect
   // attacks via a crafted notification payload.
   const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
@@ -64,11 +64,11 @@ export default function Login() {
 
     try {
       setIsLoading(true);
-      // Try the client/admin login FIRST — it's the common case. Only fall back
+      // Try the client/admin login FIRST - it's the common case. Only fall back
       // to the operator login (a separate credential + endpoint) when the admin
       // login fails. Previously the operator login ran first on every sign-in,
       // so the client majority always ate a guaranteed-failing operator 401
-      // before their real login — doubling perceived latency and flooding auth
+      // before their real login - doubling perceived latency and flooding auth
       // logs / rate limiters with expected failures. ``rememberMe`` drives the
       // absolute session TTL armed in setAuthBundle (checked → 30 days,
       // unchecked → 1 day); main.jsx wipes the session once that expiry passes.
@@ -105,11 +105,11 @@ export default function Login() {
           navigate(safeNext);
         } else {
           // Super-admins log into the dedicated console at admin.oyechats.com,
-          // not this dashboard — route them to "/" like any other client.
+          // not this dashboard - route them to "/" like any other client.
           navigate('/');
         }
       } catch (adminErr) {
-        // Admin login failed — likely a team-member operator, whose credentials
+        // Admin login failed - likely a team-member operator, whose credentials
         // live on a separate endpoint. Try that before surfacing an error; if it
         // also fails, surface the admin error (the common-case message).
         try {
@@ -132,7 +132,7 @@ export default function Login() {
             rememberMe,
           );
           sessionStorage.setItem('login_toast', '1');
-          // Operators are never affiliates by design — route to the deep-link
+          // Operators are never affiliates by design - route to the deep-link
           // target (push-notification round-trip) or /support.
           navigate(safeNext || '/support');
         } catch {
@@ -147,13 +147,13 @@ export default function Login() {
   };
 
   if (getAuthItem('admin_token')) {
-    // Verification is no longer a hard wall — an already-authenticated but
+    // Verification is no longer a hard wall - an already-authenticated but
     // unverified client falls through to their normal destination and gets
     // nudged by the VerifyEmailBanner rather than being trapped on
     // /verify-email. Verification stays enforced server-side on
     // billing/invite mutations.
     const isOperator = localStorage.getItem('auth_type') === 'operator';
-    // Deep-link ``next`` wins over defaults — invite airlock, push-notification
+    // Deep-link ``next`` wins over defaults - invite airlock, push-notification
     // click, etc. Without this, an already-logged-in user clicking an invite
     // link would get bounced straight to their dashboard instead of the
     // airlock, losing the invite context they intended to act on.
@@ -161,7 +161,7 @@ export default function Login() {
       return <Navigate to={safeNext} replace />;
     }
     // If an affiliate token is in the URL, keep routing it through the
-    // invite landing — the recipient is already logged in and the page
+    // invite landing - the recipient is already logged in and the page
     // will auto-fire accept-existing.
     if (affiliateToken && !isOperator) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
@@ -171,7 +171,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex bg-surface-50">
-      {/* Left Panel — Branding */}
+      {/* Left Panel - Branding */}
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden bg-gradient-to-br from-[#17121f] via-[#14101e] to-[#0f0b15] text-white">
         {/* Grid pattern like website hero */}
         <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
@@ -179,7 +179,7 @@ export default function Login() {
         {/* Radial glow like website hero */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(162,28,175,0.18) 0%, rgba(162,28,175,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
 
-        {/* Floating orbs — website blue palette */}
+        {/* Floating orbs - website blue palette */}
         <div className="absolute top-20 -left-20 w-96 h-96 bg-primary-600/15 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
         <div className="absolute bottom-20 right-10 w-80 h-80 bg-primary-400/10 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
         <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-primary-500/8 rounded-full blur-[60px] animate-[float_10s_ease-in-out_infinite]" />
@@ -259,7 +259,7 @@ export default function Login() {
         </motion.div>
       </div>
 
-      {/* Right Panel — Form */}
+      {/* Right Panel - Form */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50">
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -293,7 +293,7 @@ export default function Login() {
             </motion.div>
           )}
 
-          {/* Google OAuth — the PRIMARY sign-in path. Same backend endpoint
+          {/* Google OAuth - the PRIMARY sign-in path. Same backend endpoint
               as the signup page; the button hides itself if
               /auth/google/status returns enabled=false, so misconfigured envs
               degrade gracefully. */}

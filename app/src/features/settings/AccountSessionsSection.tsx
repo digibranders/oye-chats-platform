@@ -10,7 +10,7 @@ export interface AccountSessionsSectionProps {
 }
 
 /**
- * AccountSessionsSection — active sign-in sessions + the (not-yet-built)
+ * AccountSessionsSection - active sign-in sessions + the (not-yet-built)
  * two-factor / device-management surface. Moved here from the former Workspace
  * ▸ Security tab: this is account-level protection, so it belongs on Settings
  * beside Account security, not on a workspace-admin surface.
@@ -32,7 +32,7 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
 
   return (
     <div className="space-y-6">
-      {/* ── Sessions — real: current device + working sign-out. ─────────────── */}
+      {/* ── Sessions - real: current device + working sign-out. ─────────────── */}
       <Card>
         <div className="p-5 sm:p-6">
           <SectionHeader

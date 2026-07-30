@@ -1,10 +1,10 @@
 /**
- * ApiKeysPage — the Workspace ▸ API Keys surface. One job: answer
+ * ApiKeysPage - the Workspace ▸ API Keys surface. One job: answer
  * "How do I access the API?".
  *
  * It shows the workspace's single secret key (masked), lets the owner rotate it
  * with a deliberate two-step confirm, reveals the fresh key exactly once with
- * copy-to-clipboard, and explains — in plain language — how to authenticate a
+ * copy-to-clipboard, and explains - in plain language - how to authenticate a
  * server-to-server request with the `X-API-Key` header.
  *
  * The masked key is loaded through a small discriminated-union state machine so
@@ -13,7 +13,7 @@
  * it lives behind an inline confirmation rather than a one-click button.
  *
  * Colour usage follows the DS pattern (see InsightCard / BillingPage): the
- * saturated semantic hue stays on borders, tint backgrounds, and icons only —
+ * saturated semantic hue stays on borders, tint backgrounds, and icons only -
  * body copy renders in --ds-text / --ds-text-muted so it clears WCAG AA (4.5:1),
  * which the mid-tone hues on their own soft tints do not.
  *
@@ -64,7 +64,7 @@ const CURL_EXAMPLE = `curl ${API_BASE_URL}/<endpoint> \\
 
 /** Announced (screen-reader only) the instant a fresh key is revealed. */
 const REVEAL_ANNOUNCEMENT =
-  'Your API key was regenerated. Copy the new key now — it won’t be shown again.';
+  'Your API key was regenerated. Copy the new key now - it won’t be shown again.';
 
 // ── State machine ────────────────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ export function ApiKeysPage(): ReactElement {
   const [confirming, setConfirming] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   // The full key exists only in the moment after a rotation; once dismissed we
-  // drop it from state and fall back to the mask — it is never shown again.
+  // drop it from state and fall back to the mask - it is never shown again.
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const keyCopy = useCopyFlag();
   const curlCopy = useCopyFlag();
@@ -248,7 +248,7 @@ export function ApiKeysPage(): ReactElement {
     >
       {/* Screen-reader announcement for a fresh key. Permanently mounted (never
           conditionally rendered) so the live region is in the a11y tree before
-          its text is swapped in — several screen readers skip regions that were
+          its text is swapped in - several screen readers skip regions that were
           absent/display:none at mutation time. */}
       <p className="sr-only" role="status" aria-live="polite">
         {revealedKey ? REVEAL_ANNOUNCEMENT : ''}
@@ -288,7 +288,7 @@ export function ApiKeysPage(): ReactElement {
           <div className="min-w-0">
             <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">Secret key</h2>
             <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-              One key authenticates your workspace. Keep it private — anyone with it can act on your
+              One key authenticates your workspace. Keep it private - anyone with it can act on your
               behalf.
             </p>
           </div>
@@ -353,7 +353,7 @@ export function ApiKeysPage(): ReactElement {
             ) : (
               <div className="flex items-center gap-3">
                 <code className="min-w-0 flex-1 truncate rounded-md border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2 font-mono text-[13px] text-[var(--ds-text-muted)]">
-                  {phase.masked || '—'}
+                  {phase.masked || '-'}
                 </code>
                 <StatusBadge tone="neutral">Active</StatusBadge>
               </div>
@@ -459,7 +459,7 @@ export function ApiKeysPage(): ReactElement {
         <p className="mt-3 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
           Replace <code className="font-mono">&lt;your-api-key&gt;</code> with the key above and{' '}
           <code className="font-mono">&lt;endpoint&gt;</code> with the resource you’re calling. Never
-          embed this key in browser or mobile app code — it belongs on your server only.
+          embed this key in browser or mobile app code - it belongs on your server only.
         </p>
       </Card>
 

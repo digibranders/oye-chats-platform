@@ -10,8 +10,8 @@ import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
 /**
- * Step 2 — Create Agent. Names the agent. Creates a new bot, or (for a returning
- * user with an existing agent) renames the selected one — the field stays
+ * Step 2 - Create Agent. Names the agent. Creates a new bot, or (for a returning
+ * user with an existing agent) renames the selected one - the field stays
  * editable so the name is never locked.
  */
 export function CreateAgentStep(props: StepProps) {
@@ -30,7 +30,7 @@ export function CreateAgentStep(props: StepProps) {
     setError(null);
     try {
       if (selectedBot) {
-        // Existing agent — rename it if the name changed, then continue.
+        // Existing agent - rename it if the name changed, then continue.
         if (trimmed !== selectedBot.name) {
           await updateBot(selectedBot.id, { name: trimmed });
           await refreshBots();
@@ -45,7 +45,7 @@ export function CreateAgentStep(props: StepProps) {
     } catch (err) {
       if (requiresSubscription(err)) {
         // Should only happen for a returning visitor who lands back on
-        // onboarding with an existing bot already on the account — route to
+        // onboarding with an existing bot already on the account - route to
         // the same upgrade modal every other paywall gate uses instead of a
         // raw error.
         openUpgradeModal('add_bot', { current: bots.length, planName });
@@ -95,7 +95,7 @@ export function CreateAgentStep(props: StepProps) {
 
         <Card className="p-4">
           <p className="text-[12px] text-[var(--ds-text-subtle)]">
-            This is the name visitors see at the top of the chat. Keep it short and friendly —
+            This is the name visitors see at the top of the chat. Keep it short and friendly -
             “Support”, “Ava”, or your brand name all work well.
           </p>
         </Card>

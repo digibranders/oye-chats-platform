@@ -34,7 +34,7 @@ function messageFromError(err: unknown): string {
 }
 
 /**
- * AgentActionsMenu — the per-agent "⋯" menu shown on each tile.
+ * AgentActionsMenu - the per-agent "⋯" menu shown on each tile.
  *
  * Sits as an overlay sibling of the card's navigational link (never nested
  * inside it), so both remain independent, keyboard-operable controls. Offers
@@ -176,7 +176,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     try {
       await navigator.clipboard.writeText(demoUrl);
     } catch {
-      setError('Could not copy — check clipboard permissions.');
+      setError('Could not copy - check clipboard permissions.');
       return;
     }
     setCopied(true);

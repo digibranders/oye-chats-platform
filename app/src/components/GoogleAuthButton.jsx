@@ -41,7 +41,7 @@ async function probeGoogleOAuth() {
 /**
  * "Sign in / Sign up with Google" button.
  *
- * Same component on both /login and /register — the `label` prop is the
+ * Same component on both /login and /register - the `label` prop is the
  * only difference in copy. Clicking redirects to the backend's
  * `/auth/google/login` endpoint, which issues the CSRF state cookie and
  * 302s to Google. After Google → callback → success, the backend
@@ -49,17 +49,17 @@ async function probeGoogleOAuth() {
  * picks up.
  *
  * Props:
- *  - label?: string — visible button text. Defaults to "Continue with Google".
- *  - next?: string — relative path the user should land on after success.
+ *  - label?: string - visible button text. Defaults to "Continue with Google".
+ *  - next?: string - relative path the user should land on after success.
  *      Passed through the OAuth round-trip via a signed state cookie so
  *      deep-link redirects survive (e.g. /billing).
- *  - mode?: "login" | "register" — telemetry only; behaviour is identical.
- *  - className?: string — appended to the button's base classes.
- *  - onBlockedClick?: () => boolean — optional pre-flight gate called before
+ *  - mode?: "login" | "register" - telemetry only; behaviour is identical.
+ *  - className?: string - appended to the button's base classes.
+ *  - onBlockedClick?: () => boolean - optional pre-flight gate called before
  *      the OAuth redirect fires. Return `true` to cancel the redirect (the
  *      caller is responsible for surfacing why, e.g. a "please accept the
  *      Terms" error) or `false`/omit to proceed. Used by Register.jsx to
- *      require the Terms/Privacy checkbox before Google sign-up too — Google
+ *      require the Terms/Privacy checkbox before Google sign-up too - Google
  *      is a full-page redirect, so this has to run synchronously on click,
  *      before `window.location.href` navigates away.
  */
@@ -92,7 +92,7 @@ export default function GoogleAuthButton({
         if (clicking || enabled === null) return;
         if (onBlockedClick?.()) return;
         setClicking(true);
-        // Full-page navigation — the OAuth dance has to happen at the
+        // Full-page navigation - the OAuth dance has to happen at the
         // top level so Google's redirect lands back on a real URL the
         // router can interpret.
         const params = new URLSearchParams({ next, mode });

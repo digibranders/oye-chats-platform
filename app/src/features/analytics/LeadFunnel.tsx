@@ -23,7 +23,7 @@ function percent(part: number, whole: number): number {
 }
 
 /**
- * LeadFunnel — how visitors progress from first contact to sales-qualified,
+ * LeadFunnel - how visitors progress from first contact to sales-qualified,
  * across every agent. Cumulative funnel: each stage counts leads that reached
  * it *or beyond*, so the bars taper as qualification tightens.
  */

@@ -1755,9 +1755,25 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
 # :01 and the webhook-retry poll at :00/:30 so ARQ concurrency isn't
 # starved on the minute boundary).
 
+# Max bots the hourly sweep may enqueue in a single tick. Cohort surprise
+# safety net (see ``task_auto_recrawl_sweep`` docstring). Kept as a module
+# constant, not an env var — ops never tunes this per deploy; the value
+# below is the deliberate default backed by the concurrency analysis in
+# the recrawl RFC / issue tracker.
+_SWEEP_HOURLY_CAP: int = 3
+
 
 async def task_auto_recrawl_sweep(ctx: dict) -> int:
     """Cron: enqueue an auto-recrawl for every bot whose weekly window has elapsed.
+
+    Bounded by ``_SWEEP_HOURLY_CAP`` — a sweep tick picks at most N bots
+    ordered by ``next_recrawl_at ASC`` (oldest-due first, fairness). Any
+    bot left behind stays past-due, so the next hourly tick re-picks it
+    naturally without any bookkeeping. This is the hard safety net against
+    a cohort surprise (e.g. 20 bots enabled in one sitting all coming due
+    in the same UTC hour a week later); the per-toggle jitter in
+    ``compute_next_recrawl_at`` is the primary scattering, this cap is
+    the belt-and-braces limit for whatever slips past it.
 
     Idempotent within an hour bucket via ``_job_id`` — two sweeps that fire
     in the same clock hour (e.g. a redeploy overlap) can't double-enqueue
@@ -1772,9 +1788,19 @@ async def task_auto_recrawl_sweep(ctx: dict) -> int:
     from app.db.session import get_session
     from app.worker.enqueue import enqueue
 
-    def _due_bot_ids() -> list[int]:
+    # How many bots the sweep may enqueue in a single hourly tick. Held as
+    # a local module constant (mirrors the ``RECRAWL_JITTER_HOURS`` +
+    # ``RECRAWL_CADENCE_DAYS`` pattern in ``recrawl_service``): ops never
+    # tunes this per deploy, and a runtime env var would only complicate
+    # the test that monkeypatches it.
+    cap = _SWEEP_HOURLY_CAP
+
+    def _due_bot_ids() -> tuple[list[int], int]:
+        """Return ``(picked, total_due)`` — the capped slice we'll enqueue
+        this tick and how many were eligible in total, so the log line can
+        surface when the cap is actively engaged."""
         with get_session() as session:
-            return list(
+            total_due = (
                 session.execute(
                     select(Bot.id).where(
                         Bot.recrawl_enabled.is_(True),
@@ -1786,9 +1812,27 @@ async def task_auto_recrawl_sweep(ctx: dict) -> int:
                 .scalars()
                 .all()
             )
+            if not total_due:
+                return [], 0
+            picked = list(
+                session.execute(
+                    select(Bot.id)
+                    .where(
+                        Bot.recrawl_enabled.is_(True),
+                        Bot.next_recrawl_at.is_not(None),
+                        Bot.next_recrawl_at <= datetime.now(UTC),
+                        Bot.is_active.is_(True),
+                    )
+                    .order_by(Bot.next_recrawl_at.asc())
+                    .limit(cap)
+                )
+                .scalars()
+                .all()
+            )
+            return picked, len(total_due)
 
     loop = asyncio.get_running_loop()
-    bot_ids = await loop.run_in_executor(None, _due_bot_ids)
+    bot_ids, total_due = await loop.run_in_executor(None, _due_bot_ids)
 
     if not bot_ids:
         return 0
@@ -1812,7 +1856,17 @@ async def task_auto_recrawl_sweep(ctx: dict) -> int:
             enqueued += 1
 
     if enqueued:
-        logger.info("task_auto_recrawl_sweep: enqueued auto-recrawl for %d bot(s)", enqueued)
+        deferred = max(0, total_due - enqueued)
+        if deferred:
+            logger.info(
+                "task_auto_recrawl_sweep: enqueued %d of %d due bot(s) (cap=%d, %d deferred to next tick)",
+                enqueued,
+                total_due,
+                cap,
+                deferred,
+            )
+        else:
+            logger.info("task_auto_recrawl_sweep: enqueued auto-recrawl for %d bot(s)", enqueued)
     return enqueued
 
 

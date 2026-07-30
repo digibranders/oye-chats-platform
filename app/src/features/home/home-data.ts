@@ -1,11 +1,11 @@
 /**
- * Home — pure data + business logic layer (no React, no UI).
+ * Home - pure data + business logic layer (no React, no UI).
  *
  * The Home page answers "How is my business doing today?" across ALL agents
  * (not one bot). The legacy Dashboard (`pages/Dashboard.jsx`) is scoped to a
  * single `selectedBot`; here we aggregate the same per-bot endpoints into one
  * workspace-wide view. Everything in this module is a pure function so it can be
- * unit-tested and kept free of fabricated data — we only surface numbers the API
+ * unit-tested and kept free of fabricated data - we only surface numbers the API
  * actually returned.
  */
 import type { Bot, TopQuestion } from '../../types/domain';
@@ -114,6 +114,10 @@ export interface AgentSummary {
   hotLeads: number;
   /** Answer success rate for this agent, as a percentage (0–100). */
   successRate: number;
+  /** Active operators assigned to this agent (per-bot seat usage). */
+  operators: number;
+  /** Distinct knowledge documents/sources ingested for this agent. */
+  documents: number;
 }
 
 export interface HomeTotals {
@@ -152,7 +156,7 @@ export interface HomeData {
 
 // Qualified leads = every tier above "unqualified" (MQL + SAL + SQL). The
 // lead-stats endpoint's `total` counts ALL chat sessions, which is identical to
-// getDashboardStats' conversation count — so we surface qualified leads instead
+// getDashboardStats' conversation count - so we surface qualified leads instead
 // to keep this KPI honest and non-redundant with "Conversations".
 const LEAD_QUALIFIED_KEYS = ['mql', 'sal', 'sql'] as const;
 const LEAD_HOT_KEYS = ['hot', 'sal'] as const;
@@ -163,11 +167,13 @@ export interface AgentStatsInput {
   stats: Record<string, unknown> | null;
   /** Result of getLeadStats(bot.id); null if the call failed. */
   leads: Record<string, unknown> | null;
+  /** Active operators bound to this bot, tallied from the workspace roster. */
+  operators: number;
 }
 
 /** Build one agent's summary row from its raw stats payloads. */
 export function summarizeAgent(input: AgentStatsInput): AgentSummary {
-  const { bot, stats, leads } = input;
+  const { bot, stats, leads, operators } = input;
   const trained = isTrained(bot);
   return {
     bot,
@@ -180,6 +186,8 @@ export function summarizeAgent(input: AgentStatsInput): AgentSummary {
     leads: sumNumbers(leads, LEAD_QUALIFIED_KEYS),
     hotLeads: pickNumber(leads, LEAD_HOT_KEYS),
     successRate: toNumber(stats?.success_rate),
+    operators,
+    documents: toNumber(stats?.total_documents),
   };
 }
 

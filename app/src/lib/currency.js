@@ -7,9 +7,9 @@ export const FALLBACK_USD_TO_INR = 94.67;
  * Money formatting for minor-unit amounts (paise / cents).
  *
  * INR renders with the rupee symbol and INDIAN digit grouping
- * (₹1,52,458 — lakh/crore commas), everything else falls back to the
+ * (₹1,52,458 - lakh/crore commas), everything else falls back to the
  * dollar symbol with western grouping. Whole amounts drop the decimals
- * (₹499 not ₹499.00); fractional amounts always show 2dp — mirrors the
+ * (₹499 not ₹499.00); fractional amounts always show 2dp - mirrors the
  * behaviour the Billing page's fmtCurrency has always had.
  *
  * @param {number} amountMinor - Amount in the currency's minor unit (paise for INR, cents for USD).
@@ -34,7 +34,7 @@ export function formatMoney(amountMinor, currency = 'usd') {
  * carries BOTH an INR column and a USD column (plans, packs, seats).
  *
  * INR is the charge currency for Indian accounts, so the INR column is read
- * directly (never a converted USD figure) — the number shown then equals the
+ * directly (never a converted USD figure) - the number shown then equals the
  * Razorpay debit.
  *
  * @param {{inrMinor?: number|null, usdMinor?: number|null}} amounts

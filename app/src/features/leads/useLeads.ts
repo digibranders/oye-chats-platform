@@ -1,5 +1,5 @@
 /**
- * useLeads — loads the lead list, tier summary, and qualification funnel for
+ * useLeads - loads the lead list, tier summary, and qualification funnel for
  * the currently-selected agent, in one place.
  *
  * Loading is *derived* from a status enum rather than a standalone boolean, and
@@ -53,7 +53,7 @@ function messageOf(error: unknown): string {
 
 /**
  * @param botId The selected agent's id (or `undefined` while agents are still loading).
- * @param enabled When `false`, the fetch never fires — used to keep Free-plan
+ * @param enabled When `false`, the fetch never fires - used to keep Free-plan
  *   workspaces from hitting the gated `/leads` endpoint (which 403s for Free)
  *   when the page renders its upgrade teaser instead of the real list.
  *   Defaults to `true` so existing callers are unaffected.
@@ -85,7 +85,7 @@ export function useLeads(botId: number | undefined, enabled = true): LeadsData {
   }, []);
 
   useEffect(() => {
-    // Skip entirely rather than fetching and discarding the result — the
+    // Skip entirely rather than fetching and discarding the result - the
     // caller (Free-plan gating) needs this to never issue the network call.
     if (!enabled) return;
 
@@ -118,7 +118,7 @@ export function useLeads(botId: number | undefined, enabled = true): LeadsData {
 
   // The funnel is an enrichment fetched independently of the list so it can be
   // re-queried on a period change without reloading (and re-skeletoning) the
-  // whole page. It defaults to empty on any failure — a missing funnel must
+  // whole page. It defaults to empty on any failure - a missing funnel must
   // never break the leads table.
   useEffect(() => {
     // Free plan / still-loading agent: never issue the request. The funnel

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -58,6 +59,15 @@ logger = logging.getLogger(__name__)
 # override yet. Kept as a module constant so a future ``recrawl_cadence_days``
 # column can drop in without a service rewrite.
 RECRAWL_CADENCE_DAYS: int = 7
+
+# Random 0..N-hour jitter added on top of the 7-day cadence when computing the
+# next scheduled recrawl. Prevents a cohort of bots toggled on in the same
+# sitting from stampeding the crawl provider (and each other) on the same UTC
+# hour a week later — see the pathological "10 bots enabled in a 30-minute
+# window all recrawl in the same sweep tick" analysis. 24 h spreads a
+# full-day cohort evenly across a day; tests monkeypatch this to 0 for
+# deterministic ``compute_next_recrawl_at`` behaviour.
+RECRAWL_JITTER_HOURS: float = 24.0
 
 # Cap on how many failure samples we retain in ``last_recrawl_summary`` so a
 # bot with 500 broken URLs doesn't produce a 200KB JSONB row. The admin UI
@@ -101,8 +111,16 @@ def compute_next_recrawl_at(now: datetime) -> datetime:
     Kept as a helper so the API route (which sets the initial
     ``next_recrawl_at`` on toggle-on) and the worker task (which sets it
     after a successful recrawl) always compute the same value.
+
+    Adds a random 0..``RECRAWL_JITTER_HOURS`` hour offset on top of the
+    weekly cadence so a cohort of bots enabled together doesn't remain
+    clustered on the same UTC hour forever. Uses ``random.uniform`` from
+    the module-level ``random`` so tests can monkeypatch it for
+    determinism (``monkeypatch.setattr(recrawl_service, "random", …)``
+    or ``random.seed(...)``).
     """
-    return now + timedelta(days=RECRAWL_CADENCE_DAYS)
+    jitter_hours = random.uniform(0.0, RECRAWL_JITTER_HOURS) if RECRAWL_JITTER_HOURS > 0 else 0.0
+    return now + timedelta(days=RECRAWL_CADENCE_DAYS, hours=jitter_hours)
 
 
 async def _fetch_pages(urls: list[str], client_id: int) -> tuple[list[dict], list[str]]:
@@ -245,23 +263,29 @@ async def recrawl_bot(bot_id: int) -> dict:
                 ingest_result = await loop.run_in_executor(None, _do_ingest)
             except Exception:  # noqa: BLE001
                 logger.exception("recrawl_bot: ingestion failed for bot %s", bot_id)
-                ingest_result = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": True}
+                ingest_result = {
+                    "chunks": 0,
+                    "pages_changed": 0,
+                    "pages_charged": 0,
+                    "credits_deducted": 0,
+                    "aborted": True,
+                }
         else:
-            ingest_result = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
+            ingest_result = {
+                "chunks": 0,
+                "pages_changed": 0,
+                "pages_charged": 0,
+                "credits_deducted": 0,
+                "aborted": False,
+            }
 
-        # ``pages_charged`` is 0 because we set ``cost_per_page=0``, so we can't
-        # read "how many pages actually changed" off that field. Instead we
-        # approximate: any page that produced new chunks flipped the hash and
-        # therefore counts as changed. ``pages_charged`` becomes the changed
-        # count for the sole run where cost_per_page > 0, so leave the
-        # approximation here scoped to auto-recrawl only.
+        # ``pages_changed`` is the honest count of pages that made it past the
+        # hash-skip AND had their fresh chunks successfully committed. It's the
+        # right signal here because auto-recrawl runs with ``cost_per_page=0``,
+        # so ``pages_charged`` is always 0 and can't stand in for "how many
+        # pages changed" like it does on the paid interactive-crawl path.
         total_chunks = int(ingest_result.get("chunks") or 0)
-        changed_pages = int(ingest_result.get("pages_charged") or 0)
-        if changed_pages == 0 and total_chunks > 0:
-            # Fallback estimate when billing was disabled: at least one page
-            # changed. The customer sees ``chunks_updated`` as the honest signal;
-            # ``changed_pages`` is best-effort.
-            changed_pages = 1
+        changed_pages = int(ingest_result.get("pages_changed") or 0)
 
         fetched_count = len(fetched_pages)
         unchanged_pages = max(0, fetched_count - changed_pages)

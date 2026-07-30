@@ -31,7 +31,7 @@ export interface OfflineMessagesPanelProps {
 }
 
 /**
- * OfflineMessagesPanel — the "messages left while you were away" inbox. A metric
+ * OfflineMessagesPanel - the "messages left while you were away" inbox. A metric
  * row summarizes volume, a filter switches lifecycle state, and a master list +
  * reading pane let an operator triage and reply. All states are explicit:
  * loading skeletons, an error with retry, and an empty state.
@@ -59,7 +59,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
 
   const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([]);
 
-  // Load workspace quick replies once — they enrich the reply affordances but the
+  // Load workspace quick replies once - they enrich the reply affordances but the
   // pane works without them (falls back to built-in templates).
   useEffect(() => {
     let active = true;
@@ -87,7 +87,7 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
   function handleSelect(id: number, status: string | undefined): void {
     setSelectedId(id);
     setActionError(null);
-    // Opening an unread message reads it (matches every inbox convention) — but
+    // Opening an unread message reads it (matches every inbox convention) - but
     // only under the "All" filter. Under a "New"-only filter, auto-reading would
     // immediately drop the row the operator just opened, clearing the pane.
     if (status === 'new' && statusFilter === 'all') {
@@ -268,7 +268,7 @@ interface StatusFilterBarProps {
 }
 
 /**
- * StatusFilterBar — a single-select segmented control for the message lifecycle
+ * StatusFilterBar - a single-select segmented control for the message lifecycle
  * filter. Uses `aria-pressed` toggle buttons inside a labelled group rather than
  * a tablist: this is a filter over one results list, not a set of tabpanels, so
  * the WAI-ARIA tabs pattern (with its aria-controls → tabpanel wiring) doesn't

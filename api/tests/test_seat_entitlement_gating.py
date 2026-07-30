@@ -18,6 +18,16 @@ from app.services import razorpay_service
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
 
 
+@pytest.fixture(autouse=True)
+def _seat_plan_configured():
+    """Seat billing is env-only with no baked-in default (``RAZORPAY_SEAT_PLAN_ID``).
+    Configure it for the suite so the seat add-on create/carry paths run instead of
+    raising ``RazorpayBillingError`` — mirrors the patch in ``test_razorpay_service``.
+    """
+    with patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_test_seat"):
+        yield
+
+
 def _sub(db, included=1):
     client = Client(name="Seat", email="seat-a@test.local", hashed_password="x", api_key="k-seat-a")
     db.add(client)

@@ -44,7 +44,7 @@ const alignClass: Record<ColumnAlign, string> = {
 };
 
 /**
- * DataTable — a lightweight, typed, accessible table (mandate shared
+ * DataTable - a lightweight, typed, accessible table (mandate shared
  * component). No external table library: a semantic `<table>` with per-column
  * render functions and optional row interaction. Horizontally scrollable so it
  * never breaks the page on narrow viewports.

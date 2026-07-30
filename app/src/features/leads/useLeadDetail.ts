@@ -1,5 +1,5 @@
 /**
- * useLeadDetail — loads the full record for a single lead when the detail
+ * useLeadDetail - loads the full record for a single lead when the detail
  * drawer opens, keyed by session id. Passing `null` closes the fetch down.
  *
  * Same discipline as {@link useLeads}: loading is derived from a status enum,
@@ -33,7 +33,7 @@ export function useLeadDetail(sessionId: string | null): LeadDetailData {
   const [error, setError] = useState<string | null>(null);
   const [trackedId, setTrackedId] = useState<string | null>(sessionId);
 
-  // Reset when the session changes — adjust state during render (React-approved),
+  // Reset when the session changes - adjust state during render (React-approved),
   // keeping the effect free of synchronous setState.
   if (sessionId !== trackedId) {
     setTrackedId(sessionId);

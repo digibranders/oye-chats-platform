@@ -14,8 +14,8 @@ const FALLBACK_QUESTIONS = [
 ];
 
 /**
- * Step 6 — Test Agent. Ask a question (a suggested one or your own in the
- * widget) and watch the real agent answer in the live preview on the right —
+ * Step 6 - Test Agent. Ask a question (a suggested one or your own in the
+ * widget) and watch the real agent answer in the live preview on the right -
  * streamed via previewChatStream. The aha moment.
  */
 export function TestStep(props: StepProps) {
@@ -43,7 +43,7 @@ export function TestStep(props: StepProps) {
   return (
     <StepShell
       title="Try it yourself"
-      description="Ask your agent anything — it answers from what it just learned. Watch the preview on the right."
+      description="Ask your agent anything - it answers from what it just learned. Watch the preview on the right."
       onBack={props.onBack}
       onContinue={props.onContinue}
       isFirst={props.isFirst}

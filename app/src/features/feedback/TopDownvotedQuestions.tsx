@@ -9,9 +9,9 @@ interface TopDownvotedQuestionsProps {
 }
 
 /**
- * TopDownvotedQuestions — the most-repeated negatively-rated questions,
+ * TopDownvotedQuestions - the most-repeated negatively-rated questions,
  * ranked, with a proportional bar. Clicking a row jumps to a matching item in
- * the list below (handled by the caller — see `FeedbackPanel`). Restyled port
+ * the list below (handled by the caller - see `FeedbackPanel`). Restyled port
  * of the legacy "Top downvoted questions" panel (`pages/Feedback.jsx:246-294`).
  */
 export function TopDownvotedQuestions({ items, onSelect }: TopDownvotedQuestionsProps): ReactElement {

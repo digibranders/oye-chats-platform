@@ -15,7 +15,7 @@ export type QuickActionProps = QuickActionBaseProps &
   ({ to: string; onClick?: never } | { onClick: () => void; to?: never });
 
 /**
- * QuickAction — a compact action chip (mandate shared component). Sits in
+ * QuickAction - a compact action chip (mandate shared component). Sits in
  * toolbars and quick-action rows. Renders as a router `<Link>` when `to` is
  * given, otherwise a `<button>`.
  */

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Bot, ChevronDown, X, ArrowUp } from 'lucide-react';
 import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
+import PremiumOrb from './PremiumOrb';
 
 const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     const launcherName = settings?.launcher_name || "Have Questions?";
@@ -58,15 +59,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     const renderBotIcon = () => {
         if (avatarType === 'orb') {
             const oc = sanitizeColor(settings?.orb_color, primaryColor);
-            return (
-                <div
-                    className="w-full h-full rounded-full"
-                    style={{
-                        background: `radial-gradient(circle at 35% 35%, ${oc}44, ${oc}bb, ${oc})`,
-                        boxShadow: `0 0 12px ${oc}55`
-                    }}
-                />
-            );
+            return <PremiumOrb color={oc} size={56} style={{ width: '100%', height: '100%' }} />;
         }
         if (avatarType === 'mascot') {
             return (
@@ -95,12 +88,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     const renderSmallAvatar = () => {
         if (avatarType === 'orb') {
             const oc = sanitizeColor(settings?.orb_color, primaryColor);
-            return (
-                <div
-                    className="w-7 h-7 rounded-full flex-shrink-0"
-                    style={{ background: `radial-gradient(circle at 35% 35%, ${oc}44, ${oc}bb, ${oc})` }}
-                />
-            );
+            return <PremiumOrb color={oc} size={28} />;
         }
         if (launcherLogo && launcherLogo !== "null") {
             return <img src={launcherLogo} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />;

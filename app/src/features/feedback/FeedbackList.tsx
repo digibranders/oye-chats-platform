@@ -8,7 +8,7 @@ interface FeedbackListProps {
   onToggle: (messageId: number) => void;
 }
 
-/** FeedbackList — the itemized, expandable feedback cards for the active filter. */
+/** FeedbackList - the itemized, expandable feedback cards for the active filter. */
 export function FeedbackList({ items, expandedId, onToggle }: FeedbackListProps): ReactElement {
   return (
     <div className="space-y-3">

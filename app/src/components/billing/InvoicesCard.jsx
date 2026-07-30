@@ -4,7 +4,7 @@ import { getInvoices } from '../../services/api';
 import { formatMoney } from '../../lib/currency';
 import { cn } from '../../lib/utils';
 
-// Customer-facing invoice list — numbered GST documents with PDF downloads,
+// Customer-facing invoice list - numbered GST documents with PDF downloads,
 // legacy payment-history rows rendered as before (description only). Self-
 // loading so it can mount on any billing surface.
 const INVOICE_TYPE_LABELS = {
@@ -24,7 +24,7 @@ function formatDate(iso) {
 }
 
 // A numbered invoice this recent without a PDF is still being rendered by
-// the worker (enqueued seconds after payment; 5-min sweep as backstop) —
+// the worker (enqueued seconds after payment; 5-min sweep as backstop) -
 // poll until the Download link can appear. Older ones without a PDF are
 // stuck for some other reason; polling won't fix those.
 const PDF_PENDING_WINDOW_MS = 15 * 60 * 1000;
@@ -49,7 +49,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
 
   // Refetches whenever the parent bumps refreshKey (post-payment refresh
   // cycle, manual Refresh button) or the PDF poll fires. Only the first
-  // load shows the skeleton — refreshes swap the rows in place. A fetch
+  // load shows the skeleton - refreshes swap the rows in place. A fetch
   // failure is tracked as a distinct error state (audit F36): rendering it
   // as the "no invoices" empty state told customers their tax documents
   // don't exist when the API was merely unreachable.

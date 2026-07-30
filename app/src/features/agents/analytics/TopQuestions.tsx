@@ -9,7 +9,7 @@ interface TopQuestionsProps {
 }
 
 /**
- * TopQuestions — the most-asked visitor questions, ranked, with a proportional
+ * TopQuestions - the most-asked visitor questions, ranked, with a proportional
  * bar per row. Surfaces what people actually come to the AI for, so the owner
  * knows which answers matter most.
  */

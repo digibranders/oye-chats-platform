@@ -1,9 +1,9 @@
 /**
- * Analytics — typed views over the legacy analytics endpoints.
+ * Analytics - typed views over the legacy analytics endpoints.
  *
  * Several legacy endpoints are declared as `Promise<Record<string, unknown>>`
  * (their server shape varies by widget/plan). This module narrows those loose
- * records into strict, workspace-level view models the UI can trust — no `any`,
+ * records into strict, workspace-level view models the UI can trust - no `any`,
  * every field defaulted, so a missing key never crashes a card.
  */
 import { type ActivityPoint } from '../../types/domain';
@@ -28,7 +28,7 @@ export interface WorkspaceTotals {
   totalMessages: number;
   activeVisitors: number;
   /**
-   * Percentage 0–100. Share of rated AI answers that got a thumbs-up — the
+   * Percentage 0–100. Share of rated AI answers that got a thumbs-up - the
    * backend `success_rate` is `positive_feedback / total_feedback`, i.e. a
    * message-level positivity ratio, NOT a share of conversations resolved.
    */
@@ -201,12 +201,12 @@ export interface TrendSummary {
 
 export function summarizeTrend(points: TrendPoint[]): TrendSummary {
   if (points.length === 0) {
-    return { total: 0, dailyAverage: 0, peak: 0, peakLabel: '—' };
+    return { total: 0, dailyAverage: 0, peak: 0, peakLabel: '-' };
   }
 
   let total = 0;
   let peak = 0;
-  let peakLabel = '—';
+  let peakLabel = '-';
   for (const point of points) {
     total += point.messages;
     if (point.messages > peak) {

@@ -9,28 +9,28 @@ import { Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
  * Renders the same subtle icon-button + hover-tooltip the KnowledgeBase row
  * uses today, but clicking now opens a small popover with two options:
  *
- *   1. Full recrawl        — Re-scrape every page, charge per page.
+ *   1. Full recrawl        - Re-scrape every page, charge per page.
  *                            Available to every tier.
- *   2. Updated pages only  — Skip pages whose content hasn't changed since
+ *   2. Updated pages only  - Skip pages whose content hasn't changed since
  *                            the last crawl. Standard+ only; Free / Starter
  *                            see the option dimmed with an inline upgrade CTA.
  *
  * The upgrade CTA is intentionally shown to non-entitled users (not hidden)
- * so the feature is discoverable — this is a load-bearing upsell surface, not
+ * so the feature is discoverable - this is a load-bearing upsell surface, not
  * a hidden capability.
  *
  * Plan gating on the backend (`enforce_delta_recrawl` in `plan_service.py`)
  * is the security boundary. This component is a UX affordance only.
  *
  * @param {object} props
- * @param {string} props.planSlug — Entitlements plan slug ('free' | 'starter' | 'standard' | 'professional').
- * @param {() => void} props.onFullRecrawl — Called when the user picks "Full recrawl".
- * @param {() => void} props.onDeltaRecrawl — Called when the user picks "Updated pages only" AND is entitled.
- * @param {() => void} [props.onUpgradeClick] — Called when a non-entitled user clicks the upgrade CTA.
- * @param {boolean} [props.loading] — Show a spinner instead of the RefreshCw icon; disables the trigger.
- * @param {boolean} [props.disabled] — Hard-disable the trigger (e.g. crawl already running).
+ * @param {string} props.planSlug - Entitlements plan slug ('free' | 'starter' | 'standard' | 'professional').
+ * @param {() => void} props.onFullRecrawl - Called when the user picks "Full recrawl".
+ * @param {() => void} props.onDeltaRecrawl - Called when the user picks "Updated pages only" AND is entitled.
+ * @param {() => void} [props.onUpgradeClick] - Called when a non-entitled user clicks the upgrade CTA.
+ * @param {boolean} [props.loading] - Show a spinner instead of the RefreshCw icon; disables the trigger.
+ * @param {boolean} [props.disabled] - Hard-disable the trigger (e.g. crawl already running).
  */
-// Popover width in px — must match the Tailwind class below (w-72 = 18rem).
+// Popover width in px - must match the Tailwind class below (w-72 = 18rem).
 const POPOVER_WIDTH = 288;
 // Gap between the trigger's bottom edge and the popover's top edge.
 const POPOVER_GAP = 6;
@@ -45,7 +45,7 @@ export default function RecrawlMenu({
 }) {
   const [open, setOpen] = useState(false);
   // {top, left} viewport coords for the fixed-position popover. Null until the
-  // trigger rect has been measured — first paint of the popover is skipped
+  // trigger rect has been measured - first paint of the popover is skipped
   // until we have real coordinates so it never flashes in at (0,0).
   const [coords, setCoords] = useState(null);
   const triggerRef = useRef(null);
@@ -71,7 +71,7 @@ export default function RecrawlMenu({
   // Reposition the portal when the window (or any scrollable ancestor such
   // as the containing table) scrolls or the viewport resizes. ``capture:
   // true`` on scroll catches events from ancestor overflow containers that
-  // never bubble to window. Only setState fires here — the initial coords
+  // never bubble to window. Only setState fires here - the initial coords
   // are set inside the toggle handler, which side-steps React's "setState
   // synchronously in an effect" warning by moving the first measure out of
   // the effect body entirely.
@@ -92,7 +92,7 @@ export default function RecrawlMenu({
   // Close on outside click. Escape key also closes so keyboard users don't
   // get stuck inside the menu. Now that the popover lives in a portal,
   // ``containerRef.current.contains(...)`` misses clicks inside the popover
-  // itself — the target is portalled out of the container's subtree. So
+  // itself - the target is portalled out of the container's subtree. So
   // check both the trigger and the popover explicitly.
   useEffect(() => {
     if (!open) return undefined;
@@ -119,7 +119,7 @@ export default function RecrawlMenu({
 
   const handleDelta = () => {
     if (!canUseDelta) {
-      // Non-entitled users still get a click affordance — route them to
+      // Non-entitled users still get a click affordance - route them to
       // the upgrade flow rather than silently doing nothing.
       onUpgradeClick?.();
       return;
@@ -200,7 +200,7 @@ export default function RecrawlMenu({
                   </div>
                   {/* The badge is a plan-tier hint for users who don't have
                       the feature yet. Standard / Professional callers already
-                      have delta — showing "STANDARD" to them is redundant
+                      have delta - showing "STANDARD" to them is redundant
                       and reads as a "coming soon" badge on a feature they
                       can use right now. Hide it for entitled tiers. */}
                   {!canUseDelta && (
@@ -230,7 +230,7 @@ export default function RecrawlMenu({
           if (disabled || loading) return;
           if (!open) {
             // Measure right here so the very first paint of the portal
-            // already has real coords — avoids a one-frame flash at (0,0)
+            // already has real coords - avoids a one-frame flash at (0,0)
             // and keeps setState out of a useLayoutEffect body (which the
             // React Compiler flags as a cascading-render smell).
             const next = measureCoords();
@@ -253,7 +253,7 @@ export default function RecrawlMenu({
         )}
       </button>
 
-      {/* Hover tooltip — matches the sibling delete/preview buttons.
+      {/* Hover tooltip - matches the sibling delete/preview buttons.
           Hidden while the popover is open so the two chrome elements
           don't stack awkwardly. */}
       {!open && (

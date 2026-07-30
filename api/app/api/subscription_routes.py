@@ -248,7 +248,10 @@ def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_c
 
 
 @router.get("/current")
-def get_current_subscription(auth: dict = Depends(get_current_client_or_operator)):
+def get_current_subscription(
+    auth: dict = Depends(get_current_client_or_operator),
+    bot_id: int | None = None,
+):
     """Return the current workspace's subscription details + plan info.
 
     Resolved via ``get_current_client_or_operator`` (not strict-client) so an
@@ -258,11 +261,27 @@ def get_current_subscription(auth: dict = Depends(get_current_client_or_operator
     response — reading the wrong client's plan is what made "Live chat isn't
     included in your plan" appear on the operator's Support surface even
     though the workspace owner is on Standard.
+
+    When ``bot_id`` is given (the per-agent Billing overview), resolve that
+    agent's OWN subscription + plan instead of the account default, so the
+    overview shows the money attached to the selected agent. ``bot_id`` is
+    scoped by ``client_id`` inside ``get_subscription_for_bot``, so a foreign
+    id simply yields no subscription rather than another workspace's plan.
     """
     client_id = auth["client_id"]
     with get_session() as session:
-        sub = get_client_subscription(session, client_id)
-        plan = get_client_plan(session, client_id)
+        if bot_id is not None:
+            sub = get_subscription_for_bot(session, client_id, bot_id)
+            if sub is not None:
+                plan = sub.plan if sub.plan_id else None
+            else:
+                # The agent has no subscription of its own — it draws from the
+                # shared account plan, so surface that instead of an empty panel.
+                sub = get_client_subscription(session, client_id)
+                plan = get_client_plan(session, client_id)
+        else:
+            sub = get_client_subscription(session, client_id)
+            plan = get_client_plan(session, client_id)
 
         sub_data = None
         if sub:
@@ -308,29 +327,36 @@ def get_current_subscription(auth: dict = Depends(get_current_client_or_operator
 
         return {
             "subscription": sub_data,
-            "plan": {
-                "id": plan.id,
-                "name": plan.name,
-                "slug": plan.slug,
-                "description": plan.description,
-                "pricing_model": plan.pricing_model,
-                "currency": plan.currency,
-                "monthly_price_cents": plan.monthly_price_cents,
-                "annual_price_cents": plan.annual_price_cents,
-                # USD headline columns — the dashboard renders prices in USD,
-                # so these must travel with every plan payload (mirrors the
-                # /plans endpoint). Omitting them makes the UI read them as
-                # undefined and fall through to "No paid subscription".
-                "monthly_price_usd_cents": plan.monthly_price_usd_cents,
-                "annual_price_usd_cents": plan.annual_price_usd_cents,
-                "extra_seat_price_usd_cents": plan.extra_seat_price_usd_cents,
-                "credits_per_month": plan.credits_per_month,
-                "included_operator_seats": plan.included_operator_seats,
-                "extra_seat_price_cents": plan.extra_seat_price_cents,
-                "limits": plan.limits,
-                "features": plan.features,
-                "overage_rate_cents": plan.overage_rate_cents,
-            },
+            # ``plan`` can be None in the per-agent view when the selected agent
+            # has no subscription of its own yet — the frontend renders that as
+            # "no paid subscription", so emit null rather than dereferencing it.
+            "plan": (
+                {
+                    "id": plan.id,
+                    "name": plan.name,
+                    "slug": plan.slug,
+                    "description": plan.description,
+                    "pricing_model": plan.pricing_model,
+                    "currency": plan.currency,
+                    "monthly_price_cents": plan.monthly_price_cents,
+                    "annual_price_cents": plan.annual_price_cents,
+                    # USD headline columns — the dashboard renders prices in USD,
+                    # so these must travel with every plan payload (mirrors the
+                    # /plans endpoint). Omitting them makes the UI read them as
+                    # undefined and fall through to "No paid subscription".
+                    "monthly_price_usd_cents": plan.monthly_price_usd_cents,
+                    "annual_price_usd_cents": plan.annual_price_usd_cents,
+                    "extra_seat_price_usd_cents": plan.extra_seat_price_usd_cents,
+                    "credits_per_month": plan.credits_per_month,
+                    "included_operator_seats": plan.included_operator_seats,
+                    "extra_seat_price_cents": plan.extra_seat_price_cents,
+                    "limits": plan.limits,
+                    "features": plan.features,
+                    "overage_rate_cents": plan.overage_rate_cents,
+                }
+                if plan is not None
+                else None
+            ),
             "billing": {
                 "default_provider": BILLING_PROVIDER,
                 "razorpay_enabled": RAZORPAY_ENABLED,
@@ -492,10 +518,24 @@ def get_subscription_usage(client: Client = Depends(get_current_client)):
 
 
 @router.get("/invoices")
-def list_invoices(client: Client = Depends(get_current_client)):
-    """Return the client's payment history (most recent first)."""
+def list_invoices(client: Client = Depends(get_current_client), bot_id: int | None = None):
+    """Return the client's payment history (most recent first).
+
+    When ``bot_id`` is given, the history is scoped to that agent's invoices
+    (``Invoice.bot_id``); the ``client_id`` filter still applies so a foreign
+    id yields an empty list rather than another workspace's invoices. Omit
+    ``bot_id`` for the account-wide history.
+    """
     with get_session() as session:
-        stmt = select(Invoice).where(Invoice.client_id == client.id).order_by(Invoice.created_at.desc()).limit(50)
+        stmt = (
+            select(Invoice)
+            .where(
+                Invoice.client_id == client.id,
+                *([Invoice.bot_id == bot_id] if bot_id is not None else []),
+            )
+            .order_by(Invoice.created_at.desc())
+            .limit(50)
+        )
         invoices = session.execute(stmt).scalars().all()
 
         return [
@@ -1711,7 +1751,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
     """
     from sqlalchemy import func
 
-    from app.db.models import Bot, CreditLedger
+    from app.db.models import Bot, CreditLedger, Document, LeadInfo, Operator
 
     def _scope_period_and_usage(session, client_id: int, bot_id: int | None):
         """Pull period anchor + per-reason usage for one ledger scope."""
@@ -1778,6 +1818,47 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             bot_breakdown = credit_service.get_balance_breakdown(session, client.id, bot_id=ledger_bot_id)
             bot_period_start, bot_usage = _scope_period_and_usage(session, client.id, ledger_bot_id)
             bot_sub = bot.subscription
+
+            # ── Per-agent plan ceilings + usage (drives the Usage page's
+            # "Plan limits" section when this agent is the active scope). Limits
+            # come straight from the agent's own plan; usage is counted scoped to
+            # this bot so it mirrors the per-agent Members / Knowledge / Leads
+            # surfaces rather than the account-wide totals.
+            bot_limits = dict(bot_plan.limits or {}) if bot_plan else {}
+            bot_operators_used = int(
+                session.execute(
+                    select(func.count(Operator.id)).where(
+                        Operator.client_id == client.id,
+                        Operator.bot_id == bot.id,
+                        Operator.is_active.is_(True),
+                    )
+                ).scalar()
+                or 0
+            )
+            bot_documents_used = int(
+                session.execute(
+                    select(func.count(func.distinct(Document.document_name))).where(
+                        Document.bot_id == bot.id,
+                        Document.source == "upload",
+                    )
+                ).scalar()
+                or 0
+            )
+            lead_period_start = (
+                bot_sub.current_period_start if bot_sub and bot_sub.current_period_start else bot_period_start
+            )
+            bot_leads_used = 0
+            if lead_period_start is not None:
+                bot_leads_used = int(
+                    session.execute(
+                        select(func.count(LeadInfo.id)).where(
+                            LeadInfo.bot_id == bot.id,
+                            LeadInfo.created_at >= lead_period_start,
+                        )
+                    ).scalar()
+                    or 0
+                )
+
             bot_ledgers.append(
                 {
                     "bot_id": bot.id,
@@ -1799,6 +1880,13 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
                     if bot_sub and effective_resets_at(bot_sub)
                     else None,
                     "usage": bot_usage,
+                    # Per-agent "Plan limits" data.
+                    "limits": bot_limits,
+                    "limit_usage": {
+                        "operators": bot_operators_used,
+                        "documents": bot_documents_used,
+                        "leads": bot_leads_used,
+                    },
                 }
             )
 
@@ -1848,15 +1936,25 @@ def get_credit_history(
     client: Client = Depends(get_current_client),
     page: int = 1,
     limit: int = 50,
+    bot_id: int | None = None,
 ):
-    """Return paginated ledger entries for the client (most recent first)."""
+    """Return paginated ledger entries for the client (most recent first).
+
+    When ``bot_id`` is given, the history is scoped to that agent's own ledger
+    (entries carry ``CreditLedger.bot_id``); the ``client_id`` filter still
+    applies, so a foreign ``bot_id`` simply matches nothing rather than leaking
+    another workspace's rows. Omit ``bot_id`` for the workspace-wide history.
+    """
     page = max(int(page or 1), 1)
     limit = max(min(int(limit or 50), 200), 1)
     with get_session() as session:
         rows = (
             session.execute(
                 select(CreditLedger)
-                .where(CreditLedger.client_id == client.id)
+                .where(
+                    CreditLedger.client_id == client.id,
+                    *([CreditLedger.bot_id == bot_id] if bot_id is not None else []),
+                )
                 .order_by(CreditLedger.created_at.desc())
                 .limit(limit)
                 .offset((page - 1) * limit)
@@ -1890,6 +1988,7 @@ _CONSUMPTION_REASONS = ("ai_chat", "url_scan", "email_send", "document_upload")
 def get_credit_daily(
     client: Client = Depends(get_current_client),
     days: int = 30,
+    bot_id: int | None = None,
 ):
     """Daily credit consumption for the last ``days`` days (zero-filled).
 
@@ -1917,6 +2016,7 @@ def get_credit_daily(
                 CreditLedger.client_id == client.id,
                 CreditLedger.reason.in_(_CONSUMPTION_REASONS),
                 CreditLedger.created_at >= window_start,
+                *([CreditLedger.bot_id == bot_id] if bot_id is not None else []),
             )
             .group_by(day_col)
         ).all()

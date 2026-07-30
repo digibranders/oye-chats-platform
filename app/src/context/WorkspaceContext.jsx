@@ -1,10 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * Workspace context — the single source of truth for "which workspace am I
+ * Workspace context - the single source of truth for "which workspace am I
  * acting in right now?"
  *
  * A Client identity can hold:
- *   • their own workspace (as owner) — one per Client, ``id === client.id``
+ *   • their own workspace (as owner) - one per Client, ``id === client.id``
  *   • zero or more linked-operator memberships in other workspaces (via
  *     accepted invites)
  *
@@ -23,13 +23,13 @@
  * ----------------
  * ``switchWorkspace(id)`` is atomic from the frontend's perspective:
  *   1. Aborts every in-flight request scoped to the previous workspace via
- *      ``rotateWorkspaceAbort`` — no cross-tenant data leak.
+ *      ``rotateWorkspaceAbort`` - no cross-tenant data leak.
  *   2. Updates persistent state so subsequent reads see the new workspace.
  *   3. Broadcasts a ``oyechats:workspace-switched`` window event so ad-hoc
  *      consumers (WebSocket clients, feature-flag caches) can react without
  *      subscribing to this context.
  *   4. Optionally navigates to a landing route (``/support`` for operator
- *      roles, ``/`` for owner) — controlled by the caller.
+ *      roles, ``/`` for owner) - controlled by the caller.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -52,9 +52,21 @@ function _restoreFromStorage() {
 }
 
 function _clientOwnedWorkspace(workspaces) {
-    // First-time users have no persisted workspace — pick their owned one
+    // First-time users have no persisted workspace - pick their owned one
     // (there's always exactly one owned entry per Client identity).
     return workspaces.find((w) => w.role === 'owner') || null;
+}
+
+/**
+ * Collapse a workspace entry to the effective seat role the UI gates on:
+ * ``owner | admin | operator``. Owned workspaces are always ``owner``; a
+ * linked membership uses its granular ``operator_role`` (an admin invited into
+ * another workspace keeps admin-level access), defaulting to ``operator``.
+ */
+function _effectiveRole(workspace) {
+    if (!workspace) return null;
+    if (workspace.role === 'owner') return 'owner';
+    return workspace.operator_role || 'operator';
 }
 
 export function WorkspaceProvider({ children }) {
@@ -111,7 +123,7 @@ export function WorkspaceProvider({ children }) {
             }
             return list;
         } catch (err) {
-            // Don't clobber state on transient failures — the UI can show a
+            // Don't clobber state on transient failures - the UI can show a
             // "reconnecting" chip if this repeats. Legacy operator sessions
             // don't hit /me/workspaces at all (they use X-Operator-Key).
             setError(err);
@@ -141,7 +153,10 @@ export function WorkspaceProvider({ children }) {
         }));
 
         if (navigate) {
-            const landingPath = next.role === 'operator' ? '/support' : '/';
+            // Operators land on the live-chat console; owners/admins on the
+            // dashboard. (`/inbox` is the real route - the old `/support`
+            // alias never existed under Admin 2.0 and 404'd.)
+            const landingPath = next.role === 'operator' ? '/inbox' : '/';
             navigate(landingPath, { replace: true });
         }
         return next;
@@ -174,7 +189,7 @@ export function WorkspaceProvider({ children }) {
         return () => window.removeEventListener(WORKSPACE_ACCESS_DENIED_EVENT, onAccessDenied);
     }, [refresh]);
 
-    // Initial load — fire once after mount. Skips for legacy operator sessions
+    // Initial load - fire once after mount. Skips for legacy operator sessions
     // (they use X-Operator-Key which doesn't play with workspace switching).
     useEffect(() => {
         const authType = getAuthItem('auth_type');
@@ -184,7 +199,7 @@ export function WorkspaceProvider({ children }) {
             return;
         }
         if (authType === 'operator') {
-            // Legacy operator — no workspace switcher, single implicit workspace.
+            // Legacy operator - no workspace switcher, single implicit workspace.
             setIsLoading(false);
             return;
         }
@@ -192,22 +207,35 @@ export function WorkspaceProvider({ children }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // The workspace the caller is currently acting in, resolved against the
+    // freshly-loaded membership list. Falls back to `null` until the first
+    // `/me/workspaces` response lands.
+    const currentWorkspace = workspaces.find((w) => w.id === currentWorkspaceId) || null;
+    // Effective seat role for gating. Prefer the loaded membership entry;
+    // before the list loads, fall back to the persisted role so an operator is
+    // gated immediately on reload (no flash of the full owner dashboard).
+    const effectiveRole = currentWorkspace ? _effectiveRole(currentWorkspace) : (currentRole || null);
+    const isOperator = effectiveRole === 'operator';
+
     const value = useMemo(() => ({
         workspaces,
         currentWorkspaceId,
         currentWorkspaceName,
         currentRole,
+        // Gating-facing derivations (see above).
+        effectiveRole,
+        isOperator,
         isLoading,
         error,
         accessDeniedForWorkspaceId,
         clearAccessDenied: () => setAccessDeniedForWorkspaceId(null),
         refresh,
         switchWorkspace,
-        // True when the caller belongs to more than one workspace — drives the
+        // True when the caller belongs to more than one workspace - drives the
         // switcher-vs-static-label decision in the AppShell.
         hasMultipleWorkspaces: workspaces.length > 1,
         // True when the caller is an invited-only operator (no owned workspace
-        // with bots) — used by the sidebar to hide the "Create workspace" CTA
+        // with bots) - used by the sidebar to hide the "Create workspace" CTA
         // and other owner-side affordances.
         isInvitedOnly: (() => {
             const owned = _clientOwnedWorkspace(workspaces);
@@ -218,6 +246,8 @@ export function WorkspaceProvider({ children }) {
         currentWorkspaceId,
         currentWorkspaceName,
         currentRole,
+        effectiveRole,
+        isOperator,
         isLoading,
         error,
         accessDeniedForWorkspaceId,
@@ -233,7 +263,7 @@ export function WorkspaceProvider({ children }) {
 }
 
 /**
- * Hook — subscribe to workspace context.
+ * Hook - subscribe to workspace context.
  *
  * Callers outside the provider get sensible defaults so components mounted
  * before the provider (e.g. login screen) don't need to guard.
@@ -246,6 +276,8 @@ export function useWorkspace() {
             currentWorkspaceId: null,
             currentWorkspaceName: null,
             currentRole: null,
+            effectiveRole: null,
+            isOperator: false,
             isLoading: false,
             error: null,
             accessDeniedForWorkspaceId: null,

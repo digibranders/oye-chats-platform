@@ -58,6 +58,7 @@ from app.core.exceptions import SessionOwnershipError
 from app.core.middleware import (
     TimeoutMiddleware,
     generic_exception_handler,
+    get_cors_origin_regex,
     get_cors_origins,
     session_ownership_exception_handler,
     validation_exception_handler,
@@ -213,9 +214,11 @@ except Exception as e:
 # CORS spec — browsers silently reject the response. When using wildcard origins
 # (e.g. for an embeddable widget), credentials must be disabled.
 _cors_origins = get_cors_origins()
+_cors_origin_regex = get_cors_origin_regex()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -4,6 +4,15 @@ import { getAuthItem } from '../utils/authStorage';
 
 const BotContext = createContext(null);
 
+/**
+ * localStorage sentinel meaning "All agents" - the workspace-aggregated scope
+ * a multi-bot user picks from the shell BotSwitcher. Stored explicitly (rather
+ * than as an absent key) so we can tell "user chose All" apart from "user has
+ * never picked anything, default to All" if we ever need to.
+ */
+const ALL_BOTS_SENTINEL = 'all';
+const STORAGE_KEY = 'selected_bot_id';
+
 export function BotProvider({ children }) {
     const [bots, setBots] = useState([]);
     const [selectedBot, setSelectedBot] = useState(null);
@@ -18,20 +27,38 @@ export function BotProvider({ children }) {
             setBots(data);
 
             if (data.length === 0) {
-                // No bots exist — clear selection
+                // No bots exist - clear selection.
                 setSelectedBot(null);
-                localStorage.removeItem('selected_bot_id');
+                localStorage.removeItem(STORAGE_KEY);
             } else {
                 setSelectedBot((currentSelectedBot) => {
+                    // Explicit "All agents" selection - preserve it across
+                    // refreshes and workspace switches; only collapse to a
+                    // single bot when the workspace has exactly one bot (in
+                    // which case "All" and "that bot" are the same thing).
+                    const savedRaw = localStorage.getItem(STORAGE_KEY);
+                    if (currentSelectedBot === null && savedRaw === ALL_BOTS_SENTINEL) {
+                        return data.length === 1 ? data[0] : null;
+                    }
                     if (currentSelectedBot) {
                         const stillSelected = data.find((bot) => bot.id === currentSelectedBot.id);
-                        return stillSelected || data[0];
+                        // If the previously-selected bot is gone (deleted /
+                        // workspace switch), fall back to All-agents when the
+                        // user has more than one; otherwise to their only bot.
+                        return stillSelected || (data.length === 1 ? data[0] : null);
                     }
 
-                    // Check localStorage for last selected bot
-                    const savedId = localStorage.getItem('selected_bot_id');
-                    const saved = savedId ? data.find((bot) => bot.id === Number(savedId)) : null;
-                    return saved || data[0];
+                    // No in-memory selection yet - restore from localStorage.
+                    if (savedRaw === ALL_BOTS_SENTINEL) return data.length === 1 ? data[0] : null;
+                    if (savedRaw) {
+                        const saved = data.find((bot) => bot.id === Number(savedRaw));
+                        if (saved) return saved;
+                    }
+                    // Fresh session with no persisted choice - single-bot
+                    // workspaces auto-pick their only bot; multi-bot ones
+                    // default to All agents so the shell reads as
+                    // workspace-wide until the user narrows it.
+                    return data.length === 1 ? data[0] : null;
                 });
             }
             // Return the freshly-loaded list so callers (e.g. the create flow)
@@ -70,7 +97,7 @@ export function BotProvider({ children }) {
     //
     // Listens for the ``oyechats:workspace-switched`` window event dispatched
     // by ``WorkspaceContext.switchWorkspace``. Guarded so it only fires when
-    // there's still a valid token — if the switch was actually a logout
+    // there's still a valid token - if the switch was actually a logout
     // (rare edge case) the response interceptor will handle the auth clear.
     useEffect(() => {
         function onWorkspaceSwitched() {
@@ -82,10 +109,18 @@ export function BotProvider({ children }) {
         return () => window.removeEventListener('oyechats:workspace-switched', onWorkspaceSwitched);
     }, [refreshBots]);
 
+    /**
+     * Set the active bot scope. Pass a bot to scope every downstream page to
+     * that agent; pass `null` for the workspace-aggregated "All agents" mode
+     * (the shell BotSwitcher's default when the workspace has 2+ bots). The
+     * choice is persisted so it survives reloads.
+     */
     const selectBot = useCallback((bot) => {
         setSelectedBot(bot);
         if (bot?.id) {
-            localStorage.setItem('selected_bot_id', bot.id.toString());
+            localStorage.setItem(STORAGE_KEY, bot.id.toString());
+        } else {
+            localStorage.setItem(STORAGE_KEY, ALL_BOTS_SENTINEL);
         }
     }, []);
 
@@ -97,6 +132,10 @@ export function BotProvider({ children }) {
             refreshBots,
             loading,
             error,
+            // True when the user has explicitly chosen (or defaulted to) the
+            // workspace-aggregated view. Semantic sugar so pages don't have to
+            // remember that `selectedBot === null` carries this meaning.
+            isAllAgents: selectedBot === null && bots.length > 0,
         }}>
             {children}
         </BotContext.Provider>

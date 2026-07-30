@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 
 /**
- * Credit-coin icon — a stroked coin outline with a bold "C" inside.
+ * Credit-coin icon - a stroked coin outline with a bold "C" inside.
  * Drop-in replacement for the previous Lucide ``Coins`` icon used on the
  * Billing page and the top-up modal.
  *
@@ -9,7 +9,7 @@ import { forwardRef } from 'react';
  *   • Line-art (``fill="none"`` + ``stroke="currentColor"``) so the icon
  *     inherits the surrounding text color via Tailwind utilities like
  *     ``text-primary-500`` and adapts to dark mode without extra wiring.
- *   • Outer radius 8 / inner "C" radius 3 — matches the visual weight of
+ *   • Outer radius 8 / inner "C" radius 3 - matches the visual weight of
  *     other Lucide icons in the same row (Activity, Users, ListOrdered),
  *     which occupy roughly 67% of the 24px viewBox. A larger circle made
  *     the coin read "heavier" than its tab-row neighbors.

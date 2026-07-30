@@ -54,7 +54,7 @@ import { type Bot, type Webhook, type WebhookDelivery } from '../../types/domain
 // The shared `Bot` shim intentionally types only the core columns. Email routing
 // and meeting-booking settings live on the same row; we read them through this
 // narrow view. `Bot` is structurally assignable to `Bot & BotIntegrationSettings`
-// (every added key is optional), so the assertion below is safe — no `any`.
+// (every added key is optional), so the assertion below is safe - no `any`.
 
 interface NotificationEmails {
   default?: string[];
@@ -199,9 +199,9 @@ function toMessage(error: unknown, fallback: string): string {
 }
 
 function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleString('en-GB', {
     day: 'numeric',
     month: 'short',
@@ -638,7 +638,7 @@ function WebhooksPanel({
               <div className="rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] p-4">
                 <p className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-warning)]">
                   <CheckCircle2 size={16} aria-hidden="true" />
-                  Save this signing secret — it won’t be shown again.
+                  Save this signing secret - it won’t be shown again.
                 </p>
                 <div className="mt-3 flex items-center gap-2">
                   <code className="flex-1 truncate rounded-md bg-[var(--ds-bg-surface)] px-3 py-2 font-mono text-[12px] text-[var(--ds-text)]">
@@ -1011,7 +1011,7 @@ interface BotPanelProps {
 
 function MeetingsPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
   // Initialized lazily from the agent. The parent keys this panel by agent id,
-  // so switching agents remounts it with fresh values — no setState-in-effect.
+  // so switching agents remounts it with fresh values - no setState-in-effect.
   const initial = readIntegrations(bot);
   const [enabled, setEnabled] = useState(!!initial.meeting_booking_enabled);
   const [provider, setProvider] = useState(initial.meeting_provider || 'calendly');
@@ -1405,7 +1405,7 @@ interface WebhookResult {
 }
 
 /**
- * IntegrationsPage — the Workspace ▸ Integrations surface. One job: answer
+ * IntegrationsPage - the Workspace ▸ Integrations surface. One job: answer
  * "What is connected?". Shows an at-a-glance status of webhooks, meeting
  * booking, and email routing for the selected agent, then lets you manage each.
  *
@@ -1423,9 +1423,9 @@ export function IntegrationsPage(): ReactElement {
   const [result, setResult] = useState<WebhookResult | null>(null);
 
   // Load webhooks for the selected agent. No synchronous setState in the effect
-  // body — the first write always follows the await, and loading is derived
+  // body - the first write always follows the await, and loading is derived
   // from whether `result` matches the current agent. Free-plan workspaces
-  // never issue this fetch — the page renders the upgrade teaser below
+  // never issue this fetch - the page renders the upgrade teaser below
   // instead. Re-runs (and starts fetching) the moment `isFree` flips false.
   useEffect(() => {
     if (!selectedBotId || isFree) return;
@@ -1458,7 +1458,7 @@ export function IntegrationsPage(): ReactElement {
   // ── Free-plan gate ───────────────────────────────────────────────────────
   // Placed after every hook call (rules-of-hooks requires hooks to run
   // unconditionally) but before any other derived/render logic. Takes
-  // priority over the "pick an agent" empty state below — a Free workspace
+  // priority over the "pick an agent" empty state below - a Free workspace
   // can't use Integrations regardless of which agent is selected.
   if (isFree) {
     return (
@@ -1535,18 +1535,18 @@ export function IntegrationsPage(): ReactElement {
   return (
     <PageContainer
       title="Integrations"
-      description="See what’s connected to this agent — and wire up your CRM, calendar, and inbox."
+      description="See what’s connected to this agent - and wire up your CRM, calendar, and inbox."
     >
       {feedbackBanner}
 
-      {/* Connection overview — answers "what is connected?" at a glance. */}
+      {/* Connection overview - answers "what is connected?" at a glance. */}
       <div className="grid gap-4 sm:grid-cols-3">
         <StatusTile
           icon={WebhookIcon}
           label="Webhooks"
           value={
             webhooksLoading
-              ? '—'
+              ? '-'
               : `${activeWebhookCount} active`
           }
           connected={activeWebhookCount > 0}

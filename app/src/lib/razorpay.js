@@ -14,7 +14,7 @@ let scriptPromise = null;
 
 function loadRazorpayScript() {
   if (scriptPromise) return scriptPromise;
-  // Already loaded earlier (e.g. via SSR or extension) — reuse.
+  // Already loaded earlier (e.g. via SSR or extension) - reuse.
   if (typeof window !== 'undefined' && window.Razorpay) {
     scriptPromise = Promise.resolve(window.Razorpay);
     return scriptPromise;

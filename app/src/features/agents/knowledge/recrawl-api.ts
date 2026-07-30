@@ -2,11 +2,11 @@ import * as apiModule from '../../../services/api';
 import { diffRecrawl, getRecrawlStatus } from '../../../services/api';
 
 /**
- * recrawl-api — locally-typed access to the crawl-lifecycle endpoints the
+ * recrawl-api - locally-typed access to the crawl-lifecycle endpoints the
  * Knowledge tab needs. The shared `services/api` declarations return loose
  * `Record<string, unknown>` for these (and `updateRecrawl` isn't declared at
  * all), so this module narrows those responses into the strict shapes the
- * Knowledge components consume — without touching the shared services layer.
+ * Knowledge components consume - without touching the shared services layer.
  */
 
 export type RecrawlMode = 'full' | 'delta';
@@ -27,7 +27,7 @@ export interface RecrawlDiffData {
   capped: boolean;
 }
 
-/** A resolved diff ready to render — server data plus the source it describes. */
+/** A resolved diff ready to render - server data plus the source it describes. */
 export interface RecrawlDiff extends RecrawlDiffData {
   mode: RecrawlMode;
   docName: string;

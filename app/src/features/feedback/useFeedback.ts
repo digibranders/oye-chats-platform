@@ -16,10 +16,10 @@ function errorMessage(cause: unknown): string {
 }
 
 /**
- * useFeedback — loads the itemized thumbs-up/down feedback log for either the
+ * useFeedback - loads the itemized thumbs-up/down feedback log for either the
  * whole workspace (`agentId` omitted) or a single agent (`agentId` provided,
  * matching the URL-scoped agent's string route param). Filtering/bucketing
- * happens entirely client-side (see `feedback-helpers.ts`) — the endpoint has
+ * happens entirely client-side (see `feedback-helpers.ts`) - the endpoint has
  * no pagination or server-side filters.
  */
 export function useFeedback(agentId?: string): UseFeedbackResult {

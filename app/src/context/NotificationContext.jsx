@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * NotificationContext — global in-app notification state for the admin
+ * NotificationContext - global in-app notification state for the admin
  * dashboard.
  *
  * Responsibilities:
@@ -10,8 +10,8 @@
  *      notification appears instantly in every open dashboard tab.
  *   3. Expose typed actions (markRead, markAllRead, dismiss, clear).
  *   4. Surface a transient ``incomingHandoff`` slot the
- *      LiveChatRequestBanner subscribes to. A separate slot — distinct
- *      from the persisted notification feed — lets the banner own its
+ *      LiveChatRequestBanner subscribes to. A separate slot - distinct
+ *      from the persisted notification feed - lets the banner own its
  *      own dismissal lifecycle without re-rendering the entire bell.
  *
  * Failure modes:
@@ -91,7 +91,7 @@ export function NotificationProvider({ children }) {
     const seenHandoffSessionsRef = useRef(new Set());
 
     useEffect(() => {
-        // Reset on every mount — critical for React StrictMode double-mount
+        // Reset on every mount - critical for React StrictMode double-mount
         // in development where the ref persists across unmount→remount.
         mountedRef.current = true;
         return () => {
@@ -126,11 +126,11 @@ export function NotificationProvider({ children }) {
             const next = await getUnreadNotificationCount();
             if (mountedRef.current) setUnreadCount(next);
         } catch {
-            // Silent — the WS will catch us up.
+            // Silent - the WS will catch us up.
         }
     }, [isAuthed]);
 
-    // Re-hydrate on workspace switch — notifications (handoff requests,
+    // Re-hydrate on workspace switch - notifications (handoff requests,
     // offline messages, chat transfers) are workspace-scoped, so a switch
     // from workspace A to workspace B must pull B's notifications or the
     // bell counter, dropdown, and incoming-handoff banner stay pointed at
@@ -139,7 +139,7 @@ export function NotificationProvider({ children }) {
     useEffect(() => {
         function onWorkspaceSwitched() {
             if (isAuthed()) {
-                // Reset the seen-handoff dedup set — a session id from A
+                // Reset the seen-handoff dedup set - a session id from A
                 // that we've already surfaced there shouldn't suppress a
                 // legitimate new handoff banner in B.
                 seenHandoffSessionsRef.current = new Set();
@@ -160,10 +160,10 @@ export function NotificationProvider({ children }) {
         if (notification?.type !== HANDOFF_TYPE) return;
         const sid = notification?.data?.session_id;
         if (!sid || seenHandoffSessionsRef.current.has(sid)) {
-            console.log('[Notifications] maybeShowHandoff skipped — already seen session:', sid);
+            console.log('[Notifications] maybeShowHandoff skipped - already seen session:', sid);
             return;
         }
-        console.log('[Notifications] maybeShowHandoff — showing banner for session:', sid);
+        console.log('[Notifications] maybeShowHandoff - showing banner for session:', sid);
         seenHandoffSessionsRef.current.add(sid);
         setIncomingHandoff(notification);
     }, []);
@@ -279,7 +279,7 @@ export function NotificationProvider({ children }) {
 
         ws.onmessage = (event) => {
             if (!mountedRef.current) return;
-            // pong arrives as a plain string — JSON.parse would throw.
+            // pong arrives as a plain string - JSON.parse would throw.
             if (event.data === 'pong') return;
             let payload;
             try {
@@ -313,7 +313,7 @@ export function NotificationProvider({ children }) {
             scheduleReconnect();
         };
         // `scheduleReconnect` and `connect` reference each other to form
-        // the reconnect loop — that mutual dependency is intentional and
+        // the reconnect loop - that mutual dependency is intentional and
         // both callbacks are wrapped in their own ``useCallback``.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [maybeShowHandoff]);
@@ -356,7 +356,7 @@ export function NotificationProvider({ children }) {
         }, POLL_INTERVAL_MS);
 
         const onFocus = () => {
-            // Tab regained focus — re-hydrate unconditionally. The WS may
+            // Tab regained focus - re-hydrate unconditionally. The WS may
             // be alive but missed events while the browser throttled the
             // background tab, so an authoritative REST refresh is the
             // safer move.

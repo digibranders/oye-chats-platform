@@ -1,5 +1,5 @@
 /**
- * BusinessHoursEditor — reusable weekly-schedule editor.
+ * BusinessHoursEditor - reusable weekly-schedule editor.
  *
  * Rebuilt from the orphaned legacy `components/BusinessHoursEditor.jsx` (which
  * had no route into Admin 2.0). Drives the same JSONB shape stored on
@@ -8,7 +8,7 @@
  *
  *   { enabled, timezone, days: { mon: { enabled, start, end }, … } }
  *
- * A null/absent value (or `enabled: false`) means "always open" — the resolver
+ * A null/absent value (or `enabled: false`) means "always open" - the resolver
  * short-circuits without checking days.
  */
 import { type ReactElement } from 'react';
@@ -136,7 +136,7 @@ export function BusinessHoursEditor({ value, onChange, disabled = false }: Busin
 
   return (
     <div className="space-y-4">
-      {/* Master enable — null/false means "always open". */}
+      {/* Master enable - null/false means "always open". */}
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="flex items-center gap-2 text-[13px] font-medium text-[var(--ds-text)]">

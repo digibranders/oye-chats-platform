@@ -33,7 +33,7 @@ function sliceForCrawl(urls: string[], order: CrawlOrder, count: number): string
 }
 
 /**
- * Step 3 — Connect Website. Discovers pages first and shows the page count +
+ * Step 3 - Connect Website. Discovers pages first and shows the page count +
  * credit estimate before crawling (matches the old flow), then confirms →
  * crawl. Or upload documents instead (a real fallback that also lets you proceed).
  */
@@ -93,7 +93,7 @@ export function ConnectStep(props: StepProps) {
     }
     if (!trimmed || !selectedBot) return;
 
-    // Already trained on this site (e.g. returning from a later step) — just move on.
+    // Already trained on this site (e.g. returning from a later step) - just move on.
     if (alreadyCrawled(normalizeUrl(trimmed))) {
       props.onContinue();
       return;
@@ -108,7 +108,7 @@ export function ConnectStep(props: StepProps) {
         result.exceeds_balance ? (result.max_affordable_pages ?? 0) : (result.total_found ?? 0),
       );
     } catch {
-      // Discovery failed — let them crawl anyway (homepage-link crawl).
+      // Discovery failed - let them crawl anyway (homepage-link crawl).
       setEstimate({ total_found: 0, capped: false });
       setCrawlCount(0);
     } finally {
@@ -185,7 +185,7 @@ export function ConnectStep(props: StepProps) {
                 <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
                   {pages > 0
                     ? `About ${cost.toLocaleString()} credit${cost === 1 ? '' : 's'} · ${costPerPage} per page`
-                    : "No sitemap found — we'll follow links from your homepage."}
+                    : "No sitemap found - we'll follow links from your homepage."}
                 </p>
               </div>
             </div>
@@ -300,11 +300,11 @@ export function ConnectStep(props: StepProps) {
             <div className="min-w-0">
               <p className="text-[13px] font-medium text-[var(--ds-text)]">
                 {uploadedCount > 0
-                  ? `${uploadedCount} document${uploadedCount === 1 ? '' : 's'} added — add more or continue`
+                  ? `${uploadedCount} document${uploadedCount === 1 ? '' : 's'} added - add more or continue`
                   : 'No website? Upload documents'}
               </p>
               <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                PDFs, docs or text — a fallback for sites we can't crawl.
+                PDFs, docs or text - a fallback for sites we can't crawl.
               </p>
             </div>
           </Card>

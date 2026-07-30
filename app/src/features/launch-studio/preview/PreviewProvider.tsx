@@ -21,7 +21,7 @@ function newSessionId(): string {
 /**
  * Stream a chunk into the conversation: append to the trailing bot message, or
  * start a new bot message if the last one is the user's. Critically, we do NOT
- * pre-create an empty bot message on send — otherwise the widget renders both an
+ * pre-create an empty bot message on send - otherwise the widget renders both an
  * empty bot avatar AND the typing indicator (double avatar). The bot message is
  * born on the first chunk.
  */
@@ -34,7 +34,7 @@ function appendChunk(messages: PreviewMessage[], text: string): PreviewMessage[]
 }
 
 /**
- * PreviewProvider — holds the live widget-preview config for Launch Studio and
+ * PreviewProvider - holds the live widget-preview config for Launch Studio and
  * owns the preview chat (Test step): `ask()` streams a real answer from the
  * agent (previewChatStream) into the widget's message list.
  */

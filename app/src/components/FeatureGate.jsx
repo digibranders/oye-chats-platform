@@ -4,7 +4,7 @@ import useEntitlements from '../hooks/useEntitlements';
 import { cn } from '../lib/utils';
 
 /**
- * FeatureGate — wraps children behind a plan feature check.
+ * FeatureGate - wraps children behind a plan feature check.
  *
  * Renders the children unchanged when the workspace's plan includes the
  * named feature. Otherwise replaces them with an upgrade card (or
@@ -21,14 +21,14 @@ import { cn } from '../lib/utils';
  *   </FeatureGate>
  *
  * Behavior summary:
- *  - `feature`        — the name on `plan.features` (e.g. "live_chat", "webhooks").
- *  - `fallback`       — optional ReactNode to render when locked. Defaults to the
+ *  - `feature`        - the name on `plan.features` (e.g. "live_chat", "webhooks").
+ *  - `fallback`       - optional ReactNode to render when locked. Defaults to the
  *                       built-in upgrade card. Pass `null` to render nothing at all
  *                       (good for sidebar items that should simply disappear).
- *  - `loadingFallback`— optional ReactNode while entitlements are loading.
+ *  - `loadingFallback`- optional ReactNode while entitlements are loading.
  *                       Defaults to rendering children (optimistic) so the page
  *                       doesn't flicker on every render.
- *  - `requiredPlan`   — display-only string shown in the upgrade card
+ *  - `requiredPlan`   - display-only string shown in the upgrade card
  *                       ("Available on Standard"). If omitted, the card just
  *                       says "Upgrade to unlock".
  */
@@ -43,7 +43,7 @@ export default function FeatureGate({
 
     if (loading) {
         // Optimistic: render children. The risk of briefly showing a paid
-        // feature to a Free user is acceptable — backend still enforces the
+        // feature to a Free user is acceptable - backend still enforces the
         // gate, so they get a friendly 403 on action, not silent breakage.
         return loadingFallback !== undefined ? loadingFallback : children;
     }
@@ -53,7 +53,7 @@ export default function FeatureGate({
     }
 
     // Caller wants the gated children to simply vanish (sidebar items, menu
-    // entries). Returning `null` is intentional — no upgrade card here.
+    // entries). Returning `null` is intentional - no upgrade card here.
     if (fallback !== undefined) {
         return fallback;
     }

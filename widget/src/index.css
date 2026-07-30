@@ -180,6 +180,19 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Premium orb avatar — living procedural energy field. Interior motion
+   is driven by SVG feTurbulence + feDisplacementMap; CSS only handles
+   the outer breathing scale. Bloom lives inside the SVG and follows the
+   internal energy (no circular drop-shadow). */
+@keyframes oyechats-orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.018); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oyechats-premium-orb,
+  .oyechats-premium-orb * { animation: none !important; }
+}
+
 /* Read-receipt tick states — in-flight pulse + green "pop" when read */
 @keyframes oyechatsTickPulse {
   0%, 100% { opacity: 0.45; }

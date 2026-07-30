@@ -126,7 +126,7 @@ export default function AddSeatConfirmModal({
 
                                     <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
                                         {isAdd
-                                            ? `Your Razorpay subscription will be updated immediately. The next invoice picks up the new seat amount — Razorpay handles proration automatically.`
+                                            ? `Your Razorpay subscription will be updated immediately. The next invoice picks up the new seat amount - Razorpay handles proration automatically.`
                                             : `The removed seat stops billing at the end of the current period. The operator keeps access until then.`}
                                     </p>
 
@@ -157,7 +157,7 @@ export default function AddSeatConfirmModal({
                                         >
                                             {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                             {isAdd
-                                                ? `Add seat — ${seatPriceDisplay}/mo`
+                                                ? `Add seat - ${seatPriceDisplay}/mo`
                                                 : `Remove seat`}
                                         </button>
                                     </div>

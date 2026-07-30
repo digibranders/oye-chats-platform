@@ -14,7 +14,7 @@ const CODE_REGEX = /^[A-Za-z0-9_-]{3,20}$/;
  * PATCH instead of POST. The headline behavior we surface here:
  *
  *   - Renaming the code string is allowed (backend accepts it), but
- *     destructive in effect — anyone who saved the OLD code stops being
+ *     destructive in effect - anyone who saved the OLD code stops being
  *     attributed. We render a prominent amber warning whenever the code
  *     field is edited away from its original value.
  *
@@ -30,7 +30,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     // Brief "Copied" confirmation flash on the preview URL. Boolean +
-    // setTimeout — a fresh click resets the 1.5s window.
+    // setTimeout - a fresh click resets the 1.5s window.
     const [copied, setCopied] = useState(false);
     const inputRef = useRef(null);
 
@@ -55,7 +55,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
         return undefined;
     }, [open, code]);
 
-    // ESC to close — matches the existing modal pattern.
+    // ESC to close - matches the existing modal pattern.
     useEffect(() => {
         if (!open) return undefined;
         const handler = (e) => {
@@ -86,7 +86,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
     /**
      * Copy the code to the clipboard with a graceful fallback for non-https
      * origins (Safari & some embedded webviews block the Clipboard API
-     * there). The fallback uses an off-screen textarea + execCommand —
+     * there). The fallback uses an off-screen textarea + execCommand -
      * deprecated but universally supported.
      */
     const handleCopy = async () => {
@@ -103,7 +103,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
             try {
                 document.execCommand('copy');
             } catch {
-                /* swallow — last-resort failure */
+                /* swallow - last-resort failure */
             }
             document.body.removeChild(ta);
         }
@@ -136,7 +136,7 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
         }
         try {
             setIsSaving(true);
-            // Build a minimal patch — only changed fields go on the wire.
+            // Build a minimal patch - only changed fields go on the wire.
             const patch = {};
             if (codeChanged) patch.code = codeName.trim();
             if (myChanged) patch.affiliateCommissionPct = myNum;

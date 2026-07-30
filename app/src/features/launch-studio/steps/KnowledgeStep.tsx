@@ -50,9 +50,9 @@ function pageLabel(source: KnowledgeSource): string {
 }
 
 /**
- * Step 4 — Knowledge (merged Training + Review). One state-driven surface: shows
+ * Step 4 - Knowledge (merged Training + Review). One state-driven surface: shows
  * LIVE training progress (crawl or document ingestion), then becomes the source
- * & page review once training finishes — with an "add more" upload and a
+ * & page review once training finishes - with an "add more" upload and a
  * "view all pages" drawer.
  */
 export function KnowledgeStep(props: StepProps) {

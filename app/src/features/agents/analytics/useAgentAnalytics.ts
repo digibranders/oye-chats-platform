@@ -46,7 +46,7 @@ const EMPTY: AgentAnalytics = {
 /**
  * Upper bound on the gap-filled series. A long-lived agent (years of history)
  * would otherwise materialize thousands of daily points and render them all in
- * the "All time" range — a scalability sharp edge for high-volume accounts. The
+ * the "All time" range - a scalability sharp edge for high-volume accounts. The
  * chart therefore shows at most the most recent year of daily volume.
  */
 const MAX_TIMELINE_DAYS = 365;
@@ -125,7 +125,7 @@ export function useAgentAnalytics(
   const [reloadKey, setReloadKey] = useState(0);
   const [trackedReload, setTrackedReload] = useState(0);
 
-  // Reset when the agent changes (or on manual reload) — adjust state during
+  // Reset when the agent changes (or on manual reload) - adjust state during
   // render (React-approved), which keeps the effect free of synchronous setState.
   if (agentId !== trackedId) {
     setTrackedId(agentId);

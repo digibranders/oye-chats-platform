@@ -1,15 +1,15 @@
 /**
- * useBillingData — loads everything the Workspace ▸ Billing page needs to answer
+ * useBillingData - loads everything the Workspace ▸ Billing page needs to answer
  * "What am I paying?": the current subscription + plan, the catalog of plans to
  * compare against, issued invoices, and the buyer's tax/billing identity.
  *
- * Resilience: only the current subscription is load-bearing — if it fails the
+ * Resilience: only the current subscription is load-bearing - if it fails the
  * page shows an error. The plan catalog, invoices, and billing details each
  * degrade independently (a down invoices endpoint must never blank the plan
  * summary, and vice-versa) so a partial outage still renders a useful page.
  *
  * Loading is DERIVED (`data === null && error === null`) and no state is written
- * synchronously inside the effect — the fetch resolves first. Matches the
+ * synchronously inside the effect - the fetch resolves first. Matches the
  * codebase pattern (see features/home/useHomeData.ts).
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -54,16 +54,21 @@ interface Fetched {
   error: string | null;
 }
 
-async function loadBillingData(): Promise<BillingData> {
+async function loadBillingData(botId?: number | null): Promise<BillingData> {
   // Fire all four requests together so the three independent fetches overlap
   // the load-bearing subscription round-trip instead of queuing behind it.
   // getCurrentSubscription has no `.catch`, so a rejection propagates through
   // Promise.all and surfaces the page error state; the other three each carry
   // their own catch and degrade independently.
+  //
+  // `botId` scopes the subscription + invoices to the selected agent (the
+  // per-agent Billing overview); plans (catalog) and billing details are
+  // account-level and stay unscoped.
+  const scope = botId ?? undefined;
   const [subscriptionRaw, plansRaw, invoicesResult, detailsRaw] = await Promise.all([
-    getCurrentSubscription(),
+    getCurrentSubscription(scope),
     getSubscriptionPlans().catch((): Array<Record<string, unknown>> => []),
-    getInvoices()
+    getInvoices(scope)
       .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: false }))
       .catch(() => ({ rows: [] as Array<Record<string, unknown>>, error: true })),
     getBillingDetails().catch((): Record<string, unknown> => ({})),
@@ -86,12 +91,12 @@ async function loadBillingData(): Promise<BillingData> {
   };
 }
 
-export function useBillingData(): UseBillingDataResult {
+export function useBillingData(botId?: number | null): UseBillingDataResult {
   const [reloadKey, setReloadKey] = useState(0);
   const [result, setResult] = useState<Fetched>({ data: null, error: null });
 
   const reload = useCallback(() => {
-    // Reset to loading from an event handler — never synchronously in the effect.
+    // Reset to loading from an event handler - never synchronously in the effect.
     setResult({ data: null, error: null });
     setReloadKey((key) => key + 1);
   }, []);
@@ -100,7 +105,7 @@ export function useBillingData(): UseBillingDataResult {
     let cancelled = false;
     void (async () => {
       try {
-        const data = await loadBillingData();
+        const data = await loadBillingData(botId);
         if (!cancelled) setResult({ data, error: null });
       } catch (err) {
         if (!cancelled) {
@@ -117,7 +122,7 @@ export function useBillingData(): UseBillingDataResult {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, botId]);
 
   return {
     loading: result.data === null && result.error === null,

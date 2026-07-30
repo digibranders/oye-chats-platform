@@ -24,7 +24,7 @@ import { trialDaysLeft } from '../utils/trial';
  * fetch (avoids a layout flash before the payload lands).
  *
  * All CTAs route to ``/billing``. PR-X's plan modal already handles "Start
- * free trial — Plan" and the trial-swap flow; piping users there keeps a
+ * free trial - Plan" and the trial-swap flow; piping users there keeps a
  * single payment surface instead of duplicating the modal at the layout
  * level.
  *
@@ -32,7 +32,7 @@ import { trialDaysLeft } from '../utils/trial';
  * ─────────
  * Every variant carries an X button. The dismissal lives in
  * ``sessionStorage`` keyed by status so the banner returns on the next
- * browser session — a customer who closes the "trial ends tomorrow"
+ * browser session - a customer who closes the "trial ends tomorrow"
  * strip on Monday still sees the expiry on Tuesday. The key includes the
  * status so dismissing the calm chip doesn't suppress the urgent strip
  * three days later, and dismissing while trialing never suppresses the
@@ -43,7 +43,7 @@ function useBannerDismissal(status) {
     // ``trackedStatus`` snapshots the status the dismissal flag was last
     // computed against. When ``status`` changes (trialing → expired) we
     // re-read sessionStorage so the new status starts with a clean slate
-    // — without this, dismissing the calm chip would also suppress the
+    // - without this, dismissing the calm chip would also suppress the
     // expired blocker.
     const [trackedStatus, setTrackedStatus] = useState(status);
     const [dismissed, setDismissed] = useState(() => readBannerDismissed(status));
@@ -80,7 +80,7 @@ export default function TrialBanner() {
                     <span className="text-[13px] font-medium leading-snug flex-1 min-w-0 order-2 sm:order-none basis-full sm:basis-auto">
                         Your free trial ended.
                         <span className="opacity-90 ml-1">
-                            Your bot is currently offline. Pick a plan to bring it back live —
+                            Your bot is currently offline. Pick a plan to bring it back live -
                             your knowledge base, settings and chat history are kept for 15 days.
                         </span>
                     </span>
@@ -111,7 +111,7 @@ export default function TrialBanner() {
         const isUrgent = remaining <= 3;
 
         if (isUrgent) {
-            // Amber urgency strip — countdown copy.
+            // Amber urgency strip - countdown copy.
             const daysCopy =
                 remaining <= 0
                     ? 'ends today'
@@ -126,7 +126,7 @@ export default function TrialBanner() {
                     <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-2 flex flex-wrap sm:flex-nowrap items-start sm:items-center gap-x-3 gap-y-2">
                         <Clock size={16} className="shrink-0 mt-0.5 sm:mt-0" />
                         <span className="text-[13px] font-medium leading-snug tabular-nums flex-1 min-w-0 order-2 sm:order-none basis-full sm:basis-auto">
-                            Heads up — your free trial {daysCopy}.
+                            Heads up - your free trial {daysCopy}.
                             <span className="opacity-80 ml-1">
                                 Pick a plan to avoid your bot going offline.
                             </span>
@@ -150,7 +150,7 @@ export default function TrialBanner() {
             );
         }
 
-        // Calm cobalt chip — plenty of runway left.
+        // Calm cobalt chip - plenty of runway left.
         const daysCopy = remaining === 1 ? '1 day left' : `${remaining} days left`;
         return (
             <div
@@ -185,7 +185,7 @@ export default function TrialBanner() {
     }
 
     // Any other status (``canceled``, ``past_due``, ``paused``) is out of
-    // scope for the trial banner — surface nothing rather than pretend we
+    // scope for the trial banner - surface nothing rather than pretend we
     // know what to say.
     return null;
 }

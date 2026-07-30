@@ -14,7 +14,7 @@ interface ScopeStrictnessSectionProps {
 }
 
 /**
- * Answering scope — how strictly the agent stays within your knowledge base.
+ * Answering scope - how strictly the agent stays within your knowledge base.
  * A 3-option radiogroup bound to the reused `relevance_threshold` Bot field,
  * with full WAI-ARIA radio semantics (roving tabindex + arrow-key nav).
  */

@@ -18,7 +18,7 @@ export interface ComingSoonChannel {
 
 /**
  * Channels on the roadmap. Kept as data so the Channels page stays a thin,
- * declarative list — add a channel here when it ships and promote it to a live
+ * declarative list - add a channel here when it ships and promote it to a live
  * `<ChannelCard>` in `ChannelsPage`.
  */
 export const COMING_SOON_CHANNELS: readonly ComingSoonChannel[] = [

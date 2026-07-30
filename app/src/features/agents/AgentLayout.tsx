@@ -12,20 +12,21 @@ interface AgentTab {
 }
 
 /**
- * The six canonical agent tabs, in mandate order. Each links to
+ * The canonical agent tabs, in mandate order. Each links to
  * `/agents/:agentId/<path>`; the orchestrator mounts a child route per tab.
+ * (Per-agent performance lives on the workspace Analytics page, which is
+ * already agent-scoped, so a separate per-agent Analytics tab is redundant.)
  */
 const AGENT_TABS: readonly AgentTab[] = [
   { path: 'overview', label: 'Overview' },
   { path: 'knowledge', label: 'Knowledge' },
   { path: 'experience', label: 'Experience' },
   { path: 'channels', label: 'Channels' },
-  { path: 'analytics', label: 'Analytics' },
   { path: 'advanced', label: 'Advanced' },
 ];
 
 /**
- * AgentShell — the per-agent chrome (rendered inside <AgentProvider>). A header
+ * AgentShell - the per-agent chrome (rendered inside <AgentProvider>). A header
  * naming the active agent, a horizontal tab row that routes to each section,
  * and an <Outlet/> for the active tab. Kept presentational: all data resolution
  * lives in AgentContext.
@@ -35,7 +36,7 @@ function AgentShell(): ReactElement {
 
   return (
     <div className="flex min-h-full flex-col bg-[var(--ds-bg-canvas)] text-[var(--ds-text)]">
-      {/* Header — who am I configuring? */}
+      {/* Header - who am I configuring? */}
       <header className="border-b border-[var(--ds-border)] pt-2">
         <div className="flex items-center gap-3">
           <div
@@ -62,7 +63,7 @@ function AgentShell(): ReactElement {
           )}
         </div>
 
-        {/* Tab row — real nav semantics so screen readers announce the section
+        {/* Tab row - real nav semantics so screen readers announce the section
             list; NavLink stamps aria-current="page" on the active tab. */}
         <nav aria-label="Agent sections" className="mt-5 -mb-px overflow-x-auto">
           <ul className="flex min-w-max items-center gap-1">
@@ -97,7 +98,7 @@ function AgentShell(): ReactElement {
 }
 
 /**
- * AgentLayout — parent route element for `/agents/:agentId`. Wraps the shell in
+ * AgentLayout - parent route element for `/agents/:agentId`. Wraps the shell in
  * <AgentProvider> so every tab child (via <Outlet/>) can call useAgent().
  */
 export function AgentLayout(): ReactElement {

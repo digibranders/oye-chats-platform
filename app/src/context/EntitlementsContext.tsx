@@ -14,7 +14,7 @@ import { WORKSPACE_SWITCHED_EVENT } from './WorkspaceContext';
 import type { Entitlements } from '../types/domain';
 
 /**
- * EntitlementsContext — the single source of truth for "what can this
+ * EntitlementsContext - the single source of truth for "what can this
  * workspace do on its current plan?"
  *
  * Ported from the legacy `hooks/useEntitlements.js` module-scope cache into a
@@ -26,15 +26,15 @@ import type { Entitlements } from '../types/domain';
  *  - Fetches `GET /auth/me/entitlements` once on mount.
  *  - Re-fetches on workspace switch, listening for the same
  *    `oyechats:workspace-switched` window event `WorkspaceContext` and
- *    `NotificationContext` already broadcast/consume — plan/limit/feature
+ *    `NotificationContext` already broadcast/consume - plan/limit/feature
  *    flags are workspace-scoped, so switching contexts must refetch.
  *  - On fetch failure, falls back to a typed Free-plan default rather than
- *    throwing or blocking the app — the safe, most-restrictive default.
+ *    throwing or blocking the app - the safe, most-restrictive default.
  *  - Exposes `refresh()` for callers to bust the cache after an action that
  *    changes the plan (subscription upgrade, topup purchase).
  */
 
-/** Most-restrictive Free-plan defaults — matches the backend's seeded Free
+/** Most-restrictive Free-plan defaults - matches the backend's seeded Free
  * plan (`_FREE_FALLBACK_LIMITS` / `_FREE_FALLBACK_FEATURES` in
  * `plan_entitlements_service.py`) and the legacy hook's `FREE_FALLBACK`. */
 const FREE_FALLBACK: Entitlements = {
@@ -73,7 +73,7 @@ export interface EntitlementsContextValue {
   entitlements: Entitlements;
   loading: boolean;
   error: Error | null;
-  /** Re-fetch entitlements now — call after any action that changes the plan. */
+  /** Re-fetch entitlements now - call after any action that changes the plan. */
   refresh: () => Promise<void>;
 }
 
@@ -127,7 +127,7 @@ export function EntitlementsProvider({ children }: { children: ReactNode }): Rea
   );
 }
 
-/** Internal — consumed by `hooks/useEntitlements.ts`. Not exported from the design system. */
+/** Internal - consumed by `hooks/useEntitlements.ts`. Not exported from the design system. */
 export function useEntitlementsContext(): EntitlementsContextValue {
   const ctx = useContext(EntitlementsContext);
   if (!ctx) {

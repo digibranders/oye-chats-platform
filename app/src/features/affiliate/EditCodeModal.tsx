@@ -1,10 +1,10 @@
 /**
- * EditCodeModal — patch an existing referral code.
+ * EditCodeModal - patch an existing referral code.
  *
  * Rebuilt from the legacy `components/affiliate/EditCodeModal.jsx` in the new
  * design language. Every field is an optional patch: renaming (with a loud
  * "this breaks your existing ?ref= link" warning), the private label, the
- * active toggle, and the commission split — the last validated live against the
+ * active toggle, and the commission split - the last validated live against the
  * affiliate's pool. Only changed fields are sent.
  *
  * Backend reused verbatim (typed in services/api.d.ts): updateAffiliateCode.
@@ -176,7 +176,7 @@ export function EditCodeModal({ open, onClose, code, poolPct, onSaved }: EditCod
             className="h-4 w-4 rounded border-[var(--ds-border)] text-[var(--ds-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
           />
           <span>
-            Active <span className="text-[var(--ds-text-subtle)]">— an inactive code stops attributing new signups.</span>
+            Active <span className="text-[var(--ds-text-subtle)]">- an inactive code stops attributing new signups.</span>
           </span>
         </label>
 

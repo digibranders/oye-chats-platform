@@ -10,7 +10,7 @@ export interface PagePlaceholderProps {
 }
 
 /**
- * PagePlaceholder — a foundation-only page. Phase 1 ships the shell, routing,
+ * PagePlaceholder - a foundation-only page. Phase 1 ships the shell, routing,
  * and design system; real pages arrive in later phases. Every route renders one
  * of these so the IA is fully navigable and breadcrumbs/active-state can be
  * verified before any page is built.
@@ -23,7 +23,7 @@ export function PagePlaceholder({ title, description, phase, icon = Construction
         title="This surface is coming soon"
         description={
           phase
-            ? `“${title}” is part of Phase ${phase} of the Admin 2.0 rebuild. The foundation (shell, navigation, routing, design system) is in place — the page itself lands in a later phase.`
+            ? `“${title}” is part of Phase ${phase} of the Admin 2.0 rebuild. The foundation (shell, navigation, routing, design system) is in place - the page itself lands in a later phase.`
             : `“${title}” will be built in a later phase of the Admin 2.0 rebuild.`
         }
       />

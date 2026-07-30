@@ -6,11 +6,11 @@ import { openRazorpayCheckout } from '../../../lib/razorpay';
 import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../../services/api';
 
 interface TopupPack {
-  /** INR charge amount (major unit, rupees) — the canonical price on the Razorpay rail. */
+  /** INR charge amount (major unit, rupees) - the canonical price on the Razorpay rail. */
   inr?: number;
   /** Legacy alias for the INR charge amount. */
   amount?: number;
-  /** USD display price (shown to non-INR buyers) — never charged. */
+  /** USD display price (shown to non-INR buyers) - never charged. */
   usd?: number;
   display_amount?: number;
   display_currency?: string;
@@ -20,7 +20,7 @@ interface TopupPack {
   badge?: string;
 }
 
-/** The INR amount Razorpay charges for a pack — never the USD display figure. */
+/** The INR amount Razorpay charges for a pack - never the USD display figure. */
 function chargeInr(pack: TopupPack): number {
   return Number(pack.inr ?? pack.amount ?? 0);
 }
@@ -68,7 +68,7 @@ function featuredPackIndex(packs: TopupPack[]): number {
 }
 
 /**
- * TopupModal — the redesigned one-off credit purchase dialog. Flat-pack only,
+ * TopupModal - the redesigned one-off credit purchase dialog. Flat-pack only,
  * no referral discount (those track recurring revenue on the plan flow). The
  * money-path (initiateTopup → Razorpay → verifyTopupPayment) is ported verbatim
  * from the legacy `components/credits/TopupModal.jsx`; presentation is new DS.
@@ -101,7 +101,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
   }, [open]);
 
   async function handleBuy(pack: TopupPack): Promise<void> {
-    // Razorpay charges INR — send the pack's INR price, never the USD figure.
+    // Razorpay charges INR - send the pack's INR price, never the USD figure.
     const amount = chargeInr(pack);
     if (!amount) {
       setError('Pack is misconfigured (missing amount).');
@@ -141,7 +141,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
         );
         return;
       }
-      onSuccess?.('Payment successful — credits will appear in a few seconds.');
+      onSuccess?.('Payment successful - credits will appear in a few seconds.');
       onClose();
     } catch (err: unknown) {
       if ((err as { code?: string })?.code === 'dismissed') return;
@@ -184,19 +184,19 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
         </div>
       ) : packs.length === 0 ? (
         <p className="py-12 text-center text-[13px] text-[var(--ds-text-muted)]">
-          No credit packs are available right now. Please try again in a moment — if this keeps happening,
+          No credit packs are available right now. Please try again in a moment - if this keeps happening,
           contact support.
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {packs.map((pack, idx) => {
-            // One accent per view: only ONE pack is featured — the first badged
+            // One accent per view: only ONE pack is featured - the first badged
             // pack, else the highest-bonus pack. Matches the Plans grid rule so
             // a second badge can't create competing highlights.
             const isFeatured = idx === featuredIndex;
             const amount = chargeInr(pack);
             // INR buyers see the INR charge; non-INR buyers see the USD display
-            // price (the Razorpay rail still charges INR — that gate lives on
+            // price (the Razorpay rail still charges INR - that gate lives on
             // the server). Never show the USD number with a ₹ symbol.
             const shownAmount = isInr ? amount : Number(pack.usd ?? pack.display_amount ?? amount);
             const shownCurrency = isInr

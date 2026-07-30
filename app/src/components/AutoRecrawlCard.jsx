@@ -12,7 +12,7 @@ import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { cn } from '../lib/utils';
 
 /**
- * AutoRecrawlCard — bot-scoped weekly auto-refresh of crawled URLs.
+ * AutoRecrawlCard - bot-scoped weekly auto-refresh of crawled URLs.
  *
  * Standard / Professional plans see a working toggle plus the last-run
  * summary and the next scheduled run. Free / Starter plans see the same
@@ -20,7 +20,7 @@ import { cn } from '../lib/utils';
  * upgrade modal via ``requestUpgrade('auto_recrawl')`` instead of hitting
  * the backend (which would 403 anyway).
  *
- * There is no manual "Recrawl now" trigger — the ARQ sweep at :05 past
+ * There is no manual "Recrawl now" trigger - the ARQ sweep at :05 past
  * every hour fires the per-bot task the moment ``next_recrawl_at`` has
  * elapsed. The card is a status surface, not a control surface for
  * ad-hoc runs.
@@ -60,7 +60,7 @@ export default function AutoRecrawlCard({ botId }) {
     }, [load]);
 
     // Auto-clear the flash message after 4 seconds so it doesn't linger
-    // as a permanent banner — the customer's next action is a fresh signal.
+    // as a permanent banner - the customer's next action is a fresh signal.
     useEffect(() => {
         if (!flash) return undefined;
         const timer = setTimeout(() => setFlash(null), 4000);
@@ -68,14 +68,14 @@ export default function AutoRecrawlCard({ botId }) {
     }, [flash]);
 
     const handleToggle = async (nextEnabled) => {
-        // Free / Starter never actually flip the flag — the click is
+        // Free / Starter never actually flip the flag - the click is
         // captured here and redirected to the upgrade modal instead of
         // hitting the backend (which would reject with 403 anyway).
         if (autoRecrawlLocked) {
             requestUpgrade('auto_recrawl');
             return;
         }
-        // Turning off shows a confirmation first — the customer might be
+        // Turning off shows a confirmation first - the customer might be
         // one click away from losing their weekly refresh cadence and
         // should hear the "next enable resets the 7-day clock" caveat.
         if (!nextEnabled && status?.enabled) {
@@ -173,14 +173,27 @@ export default function AutoRecrawlCard({ botId }) {
                     />
                     <StatusTile
                         label="Last checked"
-                        value={lastRecrawlAt ? formatRelative(lastRecrawlAt) : '—'}
+                        value={lastRecrawlAt ? formatRelative(lastRecrawlAt) : '-'}
                         sub={lastStatus ? capitalize(lastStatus) : null}
                     />
-                    <StatusTile
-                        label="Next check"
-                        value={enabled && nextRecrawlAt ? formatRelative(nextRecrawlAt) : '—'}
-                        sub={enabled && nextRecrawlAt ? formatDate(nextRecrawlAt) : null}
-                    />
+                    {(() => {
+                        // Both the relative "in about X" and the absolute
+                        // "≈ 2:35 PM" must describe the SAME moment - the
+                        // sweep tick that will actually enqueue this bot.
+                        // Feeding raw next_recrawl_at into formatRelative
+                        // while the sub-line ceilings to the tick made the
+                        // two lines contradict each other (primary said
+                        // "in 55 mins" while sub said "≈ 2:35 PM", which
+                        // was actually ~2h away).
+                        const runTick = enabled && nextRecrawlAt ? ceilToNextSweepTick(nextRecrawlAt) : null;
+                        return (
+                            <StatusTile
+                                label="Next check"
+                                value={runTick ? formatRelative(runTick.toISOString()) : '-'}
+                                sub={runTick ? formatAbsoluteRunTime(runTick) : null}
+                            />
+                        );
+                    })()}
                 </div>
 
                 {/* Sources line */}
@@ -211,7 +224,7 @@ export default function AutoRecrawlCard({ botId }) {
                     </div>
                 )}
 
-                {/* Transient error — PATCH failures, network hiccups, etc. */}
+                {/* Transient error - PATCH failures, network hiccups, etc. */}
                 {error && (
                     <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300">
                         <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
@@ -317,15 +330,53 @@ function capitalize(slug) {
     return slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 
-function formatDate(iso) {
+// Round ``next_recrawl_at`` up to the actual sweep tick that would enqueue
+// this bot. The cron fires hourly at UTC :05, so a bot due at 14:37 UTC
+// won't run until the 15:05 UTC sweep - showing 14:37 raw would be a lie.
+// This helper gives the honest estimate; the ≈ prefix in the tile signals
+// it's still approximate (the per-hour cap can defer by an extra hour,
+// sweep queue depth affects start latency, and the recrawl itself takes
+// minutes to run).
+//
+// Ceiling math runs in UTC (``setUTCMinutes``/``setUTCHours``) because
+// the sweep cron uses UTC minutes - in half-hour-offset zones (IST,
+// Nepal, Newfoundland) rounding to LOCAL :05 lands on UTC :35, which
+// would be wrong. Only the final ``toLocale*String`` renders in the
+// user's own timezone.
+function ceilToNextSweepTick(iso) {
+    const d = new Date(iso);
+    const tick = new Date(d);
+    tick.setUTCSeconds(0, 0);
+    tick.setUTCMinutes(5);
+    // Strict `<` - a bot with next_recrawl_at exactly at :05:00.000 IS
+    // caught by that same-hour sweep (the cron fires with now slightly
+    // past :05:00.000, so ``next_recrawl_at <= now`` matches). Only bump
+    // to the next hour when d is past :05 in the current hour.
+    if (tick < d) {
+        tick.setUTCHours(tick.getUTCHours() + 1);
+    }
+    return tick;
+}
+
+// Format an already-computed sweep-tick Date as "≈ 2:35 PM · Tue, Jul 21".
+// Kept separate from ``ceilToNextSweepTick`` so the tile can compute the
+// tick once and feed it into BOTH the relative and absolute formatters -
+// otherwise the two lines describe different moments and contradict each
+// other (see the AutoRecrawl "Next check" tile).
+function formatAbsoluteRunTime(tick) {
     try {
-        return new Date(iso).toLocaleDateString(undefined, {
+        const time = tick.toLocaleTimeString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+        const date = tick.toLocaleDateString(undefined, {
+            weekday: 'short',
             month: 'short',
             day: 'numeric',
-            year: 'numeric',
         });
+        return `≈ ${time} · ${date}`;
     } catch {
-        return '—';
+        return '-';
     }
 }
 
@@ -337,19 +388,24 @@ function formatRelative(iso) {
         const absSeconds = Math.abs(diffMs) / 1000;
         const isFuture = diffMs > 0;
 
+        // Fuzzy units get an "about" qualifier - an hour-grain estimate
+        // for a system that can slip by 30+ minutes shouldn't look precise.
         const units = [
-            { limit: 60, label: 'sec', divisor: 1 },
-            { limit: 3600, label: 'min', divisor: 60 },
-            { limit: 86400, label: 'hour', divisor: 3600 },
-            { limit: 604800, label: 'day', divisor: 86400 },
-            { limit: 2629800, label: 'week', divisor: 604800 },
-            { limit: Infinity, label: 'month', divisor: 2629800 },
+            { limit: 60, label: 'sec', divisor: 1, fuzzy: false },
+            { limit: 3600, label: 'min', divisor: 60, fuzzy: false },
+            { limit: 86400, label: 'hour', divisor: 3600, fuzzy: true },
+            { limit: 604800, label: 'day', divisor: 86400, fuzzy: true },
+            { limit: 2629800, label: 'week', divisor: 604800, fuzzy: true },
+            { limit: Infinity, label: 'month', divisor: 2629800, fuzzy: true },
         ];
         const unit = units.find((u) => absSeconds < u.limit);
         const value = Math.round(absSeconds / unit.divisor);
         const plural = value === 1 ? unit.label : `${unit.label}s`;
-        return isFuture ? `in ${value} ${plural}` : `${value} ${plural} ago`;
+        if (isFuture) {
+            return unit.fuzzy ? `in about ${value} ${plural}` : `in ${value} ${plural}`;
+        }
+        return `${value} ${plural} ago`;
     } catch {
-        return '—';
+        return '-';
     }
 }

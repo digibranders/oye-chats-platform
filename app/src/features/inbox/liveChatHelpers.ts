@@ -1,5 +1,5 @@
 /**
- * liveChatHelpers — pure formatting/parsing utilities for the operator console.
+ * liveChatHelpers - pure formatting/parsing utilities for the operator console.
  * No React, no side effects; safe to import anywhere.
  */
 
@@ -9,7 +9,7 @@ import type { OperatorMessage } from './liveChatProtocol';
 const FILE_RE = /^\[File: (.+?)\]\((https?:\/\/[^\s)]+)\)$/;
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
 
-/** Only ever render http(s) file links — never `javascript:` or data URIs. */
+/** Only ever render http(s) file links - never `javascript:` or data URIs. */
 export function isSafeFileUrl(url: string | undefined | null): url is string {
   if (!url) return false;
   return /^https?:\/\//i.test(url);
@@ -100,7 +100,7 @@ export function mergeHistoryWithLive(
   return extras.length === 0 ? history : [...history, ...extras];
 }
 
-/** Highest DB id among the visitor's messages — the read-receipt high-water mark. */
+/** Highest DB id among the visitor's messages - the read-receipt high-water mark. */
 export function maxVisitorDbId(messages: OperatorMessage[]): number {
   let max = 0;
   for (const m of messages) {

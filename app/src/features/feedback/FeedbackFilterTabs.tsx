@@ -16,7 +16,7 @@ function isFeedbackFilter(key: string): key is FeedbackFilter {
 }
 
 /**
- * FeedbackFilterTabs — All / Positive / Negative, each labelled with its live
+ * FeedbackFilterTabs - All / Positive / Negative, each labelled with its live
  * count. Thin wrapper over the design-system `Tabs` primitive.
  */
 export function FeedbackFilterTabs({ stats, value, onChange }: FeedbackFilterTabsProps): ReactElement {

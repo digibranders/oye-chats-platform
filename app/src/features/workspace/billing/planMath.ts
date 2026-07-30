@@ -1,5 +1,5 @@
 /**
- * Pure billing/plan math — ported verbatim from the legacy
+ * Pure billing/plan math - ported verbatim from the legacy
  * `components/billing/PlanModal.jsx` so the redesigned (new design-system)
  * checkout surface charges EXACTLY what the old one did. Presentation is
  * rebuilt in the DS; this money logic is preserved unchanged and typed.
@@ -49,7 +49,7 @@ export const TIER_META: Record<string, { accent: 'accent' | 'neutral'; descripti
 export const MOST_POPULAR_SLUG = 'standard';
 
 /**
- * Per-slug fallback crawl limits — mirror the latest alembic revision so the
+ * Per-slug fallback crawl limits - mirror the latest alembic revision so the
  * "Crawl up to N pages" bullet renders even when `plan.limits` is absent.
  * `-1` (UNLIMITED) means no per-crawl page cap (page spend governed by credits).
  */
@@ -317,7 +317,7 @@ export function ctasFor({
         kind: 'noop',
         variant: 'primary',
         label: 'You’re on Free',
-        note: 'Free tier is your default — no action required.',
+        note: 'Free tier is your default - no action required.',
       },
     ];
   }

@@ -9,7 +9,7 @@ export interface UsageHeroProps {
 }
 
 /**
- * UsageHero — the headline credit position and the page's primary answer to
+ * UsageHero - the headline credit position and the page's primary answer to
  * "how much have I used?". Total spendable credits lead; a prominent allowance
  * bar shows how much of the monthly plan is gone; renewal / top-up-expiry facts
  * and a Buy-credits CTA sit alongside. One card, strong hierarchy.

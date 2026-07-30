@@ -3,7 +3,7 @@ import { cn } from '../lib/cn';
 
 export type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement>;
 
-/** Textarea — the standard multi-line text field. Mirrors `Input`. */
+/** Textarea - the standard multi-line text field. Mirrors `Input`. */
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(({ className, ...props }, ref) => (
   <textarea
     ref={ref}

@@ -17,18 +17,18 @@ export interface FeatureGateProps {
    * renders the richer `LockedFeatureCard` (eyebrow, headline, highlights)
    * and the upgrade modal opens with this intent's specific copy instead of
    * the generic `{ feature }` reason. Excludes `add_bot` (an action-limit
-   * intent that needs live params) — a feature gate never gates on it.
+   * intent that needs live params) - a feature gate never gates on it.
    */
   intent?: TeaserIntentKey;
   /**
    * Rendered when locked. Defaults to a built-in upgrade card. Pass `null`
-   * to render nothing at all — good for sidebar items that should simply
+   * to render nothing at all - good for sidebar items that should simply
    * disappear rather than show a locked affordance.
    */
   fallback?: ReactNode;
   /**
    * Rendered while entitlements are loading. Defaults to `children`
-   * (optimistic) so the page doesn't flicker on every render — the backend
+   * (optimistic) so the page doesn't flicker on every render - the backend
    * still enforces the gate, so a brief over-render just means a friendly
    * 402 on action instead of silent breakage.
    */
@@ -53,7 +53,7 @@ interface DefaultLockedCardProps {
 
 /** Fallback upgrade card used when the gate has no `intent` (so there's no
  * registry copy to pull a richer teaser from). Designed to fit inside
- * content areas — for sidebar items, pass `fallback={null}` to the gate
+ * content areas - for sidebar items, pass `fallback={null}` to the gate
  * instead of relying on this. */
 function DefaultLockedCard({ feature, requiredPlan, planName, onUpgrade }: DefaultLockedCardProps): ReactElement {
   return (
@@ -81,7 +81,7 @@ function DefaultLockedCard({ feature, requiredPlan, planName, onUpgrade }: Defau
 }
 
 /**
- * FeatureGate — wraps children behind a plan feature check (mandate shared
+ * FeatureGate - wraps children behind a plan feature check (mandate shared
  * component). Renders the children unchanged when the workspace's plan
  * includes `feature`; otherwise renders `fallback` (or a locked card) and,
  * on interaction with its CTA, opens the upgrade modal.

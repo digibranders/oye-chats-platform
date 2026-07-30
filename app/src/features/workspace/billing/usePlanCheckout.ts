@@ -1,5 +1,5 @@
 /**
- * usePlanCheckout — the plan money-path, extracted verbatim from the legacy
+ * usePlanCheckout - the plan money-path, extracted verbatim from the legacy
  * PlanModal so the redesigned confirm Drawer can reuse it without
  * reimplementing anything payment-critical.
  *
@@ -13,7 +13,7 @@
  *   - seat overflow on downgrade    → actionable error
  *
  * The two-stage Razorpay handling is deliberate: a throw during the charge is a
- * real payment failure, but a throw during signature verification is NOT — the
+ * real payment failure, but a throw during signature verification is NOT - the
  * customer has already been charged and the activation webhook reconciles, so
  * we reassure instead of alarming.
  */
@@ -50,7 +50,7 @@ export interface PlanCheckoutResult {
   reset: () => void;
 }
 
-// Mirrors planMath.canStartTrial on a PlanView — kept byte-identical in intent
+// Mirrors planMath.canStartTrial on a PlanView - kept byte-identical in intent
 // so the trial gate can never drift between the modal and the drawer.
 export function isTrialEligible(
   plan: PlanView,
@@ -133,7 +133,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
             setError('Checkout is temporarily unavailable. Please try again in a moment.');
             return;
           }
-          // Stage 1 — the charge/authorisation. A throw here means the payment
+          // Stage 1 - the charge/authorisation. A throw here means the payment
           // did NOT go through (dismissed, card declined); safe to surface.
           let cb: Awaited<ReturnType<typeof openRazorpayCheckout>>;
           try {
@@ -148,13 +148,13 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
             });
           } catch (cbErr: unknown) {
             if ((cbErr as { code?: string })?.code === 'dismissed') {
-              setNotice('Payment cancelled — you have not been charged.');
+              setNotice('Payment cancelled - you have not been charged.');
               return;
             }
             throw cbErr;
           }
 
-          // Stage 2 — server-side signature verification. The customer has
+          // Stage 2 - server-side signature verification. The customer has
           // ALREADY been charged, so a failure here must NOT read as a payment
           // error. The activation webhook is the authoritative reconciler.
           try {
@@ -165,9 +165,9 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
             });
           } catch {
             setNotice(
-              'Payment received — we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
+              'Payment received - we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
             );
-            onSuccess('Payment received — finalising your subscription.');
+            onSuccess('Payment received - finalising your subscription.');
             onDone();
             return;
           }

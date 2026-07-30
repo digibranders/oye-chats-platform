@@ -41,7 +41,7 @@ const toneStyles: Record<ActivityTone, string> = {
 };
 
 /**
- * ActivityTimeline — a vertical feed of recent events (mandate shared
+ * ActivityTimeline - a vertical feed of recent events (mandate shared
  * component). Each item has a tinted marker, a title, optional detail, and a
  * timestamp, connected by a rail.
  */

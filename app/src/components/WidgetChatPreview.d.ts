@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 
 /**
- * Type shim for the reused legacy `components/WidgetChatPreview.jsx` — a
+ * Type shim for the reused legacy `components/WidgetChatPreview.jsx` - a
  * pixel-faithful mock of the real embeddable widget. Reused as-is so the Launch
  * Studio preview matches the actual widget; the `.jsx` stays the runtime source.
  */

@@ -1,10 +1,17 @@
 import logging
 import os
 import secrets as _secrets
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Anchor the .env lookup to the api/ directory (this file lives at api/app/config.py)
+# so any launcher — dev.sh, the ARQ worker, a REPL from the project root, systemd
+# — resolves the same file. Without this, load_dotenv() searches CWD upward and
+# silently misses api/.env when invoked from anywhere but api/, which surfaces as
+# "REDIS_URL is required" in the worker.
+_API_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(_API_DIR / ".env")
 
 logger = logging.getLogger(__name__)
 

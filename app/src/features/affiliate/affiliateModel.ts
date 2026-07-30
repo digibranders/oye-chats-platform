@@ -1,5 +1,5 @@
 /**
- * affiliateModel — typed view-models + formatters for the Workspace ▸ Affiliate
+ * affiliateModel - typed view-models + formatters for the Workspace ▸ Affiliate
  * area.
  *
  * The reused affiliate endpoints (getAffiliateMe / getAffiliateCodes /

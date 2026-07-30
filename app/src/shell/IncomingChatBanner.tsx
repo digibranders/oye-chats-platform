@@ -9,7 +9,7 @@ import { playPing } from '../features/inbox/notifications';
 const AUTO_DISMISS_MS = 30_000;
 
 /**
- * IncomingChatBanner — app-wide slide-in toast for a new live-chat handoff
+ * IncomingChatBanner - app-wide slide-in toast for a new live-chat handoff
  * request, mirroring the legacy console's `LiveChatRequestBanner`. Subscribes to
  * the `incomingHandoff` slot on `NotificationProvider` (fed by the
  * `/ws/notifications` stream), chimes once on arrival, counts down a 30s

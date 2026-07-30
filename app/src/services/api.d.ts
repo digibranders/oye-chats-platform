@@ -1,7 +1,7 @@
 /**
  * Type shim for the legacy JS API client (`services/api.js`).
  * The `.js` stays the runtime source; this only supplies types to new TS code.
- * Only the exports the new app consumes are declared — widen as needed.
+ * Only the exports the new app consumes are declared - widen as needed.
  */
 import type {
   ActivityPoint,
@@ -33,7 +33,22 @@ import type { FeedbackItem } from '../features/feedback/types';
 
 // ── Agents (bots) ────────────────────────────────────────────────────────────
 export function createBot(data: { name: string; website?: string; system_prompt?: string }): Promise<Bot>;
-/** PATCH /bots/{id} returns a status message, NOT the bot — re-fetch/merge for fresh fields. */
+/** POST /bots/checkout - start a per-agent Razorpay subscription; returns the Checkout payload. */
+export function createBotCheckout(data: {
+  name: string;
+  website?: string;
+  plan_slug: string;
+  billing_cycle?: string;
+  allowed_domains?: string[] | null;
+  domain_check_enabled?: boolean | null;
+}): Promise<Record<string, unknown>>;
+/** POST /bots/checkout/verify - materialise the new agent after payment; returns `{ status, bot_id }`. */
+export function verifyBotCheckout(data: {
+  razorpay_payment_id: string;
+  razorpay_subscription_id: string;
+  razorpay_signature: string;
+}): Promise<Record<string, unknown>>;
+/** PATCH /bots/{id} returns a status message, NOT the bot - re-fetch/merge for fresh fields. */
 export function updateBot(botId: number, data: Record<string, unknown>): Promise<{ message: string }>;
 export function getBot(botId: number): Promise<Bot>;
 export function getBots(): Promise<Bot[]>;
@@ -86,7 +101,7 @@ export function recordActivationEvent(
 
 // ── Identity / workspace ─────────────────────────────────────────────────────
 export function getCurrentUser(): Promise<CurrentUser>;
-/** GET /auth/me/entitlements. Throws on failure — callers fall back / hide gracefully. */
+/** GET /auth/me/entitlements. Throws on failure - callers fall back / hide gracefully. */
 export function getEntitlements(): Promise<Entitlements>;
 export function getMyWorkspaces(): Promise<{ workspaces: Workspace[] }>;
 /**
@@ -188,10 +203,10 @@ export function addSelfAsOperator(botId?: number): Promise<SelfOperatorResult>;
 export function removeSelfAsOperator(): Promise<boolean>;
 
 // ── Billing / subscription ───────────────────────────────────────────────────
-export function getCurrentSubscription(): Promise<Record<string, unknown>>;
+export function getCurrentSubscription(botId?: number | null): Promise<Record<string, unknown>>;
 export function getSubscriptionPlans(): Promise<Array<Record<string, unknown>>>;
 export function getSubscriptionUsage(): Promise<Record<string, unknown>>;
-export function getInvoices(): Promise<Array<Record<string, unknown>>>;
+export function getInvoices(botId?: number | null): Promise<Array<Record<string, unknown>>>;
 export function getBillingDetails(): Promise<Record<string, unknown>>;
 export function updateBillingDetails(patch: Record<string, unknown>): Promise<Record<string, unknown>>;
 
@@ -214,7 +229,7 @@ export function changePlan(planId: number, billingCycle?: string | null): Promis
 /** Start the plan's configured free trial (no card). */
 export function startTrial(planSlug: string): Promise<Record<string, unknown>>;
 export function cancelScheduledChange(): Promise<Record<string, unknown>>;
-export function cancelSubscription(reason?: string | null): Promise<Record<string, unknown>>;
+export function cancelSubscription(reason?: string | null, botId?: number | null): Promise<Record<string, unknown>>;
 export function resumeSubscription(): Promise<Record<string, unknown>>;
 /** Server-verify the Razorpay subscription Checkout callback signature. */
 export function verifyRazorpaySubscription(payload: {
@@ -223,7 +238,7 @@ export function verifyRazorpaySubscription(payload: {
   razorpay_signature: string;
 }): Promise<Record<string, unknown>>;
 /** Add (delta > 0) or remove (delta < 0) operator seats; may return `{ requires_authorization, checkout }`. */
-export function changeOperatorSeats(delta: number): Promise<Record<string, unknown>>;
+export function changeOperatorSeats(delta: number, botId?: number | null): Promise<Record<string, unknown>>;
 /** Standing referral attribution on the account: `{ attributed, code, discount_pct }`. */
 export function getReferralStatus(): Promise<{ attributed?: boolean; code?: string | null; discount_pct?: number } | null>;
 /** Apply/validate a referral code. Non-null `code` ⇒ accepted. */
@@ -266,9 +281,9 @@ export function acceptAffiliateInviteExisting(
 
 // ── Credits / top-ups ────────────────────────────────────────────────────────
 export function getCreditBalance(): Promise<Record<string, unknown>>;
-export function getCreditHistory(params?: { page?: number; limit?: number }): Promise<Record<string, unknown>>;
+export function getCreditHistory(params?: { page?: number; limit?: number; botId?: number | null }): Promise<Record<string, unknown>>;
 /** Daily consumption trend → `{ days, series: [{ date, credits_used }] }` (zero-filled, ascending). */
-export function getCreditDaily(params?: { days?: number }): Promise<Record<string, unknown>>;
+export function getCreditDaily(params?: { days?: number; botId?: number | null }): Promise<Record<string, unknown>>;
 export function getTopupPacks(): Promise<Array<Record<string, unknown>>>;
 /** Start a top-up purchase → Razorpay order payload (`order_id`, `amount`, `key_id`, …). */
 export function initiateTopup(
@@ -284,7 +299,7 @@ export function verifyTopupPayment(payload: {
 
 // ── Security / account ───────────────────────────────────────────────────────
 export function changeClientPassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }>;
-/** POST /auth/operator-change-password — an operator changes their own password. */
+/** POST /auth/operator-change-password - an operator changes their own password. */
 export function operatorChangePassword(
   currentPassword: string,
   newPassword: string,
@@ -326,7 +341,7 @@ export interface PlatformFeedbackAttachment {
   content_type?: string;
 }
 
-/** One row from `GET /client/feedback` — the caller's own submitted feedback. */
+/** One row from `GET /client/feedback` - the caller's own submitted feedback. */
 export interface PlatformFeedbackItem {
   id: number;
   message: string;
@@ -341,7 +356,7 @@ export interface PlatformFeedbackItem {
   resolved_at: string | null;
 }
 
-/** POST /client/feedback — submit a classified feedback entry. */
+/** POST /client/feedback - submit a classified feedback entry. */
 export function submitPlatformFeedback(payload: {
   message: string;
   type?: string;
@@ -351,39 +366,39 @@ export function submitPlatformFeedback(payload: {
   attachments?: PlatformFeedbackAttachment[] | null;
 }): Promise<{ ok: true }>;
 
-/** POST /client/feedback/upload (multipart) — upload one attachment, returns its hosted URL. */
+/** POST /client/feedback/upload (multipart) - upload one attachment, returns its hosted URL. */
 export function uploadFeedbackAttachment(file: File): Promise<{ url: string }>;
 
-/** GET /client/feedback — the caller's own feedback, newest first. */
+/** GET /client/feedback - the caller's own feedback, newest first. */
 export function getMyFeedback(): Promise<PlatformFeedbackItem[]>;
 
 // ── Live chat: operator console ──────────────────────────────────────────────
 // Runtime wrappers live in services/api.js; typed loosely (callers cast to a
 // local response shape). Consumed by the Inbox live-chat operator console.
 
-/** GET /operators/queue — waiting sessions + this operator's active chats. */
+/** GET /operators/queue - waiting sessions + this operator's active chats. */
 export function getOperatorQueue(): Promise<Record<string, unknown>>;
-/** GET /operators/qualified-sessions — bot sessions eligible for proactive takeover. */
+/** GET /operators/qualified-sessions - bot sessions eligible for proactive takeover. */
 export function getQualifiedBotSessions(limit?: number): Promise<Record<string, unknown>>;
-/** POST /operators/accept/{sessionId} — take a waiting visitor (bot→live). */
+/** POST /operators/accept/{sessionId} - take a waiting visitor (bot→live). */
 export function acceptChat(sessionId: string, operatorId?: number | null): Promise<Record<string, unknown>>;
-/** POST /operators/close/{sessionId} — end an active chat (live→bot). */
+/** POST /operators/close/{sessionId} - end an active chat (live→bot). */
 export function closeOperatorChat(sessionId: string): Promise<Record<string, unknown>>;
 export function resolveOperatorChat(sessionId: string): Promise<Record<string, unknown>>;
-/** POST /operators/transfer/{sessionId} — hand a chat to another operator/department. */
+/** POST /operators/transfer/{sessionId} - hand a chat to another operator/department. */
 export function transferChat(sessionId: string, data: Record<string, unknown>): Promise<Record<string, unknown>>;
-/** GET /operators/session/{sessionId} — visitor identity/geo/device + history. */
+/** GET /operators/session/{sessionId} - visitor identity/geo/device + history. */
 export function getSessionDetails(sessionId: string): Promise<Record<string, unknown>>;
-/** POST /operators/connect-request — proactively invite a bot-session visitor to a human. */
+/** POST /operators/connect-request - proactively invite a bot-session visitor to a human. */
 export function sendConnectRequest(
   sessionId: string,
   operatorId?: number | null,
 ): Promise<Record<string, unknown>>;
-/** POST /operators/connect-request/{sessionId}/cancel — withdraw a pending connect invite. */
+/** POST /operators/connect-request/{sessionId}/cancel - withdraw a pending connect invite. */
 export function cancelConnectRequest(sessionId: string): Promise<Record<string, unknown>>;
 
 // ── Knowledge: recrawl lifecycle ─────────────────────────────────────────────
-/** POST /bots/{id}/crawl/cancel — stop an in-progress crawl. */
+/** POST /bots/{id}/crawl/cancel - stop an in-progress crawl. */
 export function cancelCrawl(botId: number): Promise<Record<string, unknown>>;
 /** Preview a recrawl diff (unchanged/new/removed) before spending credits; mode 'full' | 'delta'. */
 export function diffRecrawl(
@@ -396,19 +411,19 @@ export function diffRecrawl(
 export function getRecrawlStatus(botId: number): Promise<Record<string, unknown>>;
 
 // ── Notifications: web push (settings) ───────────────────────────────────────
-/** GET /operators/push/vapid-public-key — server VAPID key + whether push is enabled. */
+/** GET /operators/push/vapid-public-key - server VAPID key + whether push is enabled. */
 export function getVapidPublicKey(): Promise<{ public_key: string; enabled: boolean }>;
-/** POST /operators/push/subscribe — persist a PushSubscription for this operator. */
+/** POST /operators/push/subscribe - persist a PushSubscription for this operator. */
 export function subscribePush(subscription: unknown): Promise<Record<string, unknown>>;
-/** DELETE /operators/push/subscribe — remove a stored push subscription. */
+/** DELETE /operators/push/subscribe - remove a stored push subscription. */
 export function unsubscribePush(endpoint: string, keys?: unknown): Promise<boolean>;
 
 // ── Personality: brand-tone AI assist (experience) ───────────────────────────
-/** GET /bots/brand-tone-presets — the selectable brand-tone presets. */
+/** GET /bots/brand-tone-presets - the selectable brand-tone presets. */
 export function getBrandTonePresets(): Promise<Array<Record<string, unknown>>>;
-/** POST /bots/{id}/brand-tone/detect — infer a brand tone from the crawled site. */
+/** POST /bots/{id}/brand-tone/detect - infer a brand tone from the crawled site. */
 export function detectBrandTone(botId: number): Promise<Record<string, unknown>>;
 
 // ── Demo share tracking (channels) ───────────────────────────────────────────
-/** POST /bots/{id}/demo-share-click — record a shared demo-link click. */
+/** POST /bots/{id}/demo-share-click - record a shared demo-link click. */
 export function trackDemoShareClick(botId: number): Promise<Record<string, unknown>>;

@@ -9,8 +9,8 @@
  *   - "operator" = employee account. Live-chat only; sees owner's bots automatically.
  *
  * Operator roles (only relevant when auth_type === "operator"):
- *   - "owner" / "admin" — can manage bots, operators, departments, quick replies
- *   - "operator"        — read-only on management; can only handle live chat
+ *   - "owner" / "admin" - can manage bots, operators, departments, quick replies
+ *   - "operator"        - read-only on management; can only handle live chat
  */
 
 /**
@@ -54,7 +54,7 @@ import { getAuthItem } from './authStorage';
 
 export function getAuthState() {
     // Read via authStorage helper so session-only logins ("Remember me"
-    // unchecked) resolve correctly — those land in sessionStorage instead
+    // unchecked) resolve correctly - those land in sessionStorage instead
     // of localStorage.
     const isOperator = getAuthItem('auth_type') === 'operator';
     const operatorRole = getAuthItem('operator_role') || '';

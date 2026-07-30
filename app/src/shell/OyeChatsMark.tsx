@@ -8,7 +8,7 @@ export interface OyeChatsMarkProps {
 }
 
 /**
- * OyeChatsMark — the original brand glyph.
+ * OyeChatsMark - the original brand glyph.
  *
  * The source PNG (`/oye_final.png`) is the full lockup (icon + wordmark); we
  * scale it up and translate so only the planet+bubble glyph sits inside the

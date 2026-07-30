@@ -18,14 +18,14 @@ export type LedgerState =
   | { readonly status: 'ready'; readonly rows: LedgerRow[] }
   | { readonly status: 'error'; readonly message: string };
 
-/** The 30-day trend degrades independently too — a failure just hides the chart. */
+/** The 30-day trend degrades independently too - a failure just hides the chart. */
 export type TrendState =
   | { readonly status: 'ready'; readonly points: TrendPoint[] }
   | { readonly status: 'error' };
 
 /**
  * Loading state machine for the Usage page. `loading` is a genuine derived
- * phase — the first `setState` in the effect always follows an `await`, so we
+ * phase - the first `setState` in the effect always follows an `await`, so we
  * never call `setState` synchronously inside the effect body.
  */
 export type UsagePhase =
@@ -49,24 +49,27 @@ function toMessage(error: unknown, fallback: string): string {
 }
 
 /**
- * useUsageData — fetches the account credit balance and the recent consumption
- * ledger in parallel. Owns the loading/error/ready state machine so the page
- * can stay declarative.
+ * useUsageData - fetches the credit balance and the recent consumption ledger
+ * in parallel. Owns the loading/error/ready state machine so the page can stay
+ * declarative. When `botId` is set the history + trend are scoped to that agent
+ * (the balance already carries every pool, so the page slices it client-side);
+ * a change of scope re-fetches.
  */
-export function useUsageData(): UsageData {
+export function useUsageData(botId?: number | null): UsageData {
   const [phase, setPhase] = useState<UsagePhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     let active = true;
+    const scope = botId ?? undefined;
     void (async () => {
       // Settle both independently: the balance is the page's primary answer,
       // so a history-only failure degrades to an inline error on the ledger
       // section rather than blanking the whole page.
       const [balanceResult, historyResult, trendResult] = await Promise.allSettled([
         getCreditBalance(),
-        getCreditHistory({ page: 1, limit: 50 }),
-        getCreditDaily({ days: 30 }),
+        getCreditHistory({ page: 1, limit: 50, botId: scope }),
+        getCreditDaily({ days: 30, botId: scope }),
       ]);
       if (!active) return;
 
@@ -107,7 +110,7 @@ export function useUsageData(): UsageData {
     return () => {
       active = false;
     };
-  }, [refreshToken]);
+  }, [refreshToken, botId]);
 
   const retry = (): void => {
     setPhase({ status: 'loading' });

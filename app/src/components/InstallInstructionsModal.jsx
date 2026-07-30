@@ -1,17 +1,40 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Share, Plus, X, Smartphone, MoreVertical, MonitorSmartphone } from 'lucide-react';
+import { Chrome, Share, Plus, X, Smartphone, MoreVertical, MonitorSmartphone } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+// In-app WebViews (Instagram, FB, TikTok, LinkedIn, Snapchat, etc.) never fire
+// ``beforeinstallprompt``, so the fallback modal is the only path a user can
+// take. The clearest escape hatch on Android is to hand the URL off to real
+// Chrome via an intent URL - once opened there, the normal install banner
+// works. ``\bwv\)`` catches generic Android WebViews used by countless apps.
+const IN_APP_WEBVIEW_MARKERS = /\bwv\)|FBAN|FBAV|FB_IAB|Instagram|Line\/|LinkedInApp|Twitter for|musical_ly|Bytedance|Snapchat|MicroMessenger/;
+
+function detectAndroidContext() {
+    if (typeof navigator === 'undefined' || typeof window === 'undefined') {
+        return { isAndroid: false, inAppWebView: false, chromeIntentUrl: null };
+    }
+    const ua = navigator.userAgent || '';
+    const isAndroid = /Android/i.test(ua);
+    if (!isAndroid) return { isAndroid: false, inAppWebView: false, chromeIntentUrl: null };
+    const inAppWebView = IN_APP_WEBVIEW_MARKERS.test(ua);
+    const { host, pathname, search, hash, href } = window.location;
+    // browser_fallback_url handles the "Chrome not installed" case - the OS
+    // opens the fallback in whatever browser the user has, so the link never
+    // becomes a dead end.
+    const chromeIntentUrl = `intent://${host}${pathname}${search}${hash}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(href)};end`;
+    return { isAndroid, inAppWebView, chromeIntentUrl };
+}
+
 /**
- * InstallInstructionsModal — fallback walkthrough shown from the "Install as
+ * InstallInstructionsModal - fallback walkthrough shown from the "Install as
  * app" CTA whenever the browser hasn't fired ``beforeinstallprompt`` and we
  * can't drive a programmatic install.
  *
  * Two variants, keyed by ``mode``:
- *   • ``ios``     — Safari Share → Add to Home Screen (Apple never fires
+ *   • ``ios``     - Safari Share → Add to Home Screen (Apple never fires
  *                    beforeinstallprompt, so this is the ONLY install path).
- *   • ``desktop`` — Chrome/Edge overflow menu → "Install OyeChats". Firefox
+ *   • ``desktop`` - Chrome/Edge overflow menu → "Install OyeChats". Firefox
  *                    doesn't support PWA install on desktop so we mention it
  *                    as a fallback for parity with reality.
  *
@@ -21,6 +44,9 @@ import { cn } from '../lib/utils';
  */
 export default function InstallInstructionsModal({ open, mode, onClose }) {
     const dialogRef = useRef(null);
+    // Recompute per open - the UA is stable within a session, but memoising
+    // keeps the intent URL fresh if the user navigates before reopening.
+    const androidContext = useMemo(() => (open ? detectAndroidContext() : null), [open]);
 
     useEffect(() => {
         if (!open) return undefined;
@@ -45,10 +71,14 @@ export default function InstallInstructionsModal({ open, mode, onClose }) {
     const isAndroid = mode === 'android';
     const heroIcon = (isIOS || isAndroid) ? <Smartphone size={26} strokeWidth={2.2} /> : <MonitorSmartphone size={26} strokeWidth={2.2} />;
     const title = isIOS ? 'Install OyeChats on iOS' : (isAndroid ? 'Install OyeChats on Android' : 'Install OyeChats on desktop');
+    const showChromeHandoff = isAndroid && !!androidContext?.chromeIntentUrl;
+    const inAppDetected = !!androidContext?.inAppWebView;
     const subtitle = isIOS
-        ? "Safari doesn't offer a one-tap install button — follow these two steps."
+        ? "Safari doesn't offer a one-tap install button - follow these two steps."
         : (isAndroid
-            ? "Your browser hasn't offered a one-tap install yet — follow these two steps."
+            ? (inAppDetected
+                ? "You're viewing OyeChats inside an in-app browser, which blocks the one-tap install. Open it in Chrome to install with a single tap."
+                : "Your browser hasn't offered a one-tap install yet. Open in Chrome for the one-tap install, or follow the manual steps below.")
             : "Your browser hasn't offered a one-tap install yet. Use its menu to add OyeChats as an app.");
 
     return (
@@ -123,11 +153,34 @@ export default function InstallInstructionsModal({ open, mode, onClose }) {
                                         body="Scroll the share sheet until you see it, then tap Add. OyeChats will launch like a native app."
                                     />
                                     <Note>
-                                        Add to Home Screen only works from Safari on iOS — not Chrome, Firefox, or in-app browsers.
+                                        Add to Home Screen only works from Safari on iOS - not Chrome, Firefox, or in-app browsers.
                                     </Note>
                                 </>
                             ) : isAndroid ? (
                                 <>
+                                    {showChromeHandoff && (
+                                        <>
+                                            <a
+                                                href={androidContext.chromeIntentUrl}
+                                                onClick={onClose}
+                                                className={cn(
+                                                    'flex items-center justify-center gap-2 w-full rounded-xl px-4 py-3 text-sm font-semibold transition-colors',
+                                                    'bg-primary-600 hover:bg-primary-500 text-white shadow-md shadow-primary-500/20',
+                                                    'focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-surface-950',
+                                                )}
+                                            >
+                                                <Chrome size={18} strokeWidth={2.2} />
+                                                Open in Chrome
+                                            </a>
+                                            <div className="flex items-center gap-3 pt-1 pb-1">
+                                                <div className="h-px flex-1 bg-surface-200 dark:bg-surface-800" />
+                                                <span className="text-[11px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">
+                                                    Or install manually
+                                                </span>
+                                                <div className="h-px flex-1 bg-surface-200 dark:bg-surface-800" />
+                                            </div>
+                                        </>
+                                    )}
                                     <Step
                                         index={1}
                                         icon={<MoreVertical size={16} strokeWidth={2.2} />}
@@ -159,7 +212,7 @@ export default function InstallInstructionsModal({ open, mode, onClose }) {
                                         body="If you don't see it right away, look under 'Cast, save and share' or 'Apps'. OyeChats launches like a native app after install."
                                     />
                                     <Note>
-                                        Firefox on desktop doesn&apos;t support PWA installs — use Chrome, Edge, or Brave for the one-click experience.
+                                        Firefox on desktop doesn&apos;t support PWA installs - use Chrome, Edge, or Brave for the one-click experience.
                                     </Note>
                                 </>
                             )}

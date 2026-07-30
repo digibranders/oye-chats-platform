@@ -9,7 +9,7 @@ interface ErrorDetailsProps {
 
 /**
  * Collapsible technical detail (message + stack) for an error surface. Renders
- * nothing in production builds — end users never see a stack trace, but during
+ * nothing in production builds - end users never see a stack trace, but during
  * development this replaces React Router's raw crash screen with an inspectable,
  * on-brand panel.
  */

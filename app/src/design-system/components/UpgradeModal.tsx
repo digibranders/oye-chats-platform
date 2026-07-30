@@ -11,13 +11,13 @@ import { renderPriceLabel, type PlanRow } from '../../features/workspace/billing
 import type { UpgradeIntent } from '../../context/upgradeIntents';
 
 /** Re-exported so existing imports of `UpgradeModalReason` from the barrel
- * keep resolving — the shape now lives in the context module (the single
+ * keep resolving - the shape now lives in the context module (the single
  * source of truth for both the escape hatch and the intent registry). */
 export type { UpgradeModalReason } from '../../context/UpgradeModalContext';
 
 export interface UpgradeModalProps {
   open: boolean;
-  /** Resolved copy — either a registry intent or the normalized escape-hatch reason. `null` while closed. */
+  /** Resolved copy - either a registry intent or the normalized escape-hatch reason. `null` while closed. */
   content: UpgradeIntent | null;
   onClose: () => void;
 }
@@ -42,12 +42,12 @@ function loadPlans(): Promise<PlanRow[]> {
 }
 
 /**
- * UpgradeModal — the single premium upsell surface used by every gate
+ * UpgradeModal - the single premium upsell surface used by every gate
  * (mandate shared component, built on the DS `Modal` shell).
  *
  * Restrained by design: a small lock glyph in a soft accent tile, an
  * uppercase eyebrow, title, description, a benefit checklist, and a
- * current → target plan chip. No crown, no sparkles, no gradient glow — the
+ * current → target plan chip. No crown, no sparkles, no gradient glow - the
  * legacy modal's "moment" theatrics are deliberately NOT ported; the
  * substance (per-feature copy from the intent registry) is.
  */
@@ -56,7 +56,7 @@ export function UpgradeModal({ open, content, onClose }: UpgradeModalProps): Rea
   const { planName } = useEntitlements();
   const [plans, setPlans] = useState<PlanRow[] | null>(null);
 
-  // Resolve the target plan's real name/price once a plan list is available —
+  // Resolve the target plan's real name/price once a plan list is available -
   // best-effort only. If it never loads (or no plan matches), the chip simply
   // falls back to the plain `recommendedPlan` name from the intent copy.
   useEffect(() => {

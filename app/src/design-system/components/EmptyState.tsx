@@ -11,7 +11,7 @@ export interface EmptyStateProps {
   className?: string;
 }
 
-/** EmptyState — the standard "nothing here yet" surface. */
+/** EmptyState - the standard "nothing here yet" surface. */
 export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
   return (
     <div
