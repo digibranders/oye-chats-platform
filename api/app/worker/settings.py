@@ -79,11 +79,13 @@ def _init_sentry_for_worker() -> None:
     they only end up in ``journalctl`` on the droplet.
 
     Tagged as ``service: worker`` so events can be filtered apart from the API.
+    Production-only, same as the API — see ``app.config.sentry_enabled``.
     """
     from app.config import APP_ENV, SENTRY_DSN, SENTRY_ENABLED
 
     if not SENTRY_ENABLED:
-        logger.info("Sentry disabled in worker (no DSN configured)")
+        reason = f"APP_ENV={APP_ENV}, production only" if SENTRY_DSN else "no DSN configured"
+        logger.info(f"Sentry disabled in worker ({reason})")
         return
 
     import sentry_sdk
@@ -93,10 +95,9 @@ def _init_sentry_for_worker() -> None:
         environment=APP_ENV,
         release=os.getenv("SENTRY_RELEASE") or None,
         send_default_pii=False,
-        enable_logs=True,
+        # Errors + light tracing only — profiling and logs stay off on the free
+        # plan. See the matching note in app/main.py.
         traces_sample_rate=0.1,
-        profile_session_sample_rate=0.1,
-        profile_lifecycle="trace",
     )
     sentry_sdk.set_tag("service", "worker")
     logger.info(f"Sentry error tracking enabled in worker | env={APP_ENV}")

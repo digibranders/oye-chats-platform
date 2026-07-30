@@ -5,15 +5,39 @@ import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { getController } from './widget-controller.js'
 
+// True when the page embedding the widget is a developer machine rather than a
+// deployed site — including a production widget bundle (`vite preview`) dropped
+// onto a localhost test page.
+const isLocalHostname = (hostname) => {
+  const host = String(hostname || '').toLowerCase()
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local')
+  )
+}
+
 // Lazy-loaded only on first error or when OYECHATS_DEBUG=true.
+// Production only: dev builds and localhost-embedded widgets are skipped so
+// developer noise never reaches the Sentry project that pages on real incidents.
 const loadSentry = async () => {
   const dsn = import.meta.env.VITE_SENTRY_DSN
-  if (!dsn) return
+  if (!dsn || !import.meta.env.PROD) return
+  if (isLocalHostname(window.location.hostname)) return
   try {
     const Sentry = await import('@sentry/react')
     Sentry.init({
       dsn,
       environment: import.meta.env.MODE,
+      // Errors + light tracing only — no Replay, Profiling or Logs. We are on
+      // the Sentry free plan, where blowing any one of those quotas pauses
+      // ingestion project-wide and we lose error reporting too. Replay is
+      // doubly unwanted here: this bundle runs on the CUSTOMER's page, so a
+      // replay would record their visitors, not just our widget.
       tracesSampleRate: 0.1,
       sendDefaultPii: false,
     })
