@@ -1,10 +1,10 @@
 /**
- * AffiliatePage — the Workspace ▸ Affiliate surface. One job: answer
+ * AffiliatePage - the Workspace ▸ Affiliate surface. One job: answer
  * "How are my referral codes performing, and how do I share them?".
  *
  * Rebuilt from the legacy `pages/AffiliateDashboard.jsx` in the new design
  * language. Shows the affiliate's commission pool, four headline counters, and a
- * table of their codes — each with a one-click "copy share link". A new code is
+ * table of their codes - each with a one-click "copy share link". A new code is
  * created through a focused modal; a code is activated/deactivated inline
  * (respecting the active-code cap). Referral detail + editing land in follow-up
  * modals.
@@ -36,7 +36,7 @@ import { EditCodeModal } from './EditCodeModal';
 import { ReferralsModal } from './ReferralsModal';
 
 /**
- * Where a `?ref=CODE` visitor lands — the public marketing site captures the
+ * Where a `?ref=CODE` visitor lands - the public marketing site captures the
  * click. Overridable per-environment; defaults to the production site.
  */
 const REFERRAL_BASE_URL: string =
@@ -62,7 +62,7 @@ function CopyLinkButton({ url, label }: { url: string; label: string }): ReactEl
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      /* clipboard unavailable — no-op, the link is still visible on hover */
+      /* clipboard unavailable - no-op, the link is still visible on hover */
     }
   };
 
@@ -269,7 +269,7 @@ export function AffiliatePage(): ReactElement {
           variant="primary"
           size="sm"
           disabled={atCap}
-          title={atCap ? 'You’ve reached your active-code limit — deactivate one to add another' : undefined}
+          title={atCap ? 'You’ve reached your active-code limit - deactivate one to add another' : undefined}
           onClick={() => setCreateOpen(true)}
         >
           <Plus size={15} aria-hidden="true" />

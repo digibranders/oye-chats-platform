@@ -21,7 +21,7 @@ import {
  * Why this exists: the crawl runs in the ARQ worker, so the UI just polls
  * /crawl/progress. Without a global context, every route that wants to show
  * crawl status (Knowledge page, dashboard, anywhere) would have to spin up
- * its own poll loop — and the moment the user navigates away from the
+ * its own poll loop - and the moment the user navigates away from the
  * Knowledge page, the local polling state is gone and the user loses sight
  * of an in-flight crawl entirely.
  *
@@ -33,14 +33,14 @@ import {
  *   4. Exposes startCrawl / cancelCrawl / dismissCrawl actions that work the
  *      same from any route.
  *   5. Holds onto terminal state (done / cancelled / failed / no_content)
- *      until the user dismisses it — so a brief navigation doesn't make the
+ *      until the user dismisses it - so a brief navigation doesn't make the
  *      success toast disappear before they see it.
  */
 
 const POLL_INTERVAL_MS = 2000;
 const CANCELLING_POLL_INTERVAL_MS = 500; // poll aggressively while waiting for cancel confirmation
 // Backoff for the "are there any leftover crawls?" probe when nothing is
-// running locally — avoids hammering the API every 2s for a no-op. Long
+// running locally - avoids hammering the API every 2s for a no-op. Long
 // enough that a stale ``done`` from the server can't keep re-triggering UI
 // effects, short enough that a crawl started in another tab still surfaces.
 const IDLE_PROBE_INTERVAL_MS = 30000;
@@ -48,13 +48,13 @@ const IDLE_PROBE_INTERVAL_MS = 30000;
 // notification toast can fire exactly once and then we hard-reset to idle.
 // Without this, the next poll keeps echoing ``status="done"`` and any
 // component that mounts during that window would re-fire its "completed"
-// toast — that's the "toast every 30s" bug.
+// toast - that's the "toast every 30s" bug.
 const TERMINAL_HOLD_MS = 4000;
 
 // 'no_content' is a terminal-but-not-successful outcome: the crawl fetched
 // pages but extracted zero readable text (e.g. a JS-rendered site the
 // HTTP-only fetch never sees hydrated). It must be treated as terminal here
-// — otherwise nothing ever calls resetToIdle for it and CrawlContext stays
+// - otherwise nothing ever calls resetToIdle for it and CrawlContext stays
 // pinned on 'no_content' forever while the server's 1h progress key keeps
 // echoing it back on every poll.
 const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'failed', 'no_content']);
@@ -80,8 +80,8 @@ const initialState = {
     result: null, // populated on 'done' / 'cancelled' / 'no_content'
     error: null, // populated on 'failed'
     cancellable: true,
-    isStarting: false, // local state — true between startCrawl() and the first poll seeing 'running'
-    cancelInFlight: false, // local state — true between cancelCrawl() and the server flip
+    isStarting: false, // local state - true between startCrawl() and the first poll seeing 'running'
+    cancelInFlight: false, // local state - true between cancelCrawl() and the server flip
 };
 
 function normalizeProgress(raw, prev) {
@@ -92,14 +92,14 @@ function normalizeProgress(raw, prev) {
         urls,
         pagesCrawled: raw?.pages_crawled ?? urls.length,
         maxPages: raw?.max_pages ?? prev.maxPages,
-        // discoveredTotal is client-side only — preserve it across every server poll
+        // discoveredTotal is client-side only - preserve it across every server poll
         discoveredTotal: prev.discoveredTotal,
         currentUrl: raw?.current_url ?? (urls.length ? urls[urls.length - 1] : prev.currentUrl),
         phase: raw?.phase ?? prev.phase,
         startedAt: raw?.started_at ?? prev.startedAt,
         rootUrl: prev.rootUrl, // set client-side on startCrawl; server doesn't echo
         botId: prev.botId,
-        botName: prev.botName, // client-side only — preserved across polls
+        botName: prev.botName, // client-side only - preserved across polls
         result: raw?.result ?? null,
         error: raw?.error ?? null,
         cancellable: raw?.cancellable ?? (status === 'running'),
@@ -119,13 +119,13 @@ export const CrawlProvider = ({ children }) => {
     const cancelledByUserRef = useRef(false); // suppresses the failure toast when *we* triggered the cancel
     // The status string of the most-recent transition we've already "handled"
     // (i.e. consumers fired their one-shot toast for it). Used to suppress the
-    // "Crawl complete" toast looping every poll tick — without this guard,
+    // "Crawl complete" toast looping every poll tick - without this guard,
     // any component that re-mounts or any spurious re-render with the same
     // terminal status would re-fire its useEffect. See TERMINAL_HOLD_MS.
     const handledTerminalRef = useRef(null);
     const terminalResetTimerRef = useRef(null);
     // True once we've observed a running/cancelling poll in this browser
-    // session. Used to suppress the "Crawl complete" toast on page reload —
+    // session. Used to suppress the "Crawl complete" toast on page reload -
     // the server's progress key has a 1h TTL, so a reload right after a
     // crawl finishes would otherwise re-fire the success toast every time.
     // We only fire the toast for transitions we actually witnessed.
@@ -142,7 +142,7 @@ export const CrawlProvider = ({ children }) => {
      * Force the local state back to ``idle`` and drop the cached terminal
      * result. Called after the indicator's grace period expires so the next
      * poll can't keep echoing a stale ``done`` and re-firing toasts. The
-     * server's progress key has a 1h TTL — if a new crawl shows up between
+     * server's progress key has a 1h TTL - if a new crawl shows up between
      * now and then, the poll will surface it; meanwhile the UI stays quiet.
      */
     const resetToIdle = useCallback(() => {
@@ -184,7 +184,7 @@ export const CrawlProvider = ({ children }) => {
             setCrawl((prev) => {
                 // Suppress stale terminal echoes: once we've shown the
                 // result for THIS crawl run and moved on, ignore any poll
-                // that just keeps saying "yep, still done" — that's how
+                // that just keeps saying "yep, still done" - that's how
                 // the "Crawl complete every 30s" loop was being created.
                 if (
                     handledTerminalRef.current &&
@@ -203,7 +203,7 @@ export const CrawlProvider = ({ children }) => {
                 return next;
             });
         } catch {
-            // Network blip — keep last known state. The next poll tick retries.
+            // Network blip - keep last known state. The next poll tick retries.
         }
     }, []);
 
@@ -239,7 +239,7 @@ export const CrawlProvider = ({ children }) => {
     //   2. If the result payload hasn't arrived yet, kick a one-shot poll in
     //      500ms to grab it before the local hold timer fires.
     //   3. Auto-reset to ``idle`` after TERMINAL_HOLD_MS so the floating
-    //      indicator vanishes — user only wants to see it during the crawl.
+    //      indicator vanishes - user only wants to see it during the crawl.
     // The handledTerminalRef is cleared on the next startCrawl so a brand-new
     // crawl gets its toast fired again.
     useEffect(() => {

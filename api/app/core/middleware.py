@@ -138,3 +138,25 @@ def get_cors_origins() -> list[str]:
         origins.append(f"http://localhost:{port}")
         origins.append(f"http://127.0.0.1:{port}")
     return origins
+
+
+def get_cors_origin_regex() -> str | None:
+    """Regex of additional allowed origins, or ``None`` to disable.
+
+    The explicit dev allowlist above can't enumerate subdomains (``test.localhost``,
+    ``community.localhost``, ``test.lvh.me`` …), and the cross-subdomain session
+    feature is specifically exercised on such hosts. In development we therefore
+    match any subdomain of ``localhost`` / ``lvh.me`` / ``localtest.me`` (the
+    loopback dev domains) on any port, over http or https.
+
+    In production the embeddable widget relies on ``CORS_ORIGINS='*'`` (any
+    origin), so this stays ``None`` — we never quietly widen an explicit
+    production allowlist to arbitrary subdomains.
+    """
+    env = os.getenv("APP_ENV", "development")
+    if env == "production":
+        return None
+    return (
+        r"^https?://([a-z0-9-]+\.)*(localhost|lvh\.me|localtest\.me)(:\d+)?$"
+        r"|^https?://127\.0\.0\.1(:\d+)?$"
+    )

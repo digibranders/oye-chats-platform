@@ -5,11 +5,11 @@ import useInstallPrompt from '../hooks/useInstallPrompt';
 import InstallInstructionsModal from './InstallInstructionsModal';
 
 /**
- * InstallAsAppCard — permanent "Install as app" affordance for Settings.
+ * InstallAsAppCard - permanent "Install as app" affordance for Settings.
  *
  * Complements the floating InstallBanner (which only shows on /support and
  * to operators). Rendering it inside a Settings tab means someone who
- * dismissed the banner — or who never triggered its audience filter — still
+ * dismissed the banner - or who never triggered its audience filter - still
  * has an obvious, always-on path to install the PWA.
  *
  * A single "Install OyeChats" CTA is shown at all times (unless the app is
@@ -21,7 +21,7 @@ import InstallInstructionsModal from './InstallInstructionsModal';
  *   iOS Safari                           | Open the iOS Add-to-Home-Screen modal
  *   Otherwise                            | Open the desktop browser-menu modal
  *
- * We never show a bare "here are the manual steps" hint block — every state
+ * We never show a bare "here are the manual steps" hint block - every state
  * gets an actual button the user can press.
  */
 export default function InstallAsAppCard() {
@@ -38,7 +38,7 @@ export default function InstallAsAppCard() {
                 if (outcome === 'accepted') {
                     showToast('success', 'OyeChats installed. Look for the app icon on your device.');
                 } else if (outcome === 'dismissed') {
-                    showToast('info', 'Install dismissed — you can try again anytime.');
+                    showToast('info', 'Install dismissed - you can try again anytime.');
                 } else {
                     // Rare: browser was ready when we rendered but the event
                     // had already been consumed by the time the click fired.

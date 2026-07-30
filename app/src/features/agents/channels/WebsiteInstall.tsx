@@ -28,7 +28,7 @@ function CopyableCode({ code, label }: { code: string; label: string }) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard blocked (e.g. insecure context) — the code stays selectable.
+      // Clipboard blocked (e.g. insecure context) - the code stays selectable.
     }
   };
   return (
@@ -58,12 +58,12 @@ function maskKey(key: string): string {
 export interface WebsiteInstallProps {
   /** The agent's public embed key (`data-bot-key`). */
   botKey: string;
-  /** The agent's numeric id — used to attribute demo-link shares. */
+  /** The agent's numeric id - used to attribute demo-link shares. */
   botId: number;
 }
 
 /**
- * WebsiteInstall — everything needed to put the agent live on a website: the
+ * WebsiteInstall - everything needed to put the agent live on a website: the
  * embed key (reveal + copy), a link to a hosted preview, and platform-specific
  * install steps. The platform config + snippets are reused wholesale from the
  * legacy `data/platformIntegrations` module (see `pages/my-bots/InstallDrawer.jsx`
@@ -85,7 +85,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
       setKeyCopied(true);
       window.setTimeout(() => setKeyCopied(false), 2000);
     } catch {
-      // Clipboard blocked — the key is visible when revealed.
+      // Clipboard blocked - the key is visible when revealed.
     }
   };
 
@@ -95,7 +95,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
       setDemoCopied(true);
       window.setTimeout(() => setDemoCopied(false), 2000);
     } catch {
-      // Clipboard blocked — the demo link is still reachable via the button above.
+      // Clipboard blocked - the demo link is still reachable via the button above.
     }
     // Attribution is best-effort: a failed track must not undo the copy.
     try {
@@ -176,7 +176,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
             </span>
           </div>
           <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-            Opens a hosted page with your agent — no install needed to try it. Share the link so
+            Opens a hosted page with your agent - no install needed to try it. Share the link so
             others can chat with it too.
           </p>
         </div>

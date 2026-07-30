@@ -8,7 +8,7 @@ export interface ProgressProps {
   className?: string;
 }
 
-/** Progress — a determinate horizontal progress bar. */
+/** Progress - a determinate horizontal progress bar. */
 export function Progress({ value, label, className }: ProgressProps) {
   const clamped = Math.max(0, Math.min(100, Math.round(value)));
   return (

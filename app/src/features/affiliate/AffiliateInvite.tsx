@@ -1,5 +1,5 @@
 /**
- * AffiliateInvite — the public magic-link landing at `/affiliate-invite?token=`.
+ * AffiliateInvite - the public magic-link landing at `/affiliate-invite?token=`.
  *
  * Rebuilt from the legacy `pages/AffiliateInvite.jsx` in the new design
  * language. It looks the invite up (to show who it's for and when it expires),
@@ -50,7 +50,7 @@ function formatExpiry(iso: string | null): string | null {
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-/** Shell that centers a single card on the canvas — mirrors the auth pages. */
+/** Shell that centers a single card on the canvas - mirrors the auth pages. */
 function InviteShell({ children }: { children: ReactElement }): ReactElement {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--ds-bg-canvas)] px-4 py-12">
@@ -113,7 +113,7 @@ export function AffiliateInvite(): ReactElement {
         if (cancelled) return;
         const status = errStatus(err);
         if (status === 409) {
-          // Already an affiliate — the desired end state.
+          // Already an affiliate - the desired end state.
           setAccept({ status: 'accepted' });
         } else if (status === 403) {
           setAccept({

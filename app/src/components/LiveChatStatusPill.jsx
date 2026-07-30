@@ -5,30 +5,30 @@ import { getOperators } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 
 /**
- * LiveChatStatusPill — at-a-glance live chat readiness for the Support page.
+ * LiveChatStatusPill - at-a-glance live chat readiness for the Support page.
  *
  * The pill answers "what would a visitor see right now if they clicked Talk
  * to Human?" without requiring the admin to dig into Settings. Three states:
  *
- *   🟢 ACTIVE          — operators exist + at least one online
- *   🟡 NO ONE ONLINE   — operators exist but all offline (likely after-hours
+ *   🟢 ACTIVE          - operators exist + at least one online
+ *   🟡 NO ONE ONLINE   - operators exist but all offline (likely after-hours
  *                        or staff away from desk). Visitor sees offline form.
- *   🔴 NOT CONFIGURED  — zero operators added. Big nudge to add the first
+ *   🔴 NOT CONFIGURED  - zero operators added. Big nudge to add the first
  *                        one with a direct link to /team. This is the
  *                        empty-state moment that converts "I bought live
  *                        chat" into "I'm using live chat".
  *
  * ## Update strategy (three layers, in order of how fast they fire)
  *
- * 1. **WebSocket event** — the operator console (``LiveChat.jsx``) receives
+ * 1. **WebSocket event** - the operator console (``LiveChat.jsx``) receives
  *    ``operators_update`` broadcasts whenever any operator in the workspace
  *    flips online/offline. It re-dispatches that as the custom DOM event
- *    ``oyechats:operators-changed`` which this component listens for —
+ *    ``oyechats:operators-changed`` which this component listens for -
  *    near-instant updates (~50ms).
- * 2. **Tab visibility** — when the admin tab regains focus we refetch
+ * 2. **Tab visibility** - when the admin tab regains focus we refetch
  *    immediately. Handles the "switched away for 10 min, came back" case
  *    without waiting for the next poll tick.
- * 3. **Polling fallback** — every 5s while visible. Catches edge cases
+ * 3. **Polling fallback** - every 5s while visible. Catches edge cases
  *    where the WS broadcast was missed (cross-tab, dropped connection).
  *    5s is a deliberate tradeoff: cheap query (≤10 rows), small workspace.
  *    Don't go below 5s without checking the backend cost first.
@@ -39,7 +39,7 @@ export default function LiveChatStatusPill() {
     // Scope the readiness pill to the sidebar-selected bot. Operators are
     // bound one-to-one to a bot (Operator.bot_id, migration b1c7e9d3f2a5),
     // so a workspace with two bots and one operator each would otherwise
-    // show "1 of 2 online" on the bot with zero operators online — the
+    // show "1 of 2 online" on the bot with zero operators online - the
     // pill is answering "can visitors on THIS bot reach a human right now?",
     // not "does anyone in the workspace happen to be online?".
     const { selectedBot } = useBotContext();
@@ -103,7 +103,7 @@ export default function LiveChatStatusPill() {
     }
 
     if (error) {
-        return null; // Fail silent — don't break the page header on an API blip
+        return null; // Fail silent - don't break the page header on an API blip
     }
 
     // Filter down to operators bound to the currently-selected bot. Falls
@@ -116,7 +116,7 @@ export default function LiveChatStatusPill() {
     const total = scopedOperators.length;
     const onlineCount = scopedOperators.filter((o) => o.is_online).length;
 
-    // Empty state — no operators at all. This is the high-impact prompt:
+    // Empty state - no operators at all. This is the high-impact prompt:
     // the customer is paying for live chat but it literally cannot work.
     if (total === 0) {
         return (
@@ -149,7 +149,7 @@ export default function LiveChatStatusPill() {
         );
     }
 
-    // Has operators but none online — visitors see the offline form.
+    // Has operators but none online - visitors see the offline form.
     return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
             <AlertTriangle size={12} className="text-surface-500 dark:text-surface-400" />

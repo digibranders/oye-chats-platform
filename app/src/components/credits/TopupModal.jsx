@@ -34,7 +34,7 @@ function pricePerKCredits(amount, credits) {
 }
 
 /**
- * Top-up modal — flat-pack purchase only, no referral discount.
+ * Top-up modal - flat-pack purchase only, no referral discount.
  *
  * Referral discounts deliberately live on the *subscription* flow (PlanModal)
  * rather than here: an affiliate's reward should track recurring revenue, not
@@ -101,11 +101,11 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         );
         return;
       }
-      showToast('success', 'Payment successful — credits will appear in a few seconds.');
+      showToast('success', 'Payment successful - credits will appear in a few seconds.');
       onSuccess?.();
       onClose?.();
     } catch (err) {
-      // openRazorpayCheckout throws on dismiss with code 'dismissed' — silent.
+      // openRazorpayCheckout throws on dismiss with code 'dismissed' - silent.
       if (err?.code === 'dismissed') return;
       showToast('error', err?.message || 'Failed to start checkout');
     } finally {
@@ -124,7 +124,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         </DialogTitle>
         <DialogDescription>
           {botName
-            ? `Credits land in ${botName}'s isolated balance — they won't be used by any other bot. Top-ups roll over for 12 months. Larger packs include bonus credits.`
+            ? `Credits land in ${botName}'s isolated balance - they won't be used by any other bot. Top-ups roll over for 12 months. Larger packs include bonus credits.`
             : "Top-up credits don't expire for 12 months and roll over month-to-month. Larger packs include bonus credits."}
         </DialogDescription>
       </DialogHeader>
@@ -137,7 +137,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
           </div>
         ) : packs.length === 0 ? (
           <div className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">
-            No credit packs are available right now. Please try again in a moment — if this keeps happening,
+            No credit packs are available right now. Please try again in a moment - if this keeps happening,
             contact support.
           </div>
         ) : (
@@ -152,7 +152,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
                 : (pack.display_currency || pack.currency || 'USD').toUpperCase();
               // Highlight only the single badged pack (e.g. "BEST VALUE") so
               // the tinted fill always matches the badge. Tying it to bonus_pct
-              // instead filled two cards while only one was badged — reading as
+              // instead filled two cards while only one was badged - reading as
               // an inconsistent, accidental highlight.
               const featured = !!pack.badge;
               const submitting = submittingPack === amount;

@@ -15,7 +15,7 @@ const KNOWN_TYPES = new Set(['success', 'error', 'warning', 'info', 'loading', '
  *   showToast('Plan upgraded', 'success')   // newer convention
  *
  * Auto-detecting which arg is the type avoids touching every call site each
- * time we rename a caller, and avoids the symptom from the bug report — a
+ * time we rename a caller, and avoids the symptom from the bug report - a
  * toast that just rendered the literal string "success" because the args
  * were swapped and the actual message was being passed as the type.
  */
@@ -24,7 +24,7 @@ function normalizeArgs(a, b) {
     const bIsType = typeof b === 'string' && KNOWN_TYPES.has(b);
     if (aIsType && !bIsType) return { type: a, message: b ?? '' };
     if (bIsType && !aIsType) return { type: b, message: a ?? '' };
-    // Both look like types or both don't — default to "first arg is type",
+    // Both look like types or both don't - default to "first arg is type",
     // which matches the original context signature.
     return { type: typeof a === 'string' ? a : 'info', message: b ?? a ?? '' };
 }
@@ -96,7 +96,7 @@ function RichToast({ id, type, message }) {
                 'ring-1', conf.ring,
             ].join(' ')}
         >
-            {/* Accent bar — same colour as the icon's tint but bolder, hugs the left edge. */}
+            {/* Accent bar - same colour as the icon's tint but bolder, hugs the left edge. */}
             <span className={`absolute inset-y-0 left-0 w-1 ${conf.accent}`} aria-hidden="true" />
 
             {/* Icon in a tinted circle */}
@@ -121,7 +121,7 @@ function RichToast({ id, type, message }) {
                 </p>
             </div>
 
-            {/* Close button — hidden for loading toasts which auto-resolve. */}
+            {/* Close button - hidden for loading toasts which auto-resolve. */}
             {!isLoading && (
                 <button
                     type="button"
@@ -142,7 +142,7 @@ function RichToast({ id, type, message }) {
 }
 
 /**
- * Helper — render a custom toast of the given type. ``options`` is the
+ * Helper - render a custom toast of the given type. ``options`` is the
  * standard sonner option bag (``duration``, ``id``, etc.); we just set a
  * sensible default duration per type so errors linger long enough to read.
  */
@@ -178,7 +178,7 @@ export function ToastProvider({ children }) {
                 visibleToasts={5}
                 // Sit above every modal/overlay in the app (highest is z-[200]).
                 style={{ zIndex: 9999 }}
-                // ``richColors`` is intentionally off — we render every toast
+                // ``richColors`` is intentionally off - we render every toast
                 // through ``toast.custom`` and don't want sonner adding its
                 // own colour layer underneath ours. ``unstyled`` on the toast
                 // option silently disables sonner's <ol> mount, so we instead

@@ -4,13 +4,13 @@ import { Input, cn } from '../../../design-system';
 interface ToggleProps {
   checked: boolean;
   onChange: (next: boolean) => void;
-  /** Accessible name — required because the visible label sits in the row. */
+  /** Accessible name - required because the visible label sits in the row. */
   label: string;
   disabled?: boolean;
 }
 
 /**
- * Toggle — an accessible on/off switch (`role="switch"`). Presentational: the
+ * Toggle - an accessible on/off switch (`role="switch"`). Presentational: the
  * caller renders the visible label alongside and passes it here as the a11y name.
  */
 export function Toggle({ checked, onChange, label, disabled = false }: ToggleProps): ReactElement {
@@ -56,7 +56,7 @@ interface NumberFieldProps {
   onChange: (raw: string) => void;
 }
 
-/** NumberField — a labelled numeric input with a unit suffix and helper text. */
+/** NumberField - a labelled numeric input with a unit suffix and helper text. */
 export function NumberField({
   id,
   label,

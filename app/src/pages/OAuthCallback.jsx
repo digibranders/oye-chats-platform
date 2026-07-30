@@ -8,7 +8,7 @@ import { setAuthBundle, setAuthItem } from '../utils/authStorage';
 /**
  * Maps the machine-readable error codes returned by the backend OAuth
  * routes onto user-facing copy. Codes that aren't in this table fall
- * back to a generic message — keeps the surface area for accidental
+ * back to a generic message - keeps the surface area for accidental
  * disclosure tight.
  */
 const ERROR_MESSAGES = {
@@ -32,7 +32,7 @@ const ERROR_MESSAGES = {
  * We pull it out of the fragment, persist it the same way the
  * password-login codepath does, then fetch /auth/me to populate the
  * navbar widgets (name, role, trial banner). Finally we route the user
- * to the destination they requested via `?next=` — or the role-default
+ * to the destination they requested via `?next=` - or the role-default
  * if no destination was supplied.
  *
  * Why a dedicated page instead of stuffing this into App.jsx:
@@ -45,7 +45,7 @@ const ERROR_MESSAGES = {
  * Resolve the initial render state synchronously from the URL so the
  * component can paint the correct branch (error screen vs spinner)
  * without an extra render. The async sign-in finalisation still happens
- * in useEffect — only the *initial* classification is precomputed here.
+ * in useEffect - only the *initial* classification is precomputed here.
  *
  * Returns one of:
  *   { kind: 'error', message }
@@ -80,7 +80,7 @@ function classifyCallback(searchParams) {
 export default function OAuthCallback() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
-    // Lazy initializer runs once per mount — classifies the URL the
+    // Lazy initializer runs once per mount - classifies the URL the
     // same instant the component is constructed so the first paint
     // already shows the right branch.
     const [classified] = useState(() => classifyCallback(searchParams));
@@ -88,7 +88,7 @@ export default function OAuthCallback() {
 
     useEffect(() => {
         if (classified.kind !== 'working') return;
-        // React 18 StrictMode double-mounts effects in dev — guard so we
+        // React 18 StrictMode double-mounts effects in dev - guard so we
         // don't post-process the same fragment twice (the second pass
         // would race against the navigate() call).
         if (handled.current) return;
@@ -96,7 +96,7 @@ export default function OAuthCallback() {
 
         const { apiKey, next, isNew, isSuperadmin } = classified;
 
-        // Scrub the URL immediately — even though the fragment never
+        // Scrub the URL immediately - even though the fragment never
         // hits the server, we still don't want it sitting in the
         // browser's history.
         window.history.replaceState({}, '', '/auth/callback');
@@ -111,7 +111,7 @@ export default function OAuthCallback() {
         } catch {
             // banner cleanup is best-effort
         }
-        // OAuth defaults to ``persistent=true`` — Google sign-in users
+        // OAuth defaults to ``persistent=true`` - Google sign-in users
         // expect to stay logged in across browser restarts (matches how
         // Google itself handles its own sessions).
         setAuthBundle({
@@ -120,12 +120,12 @@ export default function OAuthCallback() {
             admin_is_verified: 'true', // Google verified the email server-side.
             is_superadmin: isSuperadmin ? 'true' : 'false',
         });
-        // Hint to the dashboard's toast surface — same key the
+        // Hint to the dashboard's toast surface - same key the
         // password-login flow uses so behaviour stays identical.
         sessionStorage.setItem('login_toast', isNew ? 'registered' : '1');
 
         // /auth/me gives us name, company, bot_count, affiliate flag, and
-        // the trial snapshot — everything the topbar + sidebar need. We
+        // the trial snapshot - everything the topbar + sidebar need. We
         // await it before navigating so the dashboard doesn't paint with
         // a flash of empty state.
         getCurrentUser()
@@ -158,7 +158,7 @@ export default function OAuthCallback() {
                 navigate(destination, { replace: true });
             })
             .catch(() => {
-                // /auth/me failed (network blip, token invalidated) — fall
+                // /auth/me failed (network blip, token invalidated) - fall
                 // back to "/" and let the standard 401 interceptor send
                 // the user to /login if the token is actually bad.
                 navigate('/', { replace: true });

@@ -186,7 +186,7 @@ export function AgentSnapshotCards({
               <div className="text-xs font-medium text-[var(--ds-text-subtle)]">Resolution rate</div>
               <div className="mt-1 text-xl font-bold text-[var(--ds-text)]">
                 {stats?.resolutionRate === null || stats?.resolutionRate === undefined
-                  ? '—'
+                  ? '-'
                   : `${stats.resolutionRate}%`}
               </div>
               <p className="mt-0.5 text-[11px] text-[var(--ds-text-muted)]">
@@ -200,7 +200,7 @@ export function AgentSnapshotCards({
               <div className="text-xs font-medium text-[var(--ds-text-subtle)]">Average rating</div>
               <div className="mt-1 text-xl font-bold text-[var(--ds-text)]">
                 {stats?.averageRating === null || stats?.averageRating === undefined
-                  ? '—'
+                  ? '-'
                   : `${stats.averageRating} / 5`}
               </div>
               <p className="mt-0.5 text-[11px] text-[var(--ds-text-muted)]">

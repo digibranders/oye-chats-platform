@@ -20,7 +20,7 @@ const widthMap: Record<NonNullable<PageContainerProps['width']>, string> = {
 };
 
 /**
- * PageContainer — the standard page shell: centered measure, page header
+ * PageContainer - the standard page shell: centered measure, page header
  * (title / description / actions), and vertically-spaced content. Every
  * routed surface renders inside one so pages stay visually consistent.
  */

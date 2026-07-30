@@ -2,11 +2,11 @@ import { type Bot } from '../../../types/domain';
 
 /**
  * Overall health of an agent, worst-first:
- * - `critical` — something is actively broken (last training failed).
- * - `setup`    — the agent can't work yet (it has learned nothing).
- * - `attention`— it works but isn't delivering value yet (trained, not live).
- * - `training` — a crawl is in progress; check back shortly.
- * - `healthy`  — trained and live on a website.
+ * - `critical` - something is actively broken (last training failed).
+ * - `setup`    - the agent can't work yet (it has learned nothing).
+ * - `attention`- it works but isn't delivering value yet (trained, not live).
+ * - `training` - a crawl is in progress; check back shortly.
+ * - `healthy`  - trained and live on a website.
  */
 export type HealthLevel = 'healthy' | 'training' | 'attention' | 'setup' | 'critical';
 
@@ -84,7 +84,7 @@ function knowledgeCheck(agent: Bot): HealthCheck {
     id: 'knowledge',
     label: 'Knowledge',
     status: 'fail',
-    detail: 'Nothing learned yet — add a website or documents.',
+    detail: 'Nothing learned yet - add a website or documents.',
   };
 }
 
@@ -103,7 +103,7 @@ function deploymentCheck(agent: Bot): HealthCheck {
     id: 'deployment',
     label: 'Live on your site',
     status: 'warn',
-    detail: 'Not installed yet — add the widget to start conversations.',
+    detail: 'Not installed yet - add the widget to start conversations.',
   };
 }
 
@@ -127,7 +127,7 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
     };
   }
 
-  // Still learning — nothing is wrong, just not ready.
+  // Still learning - nothing is wrong, just not ready.
   if (knowledge.status === 'pending') {
     return {
       level: 'training',
@@ -138,7 +138,7 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
     };
   }
 
-  // Untrained — the agent can't answer anything useful.
+  // Untrained - the agent can't answer anything useful.
   if (!isTrained(agent)) {
     return {
       level: 'setup',
@@ -154,7 +154,7 @@ export function deriveAgentHealth(agent: Bot): AgentHealth {
     return {
       level: 'attention',
       title: 'Ready to go live',
-      description: 'Your AI is trained and answering well — add it to your website to meet visitors.',
+      description: 'Your AI is trained and answering well - add it to your website to meet visitors.',
       checks,
       nextStep: { label: 'Install widget', to: 'channels' },
     };

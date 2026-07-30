@@ -1,5 +1,5 @@
 /**
- * DomainRestrictionsSection — locks the widget to an allow-list of domains.
+ * DomainRestrictionsSection - locks the widget to an allow-list of domains.
  *
  * Rebuilt from the orphaned legacy `components/DomainRestrictions.jsx` (which
  * had no route into Admin 2.0, leaving a security control unreachable). Governs

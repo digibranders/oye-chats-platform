@@ -34,10 +34,10 @@ export interface ConsumptionTrendProps {
 }
 
 /**
- * ConsumptionTrend — a single-series 30-day credit-consumption line (magnitude
+ * ConsumptionTrend - a single-series 30-day credit-consumption line (magnitude
  * over time). One accent hue, a soft area fill, recessive axis labels, and a
  * crosshair + tooltip on hover. No legend (the title names the series) and no
- * chart library — a hand-built, theme-aware SVG. An sr-only summary + peak/
+ * chart library - a hand-built, theme-aware SVG. An sr-only summary + peak/
  * total captions keep it legible without color.
  */
 export function ConsumptionTrend({ points }: ConsumptionTrendProps): ReactElement {
@@ -105,7 +105,7 @@ export function ConsumptionTrend({ points }: ConsumptionTrendProps): ReactElemen
             </linearGradient>
           </defs>
 
-          {/* Baseline — recessive. */}
+          {/* Baseline - recessive. */}
           <line
             x1={PAD.left}
             y1={geo.baselineY}
@@ -148,7 +148,7 @@ export function ConsumptionTrend({ points }: ConsumptionTrendProps): ReactElemen
           )}
         </svg>
 
-        {/* Tooltip — pinned to the top of the plot and clamped within the
+        {/* Tooltip - pinned to the top of the plot and clamped within the
             card so a peak near an edge never clips the label. */}
         {activePoint && active !== null && (
           <div

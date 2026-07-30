@@ -42,7 +42,7 @@ function toStored(field: ConfigFieldDef, raw: string): number {
 }
 
 /**
- * Timing & reliability — the deepest widget_config knobs. Hidden behind
+ * Timing & reliability - the deepest widget_config knobs. Hidden behind
  * progressive disclosure because the defaults suit almost every site; only
  * power users tuning animation timing, frustration detection or WebSocket
  * reconnection need to open it.
@@ -62,7 +62,7 @@ export function TimingReliabilitySection({
             Timing &amp; reliability
           </span>
         }
-        description="Low-level timing for animations, frustration detection and connection recovery. The defaults work well — only change these if you know you need to."
+        description="Low-level timing for animations, frustration detection and connection recovery. The defaults work well - only change these if you know you need to."
       />
 
       <button

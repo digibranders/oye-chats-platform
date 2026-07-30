@@ -19,8 +19,6 @@ import {
 } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { useBotContext } from '../../context/BotContext';
-import { useEntitlements } from '../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot } from '../../types/domain';
 import { summarizeAgents } from './agent-status';
 import { AgentCard } from './AgentCard';
@@ -31,7 +29,7 @@ import { AgentActionsMenu } from './AgentActionsMenu';
  * One agent in the grid: the shared, fully-navigational <AgentCard> tile with
  * the actions "⋯" menu overlaid in its top-right corner. The menu is a sibling
  * of the card's link (not a child), so both stay independent, accessible
- * controls — clicking the tile opens the agent, the menu handles the rest.
+ * controls - clicking the tile opens the agent, the menu handles the rest.
  */
 function AgentGridCard({ bot, onChanged }: { bot: Bot; onChanged: () => void }): ReactElement {
   return (
@@ -44,7 +42,7 @@ function AgentGridCard({ bot, onChanged }: { bot: Bot; onChanged: () => void }):
   );
 }
 
-/** The portfolio summary row — four honest counts derived from the agent list. */
+/** The portfolio summary row - four honest counts derived from the agent list. */
 function AgentsSummary({ bots }: { bots: Bot[] }): ReactElement {
   const summary = summarizeAgents(bots);
   return (
@@ -81,17 +79,17 @@ function AgentsLoading(): ReactElement {
 }
 
 /**
- * AgentsPage — the AI Agents list. Answers exactly one question: "Which agents
+ * AgentsPage - the AI Agents list. Answers exactly one question: "Which agents
  * do I have?"
  *
  * A summary of portfolio health, then a grid of agent tiles that each navigate
  * to the agent's Overview. Data comes from the reused BotContext (an AI Agent
- * IS a legacy Bot), so `loading`/`error` are read straight from the provider —
+ * IS a legacy Bot), so `loading`/`error` are read straight from the provider -
  * no local fetch state, no synchronous setState in an effect. Creating an agent
  * reuses the legacy `createBot` API via the CreateAgentDialog.
  *
  * Add-Agent is plan-gated on the `bots` limit: the per-bot billing model means
- * only the first (free) agent is unconditional — a workspace already at its
+ * only the first (free) agent is unconditional - a workspace already at its
  * `bots` ceiling gets the upgrade modal instead of the create dialog. The
  * backend enforces the same rule server-side (`can_client_add_new_bot`), so
  * `CreateAgentDialog` also routes a 402 `must_subscribe` response from
@@ -99,23 +97,15 @@ function AgentsLoading(): ReactElement {
  */
 export function AgentsPage(): ReactElement {
   const { bots, loading, error, refreshBots } = useBotContext();
-  const { withinLimit, planName } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
 
-  const openAgentLimitUpgrade = useCallback((): void => {
-    setCreateOpen(false);
-    openUpgradeModal('add_bot', { current: bots.length, planName });
-  }, [openUpgradeModal, bots.length, planName]);
-
+  // Always open the create dialog. Whether the new agent is free or needs a paid
+  // plan is decided inside the dialog (free → created immediately; paywalled →
+  // it advances to a pricing step and runs the per-agent checkout).
   const handleAddAgent = useCallback((): void => {
-    if (!withinLimit('bots', bots.length)) {
-      openAgentLimitUpgrade();
-      return;
-    }
     setCreateOpen(true);
-  }, [withinLimit, bots.length, openAgentLimitUpgrade]);
+  }, []);
 
   const handleCreated = useCallback(
     async (bot: Bot): Promise<void> => {
@@ -124,6 +114,18 @@ export function AgentsPage(): ReactElement {
       // BotContext instead of briefly rendering "agent not found".
       await refreshBots();
       navigate(`/agents/${bot.id}/overview`);
+    },
+    [refreshBots, navigate],
+  );
+
+  // Paid-agent path: the agent is materialised server-side after checkout. Land
+  // on its Overview when we know the id; otherwise (webhook still in flight)
+  // return to the list, where it appears as soon as it's created.
+  const handleCheckoutComplete = useCallback(
+    async (botId: number): Promise<void> => {
+      setCreateOpen(false);
+      await refreshBots();
+      navigate(botId > 0 ? `/agents/${botId}/overview` : '/agents');
     },
     [refreshBots, navigate],
   );
@@ -172,7 +174,7 @@ export function AgentsPage(): ReactElement {
         <EmptyState
           icon={BotIcon}
           title="Create your first AI chatbot"
-          description="An AI chatbot answers your visitors from your own content. Name one to get started — training and customization come next."
+          description="An AI chatbot answers your visitors from your own content. Name one to get started - training and customization come next."
           action={
             <Button onClick={handleAddAgent}>
               <Plus size={16} aria-hidden="true" />
@@ -203,7 +205,7 @@ export function AgentsPage(): ReactElement {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreated}
-        onRequiresUpgrade={openAgentLimitUpgrade}
+        onCheckoutComplete={handleCheckoutComplete}
       />
     </PageContainer>
   );

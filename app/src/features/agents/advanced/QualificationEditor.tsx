@@ -24,7 +24,7 @@ import {
 interface QualificationEditorProps {
   open: boolean;
   onClose: () => void;
-  /** Current framework key — gates custom-only affordances (rename/add/remove). */
+  /** Current framework key - gates custom-only affordances (rename/add/remove). */
   framework: string;
   /** The bot's current `bant_config` (or null → BANT defaults). */
   config: Record<string, unknown> | null;
@@ -40,7 +40,7 @@ function toInt(raw: string, min: number): number {
 }
 
 /**
- * QualificationEditor — the full `bant_config` editor. Opens in a modal so the
+ * QualificationEditor - the full `bant_config` editor. Opens in a modal so the
  * heavy scoring model gets a focused, roomy surface instead of crowding the
  * Advanced page. Edits a local working copy; "Apply" hands the result back to the
  * page draft, which owns persistence via its single save bar.
@@ -219,7 +219,7 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
 
   return (
     <div className="space-y-6">
-      {/* Weight-sum guidance — surfaced first so it's visible before scrolling. */}
+      {/* Weight-sum guidance - surfaced first so it's visible before scrolling. */}
       {!weightOk && (
         <div className="flex items-start gap-2.5 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3.5 py-3">
           <AlertTriangle size={15} className="mt-0.5 shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
@@ -252,7 +252,7 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
                 key={key}
                 className="overflow-hidden rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]"
               >
-                {/* Card header — label, weight, enable, expand, (custom) delete. */}
+                {/* Card header - label, weight, enable, expand, (custom) delete. */}
                 <div className="flex flex-wrap items-center gap-3 bg-[var(--ds-bg-sunken)] px-4 py-3">
                   <button
                     type="button"
@@ -322,7 +322,7 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
                   )}
                 </div>
 
-                {/* Card body — options + CTA. */}
+                {/* Card body - options + CTA. */}
                 {isOpen && (
                   <div className="space-y-4 px-4 py-4">
                     <div className="space-y-2">
@@ -445,7 +445,7 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
 
       {/* ── Score decay ────────────────────────────────────────────────────────
           Decay is applied by the backend per `{dimension}_decay_per_30d`, and
-          these two knobs write `timeline_`/`need_` — which only exist on BANT.
+          these two knobs write `timeline_`/`need_` - which only exist on BANT.
           For every other framework they'd map to non-existent dimensions and
           silently no-op, so the section is shown only for BANT. */}
       {framework === 'bant' && (
@@ -501,7 +501,7 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
           />
         </div>
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          Add points for engagement signals from the widget — return visits, campaign traffic, time
+          Add points for engagement signals from the widget - return visits, campaign traffic, time
           on site, pages viewed, and known referrers.
         </p>
         {model.behavioral.enabled && (
@@ -631,7 +631,7 @@ function EditorBody({ framework, config, onApply, onClose }: EditorBodyProps): R
         )}
       </section>
 
-      {/* Footer actions — kept in the scroll body so long models still reach them. */}
+      {/* Footer actions - kept in the scroll body so long models still reach them. */}
       <div className="flex items-center justify-end gap-2 border-t border-[var(--ds-border)] pt-4">
         <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel

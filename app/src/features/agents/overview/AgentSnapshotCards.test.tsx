@@ -104,7 +104,7 @@ describe('AgentOverviewHero & AgentSnapshotCards', () => {
       </MemoryRouter>,
     );
 
-    const dashes = screen.getAllByText('—');
+    const dashes = screen.getAllByText('-');
     expect(dashes.length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/no ratings yet/i)).toBeInTheDocument();
     expect(screen.getByText(/no resolved conversations yet/i)).toBeInTheDocument();

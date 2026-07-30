@@ -45,7 +45,7 @@ function TrendTooltip({ active, payload, label, palette }: TrendTooltipProps): R
 }
 
 /**
- * MessageTrendChart — the workspace message-volume trend as a filled area
+ * MessageTrendChart - the workspace message-volume trend as a filled area
  * chart. Theme-aware (colors follow the DS theme) and horizontally responsive.
  * Decorative for screen readers; the accompanying summary metrics carry the
  * numbers in text.

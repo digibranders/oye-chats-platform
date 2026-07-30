@@ -4,7 +4,7 @@ import { Button, StatusBadge, cn } from '../../../design-system';
 import { formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 
-/** Standard is the value pick — matches MOST_POPULAR_SLUG on the marketing site. */
+/** Standard is the value pick - matches MOST_POPULAR_SLUG on the marketing site. */
 const MOST_POPULAR_SLUG = 'standard';
 
 type FeatureRow = { group: string; label: string } & (
@@ -14,20 +14,20 @@ type FeatureRow = { group: string; label: string } & (
 
 function limitText(value: number | undefined): string {
   if (value === -1) return 'Unlimited';
-  if (value == null) return '—';
+  if (value == null) return '-';
   return value.toLocaleString();
 }
 
 function historyText(value: number | undefined): string {
   if (value === -1) return 'Unlimited';
-  if (!value) return '—';
+  if (!value) return '-';
   return value >= 365 && value % 365 === 0
     ? `${value / 365} year${value === 365 ? '' : 's'}`
     : `${value} days`;
 }
 
 // Data-driven from the live plan payload (`features` flags + `limits` counters)
-// so the matrix stays correct as plans change — nothing here is hardcoded per
+// so the matrix stays correct as plans change - nothing here is hardcoded per
 // tier. Rows are grouped; group headers render once as a spanning row.
 const FEATURE_ROWS: readonly FeatureRow[] = [
   { group: 'Usage', label: 'Credits / month', kind: 'text', value: (p) => formatCredits(p.creditsPerMonth) },
@@ -50,7 +50,7 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
 const GROUP_ORDER: readonly string[] = ['Usage', 'Features'];
 
 // On the annual cycle, lead with the monthly-EQUIVALENT (annual ÷ 12) and
-// caption the annual total billed — mirroring the public pricing page so the
+// caption the annual total billed - mirroring the public pricing page so the
 // headline stays comparable across cycles.
 function priceLabel(
   plan: PlanView,
@@ -88,16 +88,16 @@ export interface PlanMatrixProps {
   onSelect: (plan: PlanView) => void;
   /** Suppress the built-in cycle toggle when a parent already renders one. */
   hideToggle?: boolean;
-  /** Current subscription status — a trialing current column offers activation. */
+  /** Current subscription status - a trialing current column offers activation. */
   currentStatus?: string | null;
 }
 
 /**
- * PlanMatrix — the plan-comparison surface: a single dense feature table
+ * PlanMatrix - the plan-comparison surface: a single dense feature table
  * (rows = features, columns = plans) that replaces the old space-hungry card
  * grid. The current plan's column is highlighted, Standard carries a "Most
  * popular" marker, and a monthly/annual toggle switches the header prices.
- * Every value is read from the live plan payload — no hardcoded tiers.
+ * Every value is read from the live plan payload - no hardcoded tiers.
  */
 export function PlanMatrix({
   plans,

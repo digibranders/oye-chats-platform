@@ -1,5 +1,5 @@
 /**
- * NotificationBell — bell icon + rich dropdown that lives in the TopBar.
+ * NotificationBell - bell icon + rich dropdown that lives in the TopBar.
  *
  * The bell is the persistent surface for in-app notifications. It shows:
  *

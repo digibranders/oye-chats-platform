@@ -17,7 +17,7 @@ export default function VerifyEmail() {
   // Preserve a deep-link ``next`` (e.g. ``/invite/<token>``) through the
   // verification bounce so an invite-flow signup lands back on the invite
   // airlock after OTP entry instead of the dashboard root. Open-redirect
-  // guarded — same rule as Login/Register: only same-origin relative paths.
+  // guarded - same rule as Login/Register: only same-origin relative paths.
   const rawNext = searchParams.get('next') || '';
   const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
 
@@ -35,7 +35,7 @@ export default function VerifyEmail() {
       return;
     }
     if (getAuthItem('admin_is_verified') === 'true') {
-      // Already verified — respect a preserved ``next`` (e.g. invite airlock)
+      // Already verified - respect a preserved ``next`` (e.g. invite airlock)
       // before falling back to the dashboard root. Same open-redirect guard
       // as the post-verify redirect below.
       navigate(safeNext || '/', { replace: true });
@@ -115,7 +115,7 @@ export default function VerifyEmail() {
       setAuthItem('admin_is_verified', 'true');
       removeAuthItem('admin_pending_email');
 
-      // Honor deep-link ``next`` — invite-flow signups land back on
+      // Honor deep-link ``next`` - invite-flow signups land back on
       // ``/invite/<token>`` here so the airlock's own logged-in branch
       // auto-detects the freshly-verified session and shows the Accept
       // button. Fallback to dashboard root for organic signups.
@@ -157,7 +157,7 @@ export default function VerifyEmail() {
 
   return (
     <div className="min-h-screen flex bg-surface-50">
-      {/* Left panel — branding */}
+      {/* Left panel - branding */}
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden bg-gradient-to-br from-[#17121f] via-[#14101e] to-[#0f0b15] text-white">
         <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(162,28,175,0.18) 0%, rgba(162,28,175,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
@@ -210,7 +210,7 @@ export default function VerifyEmail() {
         <div className="relative z-10" />
       </div>
 
-      {/* Right panel — form */}
+      {/* Right panel - form */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50">
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -257,7 +257,7 @@ export default function VerifyEmail() {
               animate={{ opacity: 1, y: 0 }}
               className="mb-5 p-3.5 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-medium border border-emerald-200"
             >
-              New code sent — check your inbox.
+              New code sent - check your inbox.
             </motion.div>
           )}
 

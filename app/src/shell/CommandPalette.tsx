@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import { Command } from 'cmdk';
 import { Search } from 'lucide-react';
-import { PRIMARY_NAV } from './nav.config';
+import { PRIMARY_NAV, navForRole } from './nav.config';
 import { cn } from '../design-system';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -10,7 +11,7 @@ export interface CommandPaletteProps {
 }
 
 /**
- * Command Palette — PLACEHOLDER (Phase 1).
+ * Command Palette - PLACEHOLDER (Phase 1).
  * Opens on ⌘K / Ctrl-K and currently offers navigation to the six primary
  * destinations. Full command search (agents, conversations, actions, settings)
  * is wired in a later phase once those surfaces exist. Rendered as a controlled
@@ -19,6 +20,8 @@ export interface CommandPaletteProps {
  */
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const navigate = useNavigate();
+  const { isOperator } = useWorkspace();
+  const navItems = navForRole(PRIMARY_NAV, isOperator);
 
   if (!open) return null;
 
@@ -63,7 +66,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               heading="Navigate"
               className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-[var(--ds-text-subtle)]"
             >
-              {PRIMARY_NAV.map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon;
                 return (
                   <Command.Item

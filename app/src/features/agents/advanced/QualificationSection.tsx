@@ -13,10 +13,10 @@ interface QualificationSectionProps {
 }
 
 /**
- * Lead qualification — which framework scores visitors as leads. Switching the
+ * Lead qualification - which framework scores visitors as leads. Switching the
  * framework applies its preset scoring model (handled by the page). Per-dimension
  * weight/threshold editing lives in the dedicated qualification editor (surfaced
- * to the user by the Info card below) — this surface owns the framework choice
+ * to the user by the Info card below) - this surface owns the framework choice
  * plus a read-only threshold summary.
  */
 export function QualificationSection({

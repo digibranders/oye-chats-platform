@@ -39,7 +39,7 @@ import { DataTable, type Column } from '../../design-system/components/DataTable
 import { QuickAction } from '../../design-system/components/QuickAction';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
-import type { TopQuestion } from '../../types/domain';
+import type { Bot, TopQuestion } from '../../types/domain';
 import {
   formatRelativeTime,
   formatToday,
@@ -49,6 +49,7 @@ import {
   type HomeData,
 } from './home-data';
 import { useHomeData } from './useHomeData';
+import { useBotContext } from '../../context/BotContext';
 
 // ── Small presentation helpers ───────────────────────────────────────────────
 
@@ -295,33 +296,49 @@ function HomeEmpty(): ReactElement {
 }
 
 /**
- * PlanUsageCard — a compact plan-and-capacity glance: the workspace's plan
- * badge plus the three usage-populated limit meters (bots, operators,
- * documents — see `useEntitlements` foundation notes; `credits`,
- * `page_scraping`, `chat_history_days` are NOT populated by the backend
- * `usage` map, so they're deliberately left off this summary rather than
- * shown with a fabricated "used" count). Free workspaces get a subtle
+ * PlanUsageCard - a compact plan-and-capacity glance: the workspace's plan
+ * badge plus usage-populated limit meters (see `useEntitlements` foundation
+ * notes; `credits`, `page_scraping`, `chat_history_days` are NOT populated by
+ * the backend `usage` map, so they're deliberately left off this summary rather
+ * than shown with a fabricated "used" count). Free workspaces get a subtle
  * upgrade nudge into Workspace ▸ Billing.
+ *
+ * Scope follows the shell BotSwitcher: on "All agents" (`selectedBot` null) it
+ * shows the workspace-wide plan totals (Agents / Members / Documents). With a
+ * single agent selected it drops the account-level "Agents" line and scopes
+ * Members (operator seats are per-bot) and Documents to that agent, matching
+ * the rest of Home and the per-bot seat model on the Members page.
  */
-function PlanUsageCard(): ReactElement {
+function PlanUsageCard({
+  selectedBot,
+  data,
+}: {
+  selectedBot: Bot | null;
+  data: HomeData;
+}): ReactElement {
   const { entitlements, isFree, planName, limitFor } = useEntitlements();
+
+  // When scoped to one agent, pull that agent's per-bot counts from the loaded
+  // roster; fall back to a null summary (0s) if it isn't present yet.
+  const agent = selectedBot ? data.agents.find((a) => a.bot.id === selectedBot.id) ?? null : null;
+  const scoped = selectedBot != null;
+  const membersUsed = scoped ? agent?.operators ?? 0 : entitlements.usage.operators ?? 0;
+  const documentsUsed = scoped ? agent?.documents ?? 0 : entitlements.usage.documents ?? 0;
 
   return (
     <Card className="space-y-5 p-5">
-      <SectionHeader title="Plan & usage" actions={<PlanBadge planName={planName} />} />
+      <SectionHeader
+        title="Plan & usage"
+        description={scoped ? `Usage for ${selectedBot?.name ?? 'this agent'}` : undefined}
+        actions={<PlanBadge planName={planName} />}
+      />
 
       <div className="space-y-4">
-        <QuotaMeter label="Agents" used={entitlements.usage.bots ?? 0} limit={limitFor('bots')} />
-        <QuotaMeter
-          label="Members"
-          used={entitlements.usage.operators ?? 0}
-          limit={limitFor('operators')}
-        />
-        <QuotaMeter
-          label="Documents"
-          used={entitlements.usage.documents ?? 0}
-          limit={limitFor('documents')}
-        />
+        {!scoped && (
+          <QuotaMeter label="Agents" used={entitlements.usage.bots ?? 0} limit={limitFor('bots')} />
+        )}
+        <QuotaMeter label="Members" used={membersUsed} limit={limitFor('operators')} />
+        <QuotaMeter label="Documents" used={documentsUsed} limit={limitFor('documents')} />
       </div>
 
       {isFree && (
@@ -329,7 +346,7 @@ function PlanUsageCard(): ReactElement {
           to="/workspace/billing"
           className="flex items-center justify-between gap-2 rounded-lg border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-3.5 py-2.5 text-[13px] font-medium text-[var(--ds-accent-text)] transition-colors hover:bg-[var(--ds-accent-soft)]/80"
         >
-          <span>You&rsquo;re on the Free plan — upgrade for more capacity</span>
+          <span>You&rsquo;re on the Free plan - upgrade for more capacity</span>
           <ArrowRight size={14} aria-hidden="true" className="shrink-0" />
         </Link>
       )}
@@ -357,12 +374,16 @@ const TOP_QUESTION_COLUMNS: Column<TopQuestion>[] = [
 ];
 
 /**
- * HomePage — the workspace's daily operational overview. Answers "How is my
+ * HomePage - the workspace's daily operational overview. Answers "How is my
  * business doing today?" across every agent: headline KPIs, agent health, the
  * questions visitors ask most, recommended next steps, and a live activity feed.
  */
 export function HomePage(): ReactElement {
-  const { data, loading, error, reload } = useHomeData();
+  // Home mirrors the shell BotSwitcher: a specific agent narrows the whole
+  // dashboard to that bot; "All agents" (null) keeps the workspace-wide
+  // aggregate that this page has historically shown.
+  const { selectedBot } = useBotContext();
+  const { data, loading, error, reload } = useHomeData(selectedBot?.id ?? null);
   const { currentWorkspaceName } = useWorkspace();
 
   const now = new Date();
@@ -388,13 +409,19 @@ export function HomePage(): ReactElement {
       ) : !data || data.agents.length === 0 ? (
         <HomeEmpty />
       ) : (
-        <HomeContent data={data} />
+        <HomeContent data={data} selectedBot={selectedBot} />
       )}
     </PageContainer>
   );
 }
 
-function HomeContent({ data }: { data: HomeData }): ReactElement {
+function HomeContent({
+  data,
+  selectedBot,
+}: {
+  data: HomeData;
+  selectedBot: Bot | null;
+}): ReactElement {
   const insight = buildHealthInsight(data);
   const recommendations = buildRecommendations(data);
   const activityItems = toActivityItems(data.activity);
@@ -402,7 +429,7 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
 
   return (
     <div className="space-y-8">
-      {/* KPI row — scalar snapshots. No trend deltas: the API returns point-in-
+      {/* KPI row - scalar snapshots. No trend deltas: the API returns point-in-
           time totals, so a trend arrow here would be fabricated. */}
       <section aria-label="Key metrics">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -426,7 +453,7 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
       </section>
 
       <div className="grid gap-8 lg:grid-cols-3">
-        {/* Main column — agents + what people ask */}
+        {/* Main column - agents + what people ask */}
         <div className="space-y-8 lg:col-span-2">
           <section aria-label="Your agents" className="space-y-4">
             <SectionHeader
@@ -470,17 +497,17 @@ function HomeContent({ data }: { data: HomeData }): ReactElement {
               caption="Most frequently asked questions and how many times each was asked"
               empty={
                 <span className="text-[13px] text-[var(--ds-text-muted)]">
-                  No questions yet — they’ll appear here once visitors start chatting.
+                  No questions yet - they’ll appear here once visitors start chatting.
                 </span>
               }
             />
           </section>
         </div>
 
-        {/* Aside — plan usage, health insight, next steps, live activity */}
+        {/* Aside - plan usage, health insight, next steps, live activity */}
         <div className="space-y-8">
           <section aria-label="Plan and usage">
-            <PlanUsageCard />
+            <PlanUsageCard selectedBot={selectedBot} data={data} />
           </section>
 
           {!hasFeature('bant') && (

@@ -2,15 +2,16 @@ import { type ReactElement } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { OyeChatsMark } from './OyeChatsMark';
-import { PRIMARY_NAV, SECONDARY_NAV, type NavItem } from './nav.config';
+import { PRIMARY_NAV, SECONDARY_NAV, navForRole, type NavItem } from './nav.config';
 import { cn } from '../design-system';
 import { useEntitlements } from '../hooks/useEntitlements';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 /** The one primary-nav route that is Free-plan-gated today (backend
  *  `plan_entitlements_service.py`: Free hides the Leads link entirely and the
  *  `/leads` API 403s for Free). A plain constant rather than a lookup table
- *  since it's currently a single destination — extend to a `Record<string,
+ *  since it's currently a single destination - extend to a `Record<string,
  *  UpgradeIntentKey>` if a second gated primary-nav item shows up. */
 const LEADS_NAV_ROUTE = '/leads';
 
@@ -82,7 +83,7 @@ interface LockedNavItemProps {
 }
 
 /**
- * LockedNavItem — the Free-plan-gated stand-in for a primary-nav destination.
+ * LockedNavItem - the Free-plan-gated stand-in for a primary-nav destination.
  * Renders as a `<button>` (never a `<NavLink>`, since it must not navigate)
  * with the same inactive-state row styling `NavLinkItem` uses, minus any
  * active treatment (a locked destination is never "current"). Clicking opens
@@ -93,7 +94,7 @@ interface LockedNavItemProps {
  */
 function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): ReactElement {
   const Icon = item.icon;
-  const lockedLabel = `${item.label} — upgrade to unlock`;
+  const lockedLabel = `${item.label} - upgrade to unlock`;
   return (
     <button
       type="button"
@@ -135,7 +136,7 @@ function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): React
 }
 
 /**
- * Sidebar — the one navigation rail. Renders exactly the six primary
+ * Sidebar - the one navigation rail. Renders exactly the six primary
  * destinations from `nav.config`. Warm-neutral surface with volt-violet used
  * only for the active state (accent-only per mandate). Responsive: an
  * icon-collapsible rail on desktop, an off-canvas drawer on mobile.
@@ -148,9 +149,14 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
   const showLabels = isMobile || !collapsed;
   const { isFree } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
+  // Operators acting in another workspace get an inbox-scoped rail; owners and
+  // admins see the full object-nav. Route-guarded too (`OperatorRouteGuard`).
+  const { isOperator } = useWorkspace();
+  const primaryNav = navForRole(PRIMARY_NAV, isOperator);
+  const secondaryNav = navForRole(SECONDARY_NAV, isOperator);
 
   // When the mobile drawer is closed it's translated off-canvas but its links
-  // would still be focusable / in the AX tree — `inert` removes it entirely.
+  // would still be focusable / in the AX tree - `inert` removes it entirely.
   const drawerClosed = isMobile && !mobileOpen;
 
   return (
@@ -175,7 +181,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
 
       {/* Primary navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {PRIMARY_NAV.map((item) =>
+        {primaryNav.map((item) =>
           isFree && item.to === LEADS_NAV_ROUTE ? (
             <LockedNavItem
               key={item.to}
@@ -189,14 +195,14 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
         )}
       </nav>
 
-      {/* Secondary navigation — bottom-anchored, below the primary object-nav.
+      {/* Secondary navigation - bottom-anchored, below the primary object-nav.
           Preferences only (e.g. Settings); account/workspace switching stays
           in the TopBar user menu, so this never duplicates that nav. */}
       <nav
         aria-label="Secondary navigation"
         className="shrink-0 space-y-1 border-t border-[var(--ds-border)] px-3 py-2"
       >
-        {SECONDARY_NAV.map((item) => (
+        {secondaryNav.map((item) => (
           <NavLinkItem key={item.to} item={item} showLabels={showLabels} onNavigate={onNavigate} />
         ))}
       </nav>

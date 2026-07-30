@@ -3,7 +3,7 @@
  *
  * Auth ALWAYS lives in ``localStorage`` so every tab in the same browser
  * shares one session. It used to route non-"Remember me" logins into
- * ``sessionStorage``, but sessionStorage is per-tab — opening the app in a
+ * ``sessionStorage``, but sessionStorage is per-tab - opening the app in a
  * second tab found no token and tore the whole session down. localStorage is
  * shared across tabs, which is the behaviour users expect.
  *
@@ -37,7 +37,7 @@ export const AUTH_STORAGE_KEYS = [
     'auth_type',
     'operator_role',
     'operator_id',
-    // Legacy keys from before the agent → operator rename — cleared on logout
+    // Legacy keys from before the agent → operator rename - cleared on logout
     // in case the migration shim ran but the user logs out on an old session.
     'agent_role',
     'agent_id',
@@ -46,7 +46,7 @@ export const AUTH_STORAGE_KEYS = [
     'company_website',
     'onboarding_complete',
     'selected_bot_id',
-    // Workspace switcher state — the currently-active workspace context that
+    // Workspace switcher state - the currently-active workspace context that
     // gets sent as X-Workspace-Id on every API call. Persisted across reloads
     // so the user comes back to the workspace they were in last.
     'current_workspace_id',
@@ -59,7 +59,7 @@ export const AUTH_STORAGE_KEYS = [
  * Write a single auth key to localStorage (shared across tabs). Any legacy
  * sessionStorage copy of the same key is cleared so a stale per-tab shadow
  * can't shadow the shared value. The ``persistent`` param is accepted for
- * backward compatibility but no longer changes WHERE the value is stored —
+ * backward compatibility but no longer changes WHERE the value is stored -
  * session length is governed by the expiry armed in ``setAuthBundle``. Extra
  * positional args from legacy callers (the old ``persistent`` flag) are
  * harmlessly ignored.
@@ -83,7 +83,7 @@ export function setAuthBundle(items, persistent = true) {
         if (v === undefined || v === null) return;
         setAuthItem(k, v);
     });
-    // A bundle carrying a token is a login/refresh — (re)arm the absolute
+    // A bundle carrying a token is a login/refresh - (re)arm the absolute
     // session expiry. Stored in localStorage so it's shared across tabs;
     // "Remember me" (persistent) buys 30 days, otherwise 1 day.
     if (items.admin_token) {

@@ -14,7 +14,7 @@ import type { RecrawlDiff } from './recrawl-api';
 export interface RecrawlDiffModalProps {
   open: boolean;
   diff: RecrawlDiff;
-  /** When set, the diff couldn't be fetched — offer a plain proceed instead of buckets. */
+  /** When set, the diff couldn't be fetched - offer a plain proceed instead of buckets. */
   error?: string | null;
   /** True while the recrawl is being started, to disable the confirm control. */
   starting?: boolean;
@@ -35,7 +35,7 @@ interface BucketDef {
 }
 
 /**
- * RecrawlDiffModal — the pre-recrawl cost preview. Before spending credits the
+ * RecrawlDiffModal - the pre-recrawl cost preview. Before spending credits the
  * user sees exactly how many pages are unchanged, new, and removed, can expand
  * each bucket's URL list, and (for full re-crawls) sees the precise credit cost
  * with an insufficient-balance guard. Delta re-crawls skip the up-front number
@@ -87,7 +87,7 @@ export function RecrawlDiffModal({
   // The full re-crawl set is every page that will actually be scraped: pages
   // discovered as new PLUS stored pages still alive (unchanged). These buckets
   // are disjoint by construction, so the crawl-set size is their sum. Cost and
-  // the insufficient-balance guard MUST key off this — never off
+  // the insufficient-balance guard MUST key off this - never off
   // `sitemap_total`. When sitemap discovery times out the endpoint still
   // returns 200 with sitemap_total=0 (and `credits_required_full`/
   // `exceeds_balance` derived from it), which would otherwise hide the cost
@@ -117,7 +117,7 @@ export function RecrawlDiffModal({
       title={isDelta ? 'Re-train only updated pages?' : 'Re-train the entire website?'}
       description={
         isDelta
-          ? "Unchanged pages are free — you'll only be billed for pages whose content changed since the last training run."
+          ? "Unchanged pages are free - you'll only be billed for pages whose content changed since the last training run."
           : 'Every discovered page will be re-trained, and every page will be charged.'
       }
       footer={
@@ -163,7 +163,7 @@ export function RecrawlDiffModal({
             <p className="flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
-                We couldn&apos;t preview the page changes. You can still proceed — training will{' '}
+                We couldn&apos;t preview the page changes. You can still proceed - training will{' '}
                 {isDelta
                   ? 'skip unchanged pages during ingestion.'
                   : 're-train and re-bill every page.'}
@@ -176,7 +176,7 @@ export function RecrawlDiffModal({
             <p className="flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>
-                No pages discovered — the site&apos;s sitemap may be temporarily unavailable. Try
+                No pages discovered - the site&apos;s sitemap may be temporarily unavailable. Try
                 again shortly. We won&apos;t start a full re-train until we can confirm the pages to
                 train, so you&apos;re never charged for a set we can&apos;t verify.
               </span>
@@ -235,7 +235,7 @@ export function RecrawlDiffModal({
                 <p className="font-semibold text-[var(--ds-text)]">
                   {fullBlocked ? (
                     <>
-                      Not enough credits — this re-crawl needs{' '}
+                      Not enough credits - this re-crawl needs{' '}
                       <span className="tabular-nums">{required.toLocaleString()}</span> credit
                       {required === 1 ? '' : 's'}.
                     </>
@@ -249,7 +249,7 @@ export function RecrawlDiffModal({
                 </p>
                 <p className="mt-1 tabular-nums">
                   {diff.costPerPage.toLocaleString()} credit{diff.costPerPage === 1 ? '' : 's'} per page ×{' '}
-                  {crawlSetSize.toLocaleString()} page{crawlSetSize === 1 ? '' : 's'} — you have{' '}
+                  {crawlSetSize.toLocaleString()} page{crawlSetSize === 1 ? '' : 's'} - you have{' '}
                   <span className="font-semibold text-[var(--ds-text)]">
                     {diff.balance.toLocaleString()}
                   </span>{' '}

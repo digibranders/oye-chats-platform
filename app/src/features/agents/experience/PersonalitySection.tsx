@@ -17,7 +17,7 @@ export interface PersonalitySectionProps {
   onChange: (patch: Partial<ExperienceDraft>) => void;
   /** The active agent's id, or null while it resolves. Gates the AI-assist calls. */
   botId: number | null;
-  /** True once the site has been crawled — brand-tone detection needs that content. */
+  /** True once the site has been crawled - brand-tone detection needs that content. */
   canDetect: boolean;
   /**
    * Commit server-persisted values into BOTH the draft and its baseline. Used
@@ -101,7 +101,7 @@ function TextAreaField({
 }
 
 /**
- * PersonalitySection — how the agent sounds and what it knows about the
+ * PersonalitySection - how the agent sounds and what it knows about the
  * business: a custom system prompt, brand voice, and company identity. These
  * shape every answer a visitor reads. Bind to the same `Bot` fields the shipped
  * personality editor uses, with the backend length caps enforced client-side.
@@ -134,7 +134,7 @@ export function PersonalitySection({
   const botIdRef = useRef(botId);
   botIdRef.current = botId;
 
-  // Load the selectable presets once. Failure is non-fatal — the free-text tone
+  // Load the selectable presets once. Failure is non-fatal - the free-text tone
   // field and detection still work, so we simply render no chips.
   useEffect(() => {
     let cancelled = false;
@@ -347,7 +347,7 @@ export function PersonalitySection({
             </p>
           )}
           <p className="text-[11px] text-[var(--ds-text-subtle)]">
-            Streams a real answer using your agent&apos;s saved settings — save your voice changes
+            Streams a real answer using your agent&apos;s saved settings - save your voice changes
             first to hear them here.
           </p>
         </div>

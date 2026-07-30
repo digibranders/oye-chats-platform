@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { X, MoreHorizontal, Bot, Headphones, CalendarDays } from 'lucide-react';
 import { formatBotMarkdown } from '../lib/formatBotMarkdown';
+import PremiumOrb from './PremiumOrb';
 
 function pathOf(url) {
     try {
@@ -12,15 +13,15 @@ function pathOf(url) {
 }
 
 /**
- * PreviewBotAvatar — the bot avatar variant switch (orb / mascot / uploaded
+ * PreviewBotAvatar - the bot avatar variant switch (orb / mascot / uploaded
  * logo / default), extracted once and reused by both the floating agent
  * badge and the per-message avatar so the two stay visually identical.
  * Mirrors widget/src/components/BotAvatar.jsx's `orb`/`mascot`/upload
  * branches (size tokens match its `xs`/`sm` presets).
  */
 const PREVIEW_AVATAR_SIZES = {
-    xs: { container: 'w-5 h-5', icon: 'w-[11px] h-[11px]', orbShadow: '0 0 4px' },
-    sm: { container: 'w-7 h-7', icon: 'w-3.5 h-3.5', orbShadow: '0 0 6px' },
+    xs: { container: 'w-5 h-5', icon: 'w-[11px] h-[11px]', orbPx: 20 },
+    sm: { container: 'w-7 h-7', icon: 'w-3.5 h-3.5', orbPx: 28 },
 };
 
 function PreviewBotAvatar({ settings, size = 'sm' }) {
@@ -28,15 +29,7 @@ function PreviewBotAvatar({ settings, size = 'sm' }) {
     const color = settings.orb_color || settings.primary_color;
 
     if (settings.avatar_type === 'orb') {
-        return (
-            <div
-                className={`${s.container} rounded-full flex-shrink-0`}
-                style={{
-                    background: `radial-gradient(circle at 35% 35%, ${color}44, ${color}bb, ${color})`,
-                    boxShadow: `${s.orbShadow} ${color}55`,
-                }}
-            />
-        );
+        return <PremiumOrb color={color} size={s.orbPx} className="flex-shrink-0" />;
     }
     if (settings.avatar_type === 'mascot') {
         return (
@@ -56,10 +49,10 @@ function PreviewBotAvatar({ settings, size = 'sm' }) {
 }
 
 /**
- * PreviewSafeLink — minimal safe link renderer for bot-message markdown.
+ * PreviewSafeLink - minimal safe link renderer for bot-message markdown.
  * Blocks non-http(s) URI schemes and opens external links in a new tab.
  * Mirrors the spirit (not the full pill/icon-link logic) of the widget's
- * `SafeLink` in widget/src/components/MessageBubble.jsx — this preview only
+ * `SafeLink` in widget/src/components/MessageBubble.jsx - this preview only
  * needs visual fidelity for plain links, not the CTA-pill/icon-link variants.
  */
 function PreviewSafeLink({ href, children, ...props }) {
@@ -83,7 +76,7 @@ export const WIDGET_FONT_STACK =
     "'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif";
 
 /**
- * WidgetChatPreview — a faithful, static mock of the embeddable chat widget's
+ * WidgetChatPreview - a faithful, static mock of the embeddable chat widget's
  * classic (light) theme, extracted verbatim from BotSettings' inline Live
  * Preview so Bot Settings and the Build Studio render pixel-identically and both
  * stay pinned to the real widget (see widget/src/components/{themeConfigs,
@@ -104,10 +97,10 @@ export const WIDGET_FONT_STACK =
  * @param {'chat'|'waiting'|'unavailable'} [props.state='chat'] Which view to render.
  * @param {Array<{role:'user'|'bot', text:string, sources?:string[]}>} [props.messages]
  *   When non-empty (chat state), renders a LIVE conversation in the message area
- *   instead of the welcome screen — used by the Build Studio Prove step so the
+ *   instead of the welcome screen - used by the Build Studio Prove step so the
  *   agent proves itself inside the real widget. Omit for the static Bot Settings
  *   preview.
- * @param {boolean} [props.pending] Bot is answering — shows a typing indicator.
+ * @param {boolean} [props.pending] Bot is answering - shows a typing indicator.
  * @param {(question: string) => void} [props.onSend] When provided, the input
  *   becomes a real controlled text field that submits into this handler (the
  *   Build Studio Prove step, so the widget preview doubles as the actual
@@ -125,7 +118,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
     // real Q&A instead of the welcome overlay (Build Studio Prove step).
     const hasConversation = state === 'chat' && (messages.length > 0 || pending);
     // Show the typing dots only while we're waiting for the FIRST token. Once the
-    // trailing bot bubble has streamed text, that bubble IS the "typing" — the
+    // trailing bot bubble has streamed text, that bubble IS the "typing" - the
     // dots would then double up beneath it.
     const lastMsg = messages[messages.length - 1];
     const showTyping = pending && !(lastMsg && lastMsg.role === 'bot' && lastMsg.text);
@@ -134,7 +127,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }, [messages, pending]);
 
-    // Interactive input (Build Studio only — gated on `onSend` being supplied).
+    // Interactive input (Build Studio only - gated on `onSend` being supplied).
     const [draft, setDraft] = useState('');
     const submitDraft = () => {
         const q = draft.trim();
@@ -144,7 +137,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
     };
 
     return (
-        /* Chat Window Preview Wrapper — mirrors the real widget's classic
+        /* Chat Window Preview Wrapper - mirrors the real widget's classic
            (light) theme 1:1 (see widget/src/components/{themeConfigs,
            ChatWindow,WelcomeScreen,ChatInput}.jsx). The Calibri font stack
            matches widget/src/index.css so the preview can't drift from
@@ -154,7 +147,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
             style={{ fontFamily: WIDGET_FONT_STACK }}
         >
 
-            {/* 1. Header bar — date/time + action icons. The "···" menu
+            {/* 1. Header bar - date/time + action icons. The "···" menu
                 mirrors the widget: on the welcome screen its only entry is
                 "Leave a message", which shows solely in bot mode when live
                 chat is OFF. "New chat" (+) needs a prior user message, so it
@@ -175,7 +168,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                 </div>
             </div>
 
-            {/* 2. Floating agent badge — avatar + bot name only (no
+            {/* 2. Floating agent badge - avatar + bot name only (no
                 subtitle, no status dot), matching renderAgentBadge(). */}
             {state === 'chat' && (
                 <div className="shrink-0 flex justify-center -mt-3 -mb-5 relative z-30">
@@ -191,7 +184,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                 </div>
             )}
 
-            {/* 3. Messages area — the welcome overlay is bottom-anchored
+            {/* 3. Messages area - the welcome overlay is bottom-anchored
                 (justify-end), exactly like the widget's welcome screen. */}
             <div
                 className="relative flex-grow overflow-hidden min-h-[420px] bg-[#F8F8F8]"
@@ -210,9 +203,9 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                     </div>
                                 </div>
                             ) : (
-                                // Bot message intentionally has NO bubble — mirrors
+                                // Bot message intentionally has NO bubble - mirrors
                                 // widget/src/components/MessageBubble.jsx's bot branch
-                                // ("AI message — avatar + plain text, NO bubble"). Do
+                                // ("AI message - avatar + plain text, NO bubble"). Do
                                 // not add bg-white/border/rounded-*/shadow here; that
                                 // would regress the live-preview fidelity fix.
                                 <div key={i} className="flex items-start gap-2 w-full">
@@ -245,7 +238,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                             )
                         )}
                         {showTyping && (
-                            // Same no-bubble treatment as a completed bot turn — avatar
+                            // Same no-bubble treatment as a completed bot turn - avatar
                             // + bouncing dots, no white box around them.
                             <div className="flex items-start gap-2 w-full">
                                 <div className="flex-shrink-0 mt-1">
@@ -340,14 +333,14 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                 )}
             </div>
 
-            {/* 4. Input + footer — chat state only. Mirrors ChatInput.jsx:
+            {/* 4. Input + footer - chat state only. Mirrors ChatInput.jsx:
                 the empty-state send icon is #BBE7FF (not the brand color),
                 and the action bar carries icon-only affordances on the left
                 with the "Powered by OyeChats" link on the right (gated by the
                 show_branding feature flag). */}
             {state === 'chat' && (
                 <div className="px-4 pb-4 pt-2 bg-[#F8F8F8] shrink-0">
-                    {/* Input box — a real controlled field when `onSend` is
+                    {/* Input box - a real controlled field when `onSend` is
                         supplied (Build Studio Prove step); otherwise the
                         original presentational placeholder (Bot Settings). */}
                     <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
@@ -407,7 +400,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                         .
                     </p>
 
-                    {/* Action bar — handoff / meeting icons + branding */}
+                    {/* Action bar - handoff / meeting icons + branding */}
                     <div className="flex items-center justify-between gap-3 mt-3.5 pt-1 px-1">
                         <div className="flex items-center gap-3 min-w-0">
                             {settings.live_chat_enabled && liveChatAllowed && (

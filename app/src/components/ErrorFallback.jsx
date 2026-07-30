@@ -18,7 +18,7 @@ export default function ErrorFallback() {
                 </div>
                 <h1 className="text-lg font-semibold text-[var(--text)]">Something went wrong</h1>
                 <p className="mt-2 text-sm text-[var(--text-muted)]">
-                    An unexpected error interrupted the page. Reloading usually fixes it — if it keeps happening, our
+                    An unexpected error interrupted the page. Reloading usually fixes it - if it keeps happening, our
                     team can help.
                 </p>
                 <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">

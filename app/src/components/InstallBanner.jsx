@@ -16,7 +16,7 @@
  * "Take chats yourself" are role='owner' in their own workspace (not
  * ``currentRole === 'operator'``) but they DO take chats. Rather than
  * teach the banner about self-op state, we broaden the audience to
- * "anyone on /support" — that covers self-op owners, linked operators
+ * "anyone on /support" - that covers self-op owners, linked operators
  * on any operator-view page, and legacy X-Operator-Key sessions.
  *
  * Dismissal persists for 7 days in localStorage. Clicking Install and
@@ -51,7 +51,7 @@ function markDismissed() {
     try {
         window.localStorage.setItem(DISMISS_KEY, String(Date.now()));
     } catch {
-        // localStorage disabled — accept that we'll show again next mount.
+        // localStorage disabled - accept that we'll show again next mount.
     }
 }
 
@@ -62,7 +62,7 @@ export default function InstallBanner() {
     const [installing, setInstalling] = useState(false);
     const [showInstructions, setShowInstructions] = useState(false);
 
-    // Re-check dismissal on route change — someone who dismissed then hit
+    // Re-check dismissal on route change - someone who dismissed then hit
     // Cmd+K a week later would otherwise stay hidden until page reload.
     useEffect(() => {
         setDismissed(wasDismissedRecently());
@@ -79,7 +79,7 @@ export default function InstallBanner() {
             try {
                 const { outcome } = await install();
                 if (outcome !== 'accepted') {
-                    // Browser prompt was declined or unavailable — silence us so
+                    // Browser prompt was declined or unavailable - silence us so
                     // we don't re-appear on next render / route change until the
                     // 7-day window elapses.
                     markDismissed();

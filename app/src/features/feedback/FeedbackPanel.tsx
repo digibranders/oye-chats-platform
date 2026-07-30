@@ -29,7 +29,7 @@ const RANGES: readonly { id: DateRange; label: string }[] = [
 
 /**
  * Segmented date-range control (7d / 30d / All). Modelled as a WAI-ARIA radio
- * group — a one-of-N choice — with roving `tabIndex` and arrow/Home/End
+ * group - a one-of-N choice - with roving `tabIndex` and arrow/Home/End
  * navigation, matching the pattern used by `AnalyticsPage`'s `RangeControl`.
  */
 function DateRangeControl({
@@ -146,7 +146,7 @@ export interface FeedbackPanelProps {
 }
 
 /**
- * FeedbackPanel — the itemized thumbs-up/down feedback log: date filter, CSV
+ * FeedbackPanel - the itemized thumbs-up/down feedback log: date filter, CSV
  * export, summary bar, satisfaction trend, top-downvoted questions, and an
  * expandable All/Positive/Negative list. Restyled 1:1 port of the legacy
  * `pages/Feedback.jsx`, shared between the workspace Analytics page and the

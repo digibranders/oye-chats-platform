@@ -8,6 +8,10 @@ export interface WorkspaceContextValue {
   currentWorkspaceId: number | null;
   currentWorkspaceName: string | null;
   currentRole: string | null;
+  /** Effective seat role in the active workspace: `owner` | `admin` | `operator`. */
+  effectiveRole: string | null;
+  /** True when acting as a plain operator (drives operator-scoped nav + route gating). */
+  isOperator: boolean;
   isLoading: boolean;
   error: unknown;
   accessDeniedForWorkspaceId: number | null;

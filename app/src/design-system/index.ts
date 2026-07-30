@@ -1,5 +1,5 @@
 /**
- * Design System — public barrel.
+ * Design System - public barrel.
  * Import shared UI from here: `import { Button, Card, PageContainer } from '@/design-system'`
  * (or via relative path). Tokens live in `tokens.css` (imported once at the app entry).
  */
@@ -42,7 +42,7 @@ export type { Crumb, BreadcrumbsProps } from './components/Breadcrumbs';
 export { ProgressStepper } from './components/ProgressStepper';
 export type { ProgressStepperProps, StepperItem } from './components/ProgressStepper';
 
-// Composite components — Admin 2.0 page kit
+// Composite components - Admin 2.0 page kit
 export { MetricCard } from './components/MetricCard';
 export type { MetricCardProps, MetricTrend } from './components/MetricCard';
 export { InsightCard } from './components/InsightCard';
@@ -68,7 +68,7 @@ export type { PopoverProps, PopoverAlign, PopoverTriggerProps } from './componen
 export { Drawer } from './components/Drawer';
 export type { DrawerProps, DrawerWidth } from './components/Drawer';
 
-// Composite components — Plan entitlements gating
+// Composite components - Plan entitlements gating
 export { PlanBadge } from './components/PlanBadge';
 export type { PlanBadgeProps } from './components/PlanBadge';
 export { QuotaMeter } from './components/QuotaMeter';

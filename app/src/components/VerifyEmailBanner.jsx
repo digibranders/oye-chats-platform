@@ -5,7 +5,7 @@ import { getCurrentUser, resendVerification } from '../services/api';
 import { getAuthItem, setAuthItem } from '../utils/authStorage';
 import { getAuthState } from '../utils/auth';
 
-/** sessionStorage flag — dismissal survives navigation but returns next session. */
+/** sessionStorage flag - dismissal survives navigation but returns next session. */
 const DISMISS_KEY = 'verify_email_banner_dismissed';
 
 /**
@@ -22,13 +22,13 @@ const DISMISS_KEY = 'verify_email_banner_dismissed';
  * Renders NOTHING when:
  *   - the account is verified,
  *   - the session is an operator (operators have no email-verification
- *     concept — ``getAuthState().isOperator``),
+ *     concept - ``getAuthState().isOperator``),
  *   - the banner was dismissed this session.
  *
  * Verification state is read optimistically from the persisted
- * ``admin_is_verified`` flag — hidden unless it is explicitly ``'false'`` so
+ * ``admin_is_verified`` flag - hidden unless it is explicitly ``'false'`` so
  * verified/unknown sessions (e.g. a Google login that never wrote the flag)
- * never flash the banner — then confirmed against ``/auth/me`` on mount. A
+ * never flash the banner - then confirmed against ``/auth/me`` on mount. A
  * failed ``/auth/me`` leaves the optimistic value in place: no crash, no
  * layout thrash, default hidden.
  */
@@ -48,7 +48,7 @@ export default function VerifyEmailBanner() {
     const [resendState, setResendState] = useState('idle'); // idle | sending | sent | error
 
     useEffect(() => {
-        // Operators have no verification state — skip the network call.
+        // Operators have no verification state - skip the network call.
         if (isOperator) return undefined;
         let cancelled = false;
         (async () => {
@@ -61,7 +61,7 @@ export default function VerifyEmailBanner() {
                 // Keep the persisted flag fresh so later mounts don't flash.
                 setAuthItem('admin_is_verified', verified ? 'true' : 'false');
             } catch {
-                // Network/profile error — keep the optimistic flag-derived
+                // Network/profile error - keep the optimistic flag-derived
                 // value (default hidden unless the flag explicitly says false).
             }
         })();

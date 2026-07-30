@@ -2,13 +2,13 @@
  * Types for the itemized thumbs-up/down feedback log (`ChatMessage.feedback`,
  * 1 = 👍, -1 = 👎). This is distinct from the star-rating CSAT surface
  * (`SatisfactionBreakdown`, `ChatSession.visitor_rating`) and from platform
- * bug reports — see `GET /analytics/feedback`.
+ * bug reports - see `GET /analytics/feedback`.
  */
 
 /**
  * One rated bot answer, as returned by `GET /analytics/feedback`. `user` is
  * server-anonymized (e.g. "User -3"); there is no pagination or server-side
- * filtering — the full set returns and is filtered/bucketed client-side.
+ * filtering - the full set returns and is filtered/bucketed client-side.
  */
 export interface FeedbackItem {
   message_id: number;

@@ -19,7 +19,7 @@ export interface TabsProps {
 }
 
 /**
- * Tabs — an accessible in-page tablist (mandate shared component). Implements
+ * Tabs - an accessible in-page tablist (mandate shared component). Implements
  * the WAI-ARIA tabs pattern: `role="tablist"`/`role="tab"`, `aria-selected`,
  * roving `tabIndex`, and arrow / Home / End keyboard navigation. The caller
  * renders the panel for `value` (associate it via `aria-controls`/`id` as

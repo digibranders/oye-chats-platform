@@ -13,7 +13,7 @@ export interface BreadcrumbsProps {
 }
 
 /**
- * Breadcrumbs — presentational trail. The last item renders as the current
+ * Breadcrumbs - presentational trail. The last item renders as the current
  * page (non-link). Data is supplied by the shell's `useBreadcrumbs` hook,
  * which derives the trail from the matched route handles.
  */

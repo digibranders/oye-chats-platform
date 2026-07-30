@@ -22,8 +22,8 @@ interface WorkspaceSection {
 /**
  * The workspace-level sections, in mandate order. Each links to
  * `/workspace/<path>`; the router mounts a child route per section. These are
- * workspace-wide settings only — never agent configuration. Billing is
- * deliberately never gated — it's how a Free workspace upgrades in the first
+ * workspace-wide settings only - never agent configuration. Billing is
+ * deliberately never gated - it's how a Free workspace upgrades in the first
  * place.
  */
 const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
@@ -35,28 +35,28 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
   { path: 'integrations', label: 'Integrations', lockIntent: 'view_integrations' },
 ];
 
-/** Shown only to enrolled affiliates (invite-only program) — appended last. */
+/** Shown only to enrolled affiliates (invite-only program) - appended last. */
 const AFFILIATE_SECTION: WorkspaceSection = { path: 'affiliate', label: 'Affiliate' };
 
 /**
- * WorkspaceLayout — parent route element for `/workspace/*`. Adds the section
+ * WorkspaceLayout - parent route element for `/workspace/*`. Adds the section
  * navigation the Workspace area was missing, so General, Members, Billing,
  * Usage, Security, API Keys, and Integrations are all reachable by clicking
  * (previously only Members rendered; the rest were URL-only). The top-level
  * `/settings` page is account/profile-only (your name, appearance, sign-in
- * security) — General is the org-level counterpart: workspace identity
+ * security) - General is the org-level counterpart: workspace identity
  * (company, website, agent count) and agent-wide defaults, which never
  * belonged on a personal Settings page.
  *
  * Kept deliberately minimal: the app breadcrumb already reads "Workspace" and
- * each section page renders its own title, so this layout is just the tab row —
+ * each section page renders its own title, so this layout is just the tab row -
  * no redundant identity header. The tab row and the content below both align to
  * the standard page measure (matching PageContainer); AppShell's <main> supplies
  * the outer padding.
  *
  * On a Free-plan workspace, the Members and Integrations tabs render as
  * `<button>`s (never `<NavLink>`s) that open the upgrade modal instead of
- * navigating — everything else, especially Billing, stays fully clickable.
+ * navigating - everything else, especially Billing, stays fully clickable.
  *
  * The Affiliate tab is invite-only, so it's appended only once `/auth/me`
  * confirms the client is an enrolled affiliate (fail-closed on error).
@@ -86,7 +86,7 @@ export function WorkspaceLayout(): ReactElement {
 
   return (
     <div className="flex min-h-full flex-col">
-      {/* Section nav — real nav semantics; NavLink stamps aria-current on the
+      {/* Section nav - real nav semantics; NavLink stamps aria-current on the
           active section. Horizontally scrollable so all fit on mobile. */}
       <nav
         aria-label="Workspace sections"
@@ -131,7 +131,7 @@ export function WorkspaceLayout(): ReactElement {
         </ul>
       </nav>
 
-      {/* Active section — the gap below the tab row keeps the page title from
+      {/* Active section - the gap below the tab row keeps the page title from
           crowding the divider. Page content supplies its own max-width. */}
       <div className="pt-4">
         <Outlet />

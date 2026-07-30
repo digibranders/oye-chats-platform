@@ -6,7 +6,7 @@ import { UPGRADE_INTENTS, type UpgradeIntentKey } from '../../context/upgradeInt
 
 /**
  * Every teaser-safe intent. `add_bot` is excluded because its copy needs
- * live `{ current, planName }` params this component can't supply — it's an
+ * live `{ current, planName }` params this component can't supply - it's an
  * action-gate intent, not a teaser one.
  */
 export type TeaserIntentKey = Exclude<UpgradeIntentKey, 'add_bot'>;
@@ -20,16 +20,16 @@ export interface LockedFeatureCardProps {
 }
 
 /**
- * LockedFeatureCard — a premium teaser for a plan-gated surface (mandate
+ * LockedFeatureCard - a premium teaser for a plan-gated surface (mandate
  * shared component). Pulls its headline, description, and highlights
  * straight from the `UPGRADE_INTENTS` registry so every locked surface in
  * the app shows the SAME specific copy the upgrade modal shows for that
- * intent — a soft accent tile, a "plan feature" eyebrow, a headline, up to
+ * intent - a soft accent tile, a "plan feature" eyebrow, a headline, up to
  * three benefit bullets, and an upgrade CTA. Restrained by design: no
- * gradients, no glow, no crown — matches the DS upgrade modal's visual
+ * gradients, no glow, no crown - matches the DS upgrade modal's visual
  * language at teaser scale.
  *
- * The `intent` prop excludes `add_bot` at the type level — it needs live
+ * The `intent` prop excludes `add_bot` at the type level - it needs live
  * `{ current, planName }` params this component doesn't collect. Every other
  * intent is param-less and renders correctly out of the box.
  */

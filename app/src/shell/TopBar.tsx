@@ -4,6 +4,8 @@ import { useBreadcrumbs } from './useBreadcrumbs';
 import { NotificationCenter } from './NotificationCenter';
 import { ThemeToggle } from './ThemeToggle';
 import { ProfileMenu } from './ProfileMenu';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { BotSwitcher } from './BotSwitcher';
 
 export interface TopBarProps {
   isMobile: boolean;
@@ -12,7 +14,7 @@ export interface TopBarProps {
 }
 
 /**
- * Top Navigation — contextual app bar. Left: sidebar toggle + breadcrumb trail
+ * Top Navigation - contextual app bar. Left: sidebar toggle + breadcrumb trail
  * (derived from the route architecture). Right: command-palette trigger, theme
  * toggle, notifications, and the account menu. Personal/account controls live
  * here (not in the sidebar) so the rail stays purely destination navigation.
@@ -30,6 +32,13 @@ export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps)
       >
         {isMobile ? <Menu size={18} /> : <PanelLeft size={18} />}
       </button>
+
+      {/* Scope selectors - colocated on the left so the user picks
+          workspace → then narrows to a single agent, both persistent. Each
+          switcher hides itself when there's nothing to pick between (single
+          workspace / single agent). */}
+      <WorkspaceSwitcher />
+      <BotSwitcher />
 
       <div className="min-w-0 flex-1">
         <Breadcrumbs items={crumbs} />

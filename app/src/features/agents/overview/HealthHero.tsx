@@ -128,7 +128,7 @@ export interface HealthHeroProps {
 }
 
 /**
- * HealthHero — the page's answer to "Is my AI healthy?". A prominent status
+ * HealthHero - the page's answer to "Is my AI healthy?". A prominent status
  * card: a tinted glyph, a headline verdict, a per-area checklist, and (when
  * something needs doing) a single next-step action.
  */

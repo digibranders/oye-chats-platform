@@ -1,27 +1,32 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from 'react';
-import { Bot as BotIcon, Loader2, AlertCircle } from 'lucide-react';
-import { createBot } from '../../services/api';
+import { Bot as BotIcon, Check, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+import {
+  createBot,
+  createBotCheckout,
+  getSubscriptionPlans,
+  verifyBotCheckout,
+} from '../../services/api';
+import { openRazorpayCheckout } from '../../lib/razorpay';
 import { type Bot } from '../../types/domain';
-import { Button, Input } from '../../design-system';
+import { Button, Input, cn } from '../../design-system';
 import { requiresSubscription } from '../../utils/apiErrors';
+import { buildPlan, formatCredits, formatMoneyMinor, type PlanView } from '../workspace/billingModel';
 
 export interface CreateAgentDialogProps {
   /** Whether the modal is mounted/visible. */
   open: boolean;
   /** Dismiss without creating (backdrop, Cancel, or Esc). */
   onClose: () => void;
-  /** Called with the freshly created agent so the parent can refresh + navigate. */
+  /** Called with the freshly created FREE agent so the parent can refresh + navigate. */
   onCreated: (bot: Bot) => void;
-  /**
-   * Called instead of showing an inline error when `createBot` returns 402
-   * `must_subscribe` — the dialog closes itself; the parent is responsible
-   * for opening the upgrade modal (kept out of this dialog so both the
-   * pre-emptive limit check and this reactive 402 path share one call site).
-   */
-  onRequiresUpgrade: () => void;
+  /** Called after a paid agent's checkout completes, with the new agent's id. */
+  onCheckoutComplete: (botId: number) => void;
 }
 
-/** Prefix a bare host with https:// so createBot always receives a real URL. */
+type Step = 'name' | 'plan';
+type BillingCycle = 'monthly' | 'annual';
+
+/** Prefix a bare host with https:// so the API always receives a real URL. */
 function normalizeWebsite(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
@@ -33,54 +38,61 @@ function messageFromError(err: unknown): string {
   return err instanceof Error && err.message ? err.message : 'Something went wrong. Please try again.';
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
 /**
- * CreateAgentDialog — the focused "new agent" modal for the AI Agents page.
+ * CreateAgentDialog - the "new agent" modal for the AI Agents page.
  *
- * ONE job: name the agent (and optionally point it at a website), then create
- * it. Reuses the legacy `createBot` API. The first agent on an account is free;
- * additional agents require a plan, so a 402 `must_subscribe` response closes
- * this dialog and routes to `onRequiresUpgrade` (the shared upgrade modal)
- * instead of surfacing a raw error. The full paid-agent checkout (Razorpay)
- * lives in the legacy CreateBotWizard and is intentionally out of scope here.
+ * Two steps: (1) name the agent, (2) if the account has used its free agent and
+ * a new one needs a plan, pick that agent's plan and pay for it. The first agent
+ * on an account is free and completes at step 1; additional agents run the
+ * per-agent Razorpay checkout (`/bots/checkout` → Razorpay → `/bots/checkout/verify`),
+ * which materialises the agent server-side only after the payment captures.
  */
 export function CreateAgentDialog({
   open,
   onClose,
   onCreated,
-  onRequiresUpgrade,
+  onCheckoutComplete,
 }: CreateAgentDialogProps): ReactElement | null {
   const titleId = useId();
+  const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
   const [website, setWebsite] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Pricing step
+  const [plans, setPlans] = useState<PlanView[]>([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [selectedSlug, setSelectedSlug] = useState('');
+  const [cycle, setCycle] = useState<BillingCycle>('monthly');
+
   const panelRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  // Keep the latest onClose reachable from the focus effect WITHOUT depending on
-  // it: AgentsPage passes a fresh inline arrow every render, so depending on it
-  // would tear the trap down and yank focus back to the trigger mid-typing on
-  // any parent re-render (e.g. BotContext refreshing).
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
-  // Clear transient form state whenever the dialog (re)opens, so no dismiss path
-  // (Esc, backdrop, Cancel) can leak a previously-typed name or a stale
-  // error/plan banner on reopen. Render-time adjustment — not a setState-in-effect.
+  // Reset all transient state whenever the dialog (re)opens.
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
+      setStep('name');
       setName('');
       setWebsite('');
       setError('');
       setSubmitting(false);
+      setPlans([]);
+      setSelectedSlug('');
+      setCycle('monthly');
     }
   }
 
-  // Focus management + Esc-to-close + Tab focus-trap + body scroll-lock while
-  // open. Focus the name field on open; restore focus to the trigger on close.
+  // Focus management + Esc-to-close + Tab focus-trap + body scroll-lock while open.
   useEffect(() => {
     if (!open) return undefined;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -125,36 +137,107 @@ export function CreateAgentDialog({
   if (!open) return null;
 
   const trimmedName = name.trim();
-  const canSubmit = trimmedName.length > 0 && !submitting;
+  const canSubmitName = trimmedName.length > 0 && !submitting;
+  const selectedPlan = plans.find((p) => p.slug === selectedSlug) ?? null;
 
   const resetAndClose = (): void => {
-    setName('');
-    setWebsite('');
-    setError('');
     onClose();
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+  async function loadPlans(): Promise<void> {
+    setPlansLoading(true);
+    try {
+      const raw = await getSubscriptionPlans();
+      const parsed = (Array.isArray(raw) ? raw : [])
+        .map((r) => buildPlan(r))
+        .filter((p): p is PlanView => p !== null && p.isPaid);
+      setPlans(parsed);
+      setSelectedSlug((prev) => prev || (parsed[0]?.slug ?? ''));
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setPlansLoading(false);
+    }
+  }
+
+  // Step 1: name the agent. A free agent completes here; a paywalled one (402
+  // `must_subscribe`) advances to the pricing step instead of erroring out.
+  const handleNameSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (!trimmedName || submitting) return;
     setError('');
     setSubmitting(true);
     try {
-      const normalizedWebsite = normalizeWebsite(website);
       const bot = await createBot({
         name: trimmedName,
-        website: normalizedWebsite || undefined,
+        website: normalizeWebsite(website) || undefined,
       });
       onCreated(bot);
     } catch (err) {
       if (requiresSubscription(err)) {
-        // Paywalled: close this dialog and hand off to the shared upgrade
-        // modal instead of showing a raw/inline error.
-        onClose();
-        onRequiresUpgrade();
+        setStep('plan');
+        void loadPlans();
       } else {
         setError(messageFromError(err));
       }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Step 2: pay for the selected plan, then create the agent server-side.
+  const handleSubscribe = async (): Promise<void> => {
+    if (!selectedPlan || submitting) return;
+    setError('');
+    setSubmitting(true);
+    try {
+      const payload = asRecord(
+        await createBotCheckout({
+          name: trimmedName,
+          website: normalizeWebsite(website) || undefined,
+          plan_slug: selectedPlan.slug,
+          billing_cycle: cycle,
+        }),
+      );
+
+      let rzp: Record<string, unknown>;
+      try {
+        rzp = asRecord(
+          await openRazorpayCheckout({
+            key: String(payload.key_id),
+            subscription_id: String(payload.subscription_id),
+            name: (payload.name as string) || 'OyeChats',
+            description: payload.description as string | undefined,
+            prefill: payload.prefill as Record<string, unknown> | undefined,
+            theme: payload.theme as Record<string, unknown> | undefined,
+          }),
+        );
+      } catch (err) {
+        // A user-dismissed Razorpay modal is not an error - stay on the step.
+        if ((err as { code?: string })?.code === 'dismissed') {
+          setSubmitting(false);
+          return;
+        }
+        throw err;
+      }
+
+      const result = asRecord(
+        await verifyBotCheckout({
+          razorpay_payment_id: String(rzp.razorpay_payment_id),
+          razorpay_subscription_id: String(rzp.razorpay_subscription_id),
+          razorpay_signature: String(rzp.razorpay_signature),
+        }),
+      );
+
+      const botId = Number(result.bot_id);
+      if (Number.isFinite(botId) && botId > 0) {
+        onCheckoutComplete(botId);
+      } else {
+        // Webhook may still be materialising the bot; let the parent refresh.
+        onCheckoutComplete(0);
+      }
+    } catch (err) {
+      setError(messageFromError(err));
     } finally {
       setSubmitting(false);
     }
@@ -185,10 +268,12 @@ export function CreateAgentDialog({
             </span>
             <div className="min-w-0">
               <h2 id={titleId} className="text-base font-semibold text-[var(--ds-text)]">
-                Create a new agent
+                {step === 'name' ? 'Create a new agent' : `Choose a plan for ${trimmedName || 'your agent'}`}
               </h2>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
-                Give it a name — you can train and customize it next.
+                {step === 'name'
+                  ? 'Give it a name - you can train and customize it next.'
+                  : 'Each agent runs on its own plan. Pick one to activate it.'}
               </p>
             </div>
           </div>
@@ -203,61 +288,172 @@ export function CreateAgentDialog({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label
-                htmlFor="create-agent-name"
-                className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
-              >
-                Agent name
-              </label>
-              <Input
-                id="create-agent-name"
-                ref={nameInputRef}
-                value={name}
-                required
-                maxLength={50}
-                placeholder="e.g. Support Assistant"
-                onChange={(event) => setName(event.target.value)}
-              />
-            </div>
+          {step === 'name' ? (
+            <form onSubmit={handleNameSubmit} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="create-agent-name"
+                  className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
+                >
+                  Agent name
+                </label>
+                <Input
+                  id="create-agent-name"
+                  ref={nameInputRef}
+                  value={name}
+                  required
+                  maxLength={50}
+                  placeholder="e.g. Support Assistant"
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </div>
 
-            <div>
-              <label
-                htmlFor="create-agent-website"
-                className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
-              >
-                Website{' '}
-                <span className="font-normal text-[var(--ds-text-subtle)]">(optional)</span>
-              </label>
-              <Input
-                id="create-agent-website"
-                value={website}
-                inputMode="url"
-                placeholder="yourwebsite.com"
-                onChange={(event) => setWebsite(event.target.value)}
-              />
-              <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-                We&rsquo;ll use this to help train your agent later.
-              </p>
-            </div>
+              <div>
+                <label
+                  htmlFor="create-agent-website"
+                  className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
+                >
+                  Website <span className="font-normal text-[var(--ds-text-subtle)]">(optional)</span>
+                </label>
+                <Input
+                  id="create-agent-website"
+                  value={website}
+                  inputMode="url"
+                  placeholder="yourwebsite.com"
+                  onChange={(event) => setWebsite(event.target.value)}
+                />
+                <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
+                  We&rsquo;ll use this to help train your agent later.
+                </p>
+              </div>
 
-            <div className="flex gap-3 pt-1">
-              <Button type="button" variant="outline" className="flex-1" onClick={resetAndClose}>
-                Cancel
-              </Button>
-              <Button type="submit" className="flex-1" disabled={!canSubmit}>
-                {submitting ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                    Creating&hellip;
-                  </>
-                ) : (
-                  'Create agent'
-                )}
-              </Button>
+              <div className="flex gap-3 pt-1">
+                <Button type="button" variant="outline" className="flex-1" onClick={resetAndClose}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="flex-1" disabled={!canSubmitName}>
+                  {submitting ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                      Creating&hellip;
+                    </>
+                  ) : (
+                    'Continue'
+                  )}
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              {/* Billing cycle toggle */}
+              <div
+                role="tablist"
+                aria-label="Billing cycle"
+                className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
+              >
+                {(['monthly', 'annual'] as const).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    role="tab"
+                    aria-selected={cycle === c}
+                    onClick={() => setCycle(c)}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-[13px] font-medium capitalize transition-colors',
+                      cycle === c
+                        ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                        : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
+                    )}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+
+              {/* Plan list */}
+              {plansLoading ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[var(--ds-text-muted)]">
+                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                  Loading plans&hellip;
+                </div>
+              ) : plans.length === 0 ? (
+                <p className="py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
+                  No plans are available right now. Please try again shortly.
+                </p>
+              ) : (
+                <ul className="space-y-2" aria-label="Available plans">
+                  {plans.map((plan) => {
+                    const active = plan.slug === selectedSlug;
+                    const priceMinor = cycle === 'annual' ? plan.annualPriceMinor : plan.monthlyPriceMinor;
+                    return (
+                      <li key={plan.slug}>
+                        <button
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setSelectedSlug(plan.slug)}
+                          className={cn(
+                            'flex w-full items-center justify-between gap-3 rounded-xl border p-3.5 text-left transition-colors',
+                            active
+                              ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
+                              : 'border-[var(--ds-border)] hover:bg-[var(--ds-bg-hover)]',
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-[14px] font-semibold text-[var(--ds-text)]">
+                              {plan.name}
+                            </span>
+                            <span className="block text-[12px] text-[var(--ds-text-subtle)]">
+                              {formatCredits(plan.creditsPerMonth)} credits / month
+                            </span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            <span className="text-right text-[13px] font-semibold text-[var(--ds-text)]">
+                              {formatMoneyMinor(priceMinor)}
+                              <span className="font-normal text-[var(--ds-text-subtle)]">
+                                /{cycle === 'annual' ? 'yr' : 'mo'}
+                              </span>
+                            </span>
+                            {active && (
+                              <Check size={16} aria-hidden="true" className="text-[var(--ds-accent)]" />
+                            )}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setStep('name');
+                    setError('');
+                  }}
+                >
+                  <ArrowLeft size={16} aria-hidden="true" />
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  className="flex-1"
+                  disabled={!selectedPlan || submitting}
+                  onClick={() => void handleSubscribe()}
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                      Starting checkout&hellip;
+                    </>
+                  ) : (
+                    'Subscribe & create agent'
+                  )}
+                </Button>
+              </div>
             </div>
-          </form>
+          )}
         </div>
       </div>
     </div>

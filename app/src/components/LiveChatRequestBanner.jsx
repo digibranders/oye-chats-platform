@@ -1,9 +1,9 @@
 /**
- * LiveChatRequestBanner — compact toast notification that slides in from the
+ * LiveChatRequestBanner - compact toast notification that slides in from the
  * top-right when a visitor presses "Talk to a human".
  *
  * Surfaces on every authenticated page so the operator never misses an
- * incoming request. The persistent feed in the bell is unaffected — the
+ * incoming request. The persistent feed in the bell is unaffected - the
  * operator can still see the request there after dismissing the toast.
  *
  * On "Open chat" → navigate to ``/support?session=<id>`` so the live-chat

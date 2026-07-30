@@ -3,7 +3,7 @@ import { ArrowUpRight, CreditCard, Sparkles, Wallet, Zap } from 'lucide-react';
 import { Button, Card, StatusBadge, cn } from '../../../design-system';
 import { getCreditBalance } from '../../../services/api';
 import { formatCredits, humanizeStatus, statusTone } from '../billingModel';
-import { parseCreditBalance, type CreditBalance } from '../usage-model';
+import { parseCreditBalance, resolveScopedPool, type CreditBalance } from '../usage-model';
 
 export interface BillingOverviewProps {
   planName: string;
@@ -12,22 +12,30 @@ export interface BillingOverviewProps {
   isPaid: boolean;
   renewalCaption: string;
   renewalLabel: string;
-  /** Derived from `!cancelAtPeriodEnd` — false when the plan is set to end. */
+  /** Derived from `!cancelAtPeriodEnd` - false when the plan is set to end. */
   autoRenew: boolean;
   paymentLabel: string;
   paymentSub: string;
-  /** The plan's monthly entitlement — the meter's fallback when the live balance can't load. */
+  /** The plan's monthly entitlement - the meter's fallback when the live balance can't load. */
   creditsPerMonth: number;
   onChangePlan: () => void;
   onBuyCredits: () => void;
   onViewUsage: () => void;
+  /** Selected agent id: scopes the credits meter to that agent's pool (null = account-wide). */
+  botId?: number | null;
+  /**
+   * Disable "Change plan" - set while scoped to a single agent, since per-agent
+   * plan-switch runs through the (not-yet-built) per-agent Razorpay checkout.
+   * The account-level plan change stays available in the "All agents" scope.
+   */
+  changePlanDisabled?: boolean;
 }
 
 /**
- * BillingOverview — the Billing ▸ Overview tab. A management surface, not a
+ * BillingOverview - the Billing ▸ Overview tab. A management surface, not a
  * pricing page: it leads with the current subscription as a single authoritative
  * panel (plan · status · price · renewal · payment), paired with a real credits
- * meter (used / granted · reset date). The plan grid lives one tab over — this
+ * meter (used / granted · reset date). The plan grid lives one tab over - this
  * answers "what am I on, what am I paying, how much have I used" at a glance.
  *
  * The credits meter is loaded here (not part of `useBillingData`) so the tab owns
@@ -48,6 +56,8 @@ export function BillingOverview({
   onChangePlan,
   onBuyCredits,
   onViewUsage,
+  botId = null,
+  changePlanDisabled = false,
 }: BillingOverviewProps): ReactElement {
   const [balance, setBalance] = useState<CreditBalance | null>(null);
 
@@ -69,13 +79,22 @@ export function BillingOverview({
     };
   }, []);
 
-  // Meter figures: prefer the live balance, else show the plan's monthly grant
-  // with nothing consumed yet (honest — we don't invent a usage number).
-  const grant = balance?.monthlyGrant || creditsPerMonth;
-  const used = balance?.periodCreditsUsed ?? 0;
+  // Scope the meter to the selected agent's own credit pool, using the same
+  // resolver the Usage page uses so the two surfaces always show the identical
+  // figure for the same scope - never this card showing the all-agents sum while
+  // Usage shows a single agent. `null` (All agents) resolves to the aggregate.
+  const scopedPool = balance ? resolveScopedPool(balance, botId) : null;
+
+  // Meter figures: prefer the (scoped) live balance, else show the plan's
+  // monthly grant with nothing consumed yet (honest - no invented usage).
+  const grant = scopedPool?.monthlyGrant || creditsPerMonth;
+  const used = scopedPool?.periodCreditsUsed ?? 0;
   const usedPct = grant > 0 ? Math.min(Math.round((used / grant) * 100), 100) : 0;
-  const remaining = balance?.totalRemaining ?? grant;
-  const low = balance?.lowBalance ?? false;
+  const remaining = scopedPool?.totalRemaining ?? grant;
+  const low = scopedPool
+    ? scopedPool.monthlyGrant > 0 && scopedPool.totalRemaining <= scopedPool.monthlyGrant * 0.2
+    : false;
+  const resetsAt = scopedPool?.resetsAt ?? null;
   const barColor = low ? 'var(--ds-danger)' : usedPct >= 80 ? 'var(--ds-warning)' : 'var(--ds-accent)';
 
   return (
@@ -116,31 +135,38 @@ export function BillingOverview({
             </div>
           </div>
 
-          {/* Payment reference — one honest line; the editable UI lives elsewhere. */}
+          {/* Payment reference - one honest line; the editable UI lives elsewhere. */}
           <div className="mt-4 flex items-start gap-2 border-t border-[var(--ds-border)] pt-4 text-[13px] text-[var(--ds-text-muted)]">
             <Wallet size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" />
             <span>
               <span className="font-medium text-[var(--ds-text)]">{paymentLabel}</span>
-              {' — '}
+              {' - '}
               {paymentSub}
             </span>
           </div>
 
-          {/* Actions — one primary (change plan), one secondary (buy credits). */}
-          <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
-            <Button onClick={onChangePlan}>
-              <ArrowUpRight size={15} aria-hidden="true" />
-              {isPaid ? 'Change plan' : 'Choose a plan'}
-            </Button>
-            <Button variant="outline" onClick={onBuyCredits}>
-              <CreditCard size={15} aria-hidden="true" />
-              Buy credits
-            </Button>
+          {/* Actions - one primary (change plan), one secondary (buy credits). */}
+          <div className="mt-auto pt-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={onChangePlan} disabled={changePlanDisabled}>
+                <ArrowUpRight size={15} aria-hidden="true" />
+                {isPaid ? 'Change plan' : 'Choose a plan'}
+              </Button>
+              <Button variant="outline" onClick={onBuyCredits}>
+                <CreditCard size={15} aria-hidden="true" />
+                Buy credits
+              </Button>
+            </div>
+            {changePlanDisabled && (
+              <p className="mt-2 text-[12px] text-[var(--ds-text-subtle)]">
+                Per-agent plan changes are coming soon. Switch to “All agents” to change the account plan.
+              </p>
+            )}
           </div>
         </div>
       </Card>
 
-      {/* ── Credits meter (used / granted · reset) — a correctness surface ── */}
+      {/* ── Credits meter (used / granted · reset) - a correctness surface ── */}
       <Card>
         <div className="flex h-full flex-col p-5 sm:p-6">
           <div className="mb-4 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
@@ -150,7 +176,7 @@ export function BillingOverview({
 
           <div className="flex items-baseline gap-1.5">
             <span className="text-2xl font-bold tabular-nums tracking-tight text-[var(--ds-text)]">
-              {grant > 0 ? formatCredits(remaining) : '—'}
+              {grant > 0 ? formatCredits(remaining) : '-'}
             </span>
             {grant > 0 && <span className="text-[13px] text-[var(--ds-text-muted)]">left</span>}
           </div>
@@ -172,7 +198,7 @@ export function BillingOverview({
               </div>
               <p className={cn('mt-2 text-[12px]', low ? 'text-[var(--ds-danger)]' : 'text-[var(--ds-text-muted)]')}>
                 {formatCredits(used)} of {formatCredits(grant)} used
-                {balance?.resetsAt ? ` · resets ${formatMeterDate(balance.resetsAt)}` : ''}
+                {resetsAt ? ` · resets ${formatMeterDate(resetsAt)}` : ''}
               </p>
             </>
           ) : (

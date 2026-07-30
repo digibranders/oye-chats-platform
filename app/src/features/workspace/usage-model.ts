@@ -1,5 +1,5 @@
 /**
- * Usage model — boundary parsing for the credit balance + consumption ledger.
+ * Usage model - boundary parsing for the credit balance + consumption ledger.
  *
  * The reused billing endpoints (`getCreditBalance`, `getCreditHistory`) are
  * typed only as `Record<string, unknown>` in `services/api.d.ts`, and the
@@ -10,7 +10,7 @@
  *
  * Business rules mirrored from the legacy Billing surface
  * (`app/src/pages/Billing.jsx`):
- *   • Credits drain plan bucket first, then top-up — so the "running low"
+ *   • Credits drain plan bucket first, then top-up - so the "running low"
  *     signal watches TOTAL remaining, not the plan bucket alone
  *     (Billing.jsx:381-386).
  *   • The ledger `reason` is an accounting bucket, not a human label; a couple
@@ -51,7 +51,7 @@ function parseBreakdown(value: unknown): UsageBreakdownEntry {
 }
 
 /** The four metered activity buckets the backend returns for each pool. */
-interface UsageBuckets {
+export interface UsageBuckets {
   readonly aiChat: UsageBreakdownEntry;
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
@@ -65,7 +65,7 @@ function parseUsageBuckets(value: unknown): UsageBuckets {
     documentUpload: parseBreakdown(usage.document_upload),
     urlScan: parseBreakdown(usage.url_scan),
     // email_send is a metered, credit-costing activity
-    // (subscription_routes.py:1693) — omitting it under-reports spend.
+    // (subscription_routes.py:1693) - omitting it under-reports spend.
     emailSend: parseBreakdown(usage.email_send),
   };
 }
@@ -130,10 +130,20 @@ function poolCreditsUsed(usage: UsageBuckets): number {
  * carries the agent's identity so its balance can be shown and topped up in
  * isolation.
  */
+/** An agent's plan ceilings, keyed as the backend `plan.limits` map (-1 = unlimited). */
+export type PlanLimits = Readonly<Record<string, number>>;
+
+/** Per-agent usage counts that pair with `PlanLimits` on the Plan-limits meters. */
+export interface LimitUsage {
+  readonly operators: number;
+  readonly documents: number;
+  readonly leads: number;
+}
+
 export interface PoolCredit {
   /** `null` for the shared account pool; the bot's DB id for a per-agent pool. */
   readonly botId: number | null;
-  /** Display name — the agent's name, or a generic label for the account pool. */
+  /** Display name - the agent's name, or a generic label for the account pool. */
   readonly name: string;
   /** The agent's public bot key, when this is a per-agent pool. */
   readonly botKey: string | null;
@@ -153,15 +163,31 @@ export interface PoolCredit {
   readonly resetsAt: string | null;
   /** Credits consumed this period from this pool. */
   readonly periodCreditsUsed: number;
+  /** This period's metered activity for this pool, per action bucket. */
+  readonly activity: UsageBuckets;
+  /** This agent's plan ceilings (per-agent pools only; `null` for the account pool). */
+  readonly planLimits: PlanLimits | null;
+  /** This agent's usage against those ceilings (per-agent pools only). */
+  readonly limitUsage: LimitUsage | null;
 }
 
 function poolCredit(
   pool: CreditPool,
-  identity: { botId: number | null; name: string; botKey: string | null; planName: string | null },
+  identity: {
+    botId: number | null;
+    name: string;
+    botKey: string | null;
+    planName: string | null;
+    planLimits?: PlanLimits | null;
+    limitUsage?: LimitUsage | null;
+  },
 ): PoolCredit {
   const planUsed = Math.max(pool.monthlyGrant - pool.planRemaining, 0);
   return {
-    ...identity,
+    botId: identity.botId,
+    name: identity.name,
+    botKey: identity.botKey,
+    planName: identity.planName,
     monthlyGrant: pool.monthlyGrant,
     planRemaining: pool.planRemaining,
     topupRemaining: pool.topupRemaining,
@@ -170,6 +196,27 @@ function poolCredit(
       pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
     resetsAt: pool.resetsAt,
     periodCreditsUsed: poolCreditsUsed(pool.usage),
+    activity: pool.usage,
+    planLimits: identity.planLimits ?? null,
+    limitUsage: identity.limitUsage ?? null,
+  };
+}
+
+/** Coerce the backend `plan.limits` map into a numeric-valued `PlanLimits`. */
+function parsePlanLimits(value: unknown): PlanLimits {
+  const record = asRecord(value);
+  const out: Record<string, number> = {};
+  for (const key of Object.keys(record)) out[key] = toNumber(record[key]);
+  return out;
+}
+
+/** Parse the per-agent `limit_usage` payload (operators / documents / leads). */
+function parseLimitUsage(value: unknown): LimitUsage {
+  const record = asRecord(value);
+  return {
+    operators: toNumber(record.operators),
+    documents: toNumber(record.documents),
+    leads: toNumber(record.leads),
   };
 }
 
@@ -201,7 +248,7 @@ export interface CreditBalance {
   /** Credits consumed this period across every metered activity. */
   readonly periodCreditsUsed: number;
   /**
-   * Per-agent credit pools — one entry per bot that carries its own paid
+   * Per-agent credit pools - one entry per bot that carries its own paid
    * subscription (isolated balance + scoped top-up). Empty for accounts where
    * every agent draws from the shared account pool, in which case the aggregate
    * position above already tells the whole story.
@@ -210,7 +257,7 @@ export interface CreditBalance {
   /**
    * The shared account pool (Free + legacy agents) as its own card. Non-null
    * only when both per-agent pools exist AND at least one agent still drains the
-   * account pool — so the breakdown sums to the aggregate without a redundant
+   * account pool - so the breakdown sums to the aggregate without a redundant
    * "account" card on single-pool accounts.
    */
   readonly accountPool: PoolCredit | null;
@@ -223,7 +270,7 @@ export interface CreditBalance {
  * (bot_id = NULL); a bot that carries its own paid subscription keeps its
  * credits and usage in a `bots[]` ledger, so the account fields read 0 for it
  * (subscription_routes.py:1716, 1795). Presenting the account pool alone would
- * under-report — and outright contradict the consumption ledger — for any such
+ * under-report - and outright contradict the consumption ledger - for any such
  * account, so we aggregate across the account pool and every per-bot ledger to
  * answer the page's single question: "what is my WORKSPACE consuming?".
  */
@@ -244,13 +291,15 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
         name: toStringOrNull(botRecord.bot_name) ?? 'Agent',
         botKey: toStringOrNull(botRecord.bot_key),
         planName: toStringOrNull(botRecord.plan_name),
+        planLimits: parsePlanLimits(botRecord.limits),
+        limitUsage: parseLimitUsage(botRecord.limit_usage),
       }),
     );
   }
 
   // Count of agents still drawing from the shared account pool (Free / legacy).
   // Only surface the account pool as its own card when it's genuinely shared AND
-  // per-agent pools exist to break down — otherwise the aggregate hero already
+  // per-agent pools exist to break down - otherwise the aggregate hero already
   // answers the whole question.
   const accountPoolBotCount = toNumber(record.account_pool_bot_count);
   const accountPool: PoolCredit | null =
@@ -320,6 +369,54 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     botCredits,
     accountPool,
   };
+}
+
+/**
+ * Build a synthetic pool from the account-wide balance - the whole-workspace
+ * position (every plan + top-up summed) presented as a single spendable pool.
+ * Used as the "All agents" scope and as a last-resort fallback so a scoped
+ * surface is never blank.
+ */
+export function aggregatePool(balance: CreditBalance): PoolCredit {
+  return {
+    botId: null,
+    name: 'Shared credits',
+    botKey: null,
+    planName: null,
+    monthlyGrant: balance.monthlyGrant,
+    planRemaining: balance.planRemaining,
+    topupRemaining: balance.topupRemaining,
+    totalRemaining: balance.totalRemaining,
+    planUsedPct: balance.planUsedPct,
+    resetsAt: balance.resetsAt,
+    periodCreditsUsed: balance.periodCreditsUsed,
+    activity: {
+      aiChat: balance.aiChat,
+      documentUpload: balance.documentUpload,
+      urlScan: balance.urlScan,
+      emailSend: balance.emailSend,
+    },
+    planLimits: null,
+    limitUsage: null,
+  };
+}
+
+/**
+ * The single credit pool to headline for a given scope, shared by the Usage and
+ * Billing surfaces so they can never disagree. A selected agent (`botId` set)
+ * resolves to its own isolated pool, falling back to the shared account pool and
+ * then a synthetic aggregate when the agent still draws from the workspace
+ * balance. `null` (All agents) resolves to the whole-workspace aggregate.
+ */
+export function resolveScopedPool(balance: CreditBalance, botId: number | null): PoolCredit {
+  if (botId != null) {
+    return (
+      balance.botCredits.find((pool) => pool.botId === botId) ??
+      balance.accountPool ??
+      aggregatePool(balance)
+    );
+  }
+  return aggregatePool(balance);
 }
 
 // ── Consumption trend ────────────────────────────────────────────────────────
@@ -447,18 +544,18 @@ export function formatCredits(value: number): string {
   return Math.round(value).toLocaleString('en-US');
 }
 
-/** DD Mon YYYY — unambiguous for a primarily-Indian audience. */
+/** DD Mon YYYY - unambiguous for a primarily-Indian audience. */
 export function formatDate(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export function formatDateTime(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleString('en-GB', {
     day: 'numeric',
     month: 'short',
@@ -467,10 +564,10 @@ export function formatDateTime(iso: string | null): string {
   });
 }
 
-/** HH:MM — the time-of-day, for rows already grouped under a day header. */
+/** HH:MM - the time-of-day, for rows already grouped under a day header. */
 export function formatTime(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
 }

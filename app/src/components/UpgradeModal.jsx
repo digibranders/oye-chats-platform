@@ -6,12 +6,12 @@ import useEntitlements from '../hooks/useEntitlements';
 import { cn } from '../lib/utils';
 
 /**
- * UpgradeModal — the single premium upsell surface used by every gate.
+ * UpgradeModal - the single premium upsell surface used by every gate.
  *
  * Driven by `payload` from <UpgradeModalProvider />. When non-null we render
  * the dialog; when null we render nothing (AnimatePresence handles the
  * exit). All copy comes from the payload so the modal stays presentational
- * — wording lives in the intent registry in `UpgradeModalContext`.
+ * - wording lives in the intent registry in `UpgradeModalContext`.
  *
  * Design notes:
  *  - Frosted backdrop + glow halo to feel like a "moment" rather than a toast.
@@ -56,7 +56,7 @@ export default function UpgradeModal({ payload, onClose }) {
 
     const handleViewPlans = () => {
         onClose();
-        // Land on the Plan & seats tab, not the Billing overview — this modal
+        // Land on the Plan & seats tab, not the Billing overview - this modal
         // is exclusively an upgrade CTA, so the plan picker is what the user
         // is looking for. See Billing.jsx: tab id ``seats`` = "Plan & seats".
         navigate('/billing?tab=seats');
@@ -102,7 +102,7 @@ export default function UpgradeModal({ payload, onClose }) {
                             'shadow-2xl shadow-primary-900/30',
                         )}
                     >
-                        {/* Animated gradient border — sits in a 1.5px padded
+                        {/* Animated gradient border - sits in a 1.5px padded
                             outer layer so the inner surface stays a clean
                             opaque card while the perimeter glows. */}
                         <div className="absolute inset-0 rounded-3xl p-[1.5px]">
@@ -120,7 +120,7 @@ export default function UpgradeModal({ payload, onClose }) {
                                 <X size={16} />
                             </button>
 
-                            {/* Hero — animated crown + sparkles */}
+                            {/* Hero - animated crown + sparkles */}
                             <div className="relative px-6 pt-9 pb-5 text-center">
                                 <div className="relative mx-auto mb-5 w-16 h-16">
                                     <motion.div
@@ -131,7 +131,7 @@ export default function UpgradeModal({ payload, onClose }) {
                                     <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-lg shadow-primary-500/40">
                                         <Crown size={28} strokeWidth={2.2} />
                                     </div>
-                                    {/* Drifting sparkles — staggered offsets and
+                                    {/* Drifting sparkles - staggered offsets and
                                         durations so they don't visibly loop in
                                         sync. */}
                                     {SPARKLE_POSITIONS.map((pos, i) => (
@@ -177,7 +177,7 @@ export default function UpgradeModal({ payload, onClose }) {
                                 )}
                             </div>
 
-                            {/* Plan transition chip — only when a recommended
+                            {/* Plan transition chip - only when a recommended
                                 plan is given. Visually anchors the "from →
                                 to" the user is being asked to take. */}
                             {payload.recommendedPlan && (
@@ -199,7 +199,7 @@ export default function UpgradeModal({ payload, onClose }) {
                                 </div>
                             )}
 
-                            {/* Highlights — what you get if you upgrade */}
+                            {/* Highlights - what you get if you upgrade */}
                             {payload.highlights?.length > 0 && (
                                 <div className="px-6 pb-6">
                                     <ul className="space-y-2.5">
@@ -221,7 +221,7 @@ export default function UpgradeModal({ payload, onClose }) {
                                 </div>
                             )}
 
-                            {/* CTAs — single path now that bot seats are
+                            {/* CTAs - single path now that bot seats are
                                 gone. "See plans" always routes to /billing
                                 where the user can subscribe (or, for the
                                 add_bot intent, mint a second per-bot sub). */}

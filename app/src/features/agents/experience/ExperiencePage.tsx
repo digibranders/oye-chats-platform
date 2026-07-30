@@ -43,10 +43,10 @@ function isSectionKey(key: string): key is SectionKey {
 const PRESET_SWATCHES = ['#7C3AED', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', '#d97706'];
 
 /**
- * ExperiencePage — the agent's "Experience" tab. One job: let the user control
+ * ExperiencePage - the agent's "Experience" tab. One job: let the user control
  * exactly what visitors see in the chat widget (branding, messages, personality)
  * with a live, pixel-faithful preview beside the editor. Loads once, edits
- * locally, and persists the whole draft on demand — surfacing loading, empty,
+ * locally, and persists the whole draft on demand - surfacing loading, empty,
  * error, saving and saved states throughout.
  */
 export function ExperiencePage(): ReactElement {
@@ -174,7 +174,7 @@ export function ExperiencePage(): ReactElement {
   return (
     <PageContainer
       title="Experience"
-      description="Control exactly what visitors see in your chat widget — colours, avatar, greeting and voice — with a live preview."
+      description="Control exactly what visitors see in your chat widget - colours, avatar, greeting and voice - with a live preview."
       width="wide"
     >
       {showLoading ? (
@@ -245,7 +245,7 @@ export function ExperiencePage(): ReactElement {
               {activeSection === 'servicesCopy' && <BotConfigSection variant="content" />}
             </div>
 
-            {/* Sticky save bar — appears whenever there's something to act on. */}
+            {/* Sticky save bar - appears whenever there's something to act on. */}
             {(dirty || saving || saveError || justSaved) && (
               <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-t-xl border-t border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-3 shadow-[var(--ds-shadow-lg)]">
                 <p
@@ -292,7 +292,7 @@ export function ExperiencePage(): ReactElement {
           </aside>
         </div>
 
-        {/* Real "preview on my website" — loads the hosted demo page (which
+        {/* Real "preview on my website" - loads the hosted demo page (which
             overlays the live widget on the customer's URL) in an iframe. */}
         <WebsitePreviewPanel botKey={agent?.bot_key ?? null} website={agent?.website ?? null} />
         </div>

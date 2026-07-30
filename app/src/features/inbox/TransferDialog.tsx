@@ -8,7 +8,7 @@ import { initials } from './liveChatHelpers';
 export interface TransferDialogProps {
   sessionId: string;
   visitorName: string;
-  /** Current owner — excluded from the operator target list. */
+  /** Current owner - excluded from the operator target list. */
   currentOperatorId: number | null;
   onClose: () => void;
   /** Called after a successful transfer so the caller can drop the chat locally. */
@@ -18,7 +18,7 @@ export interface TransferDialogProps {
 type Target = { kind: 'operator'; id: number } | { kind: 'department'; id: number };
 
 /**
- * TransferDialog — hand the active conversation to another online operator or a
+ * TransferDialog - hand the active conversation to another online operator or a
  * department. Targets load from `getOperators` / `getDepartments`; the transfer
  * itself goes through the typed `transferChat` REST wrapper. The backend emits
  * `chat_transferred` over WS, which removes the chat from this operator's board.
@@ -38,7 +38,7 @@ export function TransferDialog({
   const [error, setError] = useState<string | null>(null);
 
   // Mounted fresh each time the dialog opens (the parent renders it only while
-  // open), so the targets load once here — no synchronous setState in the effect.
+  // open), so the targets load once here - no synchronous setState in the effect.
   useEffect(() => {
     let active = true;
     Promise.all([getOperators(), getDepartments()])

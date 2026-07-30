@@ -2,25 +2,25 @@ import { useCallback, useMemo } from 'react';
 import { useEntitlementsContext } from '../context/EntitlementsContext';
 import type { Entitlements, FeatureKey, LimitKey } from '../types/domain';
 
-/** Sentinel meaning "no limit" — mirrors `plan_entitlements_service.py::UNLIMITED`. */
+/** Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`. */
 const UNLIMITED = -1;
 
 export interface UseEntitlementsResult {
   entitlements: Entitlements;
   loading: boolean;
   error: Error | null;
-  /** Re-fetch entitlements now — call after an action that changes the plan. */
+  /** Re-fetch entitlements now - call after an action that changes the plan. */
   refresh: () => Promise<void>;
   isFree: boolean;
   isEnterprise: boolean;
   planSlug: string;
   planName: string;
   /** True when the named feature flag is enabled. String flags (`integrations`)
-   * count as "on" when set to any non-empty value — callers that need the
+   * count as "on" when set to any non-empty value - callers that need the
    * specific value read `entitlements.features.integrations` directly. */
   hasFeature: (key: FeatureKey) => boolean;
   /** The configured ceiling for `key`. `-1` means unlimited. Unknown/missing
-   * values return `0` — the same "nothing allowed" conservative default the
+   * values return `0` - the same "nothing allowed" conservative default the
    * backend resolver uses. */
   limitFor: (key: LimitKey) => number;
   /** True if `current` is still under the limit for `key`. Always true when unlimited. */
@@ -30,7 +30,7 @@ export interface UseEntitlementsResult {
 }
 
 /**
- * useEntitlements — typed selector over `EntitlementsContext`.
+ * useEntitlements - typed selector over `EntitlementsContext`.
  *
  * Ported from the legacy `hooks/useEntitlements.js` `decorate()` helpers
  * (`hasFeature` / `limitFor` / `withinLimit` / `remaining`) with identical
@@ -45,7 +45,7 @@ export function useEntitlements(): UseEntitlementsResult {
     (key: FeatureKey): boolean => {
       const value = entitlements.features[key];
       if (typeof value === 'boolean') return value;
-      // `integrations` is the one non-boolean flag ("all" | "reply_to_only") —
+      // `integrations` is the one non-boolean flag ("all" | "reply_to_only") -
       // both literal values are non-empty, so presence alone means "on".
       return Boolean(value);
     },

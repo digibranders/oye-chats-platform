@@ -3,7 +3,7 @@ import { useBotContext } from '../../../context/BotContext';
 import { usePreview } from './preview-context';
 
 /**
- * WidgetPreview — the Launch Studio right-pane preview. Renders the REAL widget
+ * WidgetPreview - the Launch Studio right-pane preview. Renders the REAL widget
  * mock (legacy WidgetChatPreview, pixel-faithful to the production widget) driven
  * by the shared preview config, so customization shows up here exactly as
  * visitors will see it. Empty `messages` → the widget's welcome screen; the Test

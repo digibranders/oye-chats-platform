@@ -28,8 +28,19 @@ import pytest
 from app.api.subscription_routes import CancelSubscriptionRequest
 from app.api.subscription_routes import cancel_subscription as cancel_subscription_route
 from app.db.models import Client, Plan, Subscription
+from app.services import razorpay_service
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
+
+
+@pytest.fixture(autouse=True)
+def _seat_plan_configured():
+    """Seat billing is env-only with no baked-in default (``RAZORPAY_SEAT_PLAN_ID``).
+    Configure it for the suite so the seat add-on carry/create paths run instead of
+    raising ``RazorpayBillingError`` — mirrors the patch in ``test_razorpay_service``.
+    """
+    with patch.object(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_test_seat"):
+        yield
 
 
 @contextmanager

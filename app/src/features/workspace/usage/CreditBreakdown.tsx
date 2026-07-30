@@ -1,6 +1,6 @@
 import { type ReactElement } from 'react';
 import { FileText, Globe, Mail, MessageSquare, type LucideIcon } from 'lucide-react';
-import { formatCredits, type CreditBalance } from '../usage-model';
+import { formatCredits, type UsageBuckets } from '../usage-model';
 
 interface BreakdownRow {
   readonly key: string;
@@ -11,22 +11,23 @@ interface BreakdownRow {
 }
 
 export interface CreditBreakdownProps {
-  balance: CreditBalance;
+  /** The metered activity to break down - the whole workspace's, or one agent's. */
+  activity: UsageBuckets;
 }
 
 /**
- * CreditBreakdown — where this period's credits went, as ranked horizontal
+ * CreditBreakdown - where this period's credits went, as ranked horizontal
  * bars (magnitude of a single measure across categories). One accent hue,
  * length-encoded, sorted high→low, with the raw credits + event count direct-
- * labeled. Lightweight by design — no chart library, no pie. Skips rendering
+ * labeled. Lightweight by design - no chart library, no pie. Skips rendering
  * when nothing has been consumed yet.
  */
-export function CreditBreakdown({ balance }: CreditBreakdownProps): ReactElement | null {
+export function CreditBreakdown({ activity }: CreditBreakdownProps): ReactElement | null {
   const rows: BreakdownRow[] = [
-    { key: 'crawler', label: 'Crawler', icon: Globe, creditsUsed: balance.urlScan.creditsUsed, eventCount: balance.urlScan.eventCount },
-    { key: 'documents', label: 'Documents', icon: FileText, creditsUsed: balance.documentUpload.creditsUsed, eventCount: balance.documentUpload.eventCount },
-    { key: 'chat', label: 'AI chat', icon: MessageSquare, creditsUsed: balance.aiChat.creditsUsed, eventCount: balance.aiChat.eventCount },
-    { key: 'emails', label: 'Emails', icon: Mail, creditsUsed: balance.emailSend.creditsUsed, eventCount: balance.emailSend.eventCount },
+    { key: 'crawler', label: 'Crawler', icon: Globe, creditsUsed: activity.urlScan.creditsUsed, eventCount: activity.urlScan.eventCount },
+    { key: 'documents', label: 'Documents', icon: FileText, creditsUsed: activity.documentUpload.creditsUsed, eventCount: activity.documentUpload.eventCount },
+    { key: 'chat', label: 'AI chat', icon: MessageSquare, creditsUsed: activity.aiChat.creditsUsed, eventCount: activity.aiChat.eventCount },
+    { key: 'emails', label: 'Emails', icon: Mail, creditsUsed: activity.emailSend.creditsUsed, eventCount: activity.emailSend.eventCount },
   ].sort((a, b) => b.creditsUsed - a.creditsUsed);
 
   const total = rows.reduce((sum, row) => sum + row.creditsUsed, 0);

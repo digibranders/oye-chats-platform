@@ -119,7 +119,7 @@ function NotificationRow({ item, onSelect, onDismiss }: NotificationRowProps) {
 }
 
 /**
- * NotificationCenter — the TopBar bell, wired to the live `NotificationProvider`
+ * NotificationCenter - the TopBar bell, wired to the live `NotificationProvider`
  * (`/ws/notifications` stream + REST fallback). `useNotifications()` returns a
  * safe all-empty shape when rendered outside the provider, so this never
  * crashes even on a route that doesn't wrap it.

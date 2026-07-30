@@ -13,7 +13,7 @@ import path from 'node:path';
  *   /* @__OYECHATS_PRECACHE__ * / []        → JSON array of precache URLs
  *
  * In dev the placeholders remain, the SW detects them (BUILD_ID starts with
- * '__') and skips precaching entirely — safe for the hot-reload workflow.
+ * '__') and skips precaching entirely - safe for the hot-reload workflow.
  */
 export function oyechatsPwaPlugin() {
   const BUILD_ID_SENTINEL = "'__OYECHATS_BUILD_ID__'";

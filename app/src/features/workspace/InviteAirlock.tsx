@@ -1,5 +1,5 @@
 /**
- * InviteAirlock — the public team-invite landing at `/invite/:token`.
+ * InviteAirlock - the public team-invite landing at `/invite/:token`.
  *
  * Rebuilt from the legacy `pages/InviteAirlock.jsx` in the Admin 2.0 design
  * language. It resolves the invite token (`GET /invites/by-token/{token}`) and
@@ -22,7 +22,7 @@
  *
  * Backend reused verbatim (typed in services/api.d.ts): getInvitePublic,
  * acceptInvitePublic, getCurrentUser. A public page outside the app shell, so
- * it owns a centered card built from design-system primitives — mirroring
+ * it owns a centered card built from design-system primitives - mirroring
  * `affiliate/AffiliateInvite`.
  */
 import { type ReactElement, useEffect, useState } from 'react';
@@ -71,7 +71,7 @@ function roleLabel(role: string | undefined): string {
 
 // ── Shell + shared chrome ──────────────────────────────────────────────────
 
-/** Centers a single card on the canvas — mirrors the auth + affiliate pages. */
+/** Centers a single card on the canvas - mirrors the auth + affiliate pages. */
 function InviteShell({ children }: { children: ReactElement }): ReactElement {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--ds-bg-canvas)] px-4 py-12">
@@ -96,7 +96,7 @@ function BrandHeader({ workspaceName }: { workspaceName: string }): ReactElement
   );
 }
 
-/** A tinted status badge above a heading — success / neutral / warning / danger. */
+/** A tinted status badge above a heading - success / neutral / warning / danger. */
 function StatusIcon({
   tone,
   icon: Icon,
@@ -168,7 +168,7 @@ function ResolvedInvite({ invite }: { invite: InviteMeta }): ReactElement {
   );
 }
 
-// ── Anonymous — choose sign in or sign up (token carried through) ───────────
+// ── Anonymous - choose sign in or sign up (token carried through) ───────────
 
 function ChooseSignInOrUp({ invite, token }: { invite: InviteMeta; token: string }): ReactElement {
   const navigate = useNavigate();
@@ -218,7 +218,7 @@ function ChooseSignInOrUp({ invite, token }: { invite: InviteMeta; token: string
   );
 }
 
-// ── Signed in, email matches — accept ──────────────────────────────────────
+// ── Signed in, email matches - accept ──────────────────────────────────────
 
 function AcceptPanel({
   invite,
@@ -267,7 +267,7 @@ function AcceptPanel({
   );
 }
 
-// ── Signed in, wrong account (or legacy operator) — sign out to switch ──────
+// ── Signed in, wrong account (or legacy operator) - sign out to switch ──────
 
 function SwitchAccount({
   invite,
@@ -315,7 +315,7 @@ function SwitchAccount({
             Sign out and switch
           </Button>
           <Button variant="ghost" className="w-full" onClick={() => navigate('/')}>
-            Cancel — stay signed in
+            Cancel - stay signed in
           </Button>
         </div>
       </div>
@@ -355,7 +355,7 @@ export function InviteAirlock(): ReactElement {
   const isAuthenticated = Boolean(getAuthItem('admin_token'));
   const isLegacyOperator = getAuthItem('auth_type') === 'operator';
 
-  // Derived initial phase — no token is invalid up front; otherwise we load.
+  // Derived initial phase - no token is invalid up front; otherwise we load.
   const [phase, setPhase] = useState<InvitePhase>(() =>
     token ? { status: 'loading' } : { status: 'invalid' },
   );
@@ -382,7 +382,7 @@ export function InviteAirlock(): ReactElement {
     };
   }, [token]);
 
-  // 2) Resolve the signed-in identity — only when a client session exists.
+  // 2) Resolve the signed-in identity - only when a client session exists.
   // A legacy operator session is handled without a profile fetch.
   useEffect(() => {
     if (!isAuthenticated || isLegacyOperator) return undefined;
@@ -443,7 +443,7 @@ export function InviteAirlock(): ReactElement {
     return <ResolvedInvite invite={invite} />;
   }
 
-  // Pending — branch on auth.
+  // Pending - branch on auth.
   if (!isAuthenticated) return <ChooseSignInOrUp invite={invite} token={token} />;
   if (isLegacyOperator) return <SwitchAccount invite={invite} currentUser={null} variant="operator" />;
 

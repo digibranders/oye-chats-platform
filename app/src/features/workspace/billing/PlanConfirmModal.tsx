@@ -59,7 +59,7 @@ function resolveIntent(
 ): Intent {
   if (plan.slug === 'free') return 'downgrade_free';
   // A trialing (or post-trial) customer selecting THEIR OWN plan is converting
-  // the trial to a paid subscription — not downgrading. Route to pay/activate
+  // the trial to a paid subscription - not downgrading. Route to pay/activate
   // (change-plan trialing→active, or checkout when the trial has expired).
   if (isCurrentPlan && (status === 'trialing' || status === 'trial_expired')) return 'subscribe';
   if (!hasActiveSubscription) return trialEligible ? 'trial' : 'subscribe';
@@ -75,10 +75,10 @@ function priceText(plan: PlanView, cycle: BillingCycle): string {
 
 const INTENT_NOTE: Record<Intent, string> = {
   trial: 'No card is charged during your free trial. We’ll remind you before it ends, and you can cancel anytime.',
-  subscribe: 'Secure checkout via Razorpay — UPI, card, or NetBanking. Cancel anytime.',
+  subscribe: 'Secure checkout via Razorpay - UPI, card, or NetBanking. Cancel anytime.',
   upgrade: 'Your plan changes immediately. Billing adjusts automatically on your next invoice.',
   downgrade:
-    'Takes effect at the end of your current billing period — you keep your current plan and credits until then.',
+    'Takes effect at the end of your current billing period - you keep your current plan and credits until then.',
   downgrade_free:
     'Your subscription ends at the close of the current billing period. Existing top-up credits stay intact.',
 };
@@ -92,16 +92,16 @@ export interface PlanConfirmModalProps {
   currentPlanSlug: string;
   currentSubscriptionStatus: string | null;
   hasActiveSubscription: boolean;
-  /** Monthly price of the current plan (minor units) — decides upgrade vs downgrade. */
+  /** Monthly price of the current plan (minor units) - decides upgrade vs downgrade. */
   currentMonthlyPriceMinor: number;
   onSuccess: (message: string) => void;
 }
 
 /**
- * PlanConfirmModal — a focused, centered confirmation for a plan change. A
+ * PlanConfirmModal - a focused, centered confirmation for a plan change. A
  * single decision belongs in a centered modal (not a side drawer): it states
- * exactly what will happen — the honest price from `/checkout/quote`, the
- * effect of the change, and any card charge — and runs the shared
+ * exactly what will happen - the honest price from `/checkout/quote`, the
+ * effect of the change, and any card charge - and runs the shared
  * {@link usePlanCheckout} money-path. It never invents a proration figure;
  * proration is applied server-side at activation.
  */
@@ -133,7 +133,7 @@ export function PlanConfirmModal({
   });
 
   // Referral / coupon state. Applying a code attaches standing attribution to
-  // the account server-side, so the checkout quote below picks up the discount —
+  // the account server-side, so the checkout quote below picks up the discount -
   // we re-fetch it after a successful apply via `quoteToken`.
   const [referral, setReferral] = useState<ReferralState>({
     input: '',
@@ -145,7 +145,7 @@ export function PlanConfirmModal({
   const [quoteToken, setQuoteToken] = useState(0);
 
   // Seed any standing referral attribution when the modal opens (an account can
-  // already carry a code from signup — its discount applies at checkout even if
+  // already carry a code from signup - its discount applies at checkout even if
   // the field looks empty). Reset per open so a prior code can't flash.
   useEffect(() => {
     if (!open || !plan?.isPaid) return undefined;
@@ -164,7 +164,7 @@ export function PlanConfirmModal({
           });
         }
       } catch {
-        /* no standing attribution — leave idle */
+        /* no standing attribution - leave idle */
       }
     })();
     return () => {
@@ -214,7 +214,7 @@ export function PlanConfirmModal({
     // All quote state is set inside this async closure (never synchronously in
     // the effect body) so a fast re-open can't cascade renders.
     void (async () => {
-      // An enterprise tier is priced on request — there is no checkout quote to
+      // An enterprise tier is priced on request - there is no checkout quote to
       // fetch; it routes to sales instead.
       if (plan.isEnterprise) {
         if (!cancelled) {
@@ -338,7 +338,7 @@ export function PlanConfirmModal({
       }
     >
       <div className="space-y-5">
-        {/* Price hero — the plan name pill sits above a large, honest figure. */}
+        {/* Price hero - the plan name pill sits above a large, honest figure. */}
         <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-subtle)] p-5">
           <div className="flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ds-accent-soft)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ds-accent-text)]">
@@ -381,7 +381,7 @@ export function PlanConfirmModal({
           </div>
         </div>
 
-        {/* Trial context strip — a calm, delightful reassurance that the free
+        {/* Trial context strip - a calm, delightful reassurance that the free
             trial charges nothing today. Only when this change starts a trial. */}
         {intent === 'trial' && (
           <div className="flex items-center gap-2.5 rounded-xl border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-3.5 py-2.5 text-[13px] text-[var(--ds-text)]">
@@ -390,13 +390,13 @@ export function PlanConfirmModal({
               <span className="font-semibold">{plan.trialDays || 7} days free</span>
               <span className="text-[var(--ds-text-muted)]">
                 {' '}
-                — you won’t be charged today. Cancel anytime before it ends.
+                - you won’t be charged today. Cancel anytime before it ends.
               </span>
             </span>
           </div>
         )}
 
-        {/* Referral / coupon code — only where a discount can apply (paid, not a
+        {/* Referral / coupon code - only where a discount can apply (paid, not a
             downgrade, not blocked). Applying attaches the code server-side; the
             quote above re-fetches to show the discounted price. */}
         {plan.isPaid && !contactOnly && intent !== 'downgrade' && intent !== 'downgrade_free' && (
@@ -408,7 +408,7 @@ export function PlanConfirmModal({
                 </span>
                 <span className="text-[var(--ds-text)]">
                   Code <span className="font-semibold">{referral.code}</span> applied
-                  {referral.discountPct > 0 ? ` — ${referral.discountPct}% off` : ''}.
+                  {referral.discountPct > 0 ? ` - ${referral.discountPct}% off` : ''}.
                 </span>
               </div>
             ) : (
@@ -465,8 +465,8 @@ export function PlanConfirmModal({
           <div className="flex items-start gap-2 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-text)]">
             <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
             {plan.isEnterprise
-              ? 'This plan is tailored to your needs — our team will set you up with custom pricing and onboarding.'
-              : 'International USD billing is coming soon — our team will set you up directly.'}
+              ? 'This plan is tailored to your needs - our team will set you up with custom pricing and onboarding.'
+              : 'International USD billing is coming soon - our team will set you up directly.'}
           </div>
         ) : (
           <p className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">

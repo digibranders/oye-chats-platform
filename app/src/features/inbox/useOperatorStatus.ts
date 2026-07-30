@@ -19,7 +19,7 @@ export interface OperatorStatusState {
 }
 
 /**
- * useOperatorStatus — reads and flips the current user's live-chat availability
+ * useOperatorStatus - reads and flips the current user's live-chat availability
  * for the active bot. When the user isn't an operator, the backend returns null;
  * we surface that as `unavailable` so the UI can explain rather than mislead.
  */

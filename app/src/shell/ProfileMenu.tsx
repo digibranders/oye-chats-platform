@@ -23,11 +23,11 @@ function getInitials(name: string | null | undefined): string {
     .toUpperCase();
 }
 
-/** ISO timestamp → "Joined Jul 16, 2026". Returns "—" on missing/bad input. */
+/** ISO timestamp → "Joined Jul 16, 2026". Returns "-" on missing/bad input. */
 function formatJoinedDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
@@ -57,12 +57,12 @@ function AvatarCircle({ name, size, online = false }: AvatarCircleProps) {
 }
 
 /**
- * ProfileMenu — the account dropdown anchored to the TopBar avatar. Built on
+ * ProfileMenu - the account dropdown anchored to the TopBar avatar. Built on
  * the `Popover` primitive so it portals past the header's `backdrop-blur-md`
  * clip. Profile is fetched lazily on first interaction (not re-fetched on
  * every subsequent open) so opening the menu never blocks on a loading
  * spinner after the first time. The plan chip reads `useEntitlements()`
- * instead of its own fetch — `EntitlementsProvider` already loads it once at
+ * instead of its own fetch - `EntitlementsProvider` already loads it once at
  * the app root, so the chip is available immediately with no extra request.
  */
 export function ProfileMenu() {
@@ -74,7 +74,7 @@ export function ProfileMenu() {
   const [profile, setProfile] = useState<CurrentUser | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
-  // Guards the profile fetch to "once ever" — reset to false only on failure,
+  // Guards the profile fetch to "once ever" - reset to false only on failure,
   // so a transient network blip can still recover on the next open rather
   // than permanently freezing the menu on "Profile unavailable".
   const hasFetchedRef = useRef(false);
@@ -187,12 +187,12 @@ export function ProfileMenu() {
               <>
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
                   <Mail size={13} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
-                  <span className="truncate">{profile?.email ?? '—'}</span>
+                  <span className="truncate">{profile?.email ?? '-'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
                   <BotIcon size={13} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
                   <span>
-                    {profile?.bot_count ?? '—'} {profile?.bot_count === 1 ? 'AI Chatbot' : 'AI Chatbots'}
+                    {profile?.bot_count ?? '-'} {profile?.bot_count === 1 ? 'AI Chatbot' : 'AI Chatbots'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">

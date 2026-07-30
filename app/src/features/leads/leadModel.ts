@@ -1,5 +1,5 @@
 /**
- * Leads — domain model helpers.
+ * Leads - domain model helpers.
  *
  * Pure, side-effect-free functions that translate the legacy backend shapes
  * (getLeads / getLeadStats / getQualificationFunnel) into the typed,
@@ -9,7 +9,7 @@
  * Vocabulary decision (mandate): the backend speaks BANT jargon
  * (unqualified / mql / sal / sql). Buyers of this product don't. Every tier is
  * given a plain-language label ("Ready to buy") so the page answers its one
- * question — "Who are my qualified leads?" — without a glossary.
+ * question - "Who are my qualified leads?" - without a glossary.
  */
 import { type StatusBadgeProps } from '../../design-system';
 import { type Lead } from '../../types/domain';
@@ -23,7 +23,7 @@ export type TierKey = 'unqualified' | 'mql' | 'sal' | 'sql';
 export const TIER_ORDER: readonly TierKey[] = ['unqualified', 'mql', 'sal', 'sql'];
 
 export interface TierMeta {
-  /** Plain-language label shown to the user — no BANT/MQL jargon. */
+  /** Plain-language label shown to the user - no BANT/MQL jargon. */
   readonly label: string;
   /** The industry acronym, kept for the tooltip / power users. */
   readonly code: string;
@@ -37,25 +37,25 @@ export const TIER_META: Record<TierKey, TierMeta> = {
   unqualified: {
     label: 'Just exploring',
     code: 'Unqualified',
-    hint: 'Early interest — keep nurturing before a sales reach-out.',
+    hint: 'Early interest - keep nurturing before a sales reach-out.',
     tone: 'neutral',
   },
   mql: {
     label: 'Warm lead',
     code: 'MQL',
-    hint: 'Showing real buying signals — worth a marketing follow-up.',
+    hint: 'Showing real buying signals - worth a marketing follow-up.',
     tone: 'info',
   },
   sal: {
     label: 'Strong interest',
     code: 'SAL',
-    hint: 'Ready for a sales conversation — reach out soon.',
+    hint: 'Ready for a sales conversation - reach out soon.',
     tone: 'warning',
   },
   sql: {
     label: 'Ready to buy',
     code: 'SQL',
-    hint: 'High intent — prioritise this lead today.',
+    hint: 'High intent - prioritise this lead today.',
     tone: 'success',
   },
 };
@@ -121,7 +121,7 @@ export interface LeadStatsSummary {
   mql: number;
   sal: number;
   sql: number;
-  /** MQL + SAL + SQL — everyone past the "just exploring" line. */
+  /** MQL + SAL + SQL - everyone past the "just exploring" line. */
   qualified: number;
   avgScore: number;
   /** New leads the user hasn't opened yet. */
@@ -259,9 +259,9 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
 
 /** Format an ISO timestamp as a compact "Jul 21, 3:04 PM"; em-dash on absence. */
 export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const parsed = Date.parse(iso);
-  if (!Number.isFinite(parsed)) return '—';
+  if (!Number.isFinite(parsed)) return '-';
   return new Date(parsed).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -270,7 +270,7 @@ export function formatDateTime(iso: string | null | undefined): string {
   });
 }
 
-/** A short display name for a lead — real name, else "Anonymous visitor". */
+/** A short display name for a lead - real name, else "Anonymous visitor". */
 export function leadDisplayName(lead: Lead): string {
   return hasContactName(lead) ? (lead.contact?.name as string) : 'Anonymous visitor';
 }

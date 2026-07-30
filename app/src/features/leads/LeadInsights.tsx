@@ -1,15 +1,18 @@
 /**
- * LeadInsights — source attribution + behavioural signals for a single lead.
+ * LeadInsights - source attribution + behavioural signals for a single lead.
  *
  * Restores two blocks the rebuild dropped from `LeadDetailDrawer` (the drawer
  * carried a `TODO(leads)` for source attribution and never rendered behavioural
  * signals). Both read data the backend already produces:
- *   • Source attribution — `detail.source` (UTM params, referrer, landing page,
+ *   • Source attribution - `detail.source` (UTM params, referrer, landing page,
  *     pre-chat page journey). Only present on plans with the feature, so its
  *     presence is the signal; absent → the section is omitted.
- *   • Behavioural signals — `detail.behavioral_score` (0–20 engagement, scored
- *     by `behavioral_service.py`) + `detail.behavioral.visit_count` (return
- *     visits). Always available.
+ *   • Behavioural signals - `detail.behavioral.visit_count` (return visits) plus
+ *     a plain-language engagement tier derived from `detail.behavioral_score`
+ *     (0–20, scored by `behavioral_service.py`). The raw score is intentionally
+ *     NOT shown as a number: it already feeds the headline 0–100 qualification
+ *     score, so a second numeric scale in the same drawer competes with that
+ *     verdict. We surface it qualitatively (Low/Medium/High) instead.
  */
 import { type ReactElement } from 'react';
 import { Activity, Compass } from 'lucide-react';
@@ -98,7 +101,7 @@ function AttrRow({ label, value }: { label: string; value: string }): ReactEleme
 
 function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | null {
   const source = asRecord(detail.source);
-  // `source` is only attached on eligible plans — absent means "not available".
+  // `source` is only attached on eligible plans - absent means "not available".
   if (Object.keys(source).length === 0) return null;
 
   const utm = asRecord(source.utm_params);
@@ -119,7 +122,7 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
       <section className="space-y-3">
         <SectionTitle icon={Compass}>Source</SectionTitle>
         <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-subtle)]">
-          Direct / Organic — no UTM tags or referrer were captured for this visitor.
+          Direct / Organic - no UTM tags or referrer were captured for this visitor.
         </p>
       </section>
     );
@@ -157,7 +160,7 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
             {visible.map((row, idx) => (
               <li key={`${row.path}-${row.ts ?? idx}`} className="flex items-start gap-2 text-[12px]">
                 <span className="shrink-0 tabular-nums text-[var(--ds-text-subtle)]">{idx + 1 + offset}.</span>
-                <span className="flex-1 break-all text-[var(--ds-text-muted)]">{row.path || '—'}</span>
+                <span className="flex-1 break-all text-[var(--ds-text-muted)]">{row.path || '-'}</span>
                 {row.isLast ? (
                   <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
                     opened chat here
@@ -181,6 +184,13 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
   );
 }
 
+/** Map the raw 0–20 engagement score to a plain-language tier + badge tone. */
+function engagementTier(score: number): { label: string; tone: 'success' | 'info' | 'neutral' } {
+  if (score >= 15) return { label: 'High engagement', tone: 'success' };
+  if (score >= 8) return { label: 'Medium engagement', tone: 'info' };
+  return { label: 'Low engagement', tone: 'neutral' };
+}
+
 function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | null {
   const score = detail.behavioral_score ?? 0;
   const behavioral = asRecord(detail.behavioral);
@@ -188,25 +198,24 @@ function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | n
 
   if (score <= 0 && visitCount <= 1) return null;
 
-  const pct = Math.min((score / 20) * 100, 100);
-  const barColor =
-    score >= 15 ? 'var(--ds-success)' : score >= 8 ? 'var(--ds-info)' : 'var(--ds-warning)';
+  // Only qualify engagement when there's actually a score; a return visitor
+  // with no engagement data still gets their visit count shown.
+  const tier = score > 0 ? engagementTier(score) : null;
 
   return (
     <section className="space-y-3">
       <SectionTitle icon={Activity}>Behavioural signals</SectionTitle>
-      <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">Engagement score</span>
-          <span className="text-[12px] font-bold text-[var(--ds-text)]">{score}/20</span>
-        </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]">
-          <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: barColor }} />
-        </div>
+      <div className="space-y-2.5 rounded-xl border border-[var(--ds-border)] p-4">
+        {tier && (
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">Engagement</span>
+            <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>
+          </div>
+        )}
         {visitCount > 1 && (
-          <div className="flex items-center gap-2 pt-1 text-[12px]">
-            <span className="text-[var(--ds-text-subtle)]">Return visitor</span>
-            <span className="text-[var(--ds-text-muted)]">{visitCount} visits</span>
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="font-medium text-[var(--ds-text-muted)]">Return visitor</span>
+            <span className="text-[var(--ds-text)]">{visitCount} visits</span>
           </div>
         )}
       </div>

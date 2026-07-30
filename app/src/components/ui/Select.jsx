@@ -3,7 +3,7 @@ import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 /**
- * Select — custom dropdown replacing the browser-default <select>.
+ * Select - custom dropdown replacing the browser-default <select>.
  *
  * Same listbox interaction contract as a native select (click or
  * ArrowDown/Enter/Space to open, arrows + Home/End to move, type-ahead on
@@ -11,7 +11,7 @@ import { cn } from '../../lib/utils';
  * rendered with the app's surface/primary tokens so it matches Input and
  * Dialog in both themes.
  *
- * With `searchable`, the open panel gains a filter box (focused on open) —
+ * With `searchable`, the open panel gains a filter box (focused on open) -
  * typing narrows the list against each option's `search` string (falls back
  * to its label). Use for long lists like countries; plain mode already
  * type-aheads for short ones.
@@ -223,7 +223,7 @@ export default function Select({
               </li>
             )}
             {visible.map((opt, index) => (
-              // Listbox options take pointer, not keyboard, interaction — the
+              // Listbox options take pointer, not keyboard, interaction - the
               // trigger button (or search box) keeps focus and owns all key
               // handling above.
               <li

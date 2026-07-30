@@ -25,7 +25,7 @@ const trendStyles: Record<MetricTrend, { icon: LucideIcon; text: string }> = {
 };
 
 /**
- * MetricCard — a single KPI tile (mandate shared component). One number, its
+ * MetricCard - a single KPI tile (mandate shared component). One number, its
  * label, and an optional trend delta. Compose several in a responsive grid to
  * build a stats row.
  */

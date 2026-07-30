@@ -12,16 +12,16 @@ export interface PlansPanelProps {
   cycle: BillingCycle;
   onCycleChange: (cycle: BillingCycle) => void;
   onSelect: (plan: PlanView) => void;
-  /** Current subscription status — drives the trial → paid activation CTA. */
+  /** Current subscription status - drives the trial → paid activation CTA. */
   currentStatus?: string | null;
-  /** Trial end date (ISO) — shown on the trialing plan's own card. */
+  /** Trial end date (ISO) - shown on the trialing plan's own card. */
   trialEnd?: string | null;
 }
 
 /**
- * PlansPanel — the plan picker for the Billing ▸ Plans tab. It leads with the
+ * PlansPanel - the plan picker for the Billing ▸ Plans tab. It leads with the
  * premium pricing cards (price + top highlights + CTA) under one monthly/annual
- * toggle — the fast switch surface — and offers the exhaustive feature matrix
+ * toggle - the fast switch surface - and offers the exhaustive feature matrix
  * in-app via a collapsed {@link ComparePlans} disclosure, so a customer can
  * re-shop line by line without leaving the product. One toggle drives both the
  * cards and the matrix.

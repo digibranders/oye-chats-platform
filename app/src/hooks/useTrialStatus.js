@@ -13,10 +13,10 @@ import { getCurrentUser } from '../services/api';
  * Two reasons it lives in its own hook rather than directly in TrialBanner:
  *
  * 1. The same status drives "show banner", "disable Upload knowledge",
- *    "show reactivate badge on Billing tab" — keeping one source of truth
+ *    "show reactivate badge on Billing tab" - keeping one source of truth
  *    avoids three components disagreeing about whether the trial is over.
  * 2. Operators (X-Operator-Key) don't get a trial payload back from
- *    /auth/me — the hook short-circuits to ``status: null`` for them so
+ *    /auth/me - the hook short-circuits to ``status: null`` for them so
  *    nothing renders. Doing that check in every consumer would be noise.
  *
  * The hook does NOT poll. The auth-me payload only changes on register,
@@ -47,7 +47,7 @@ export function useTrialStatus() {
                 error: null,
             });
         } catch (err) {
-            // Silent on auth failures — the auth flow handles redirects
+            // Silent on auth failures - the auth flow handles redirects
             // upstream. We only surface the error so consumers can render
             // a fallback UI if they care to.
             setState((prev) => ({ ...prev, loading: false, error: err }));

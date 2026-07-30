@@ -18,7 +18,7 @@ function CopyableCode({ code }: { code: string }) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // clipboard blocked — code is selectable
+      // clipboard blocked - code is selectable
     }
   };
   return (
@@ -39,7 +39,7 @@ function CopyableCode({ code }: { code: string }) {
 }
 
 /**
- * Step 8 — Deploy. Pick your platform FIRST, then get platform-specific install
+ * Step 8 - Deploy. Pick your platform FIRST, then get platform-specific install
  * instructions (Next.js/WordPress/Shopify/…). Data is reused from the legacy
  * platform-integration config; the UI is rebuilt fresh on the new design system.
  */
@@ -141,7 +141,7 @@ export function DeployStep(props: StepProps) {
 
         <Card className="p-3">
           <p className="text-[12px] text-[var(--ds-text-subtle)]">
-            Once you've added it, continue — we'll confirm it's live on the next step.
+            Once you've added it, continue - we'll confirm it's live on the next step.
           </p>
         </Card>
       </div>

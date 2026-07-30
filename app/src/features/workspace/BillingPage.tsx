@@ -34,6 +34,7 @@ import {
 } from '../../design-system';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../services/api';
+import { useBotContext } from '../../context/BotContext';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
@@ -55,7 +56,7 @@ import {
 } from './billingModel';
 
 /**
- * BillingPage — the Workspace ▸ Billing surface: a subscription-management
+ * BillingPage - the Workspace ▸ Billing surface: a subscription-management
  * dashboard answering "what am I paying for?". Four summary cards
  * (Subscription · Renewal · Payment · Credits) lead; issued invoices and the
  * buyer's tax identity follow; the full plan comparison lives in a collapsed
@@ -68,14 +69,20 @@ import {
  * notice region.
  */
 export function BillingPage(): ReactElement {
-  const { loading, error, data, reload } = useBillingData();
+  // Scope Billing to the agent picked in the shell switcher: a selected agent
+  // shows its OWN subscription + credits + invoices; "All agents" (null) shows
+  // the account-level view. Read side + Buy-credits/seats/cancel are per-agent;
+  // plan-switch stays account-scoped until per-agent checkout ships.
+  const { selectedBot } = useBotContext();
+  const billingBotId = selectedBot?.id ?? null;
+  const { loading, error, data, reload } = useBillingData(billingBotId);
   const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
 
   const subscription = data?.subscription ?? null;
   const plan = data?.plan ?? null;
 
-  // Comparison billing cycle — seeded to the customer's own cadence.
+  // Comparison billing cycle - seeded to the customer's own cadence.
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [activeTab, setActiveTab] = useState<BillingTab>('overview');
   const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
@@ -104,7 +111,7 @@ export function BillingPage(): ReactElement {
     setLifecycleError(null);
     try {
       await cancelScheduledChange();
-      handleSuccess('Scheduled change cancelled — you’ll stay on your current plan.');
+      handleSuccess('Scheduled change cancelled - you’ll stay on your current plan.');
     } catch (err) {
       setLifecycleError(err instanceof Error ? err.message : 'Couldn’t cancel the scheduled change.');
     } finally {
@@ -117,7 +124,7 @@ export function BillingPage(): ReactElement {
     setLifecycleError(null);
     try {
       await resumeSubscription();
-      handleSuccess('Subscription reactivated — it will keep renewing.');
+      handleSuccess('Subscription reactivated - it will keep renewing.');
     } catch (err) {
       setLifecycleError(err instanceof Error ? err.message : 'Couldn’t reactivate your subscription.');
     } finally {
@@ -143,7 +150,7 @@ export function BillingPage(): ReactElement {
       : 0;
   const priceLabel = plan?.isPaid ? `${formatMoneyMinor(priceMinor)}/${cycleLabel}` : 'Free';
 
-  // A subscription set to cancel at period end will NOT renew — surfacing it as
+  // A subscription set to cancel at period end will NOT renew - surfacing it as
   // "Renews" would be dishonest. scheduledChange (a downgrade) takes precedence
   // since it has its own banner; a bare pending cancellation is otherwise
   // invisible on the page.
@@ -158,13 +165,13 @@ export function BillingPage(): ReactElement {
   // subscription's default provider value.
   const provider = plan?.isPaid ? subscription?.paymentProvider ?? null : null;
   const paymentLabel = provider ? capitalize(provider) : 'None';
-  // Honest copy: OyeChats never stores or manages the card itself — Razorpay
+  // Honest copy: OyeChats never stores or manages the card itself - Razorpay
   // hosts every card/UPI detail at checkout (there is no in-app "update card"
   // endpoint), so both the active and empty states point the customer there
   // rather than implying a management surface we don't have.
   const paymentSub = provider
     ? provider.toLowerCase() === 'razorpay'
-      ? 'UPI, card, or NetBanking — managed securely by Razorpay at checkout.'
+      ? 'UPI, card, or NetBanking - managed securely by Razorpay at checkout.'
       : 'Billed manually by our team.'
     : 'Added securely via Razorpay when you start a paid plan.';
 
@@ -187,7 +194,7 @@ export function BillingPage(): ReactElement {
     >
       {/* Scaffold notice for Razorpay-gated actions. Kept permanently mounted
           (no `empty:hidden`) so the aria-live region is in the a11y tree before
-          content is injected — several screen readers skip announcing regions
+          content is injected - several screen readers skip announcing regions
           that were display:none at mutation time. */}
       <div aria-live="polite">
         {notice && (
@@ -221,7 +228,7 @@ export function BillingPage(): ReactElement {
 
       {data && !loading && subscription && (
         <>
-          {/* Active-trial conversion nudge — a growth prompt to authorise a
+          {/* Active-trial conversion nudge - a growth prompt to authorise a
               payment method before the trial ends, so the bot/credits/history
               survive. Shown across all tabs during the trial window. */}
           {subscription.status === 'trialing' && subscription.trialEnd && !trialNudgeDismissed && (
@@ -232,7 +239,7 @@ export function BillingPage(): ReactElement {
             />
           )}
 
-          {/* Data-retention purge warning — trial/subscription lapsed and the
+          {/* Data-retention purge warning - trial/subscription lapsed and the
               account's data is scheduled for deletion. Shown across all tabs
               because it's the most urgent thing on the page. */}
           {subscription.dataRetentionUntil && (
@@ -242,11 +249,11 @@ export function BillingPage(): ReactElement {
             />
           )}
 
-          {/* Segmented sub-tabs — a pill control, distinct from the underline
+          {/* Segmented sub-tabs - a pill control, distinct from the underline
               Workspace tabs above, so the two nav levels read as a hierarchy. */}
           <BillingTabs active={activeTab} onChange={setActiveTab} />
 
-          {/* Overview — the management surface: current subscription + credits.
+          {/* Overview - the management surface: current subscription + credits.
               Subscription-state banners and seat management live here because
               they're about the plan you're ON, not the ones you might switch to. */}
           {activeTab === 'overview' && (
@@ -285,20 +292,22 @@ export function BillingPage(): ReactElement {
                 onChangePlan={() => setActiveTab('plans')}
                 onBuyCredits={() => setTopupOpen(true)}
                 onViewUsage={() => void navigate('/workspace/usage')}
+                botId={billingBotId}
+                changePlanDisabled={billingBotId != null}
               />
 
-              {/* Operator seats — only meaningful once the plan includes them. */}
+              {/* Operator seats - only meaningful once the plan includes them. */}
               {includedSeats > 0 && (
                 <SeatManager
                   totalSeats={totalSeats}
                   includedSeats={includedSeats}
-                  seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
+                  seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '-'}
                   onAddSeat={() => setSeatDialog({ open: true, delta: 1 })}
                   onRemoveSeat={() => setSeatDialog({ open: true, delta: -1 })}
                 />
               )}
 
-              {/* Cancel — a live paid subscription that isn't already ending. A
+              {/* Cancel - a live paid subscription that isn't already ending. A
                   quiet, understated row (not an alarming red card): cancellation
                   is cancel-at-period-end and fully reversible. Hidden once
                   cancel_at_period_end is set (the Reactivate banner takes over). */}
@@ -313,7 +322,7 @@ export function BillingPage(): ReactElement {
             </div>
           )}
 
-          {/* Plans — switch surface only: the grid + cycle toggle. */}
+          {/* Plans - switch surface only: the grid + cycle toggle. */}
           {activeTab === 'plans' && data.availablePlans.length > 0 && (
             <PlansPanel
               plans={data.availablePlans}
@@ -336,7 +345,7 @@ export function BillingPage(): ReactElement {
         </>
       )}
 
-      {/* Centered confirm modal — runs the shared checkout money-path. */}
+      {/* Centered confirm modal - runs the shared checkout money-path. */}
       <PlanConfirmModal
         open={confirmPlan !== null}
         onClose={() => setConfirmPlan(null)}
@@ -349,7 +358,12 @@ export function BillingPage(): ReactElement {
         onSuccess={handleSuccess}
       />
 
-      <TopupModal open={topupOpen} onClose={() => setTopupOpen(false)} onSuccess={handleSuccess} />
+      <TopupModal
+        open={topupOpen}
+        botId={billingBotId}
+        onClose={() => setTopupOpen(false)}
+        onSuccess={handleSuccess}
+      />
 
       {seatDialog.open && (
         <SeatChangeDialog
@@ -357,7 +371,8 @@ export function BillingPage(): ReactElement {
           onClose={() => setSeatDialog({ open: false, delta: seatDialog.delta })}
           delta={seatDialog.delta}
           currentSeats={totalSeats}
-          seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '—'}
+          seatPriceLabel={plan ? `${formatMoneyMinor(plan.extraSeatPriceMinor)}/mo` : '-'}
+          botId={billingBotId}
           onSuccess={handleSuccess}
         />
       )}
@@ -373,6 +388,7 @@ export function BillingPage(): ReactElement {
         onClose={() => setCancelOpen(false)}
         planName={plan?.name ?? 'your plan'}
         periodEnd={subscription?.currentPeriodEnd ?? null}
+        botId={billingBotId}
         onSuccess={handleSuccess}
       />
     </PageContainer>
@@ -382,7 +398,7 @@ export function BillingPage(): ReactElement {
 // ── Cancel subscription ───────────────────────────────────────────────────────
 
 /**
- * CancelSubscriptionRow — the understated entry point to cancellation. Framed as
+ * CancelSubscriptionRow - the understated entry point to cancellation. Framed as
  * a calm management action, not a red alarm: it states the honest cancel-at-
  * period-end outcome inline and hands off to {@link CancelSubscriptionModal} for
  * the reversible confirm. Placed at the foot of the Overview tab, below the plan
@@ -428,7 +444,7 @@ const BILLING_TABS: readonly { readonly id: BillingTab; readonly label: string; 
 ];
 
 /**
- * BillingTabs — a segmented pill control switching the Billing sub-sections. A
+ * BillingTabs - a segmented pill control switching the Billing sub-sections. A
  * raised active segment on a sunken track (vs. the underline Workspace tabs)
  * makes the two navigation levels read as a clear hierarchy.
  */
@@ -529,9 +545,9 @@ function SeatManager({
 // ── Invoices ──────────────────────────────────────────────────────────────────
 
 // A freshly-issued invoice's `pdf_url` is null until the ARQ worker renders it
-// (seconds after payment; 5-min sweep as a backstop — see root CLAUDE.md and
+// (seconds after payment; 5-min sweep as a backstop - see root CLAUDE.md and
 // the legacy InvoicesCard). We poll `getInvoices` in place so the Download link
-// appears without a manual refresh, and — crucially — WITHOUT the page-blanking
+// appears without a manual refresh, and - crucially - WITHOUT the page-blanking
 // parent reload (which resets billing to a full-page skeleton every tick).
 const INVOICE_POLL_INTERVAL_MS = 5_000;
 const MAX_INVOICE_POLLS = 12; // ≈1 min of polling, then stop (manual Refresh stays)
@@ -566,7 +582,7 @@ function InvoicesTab({
   const [pollAttempts, setPollAttempts] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
-  // When the parent refetches billing (new `invoices` reference — e.g. after a
+  // When the parent refetches billing (new `invoices` reference - e.g. after a
   // payment), drop our overlay and reset the poll budget so we track the fresh
   // server data. Adjusting state during render on a prop change is React's
   // supported pattern and keeps this out of an effect (no set-state-in-effect).
@@ -580,7 +596,7 @@ function InvoicesTab({
   const rows = polled ?? invoices;
   const preparingCount = useMemo(() => rows.filter(isInvoicePreparing).length, [rows]);
 
-  // Silent, in-place refetch of just the invoices list — never the parent's
+  // Silent, in-place refetch of just the invoices list - never the parent's
   // page-blanking reload.
   const refetchInvoices = useCallback(async (): Promise<void> => {
     const raw = await getInvoices();
@@ -592,7 +608,7 @@ function InvoicesTab({
   // the `pollAttempts` dependency for a bounded ~5s cadence; the effect stops
   // the moment nothing is preparing or the budget is spent, and cleanup clears
   // the pending timer on unmount. setState only ever runs inside async
-  // callbacks here — never synchronously in the effect body.
+  // callbacks here - never synchronously in the effect body.
   useEffect(() => {
     if (preparingCount === 0 || pollAttempts >= MAX_INVOICE_POLLS) return undefined;
     const timer = setTimeout(() => {
@@ -758,7 +774,7 @@ function InvoiceDownload({ invoice }: { invoice: InvoiceView }): ReactElement {
   // seconds after payment; see legacy InvoicesCard). Communicate, don't hide.
   return (
     <span className="text-[12px] text-[var(--ds-text-subtle)]">
-      {invoice.number ? 'Preparing…' : '—'}
+      {invoice.number ? 'Preparing…' : '-'}
     </span>
   );
 }
@@ -773,7 +789,7 @@ function BillingDetailsTab({
   onEdit: () => void;
 }): ReactElement {
   // A workspace always has exactly one billing identity, so there is no "add"
-  // flow — we always show the details, prefilled from the account data we
+  // flow - we always show the details, prefilled from the account data we
   // already hold (company name → legal name, login email → billing email,
   // signup country → country) until the customer refines them via Edit.
   const legalName = details.legalName ?? details.companyName;
@@ -961,7 +977,7 @@ function CancellationBanner({
 }
 
 /**
- * TrialNudgeBanner — an active free trial is running. A calm, accent-toned
+ * TrialNudgeBanner - an active free trial is running. A calm, accent-toned
  * growth prompt to authorise a payment method (via Pick a plan) before the
  * trial ends so the bot, credits, and chat history are kept. Dismissible for
  * the session; reappears on reload while the trial is still active.
@@ -985,7 +1001,7 @@ function TrialNudgeBanner({
         <p>
           <span className="font-semibold">Your free trial ends {formatDate(trialEnd)}.</span>{' '}
           <span className="text-[var(--ds-text-muted)]">
-            Authorise a payment method to keep your bot, credits, and chat history when it ends — you won’t be
+            Authorise a payment method to keep your bot, credits, and chat history when it ends - you won’t be
             charged until the trial is over.
           </span>
         </p>
@@ -1008,7 +1024,7 @@ function TrialNudgeBanner({
 }
 
 /**
- * DataRetentionBanner — the account has lapsed and its data is scheduled for
+ * DataRetentionBanner - the account has lapsed and its data is scheduled for
  * permanent deletion on `purgeAt`. The most urgent thing on the page, so it's
  * danger-toned and shown above the tabs regardless of which tab is active.
  */
@@ -1032,7 +1048,7 @@ function DataRetentionBanner({
           </p>
           <p className="mt-0.5 text-[var(--ds-text-muted)]">
             Your subscription has lapsed. Choose a plan before this date to keep your agents, knowledge, and
-            conversations — after it, they’re permanently removed.
+            conversations - after it, they’re permanently removed.
           </p>
         </div>
         <Button size="sm" onClick={onChoosePlan} className="shrink-0">

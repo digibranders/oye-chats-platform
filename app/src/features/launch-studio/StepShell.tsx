@@ -17,7 +17,7 @@ export interface StepShellProps {
 }
 
 /**
- * StepShell — shared chrome for every Launch Studio step: a step header, the
+ * StepShell - shared chrome for every Launch Studio step: a step header, the
  * step body, and the Back / Continue footer. Keeps all nine steps visually
  * identical and their navigation wiring in one place.
  */

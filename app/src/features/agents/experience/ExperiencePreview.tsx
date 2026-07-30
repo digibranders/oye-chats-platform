@@ -19,14 +19,14 @@ const STATE_TABS: { key: PreviewState; label: string }[] = [
 ];
 
 /**
- * ExperiencePreview — the live, pixel-faithful widget mock that mirrors the
+ * ExperiencePreview - the live, pixel-faithful widget mock that mirrors the
  * current draft. It reuses the same legacy `WidgetChatPreview` the production
  * widget is pinned to, so every colour, avatar, greeting and quick action the
  * user edits shows up here exactly as a visitor will see it.
  *
  * A small state switch lets the user preview the three visitor-facing surfaces
- * — the default chat welcome, the "connecting to support" waiting view, and the
- * offline/unavailable view — not just the chat state.
+ * - the default chat welcome, the "connecting to support" waiting view, and the
+ * offline/unavailable view - not just the chat state.
  */
 export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps): ReactElement {
   const [state, setState] = useState<PreviewState>('chat');
@@ -77,7 +77,7 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
         })}
       </div>
       <WidgetChatPreview settings={settings} state={state} />
-      <p className="text-[11px] text-[var(--ds-text-subtle)]">Live preview — updates as you edit</p>
+      <p className="text-[11px] text-[var(--ds-text-subtle)]">Live preview - updates as you edit</p>
     </div>
   );
 }

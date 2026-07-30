@@ -21,7 +21,7 @@ export interface BrandingSectionProps {
 }
 
 /**
- * BrandingSection — the widget's visual identity: brand + user-message colours
+ * BrandingSection - the widget's visual identity: brand + user-message colours
  * and the avatar (photo / orb / mascot). Presentational; all state lives in the
  * parent draft so the live preview stays in lockstep.
  */
@@ -63,7 +63,7 @@ export function BrandingSection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title="Avatar"
-          description="The face of your agent — a photo, a glowing orb, or a friendly mascot."
+          description="The face of your agent - a photo, a glowing orb, or a friendly mascot."
         />
         <AvatarPicker
           avatarType={draft.avatarType}

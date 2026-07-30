@@ -1,10 +1,10 @@
 /**
- * formatBotMarkdown — ported VERBATIM from
+ * formatBotMarkdown - ported VERBATIM from
  * `widget/src/components/MessageBubble.jsx` (the embeddable widget's bot
  * message renderer). The widget is the source of truth; if that
  * implementation changes, re-port it here so the Build Studio live preview
  * keeps rendering bot answers identically to the real chatbot. Do not
- * hand-edit this file's logic independently of the widget copy — only the
+ * hand-edit this file's logic independently of the widget copy - only the
  * link-rendering helpers (SafeLink / icon-link / pill-CTA) and the
  * copy-to-plaintext helpers were intentionally left behind, since the
  * preview doesn't need them.
@@ -12,7 +12,7 @@
 
 // Follow-up questions (any capitalised sentence ending in "?") should render
 // on their own paragraph, not glued to the previous sentence. Generic by
-// design — matches ``_ensure_followup_spacing`` in rag_service.py so widget
+// design - matches ``_ensure_followup_spacing`` in rag_service.py so widget
 // + backend share one rule. No opener whitelist to maintain as LLM phrasing
 // drifts (Who / How / When / Where / Why / novel bridges all get handled).
 //
@@ -27,22 +27,22 @@ const _FOLLOW_UP_REGEX = /([.!?])[ \t\n]+(?=[A-Z][^.!?\n]{2,200}\?)/g;
 // (CleanSight, PayPalId, iPhone, eBay) requires knowing whether the capital
 // letter after the lowercase actually starts a NEW sentence, or just a
 // second part of a compound word. There's no purely-structural way to tell
-// "CleanSight" from "onDo" — both are lowercase→uppercase with no space —
+// "CleanSight" from "onDo" - both are lowercase→uppercase with no space -
 // so the regex uses the ONE signal that distinguishes them reliably in
 // English: real follow-up questions almost always open with a small set of
 // syntactically-required words (Wh-words + auxiliaries + a couple of
 // pronouns). Compound brand names never open with those words.
 //
 // Guard clauses layered on top:
-//   1. Question-opener whitelist (the ``(?:Would|Do|...)`` group) — the
+//   1. Question-opener whitelist (the ``(?:Would|Do|...)`` group) - the
 //      capital MUST start a word from the whitelist. "Sight product…?"
 //      doesn't match; "Do you need help?" does. Also catches the tricky
 //      edge case "CleanSightWould you like a demo?" by splitting at the
 //      correct t→W boundary instead of the wrong n→S one.
-//   2. ``\b`` after the opener — stops "Would" from matching inside
+//   2. ``\b`` after the opener - stops "Would" from matching inside
 //      "Wouldst" or "Wouldnt" (they'd be typos, but we don't want to
 //      split inside them either).
-//   3. ``[^.!?\n]{0,200}\?`` — bounds the tail so a stray "?" hundreds of
+//   3. ``[^.!?\n]{0,200}\?`` - bounds the tail so a stray "?" hundreds of
 //      chars away doesn't drag an unrelated split into place.
 //   4. Negative lookbehind for "://" within ~300 chars: skips matches that
 //      land inside a URL. LLMs sometimes write YouTube markdown links
@@ -69,7 +69,7 @@ const _LIST_PREFIX_RE = /^([ \t]*(?:[-*+]|\d+[.)])\s+)(.*)$/;
 // into multiple bullets. The LLM sometimes emits a list as one run-on line:
 //   "- provenance- Continuous visibility- Pre-configured GitHub Actions"
 // We split only when the dash follows a word/closing-bracket character and is
-// followed by " " + a capital letter — that pattern is reliably an inline
+// followed by " " + a capital letter - that pattern is reliably an inline
 // bullet boundary and won't fire on intra-word hyphens like "key-based" or
 // "Multi-region".
 const _splitInlineBullets = (line) => {
@@ -83,7 +83,7 @@ const _splitInlineBullets = (line) => {
 
 // Regex to find inline bullet boundaries inside a non-list paragraph.
 // Matches a dash that is NOT preceded by whitespace (so it isn't a line-start
-// marker) and IS followed by a capital letter — the reliable LLM pattern for
+// marker) and IS followed by a capital letter - the reliable LLM pattern for
 // run-on inline lists like "integration.- Custom Software- Application Dev…".
 // Does NOT fire on intra-word hyphens ("User-friendly", "well-known") because
 // those are followed by lowercase letters.
@@ -112,7 +112,7 @@ const _splitParaInlineBullets = (line) => {
 //   2. Break common follow-up offer phrases onto their own paragraph so
 //      suggestions sit a blank line below the answer.
 //
-// Safe to run on partial streaming text — the rules only add whitespace,
+// Safe to run on partial streaming text - the rules only add whitespace,
 // never remove content, so re-running over progressively longer strings
 // produces the same result as running once on the final string.
 export const formatBotMarkdown = (text) => {
@@ -141,7 +141,7 @@ export const formatBotMarkdown = (text) => {
         if (next === undefined) continue;
         if (next.trim() === '') continue;
         if (_LIST_ITEM_RE.test(next)) continue;
-        // Indented continuation of the bullet — leave alone.
+        // Indented continuation of the bullet - leave alone.
         if (/^[ \t]+\S/.test(next) && !/^[ \t]*(?:[-*+]|\d+[.)])\s/.test(next)) continue;
         out.push('');
     }
@@ -152,15 +152,15 @@ export const formatBotMarkdown = (text) => {
         // Only fires when a lowercase letter precedes ** and an uppercase follows,
         // so it won't touch closing ** or intra-word patterns like "re**start**".
         .replace(/([a-z])\*\*(?=[A-Z])/g, '$1 **')
-        // Strip em-dashes from bot output. LLMs over-use them ("we offer SEO —
+        // Strip em-dashes from bot output. LLMs over-use them ("we offer SEO -
         // including technical, on-page, and content") and the brand prefers a
-        // plain comma cadence. ``\s*—\s*`` collapses any surrounding whitespace
+        // plain comma cadence. ``\s*-\s*`` collapses any surrounding whitespace
         // so the replacement reads as a single comma break, never as ", , ".
         // Runs before the follow-up paragraph rules so a question like "...we
-        // offer SEO — which area interests you?" still gets the proper break
+        // offer SEO - which area interests you?" still gets the proper break
         // after em-dash normalisation. Only applied here in the bot renderer;
         // user-typed em-dashes are preserved.
-        .replace(/\s*—\s*/g, ', ')
+        .replace(/\s*-\s*/g, ', ')
         .replace(_FOLLOW_UP_REGEX, '$1\n\n')
         .replace(_FOLLOW_UP_INLINE_REGEX, '$1\n\n');
 };

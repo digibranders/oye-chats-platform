@@ -1,13 +1,14 @@
 import React from 'react';
 import { Bot } from 'lucide-react';
 import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
+import PremiumOrb from './PremiumOrb';
 
 const SIZES = {
-    xs: { container: 'w-5 h-5', icon: 10, orbShadow: '0 0 4px' },
-    sm: { container: 'w-7 h-7', icon: 14, orbShadow: '0 0 6px' },
-    header: { container: 'w-8 h-8', icon: 16, orbShadow: '0 0 8px' },
-    md: { container: 'w-12 h-12', icon: 24, orbShadow: '0 0 10px' },
-    lg: { container: 'w-[72px] h-[72px]', icon: 36, orbShadow: '0 0 20px' },
+    xs:     { container: 'w-5 h-5',           icon: 10, orbPx: 20 },
+    sm:     { container: 'w-7 h-7',           icon: 14, orbPx: 28 },
+    header: { container: 'w-8 h-8',           icon: 16, orbPx: 32 },
+    md:     { container: 'w-12 h-12',         icon: 24, orbPx: 48 },
+    lg:     { container: 'w-[72px] h-[72px]', icon: 36, orbPx: 72 },
 };
 
 const BotAvatar = ({ settings, size = 'md' }) => {
@@ -17,16 +18,7 @@ const BotAvatar = ({ settings, size = 'md' }) => {
 
     if (avatarType === 'orb') {
         const oc = sanitizeColor(settings.orb_color, pc);
-        return (
-            <div
-                className={`${s.container} rounded-full flex-shrink-0`}
-                style={{
-                    background: `radial-gradient(circle at 35% 35%, ${oc}44, ${oc}bb, ${oc})`,
-                    boxShadow: `${s.orbShadow} ${oc}55`,
-                    animation: 'pulse 2.5s ease-in-out infinite'
-                }}
-            />
-        );
+        return <PremiumOrb color={oc} size={s.orbPx} />;
     }
 
     if (avatarType === 'mascot') {

@@ -32,7 +32,7 @@ export interface OfflineMessagesState {
 }
 
 /**
- * useOfflineMessages — owns the offline-inbox data lifecycle for the active bot.
+ * useOfflineMessages - owns the offline-inbox data lifecycle for the active bot.
  *
  * Fetching is driven by an effect keyed on (botId, page, statusFilter); a
  * monotonic request token guards against out-of-order responses and post-unmount
@@ -123,7 +123,7 @@ export function useOfflineMessages(botId: number | undefined): OfflineMessagesSt
     await updateOfflineMessage(id, { status });
     const filter = statusFilterRef.current;
     if (filter !== 'all' && filter !== status) {
-      // The new status no longer matches the active filter — drop the row (and its
+      // The new status no longer matches the active filter - drop the row (and its
       // count) so the filtered list stays honest instead of showing a stale item.
       setMessages((prev) => prev.filter((m) => m.id !== id));
       setTotal((prev) => Math.max(0, prev - 1));
@@ -138,7 +138,7 @@ export function useOfflineMessages(botId: number | undefined): OfflineMessagesSt
       setMessages((prev) => prev.filter((m) => m.id !== id));
       setTotal((prev) => Math.max(0, prev - 1));
       if (countRef.current <= 1 && pageRef.current > 1) {
-        // We just removed the last row on a later page — step back a page so the
+        // We just removed the last row on a later page - step back a page so the
         // operator isn't stranded on an empty list while earlier pages hold items.
         // The page change re-keys the fetch effect, which reloads for us.
         setPageState((p) => Math.max(1, p - 1));

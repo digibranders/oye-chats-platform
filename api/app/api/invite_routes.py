@@ -579,7 +579,9 @@ def add_self_as_operator(
         # so a concurrent invite-create + self-op race can't both squeak
         # past the limit.
         try:
-            invite_service._require_seat_available(session, client.id)  # noqa: SLF001
+            # Seats are per-bot — gate against the target bot the owner is
+            # self-adding to, not the workspace-wide operator total.
+            invite_service._require_seat_available(session, client.id, body.bot_id)  # noqa: SLF001
         except InviteError as err:
             raise _map_invite_error(err) from err
 

@@ -12,7 +12,7 @@ const POLL_MS = 3000;
 const MAX_POLLS = 10; // ~30s
 
 /**
- * Step 9 — Verification. Polls the agent for `widget_installed_at` to confirm the
+ * Step 9 - Verification. Polls the agent for `widget_installed_at` to confirm the
  * widget is actually live before completing onboarding (a distinct step; legacy
  * merged this into deploy and let users finish unverified).
  */
@@ -45,7 +45,7 @@ export function VerifyStep(props: StepProps) {
           return;
         }
       } catch {
-        /* transient — keep polling */
+        /* transient - keep polling */
       }
       if (polls >= MAX_POLLS) {
         setState('not_found');

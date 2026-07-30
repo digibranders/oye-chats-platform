@@ -24,7 +24,6 @@ import {
   StatusBadge,
 } from '../../../design-system';
 import { MetricCard } from '../../../design-system/components/MetricCard';
-import { InsightCard } from '../../../design-system/components/InsightCard';
 import { DataTable, type Column } from '../../../design-system/components/DataTable';
 import { useAgent } from '../../../context/AgentContext';
 import { useCrawl } from '../../../context/CrawlContext';
@@ -55,7 +54,7 @@ import {
 } from './knowledge-utils';
 
 /**
- * KnowledgePage — the agent's "Knowledge" tab. Answers one question: *what does
+ * KnowledgePage - the agent's "Knowledge" tab. Answers one question: *what does
  * my AI know?* It lists every learned source (websites + documents), summarises
  * coverage, and lets the user add or remove knowledge. All crawl lifecycle is
  * owned by the shared CrawlContext; this page reads it and refreshes when a
@@ -199,11 +198,11 @@ export function KnowledgePage(): ReactElement {
         }
         if (apiErr.status === 429) {
           setActionError(
-            'Too many training requests — please wait a few minutes before training again.',
+            'Too many training requests - please wait a few minutes before training again.',
           );
           return;
         }
-        // Network/auth failure — still let the user proceed with a plain confirm.
+        // Network/auth failure - still let the user proceed with a plain confirm.
         setRecrawlDiff({
           mode,
           docName: name,
@@ -242,15 +241,15 @@ export function KnowledgePage(): ReactElement {
 
     // Guard (money): a full re-crawl where discovery SUCCEEDED but found zero
     // pages (HTTP 200, sitemap_total=0) means the sitemap was temporarily
-    // unavailable — we don't know the site's page set, and with force_reingest
+    // unavailable - we don't know the site's page set, and with force_reingest
     // this would silently re-scrape+re-bill every stale stored URL. Refuse.
     // Mirrors the modal's block; this is the non-UI safety net. The explicit
     // preview-failure path (recrawlDiffError set) is exempt: it deliberately
     // proceeds with ordered_urls omitted so the backend re-discovers. Delta is
-    // unaffected — it reconciles against stored URLs at ingest time.
+    // unaffected - it reconciles against stored URLs at ingest time.
     if (diff.mode === 'full' && diff.sitemapTotal === 0 && recrawlDiffError === null) {
       setActionError(
-        "No pages discovered — the site's sitemap may be temporarily unavailable; try again shortly.",
+        "No pages discovered - the site's sitemap may be temporarily unavailable; try again shortly.",
       );
       return;
     }
@@ -258,8 +257,8 @@ export function KnowledgePage(): ReactElement {
     // The preview buckets are capped at 500 URLs while the counts are full, so
     // if either bucket was truncated the union is only a partial slice of the
     // real crawl set. Passing a partial list as authoritative would silently
-    // skip every page beyond the cap (under-refresh). In that case — or when
-    // discovery itself was capped — omit ordered_urls so the backend re-crawls
+    // skip every page beyond the cap (under-refresh). In that case - or when
+    // discovery itself was capped - omit ordered_urls so the backend re-crawls
     // the whole site by discovery (an empty/omitted list means "crawl all").
     const listsTruncated =
       diff.newUrls.length < diff.newPages || diff.unchangedUrls.length < diff.unchanged;
@@ -307,7 +306,7 @@ export function KnowledgePage(): ReactElement {
   const openPages = useCallback(
     async (source: string): Promise<void> => {
       setDrawerSource(source);
-      // A cached entry (even an empty array) means we loaded successfully — skip
+      // A cached entry (even an empty array) means we loaded successfully - skip
       // the refetch. A failed load leaves the key unset so reopening retries.
       if (agentId == null || pagesBySource[source]) return;
       try {
@@ -373,10 +372,10 @@ export function KnowledgePage(): ReactElement {
   }, [sources]);
 
   // ── Plan quotas ──────────────────────────────────────────────────
-  // `documents` is a usage-populated key (backend counts uploaded files) —
+  // `documents` is a usage-populated key (backend counts uploaded files) -
   // prefer it, falling back to what this page already loaded. `page_scraping`
   // is NOT populated server-side, so "used" is always derived from the sum of
-  // this agent's crawled page counts (`stats.websitePages`) — never fabricated.
+  // this agent's crawled page counts (`stats.websitePages`) - never fabricated.
   const documentsUsed = entitlements.usage.documents ?? stats.documents;
   const documentsLimit = limitFor('documents');
   const documentsAtLimit = !withinLimit('documents', documentsUsed);
@@ -393,7 +392,7 @@ export function KnowledgePage(): ReactElement {
         render: (row) => <SourceCell source={row} />,
       },
       {
-        // Display-only column — the real field is unused; `render` supplies the cell.
+        // Display-only column - the real field is unused; `render` supplies the cell.
         key: 'doc_page_count',
         header: 'Type',
         width: '8rem',
@@ -504,7 +503,7 @@ export function KnowledgePage(): ReactElement {
   return (
     <PageContainer
       title="Knowledge"
-      description="Everything your AI can answer from — the websites and documents it has learned."
+      description="Everything your AI can answer from - the websites and documents it has learned."
     >
       {loading ? (
         <LoadingState />
@@ -543,13 +542,6 @@ export function KnowledgePage(): ReactElement {
                 />
                 <MetricCard label="Last updated" value={stats.lastUpdated} icon={Sparkles} />
               </div>
-
-              <InsightCard
-                tone="success"
-                icon={Sparkles}
-                title={`Your AI answers from ${stats.total} source${stats.total === 1 ? '' : 's'}`}
-                body="Visitors get answers grounded in this knowledge. Add more sources any time to widen what your AI can confidently cover — and remove anything that's out of date."
-              />
             </>
           )}
 
@@ -562,7 +554,7 @@ export function KnowledgePage(): ReactElement {
               <div className="space-y-1">
                 <QuotaMeter label="Documents" used={documentsUsed} limit={documentsLimit} />
                 {/* The `documents` limit is workspace-scoped, so this count spans
-                    every agent — not just the rows visible on this agent's page. */}
+                    every agent - not just the rows visible on this agent's page. */}
                 <p className="text-[11px] text-[var(--ds-text-subtle)]">
                   Across all agents in your workspace
                 </p>

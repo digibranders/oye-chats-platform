@@ -41,9 +41,9 @@ export function totalWebsitePages(sources: readonly KnowledgeSource[]): number {
 
 /** Short relative date, e.g. "Today", "3 days ago", or a date fallback. */
 export function formatRelativeDate(iso?: string): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '—';
+  if (Number.isNaN(then)) return '-';
   const days = Math.floor((Date.now() - then) / 86_400_000);
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yesterday';
@@ -62,7 +62,7 @@ export function lastUpdatedIso(sources: readonly KnowledgeSource[]): string | un
   return latest === null ? undefined : new Date(latest).toISOString();
 }
 
-// Upload constraints — mirror the legacy KnowledgeBase limits so the UI rejects
+// Upload constraints - mirror the legacy KnowledgeBase limits so the UI rejects
 // files the backend would reject anyway (api/app/api/ingestion routes).
 export const SUPPORTED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'] as const;
 const SUPPORTED_MIME_TYPES = new Set([
@@ -88,11 +88,11 @@ export function filterUploadFiles(fileList: FileList | File[]): FileFilterResult
       SUPPORTED_MIME_TYPES.has(file.type) ||
       (SUPPORTED_EXTENSIONS as readonly string[]).includes(ext);
     if (!supported) {
-      rejected.push(`${file.name} — unsupported file type`);
+      rejected.push(`${file.name} - unsupported file type`);
       continue;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      rejected.push(`${file.name} — larger than 10 MB`);
+      rejected.push(`${file.name} - larger than 10 MB`);
       continue;
     }
     accepted.push(file);

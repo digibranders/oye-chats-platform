@@ -24,7 +24,7 @@ export interface ModalProps {
   size?: ModalSize;
   /** Suppress the built-in header (caller renders its own). Title still labels the dialog. */
   hideHeader?: boolean;
-  /** Disable ESC / backdrop dismissal — e.g. while a payment is in flight. */
+  /** Disable ESC / backdrop dismissal - e.g. while a payment is in flight. */
   dismissible?: boolean;
   /** Footer content pinned below the scrollable body. */
   footer?: ReactNode;
@@ -64,7 +64,7 @@ function releaseScrollLock(): void {
 }
 
 /**
- * Modal — the design-system dialog shell (mandate shared component). Renders
+ * Modal - the design-system dialog shell (mandate shared component). Renders
  * into a portal with a scrim, an accessible `role="dialog" aria-modal` surface,
  * focus trapping, ESC-to-close, background scroll lock, and focus restoration
  * to the trigger on close. Theme-aware via `--ds-*` tokens.

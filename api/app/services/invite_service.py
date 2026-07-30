@@ -132,16 +132,22 @@ def _lock_active_subscription_for_workspace(session: Session, client_id: int) ->
     )
 
 
-def _active_operator_count(session: Session, workspace_id: int) -> int:
-    """Live seat usage in a workspace.
+def _active_operator_count(session: Session, workspace_id: int, bot_id: int) -> int:
+    """Live seat usage for a single bot in a workspace.
 
-    Every active operator row consumes exactly one seat, including the
-    workspace owner acting as their own operator. Rationale: per-seat pricing
-    (Starter includes N seats) is undercut if the owner gets a free +1 —
-    every real SaaS with per-seat pricing (Slack, Intercom, Notion, Linear)
-    counts the owner-as-agent. The frontend "Take chats yourself" CTA makes
-    the trade-off explicit so the owner knows a self-add consumes a seat
-    just like inviting a teammate.
+    Operator seats are allocated **per bot**: each bot in the workspace has
+    its own operator allowance (the plan's operator limit applies to every
+    bot independently), so this counts only the active operators bound to
+    ``bot_id`` — not the workspace-wide total. Switching bots therefore shows
+    a distinct seat count and roster for each one.
+
+    Every active operator row on the bot consumes exactly one of that bot's
+    seats, including the workspace owner acting as their own operator.
+    Rationale: per-seat pricing (Starter includes N seats) is undercut if the
+    owner gets a free +1 — every real SaaS with per-seat pricing (Slack,
+    Intercom, Notion, Linear) counts the owner-as-agent. The frontend "Take
+    chats yourself" CTA makes the trade-off explicit so the owner knows a
+    self-add consumes a seat just like inviting a teammate.
 
     Excluded from the count:
       * Pending invites — the invite row lives in ``operator_invites`` and
@@ -157,20 +163,25 @@ def _active_operator_count(session: Session, workspace_id: int) -> int:
         session.execute(
             select(func.count(Operator.id)).where(
                 Operator.client_id == workspace_id,
+                Operator.bot_id == bot_id,
                 Operator.is_active.is_(True),
             )
         ).scalar_one()
     )
 
 
-def _require_seat_available(session: Session, workspace_id: int) -> None:
+def _require_seat_available(session: Session, workspace_id: int, bot_id: int) -> None:
     """Raise ``InviteError('seat_limit_reached')`` when a new active operator
-    would push the workspace past its plan's operator limit.
+    would push ``bot_id`` past its plan's operator limit.
+
+    Seats are per-bot: the plan's operator limit applies to each bot
+    independently, so the check counts only the target bot's active
+    operators — one bot being full never blocks adding operators to another.
 
     Acquires a ``SELECT ... FOR UPDATE`` lock on the workspace's active
     subscription so concurrent invite creations + self-op adds serialize.
-    Two callers racing to grab the last seat will see one succeed and the
-    other reject with a clean error — no silent over-allocation.
+    Two callers racing to grab the last seat on a bot will see one succeed
+    and the other reject with a clean error — no silent over-allocation.
 
     Shared between :func:`create_invite` and the ``POST /me/self-operator``
     endpoint so both paths enforce the same per-seat semantics.
@@ -180,11 +191,11 @@ def _require_seat_available(session: Session, workspace_id: int) -> None:
     operator_limit = entitlements.limit_for("operators")
     if operator_limit == UNLIMITED:
         return
-    current = _active_operator_count(session, workspace_id)
+    current = _active_operator_count(session, workspace_id, bot_id)
     if current >= operator_limit:
         raise InviteError(
             "seat_limit_reached",
-            f"You've reached your plan's operator limit ({current}/{operator_limit}). "
+            f"You've reached this agent's operator limit ({current}/{operator_limit}). "
             "Upgrade or free a seat to add more.",
             status_code=403,
         )
@@ -373,9 +384,11 @@ def create_invite(
 
     # Seat-limit check — shared with the self-op endpoint via a helper so
     # both paths enforce identical per-seat semantics under the same
-    # FOR UPDATE lock. Pending invites intentionally don't count toward
-    # usage; see ``_active_operator_count`` for the full rationale.
-    _require_seat_available(session, workspace_id)
+    # FOR UPDATE lock. Scoped to the invite's target bot: seats are per-bot,
+    # so the check counts only that bot's operators. Pending invites
+    # intentionally don't count toward usage; see ``_active_operator_count``
+    # for the full rationale.
+    _require_seat_available(session, workspace_id, bot_id)
 
     plaintext, token_hash = _generate_invite_token()
     now = datetime.now(UTC)
@@ -528,7 +541,8 @@ def accept_invite(
     # concurrent race between two acceptances of two pending invites (or
     # an invite accept + a self-op add) resolves cleanly: one succeeds,
     # the other rejects with a structured ``seat_limit_reached`` error.
-    _require_seat_available(session, invite.client_id)
+    # Scoped to the invite's target bot — seats are allocated per-bot.
+    _require_seat_available(session, invite.client_id, invite.bot_id)
 
     if existing is not None:
         # Reactivating a previously-soft-deleted linked operator row.

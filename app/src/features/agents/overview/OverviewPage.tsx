@@ -54,13 +54,13 @@ const METRICS: readonly MetricDef[] = [
     key: 'resolutionRate',
     label: 'Resolution rate',
     icon: CheckCircle2,
-    format: (s) => (s.resolutionRate === null || s.resolutionRate === undefined ? '—' : `${s.resolutionRate}%`),
+    format: (s) => (s.resolutionRate === null || s.resolutionRate === undefined ? '-' : `${s.resolutionRate}%`),
   },
   {
     key: 'averageRating',
     label: 'Average rating',
     icon: Star,
-    format: (s) => (s.averageRating === null || s.averageRating === undefined ? '—' : `${s.averageRating} / 5`),
+    format: (s) => (s.averageRating === null || s.averageRating === undefined ? '-' : `${s.averageRating} / 5`),
   },
 ];
 
@@ -133,7 +133,7 @@ function SectionUnavailable(): ReactElement {
 }
 
 /**
- * OverviewContent — Mission Control layout for an agent.
+ * OverviewContent - Mission Control layout for an agent.
  */
 function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
   const health = deriveAgentHealth(agent);

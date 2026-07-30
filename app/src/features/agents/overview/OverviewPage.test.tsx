@@ -153,6 +153,6 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
   });
 });

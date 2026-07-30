@@ -1,11 +1,11 @@
 /**
- * CreateCodeModal — create a new referral code for the current affiliate.
+ * CreateCodeModal - create a new referral code for the current affiliate.
  *
  * Rebuilt from the legacy `components/affiliate/CreateCodeModal.jsx` in the new
  * design language. The affiliate picks a memorable code, an optional internal
  * label, and how their commission pool splits between their own cut and the
- * friend's discount. Both the code format and the split are validated live —
- * mirroring the backend rules — so submission only fires on a valid form.
+ * friend's discount. Both the code format and the split are validated live -
+ * mirroring the backend rules - so submission only fires on a valid form.
  *
  * Backend reused verbatim (typed in services/api.d.ts): createAffiliateCode.
  */
@@ -143,7 +143,7 @@ export function CreateCodeModal({ open, onClose, poolPct, onCreated }: CreateCod
           <Input
             id="code-label"
             value={label}
-            placeholder="e.g. Newsletter — March"
+            placeholder="e.g. Newsletter - March"
             maxLength={80}
             onChange={(e) => setLabel(e.target.value)}
           />

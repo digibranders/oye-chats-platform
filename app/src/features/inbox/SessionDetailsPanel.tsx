@@ -72,11 +72,11 @@ function Field({ label, children }: { label: string; children: ReactElement }): 
 }
 
 /**
- * PrivateNotesSection — operator-only notes & tags for this session, shared with
+ * PrivateNotesSection - operator-only notes & tags for this session, shared with
  * the Leads page via the same localStorage-backed store. Rendered inside the
  * "Private notes" field. Local drafts seed from the controller via `useState`
  * initializers; the parent panel is keyed by session id, so switching
- * conversations remounts this and resets the drafts — no effect needed.
+ * conversations remounts this and resets the drafts - no effect needed.
  */
 function PrivateNotesSection({ controller }: { controller: LeadAnnotationController }): ReactElement {
   const { note, tags, saveNote, saveTags } = controller;
@@ -89,7 +89,7 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
   return (
     <div className="space-y-3">
       <p className="text-[12px] text-[var(--ds-text-subtle)]">
-        Only your team sees this — it stays in this browser and is shared with the Leads page for this session.
+        Only your team sees this - it stays in this browser and is shared with the Leads page for this session.
       </p>
 
       {/* Note editor */}
@@ -104,7 +104,7 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
           id="session-note"
           rows={3}
           value={noteDraft}
-          placeholder="Add context for your team — next steps, who to loop in…"
+          placeholder="Add context for your team - next steps, who to loop in…"
           onChange={(event) => setNoteDraft(event.target.value)}
         />
         <div className="flex items-center justify-between gap-2">
@@ -167,7 +167,7 @@ function PrivateNotesSection({ controller }: { controller: LeadAnnotationControl
 }
 
 /**
- * SessionDetailsPanel — the right rail. Loads and displays the visitor's identity,
+ * SessionDetailsPanel - the right rail. Loads and displays the visitor's identity,
  * geo/device, qualification (BANT), and conversation metadata for the selected
  * live chat via `getSessionDetails`.
  */
@@ -178,7 +178,7 @@ export function SessionDetailsPanel({ sessionId }: SessionDetailsPanelProps): Re
 
   // Operator-private notes & tags (localStorage-backed) shared with the Leads
   // page for this session. The store reads synchronously, so the controller is
-  // available immediately — independent of the async details fetch above.
+  // available immediately - independent of the async details fetch above.
   const annotations = useLeadAnnotations();
   const controller = annotations.controllerFor(sessionId);
 

@@ -1,5 +1,5 @@
 /**
- * PWA install prompt hook — a stable interface over the ``beforeinstallprompt``
+ * PWA install prompt hook - a stable interface over the ``beforeinstallprompt``
  * dance that browsers make you do.
  *
  * The browser fires ``beforeinstallprompt`` when it decides the site is
@@ -8,7 +8,7 @@
  * the browser doesn't render its own mini-infobar and stash the event; our
  * own UI then calls ``.prompt()`` at whatever moment makes sense.
  *
- * iOS Safari is the wildcard. It NEVER fires ``beforeinstallprompt`` — Apple
+ * iOS Safari is the wildcard. It NEVER fires ``beforeinstallprompt`` - Apple
  * doesn't support programmatic install prompts. Instead, users add the site
  * to home screen manually via Share → Add to Home Screen. We surface ``isIOS``
  * so the Settings card can render a different "here's how" affordance for
@@ -33,7 +33,7 @@ function detectStandalone() {
             return window.navigator.standalone;
         }
     } catch {
-        // matchMedia can throw in exotic embedded contexts — fall through.
+        // matchMedia can throw in exotic embedded contexts - fall through.
     }
     return false;
 }
@@ -45,7 +45,7 @@ function detectIOSSafari() {
     if (!isIOS) return false;
     // Chrome / Firefox on iOS use ``CriOS`` / ``FxiOS`` respectively but still
     // fail to fire beforeinstallprompt (they inherit WebKit under the hood).
-    // We treat any iOS browser as "manual add to home screen only" — the
+    // We treat any iOS browser as "manual add to home screen only" - the
     // guidance is the same regardless of which WebKit shell they used.
     return /Safari/.test(ua) || /CriOS/.test(ua) || /FxiOS/.test(ua);
 }
@@ -54,7 +54,7 @@ function detectIOSSafari() {
  * @returns {{
  *   canInstall: boolean,      // ``beforeinstallprompt`` has fired and not yet been consumed
  *   isInstalled: boolean,     // launched from installed PWA
- *   isIOS: boolean,           // iOS/iPadOS — needs manual add-to-home-screen instructions
+ *   isIOS: boolean,           // iOS/iPadOS - needs manual add-to-home-screen instructions
  *   install: () => Promise<{ outcome: 'accepted' | 'dismissed' | 'unavailable' }>
  * }}
  */

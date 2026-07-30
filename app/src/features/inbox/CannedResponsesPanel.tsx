@@ -1,5 +1,5 @@
 /**
- * CannedResponsesPanel — manage the team's reusable quick replies (CRUD).
+ * CannedResponsesPanel - manage the team's reusable quick replies (CRUD).
  *
  * Rebuilt from the legacy `pages/CannedResponses.jsx`, whose management surface
  * was dropped in the rebuild: Admin 2.0 only *consumed* canned responses (as
@@ -68,7 +68,7 @@ export function CannedResponsesPanel(): ReactElement {
   const [rowBusyId, setRowBusyId] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
-  // Load (re-runs when the category filter changes — the backend scopes by it).
+  // Load (re-runs when the category filter changes - the backend scopes by it).
   useEffect(() => {
     let cancelled = false;
     setLoading(true);

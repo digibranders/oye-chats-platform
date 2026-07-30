@@ -1,10 +1,10 @@
 /**
- * useLeadAnnotations — operator-private notes and tags for leads.
+ * useLeadAnnotations - operator-private notes and tags for leads.
  *
  * There is no server API for lead notes/tags, so these live in the browser's
  * `localStorage`, keyed by `session_id` (the same approach the legacy Leads page
- * used). The store is loaded once via a `useState` initializer — never a
- * synchronous `setState` inside an effect — and every write is an event-handler
+ * used). The store is loaded once via a `useState` initializer - never a
+ * synchronous `setState` inside an effect - and every write is an event-handler
  * mutation that updates React state and persists in the same tick.
  *
  * A single instance owns the whole map so the list (tag chips in a row) and the
@@ -17,7 +17,7 @@ import { useCallback, useMemo, useState } from 'react';
 export interface LeadNote {
   /** The note body. Empty means "no note" (the entry is dropped). */
   readonly text: string;
-  /** ISO timestamp of the last edit — rendered as "Last edited …". */
+  /** ISO timestamp of the last edit - rendered as "Last edited …". */
   readonly ts: string;
 }
 
@@ -34,7 +34,7 @@ export interface LeadAnnotationController {
 export interface LeadAnnotationsStore {
   readonly notes: Readonly<Record<string, LeadNote>>;
   readonly tags: Readonly<Record<string, readonly string[]>>;
-  /** Tags for one session (empty array when none) — a stable read for row chips. */
+  /** Tags for one session (empty array when none) - a stable read for row chips. */
   readonly tagsFor: (sessionId: string) => readonly string[];
   /** Build the editing controller for one session (or `null` for no session). */
   readonly controllerFor: (sessionId: string | null) => LeadAnnotationController | null;
@@ -48,7 +48,7 @@ const MAX_TAGS = 12;
 type NotesMap = Record<string, LeadNote>;
 type TagsMap = Record<string, readonly string[]>;
 
-/** Parse a stored note map defensively — a corrupt value yields an empty map. */
+/** Parse a stored note map defensively - a corrupt value yields an empty map. */
 function readNotes(): NotesMap {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(NOTES_KEY) ?? '{}');
@@ -70,7 +70,7 @@ function readNotes(): NotesMap {
   }
 }
 
-/** Parse a stored tag map defensively — non-string entries are dropped. */
+/** Parse a stored tag map defensively - non-string entries are dropped. */
 function readTags(): TagsMap {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(TAGS_KEY) ?? '{}');
@@ -122,7 +122,7 @@ export function useLeadAnnotations(): LeadAnnotationsStore {
       try {
         localStorage.setItem(NOTES_KEY, JSON.stringify(next));
       } catch {
-        /* Storage full or unavailable (private mode) — keep the in-memory copy. */
+        /* Storage full or unavailable (private mode) - keep the in-memory copy. */
       }
       return next;
     });

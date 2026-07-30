@@ -16,7 +16,7 @@ function readCollapsed(): boolean {
 }
 
 /**
- * AppShell — the global layout. Owns the responsive sidebar/topbar chrome and
+ * AppShell - the global layout. Owns the responsive sidebar/topbar chrome and
  * the command-palette state, and renders routed pages through `<Outlet />`.
  * This is the layout route wrapping the entire authenticated app.
  */

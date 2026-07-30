@@ -52,7 +52,7 @@ export function BrandTooltip({ active, payload, label, valueFormatter }) {
 }
 
 /**
- * Area trend chart — violet line + soft gradient fill, optional dashed
+ * Area trend chart - violet line + soft gradient fill, optional dashed
  * comparison series (compareKey).
  */
 export function AreaTrendChart({
@@ -177,7 +177,7 @@ export function RadialGauge({
 }
 
 /**
- * Segmented stat row — the colored-bottom-border sub-cards from the reference
+ * Segmented stat row - the colored-bottom-border sub-cards from the reference
  * (e.g. Retailers / Distributors / Wholesalers).
  */
 export function SegmentedStat({ segments = [], className }) {

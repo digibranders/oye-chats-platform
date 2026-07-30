@@ -11,7 +11,7 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // Accent — the ONLY place violet leads. The 1px hairline ring is
+        // Accent - the ONLY place violet leads. The 1px hairline ring is
         // imperceptible here (ring color == fill), so the filled primary
         // bumps to a 2px ring that extends visibly onto the page.
         primary:

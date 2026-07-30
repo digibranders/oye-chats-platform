@@ -19,7 +19,7 @@ import { cn } from '../../lib/utils';
 import { COUNTRY_OPTIONS, countryLabel } from '../../lib/countries';
 import { useCurrency } from '../../context/CurrencyContext';
 
-// GST state codes 01–38 + 97 (Other Territory) — mirrors the backend's
+// GST state codes 01–38 + 97 (Other Territory) - mirrors the backend's
 // VALID_STATE_CODES set in api/app/core/gstin.py.
 const GST_STATES = [
   ['01', 'Jammu & Kashmir'],
@@ -67,10 +67,10 @@ const STATE_NAME_BY_CODE = Object.fromEntries(GST_STATES);
 
 const STATE_OPTIONS = GST_STATES.map(([code, name]) => ({
   value: code,
-  label: `${code} — ${name}`,
+  label: `${code} - ${name}`,
 }));
 
-/** Non-Indian buyers have no GSTIN or GST state — their supplies are
+/** Non-Indian buyers have no GSTIN or GST state - their supplies are
  *  zero-rated exports. Only a complete 2-letter code counts as foreign so a
  *  half-typed country doesn't hide fields mid-keystroke. */
 function isForeignCountry(raw) {
@@ -95,7 +95,7 @@ function ReadonlyRow({ icon: Icon, label, value }) {
         {label}
       </span>
       <span className="text-sm font-medium text-surface-900 dark:text-surface-50 truncate max-w-[60%] text-right">
-        {value || '—'}
+        {value || '-'}
       </span>
     </div>
   );
@@ -128,7 +128,7 @@ function formToPatch(form, details) {
     patch.legal_name = trim(form.legal_name) || null;
   }
   // A foreign country makes GSTIN/GST-state meaningless (and the backend
-  // 422s a GSTIN with a non-IN country) — clear both instead of sending them.
+  // 422s a GSTIN with a non-IN country) - clear both instead of sending them.
   const foreign = isForeignCountry(form.billing_country);
   const gstin = foreign ? '' : trim(form.gstin).toUpperCase();
   if (gstin !== stored.gstin) {
@@ -143,7 +143,7 @@ function formToPatch(form, details) {
   }
   const newAddress = Object.keys(address).length > 0 ? address : null;
   const oldAddress = details?.billing_address || null;
-  // Field-by-field comparison — Postgres JSONB does not preserve key order,
+  // Field-by-field comparison - Postgres JSONB does not preserve key order,
   // so a JSON.stringify diff would flag an unchanged address on every save.
   const addressChanged = ADDRESS_KEYS.some(
     (key) => (address[key] || '') !== ((oldAddress && oldAddress[key]) || ''),
@@ -154,13 +154,13 @@ function formToPatch(form, details) {
 
   const country = trim(form.billing_country).toUpperCase();
   // The form is seeded from the account's EFFECTIVE country (stored value, else
-  // the detected billing country), so persisting it on save is correct — it
+  // the detected billing country), so persisting it on save is correct - it
   // makes the Country row and the "billed in ₹/$" line agree instead of leaving
   // the country blank while a currency is already being charged.
   if (country && country !== stored.billing_country) {
     patch.billing_country = country;
   }
-  // State is server-derived from the GSTIN when one is set — only send an
+  // State is server-derived from the GSTIN when one is set - only send an
   // explicit state when the form has no GSTIN, otherwise a stale select
   // value could 422 against the GSTIN's own state digits.
   if (foreign) {
@@ -188,7 +188,7 @@ function detailsToForm(details, fallbackCountry) {
     state: address.state || '',
     postal_code: address.postal_code || '',
     billing_state_code: details?.billing_state_code || '',
-    // Stored country, else the account's detected country, else India — so the
+    // Stored country, else the account's detected country, else India - so the
     // dropdown reflects (and, on save, persists) the currency actually charged.
     billing_country: details?.billing_country || fallbackCountry || 'IN',
     billing_email: details?.billing_email || '',
@@ -196,12 +196,12 @@ function detailsToForm(details, fallbackCountry) {
 }
 
 /**
- * BillingDetailsCard — the buyer tax identity printed on invoices.
+ * BillingDetailsCard - the buyer tax identity printed on invoices.
  *
  * Readonly rows with an inline edit form (same pattern as Settings →
  * ProfileTab). Saves with PATCH semantics: only changed fields go over the
  * wire, clearing a field sends an explicit null. When a GSTIN is set the
- * state select is disabled — the backend derives the state from the
+ * state select is disabled - the backend derives the state from the
  * GSTIN's first two digits.
  */
 export default function BillingDetailsCard() {
@@ -257,7 +257,7 @@ export default function BillingDetailsCard() {
     try {
       const updated = await updateBillingDetails(patch);
       setDetails(updated);
-      // Country drives the account's display/charge currency — propagate the
+      // Country drives the account's display/charge currency - propagate the
       // saved value so every price across the app flips immediately, no reload.
       if ('billing_country' in patch) setGlobalCountry(updated?.billing_country || null);
       setEditing(false);
@@ -295,7 +295,7 @@ export default function BillingDetailsCard() {
             </CardTitle>
             <CardDescription>
               Printed on your invoices. Add your GSTIN to claim input tax credit.
-              {' '}Your billing country sets your currency — you&apos;re billed in{' '}
+              {' '}Your billing country sets your currency - you&apos;re billed in{' '}
               <span className="font-medium text-surface-700 dark:text-surface-200">
                 {currency === 'inr' ? '₹ INR' : '$ USD'}
               </span>
@@ -352,7 +352,7 @@ export default function BillingDetailsCard() {
                     className={cn(INPUT_CLASSES, 'font-mono uppercase tracking-wide')}
                   />
                   <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
-                    15-character GSTIN — adds GST breakup to your invoices for input tax credit
+                    15-character GSTIN - adds GST breakup to your invoices for input tax credit
                   </p>
                 </div>
               )}
@@ -451,7 +451,7 @@ export default function BillingDetailsCard() {
 
             {foreign && (
               <p className="text-[11px] text-surface-500 dark:text-surface-400 -mt-1">
-                Outside India, GST fields don't apply — your invoices are issued as zero-rated
+                Outside India, GST fields don't apply - your invoices are issued as zero-rated
                 exports with place of supply "Outside India". Any GSTIN or GST state on file is
                 cleared when you save.
               </p>
@@ -469,8 +469,8 @@ export default function BillingDetailsCard() {
               />
               <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
                 {details?.account_email
-                  ? `Defaults to your account email (${details.account_email}) — set only to send invoices somewhere else.`
-                  : 'Optional — invoices go to your account email unless set.'}
+                  ? `Defaults to your account email (${details.account_email}) - set only to send invoices somewhere else.`
+                  : 'Optional - invoices go to your account email unless set.'}
               </p>
             </div>
 

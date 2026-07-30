@@ -10,7 +10,7 @@ export interface ColorFieldProps {
 }
 
 /**
- * ColorField — a hex color control: current swatch (opens a react-colorful
+ * ColorField - a hex color control: current swatch (opens a react-colorful
  * popover), a hex input, and quick-pick swatches. Built fresh on the new DS.
  */
 export function ColorField({ label, value, onChange, swatches = [] }: ColorFieldProps) {

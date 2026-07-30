@@ -19,12 +19,12 @@ import { cn } from '../lib/utils';
  * admin app. Renders nothing when there's no crawl to show.
  *
  * States:
- *   running    — animated progress bar + cancel button + minimize
- *   cancelling — disabled cancel button, "Stopping…" label
- *   done       — success burst, dismiss button, links to Knowledge page
- *   cancelled  — informational, dismiss button, "X pages saved" note
- *   failed     — error chip, dismiss button, error message
- *   no_content — terminal but NOT a success: pages were fetched but no
+ *   running    - animated progress bar + cancel button + minimize
+ *   cancelling - disabled cancel button, "Stopping…" label
+ *   done       - success burst, dismiss button, links to Knowledge page
+ *   cancelled  - informational, dismiss button, "X pages saved" note
+ *   failed     - error chip, dismiss button, error message
+ *   no_content - terminal but NOT a success: pages were fetched but no
  *                readable text was extracted (e.g. a JS-rendered site).
  *                Uses the same non-success toast treatment as failed.
  *
@@ -102,7 +102,7 @@ const GlobalCrawlIndicator = () => {
     // Auto-fire a SINGLE toast on terminal transitions so even users who
     // already navigated away get a clear signal. The ref guard makes this
     // safe against re-renders, spurious effect re-runs, and stale poll
-    // echoes — the toast fires exactly once per `running → terminal` cycle.
+    // echoes - the toast fires exactly once per `running → terminal` cycle.
     useEffect(() => {
         if (!TERMINAL_STATUSES.has(crawl.status)) return;
         if (lastToastedStatusRef.current === crawl.status) return;
@@ -118,7 +118,7 @@ const GlobalCrawlIndicator = () => {
             // Terminal but not a success: pages were fetched, but no readable
             // text could be extracted from them (most often a JS-rendered
             // site the HTTP-only crawler never sees hydrated). Never show
-            // this as "Crawl complete" — there's nothing for the bot to
+            // this as "Crawl complete" - there's nothing for the bot to
             // answer from.
             showToast('warning', crawl.result?.message || 'No readable text found to train on.');
         }
@@ -129,7 +129,7 @@ const GlobalCrawlIndicator = () => {
 
     // Render the floating card ONLY while a crawl is actually running or
     // being cancelled. The terminal-state communication (success / cancelled
-    // / failed) is delivered via a single one-shot toast above — the card
+    // / failed) is delivered via a single one-shot toast above - the card
     // itself disappears the instant the crawl ends, which is what the user
     // wants when they're moving around the admin app.
     if (!isActive) {
@@ -145,7 +145,7 @@ const GlobalCrawlIndicator = () => {
     const eta = estimateEta({ pagesCrawled: pages, maxPages: max, startedAt: crawl.startedAt });
     const elapsed = formatElapsed(elapsedSeconds);
     // During the embedding phase the page count is frozen (all pages already
-    // scanned) — surface the live "Embedding X/Y chunks" phase so the card keeps
+    // scanned) - surface the live "Embedding X/Y chunks" phase so the card keeps
     // moving instead of looking stuck on the last scanned URL.
     const isEmbedding = crawl.phase?.startsWith('Embedding');
     const statusLine = isEmbedding ? crawl.phase : (crawl.currentUrl ?? 'Discovering URLs…');
@@ -160,7 +160,7 @@ const GlobalCrawlIndicator = () => {
 
     const handleViewDetails = () => {
         setMinimized(false);
-        // Deep-link straight to the Website Scan tab — that's where the live
+        // Deep-link straight to the Website Scan tab - that's where the live
         // URL list + Cancel button live. Without the query param the user
         // lands on All Sources and has to click around to see the crawl.
         navigate('/knowledge?tab=urls');
@@ -168,7 +168,7 @@ const GlobalCrawlIndicator = () => {
 
     // ── Visual treatment per state ─────────────────────────────────────────
     // Only two states surface here now: 'running' (active) and 'cancelling'
-    // (warn). Terminal states never reach this point — they're handled by
+    // (warn). Terminal states never reach this point - they're handled by
     // the one-shot toast above and the indicator returns null.
     const isCancelling = crawl.status === 'cancelling';
     const accent = isCancelling ? 'from-amber-400 to-orange-500' : 'from-primary-500 to-primary-600';
@@ -266,7 +266,7 @@ const GlobalCrawlIndicator = () => {
                         </span>
                     </button>
 
-                    {/* Progress bar — always rendered so collapsed view still
+                    {/* Progress bar - always rendered so collapsed view still
                         shows motion */}
                     <div className="px-4 pb-2">
                         <div className="h-1.5 rounded-full bg-slate-200/70 dark:bg-white/10 overflow-hidden">
@@ -296,7 +296,7 @@ const GlobalCrawlIndicator = () => {
                                 {eta && <span>{eta}</span>}
                             </div>
 
-                            {/* Current URL — falls back to a "discovering"
+                            {/* Current URL - falls back to a "discovering"
                                 line while we're between the start and the
                                 first page write, so the user always sees
                                 what we're actively doing. */}

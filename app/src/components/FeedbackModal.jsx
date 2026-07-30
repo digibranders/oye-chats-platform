@@ -543,7 +543,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 </div>
               </div>
 
-              {/* Area (optional) — custom dropdown */}
+              {/* Area (optional) - custom dropdown */}
               <div className="space-y-2">
                 <label htmlFor="fb-area" className="block text-[13px] font-semibold text-surface-900 dark:text-surface-100">
                   Area <span className="text-surface-400 font-normal">(optional)</span>
@@ -557,7 +557,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 />
               </div>
 
-              {/* Severity (bug-only) — one line */}
+              {/* Severity (bug-only) - one line */}
               {type === 'bug' && (
                 <div className="space-y-2">
                   <label className="block text-[13px] font-semibold text-surface-900 dark:text-surface-100">
@@ -678,7 +678,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
           )}
         </div>
 
-        {/* Footer — only on the compose tab */}
+        {/* Footer - only on the compose tab */}
         {activeTab === 'send' && (
           <div className="px-6 py-5 border-t border-surface-200 dark:border-surface-700 flex items-center justify-end gap-4 bg-[var(--bg-card)]">
             <button

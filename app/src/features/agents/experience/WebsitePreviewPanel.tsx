@@ -24,18 +24,18 @@ function normalizeUrl(raw: string): string {
 }
 
 /**
- * WebsitePreviewPanel — a real "preview on my website" affordance. Loading a URL
+ * WebsitePreviewPanel - a real "preview on my website" affordance. Loading a URL
  * renders the OyeChats-hosted demo page in an iframe; that page overlays the live
  * widget on top of the customer's site. Because the frame is our own hosted page
  * (not the customer's site directly), it is never blocked by the customer's
- * X-Frame-Options — but the customer's site CAN refuse to render inside the demo
+ * X-Frame-Options - but the customer's site CAN refuse to render inside the demo
  * page, so we listen for the demo page's ready ping and, if it never arrives,
  * surface a graceful "open in a new tab" fallback instead of a broken frame.
  */
 export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProps): ReactElement | null {
   const [open, setOpen] = useState(false);
   // Agent (and its website) is resolved before this panel mounts, so a lazy
-  // initial value is stable — no prefill effect (and its sync setState) needed.
+  // initial value is stable - no prefill effect (and its sync setState) needed.
   const [urlInput, setUrlInput] = useState<string>(() => website ?? '');
   const [loadedUrl, setLoadedUrl] = useState('');
   const [frameLoaded, setFrameLoaded] = useState(false);
@@ -58,7 +58,7 @@ export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProp
     return () => window.removeEventListener('message', onMessage);
   }, [loadedUrl]);
 
-  // Warn (non-fatally) if the demo page never signals ready — the overlaid site
+  // Warn (non-fatally) if the demo page never signals ready - the overlaid site
   // is likely refusing to embed. Once `ready` flips true this effect re-runs and
   // clears the pending timer, so a healthy preview never trips the warning.
   useEffect(() => {
@@ -86,7 +86,7 @@ export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProp
     <section className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5">
       <SectionHeader
         title="Preview on my website"
-        description="See the widget on your own site. It shows your saved settings — save first, then reload."
+        description="See the widget on your own site. It shows your saved settings - save first, then reload."
         actions={
           <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
             <Globe size={14} />

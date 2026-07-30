@@ -383,6 +383,15 @@ class Bot(Base):
     )
     domain_check_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
 
+    # Cross-subdomain session continuity. When set to a registrable domain
+    # (e.g. ``example.com``), the widget mirrors the visitor's session id into a
+    # cookie scoped to that parent domain so a conversation started on
+    # ``example.com`` continues on ``academy.example.com`` — ``localStorage``
+    # alone can't cross that origin boundary. NULL/empty = disabled (default),
+    # meaning each origin keeps its own independent session as before. Stored as
+    # a bare hostname; the widget prepends the leading dot at cookie-write time.
+    session_share_domain = Column(String, nullable=True)
+
     # First time the embedded widget was seen bootstrapping from a real external
     # site (not the dashboard preview / demo / localhost). Stamped exactly once
     # by the public settings endpoint; lets the dashboard confirm the widget is

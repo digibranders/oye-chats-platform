@@ -1,5 +1,5 @@
 /**
- * Operator alert helpers — a short WebAudio chime plus optional native browser
+ * Operator alert helpers - a short WebAudio chime plus optional native browser
  * notifications, ported from the legacy operator console (`pages/LiveChat.jsx`
  * `playNotification` / `sendBrowserNotification`).
  *
@@ -7,7 +7,7 @@
  * already clicked "Go online", so autoplay policies are satisfied). Browser
  * notifications only fire when the tab is hidden and permission was granted, so
  * a focused operator is never double-alerted. Every call is best-effort and
- * swallows failures — a missing capability must never break the socket.
+ * swallows failures - a missing capability must never break the socket.
  */
 
 const PING_THROTTLE_MS = 1500;
@@ -42,7 +42,7 @@ export function playPing(): void {
     osc.start();
     osc.stop(ctx.currentTime + 0.31);
   } catch {
-    /* audio unavailable — ignore */
+    /* audio unavailable - ignore */
   }
 }
 
@@ -57,7 +57,7 @@ export function ensureNotificationPermission(): void {
 }
 
 /**
- * Show a native notification — only when the tab is hidden and permission was
+ * Show a native notification - only when the tab is hidden and permission was
  * granted. Clicking it refocuses the dashboard. Uses a stable `tag` so repeated
  * alerts collapse instead of stacking.
  */

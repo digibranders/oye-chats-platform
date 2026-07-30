@@ -1,11 +1,11 @@
 /**
- * Qualification model — the typed shape behind a bot's `bant_config`, plus the
+ * Qualification model - the typed shape behind a bot's `bant_config`, plus the
  * pure parse/serialize/mutation helpers the editor drives.
  *
  * `bant_config` is stored server-side as an opaque object whose top level mixes
  * per-dimension scoring maps with a handful of reserved meta keys. This module
  * narrows that loose payload into a strongly-typed `QualModel`, and serializes
- * back to the exact on-disk shape the backend expects — so persisted values stay
+ * back to the exact on-disk shape the backend expects - so persisted values stay
  * byte-compatible with:
  *   - api/app/services/lead_service.py    (DEFAULT_BANT_CONFIG, thresholds, decay)
  *   - api/app/services/behavioral_service.py (_DEFAULT_BEHAVIORAL_CONFIG)
@@ -112,7 +112,7 @@ export const DEFAULT_BEHAVIORAL: BehavioralConfig = {
   ],
 };
 
-/** BANT default dimensions — mirrors DEFAULT_BANT_CONFIG in lead_service.py. */
+/** BANT default dimensions - mirrors DEFAULT_BANT_CONFIG in lead_service.py. */
 const DEFAULT_DIMENSIONS: Record<string, QualDimension> = {
   need: {
     enabled: true,
@@ -312,7 +312,7 @@ export function parseModel(raw: Record<string, unknown> | null, framework: strin
   const order = readOrder(raw);
   const resolvedFramework = toStr(raw.framework, framework);
 
-  // A non-empty but DIMENSIONLESS config (e.g. `{"framework":"bant"}` — what the
+  // A non-empty but DIMENSIONLESS config (e.g. `{"framework":"bant"}` - what the
   // backend stores when a framework is stamped without a full config) would
   // otherwise render zero scoring dimensions and let "Apply" persist an empty
   // conversation_order. Seed the default dimensions so the editor always has a

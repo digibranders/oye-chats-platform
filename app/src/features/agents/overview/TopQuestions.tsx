@@ -9,7 +9,7 @@ export interface TopQuestionsProps {
 }
 
 /**
- * TopQuestions — a ranked list of what visitors ask most, each with a volume
+ * TopQuestions - a ranked list of what visitors ask most, each with a volume
  * bar scaled to the top question. Answers "what are people actually coming to
  * my AI for?" at a glance. Shows an empty state before any traffic.
  */

@@ -5,7 +5,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* ── Primary — Violet (Voltage Paper — matches oyechats.com) ──
+  /* ── Primary - Violet (Voltage Paper - matches oyechats.com) ──
      Ramp centered so 600 = the brand violet #7C3AED. */
   --color-primary-50: #F5F3FF;
   --color-primary-100: #EDE9FE;
@@ -18,10 +18,10 @@
   --color-primary-800: #5B21B6;
   --color-primary-900: #4C1D95;
 
-  /* ── App canvas — used by bg-canvas surfaces (warm white, Voltage Paper) ── */
+  /* ── App canvas - used by bg-canvas surfaces (warm white, Voltage Paper) ── */
   --color-canvas: #ffffff;
 
-  /* ── Surface — Warm paper / ink (Voltage Paper — matches oyechats.com) ──
+  /* ── Surface - Warm paper / ink (Voltage Paper - matches oyechats.com) ──
      50 = paper #FAFAF7 (warm off-white app bg, white cards sit on top) ·
      100 = rail/hover · 200 = hairline border (line #E7E5DE) ·
      300 = strong border · 400 = muted-2 · 500 = muted text ·
@@ -48,7 +48,7 @@
      `text-[11px]`/`text-[10px]` arbitrary values. The default Tailwind rungs
      (text-xs=12px … text-3xl=30px) are intentionally left untouched so no
      existing usage reflows. A later, reviewed codemod maps the 692 remaining
-     `text-[Npx]` literals onto the nearest named rung — new code should reach
+     `text-[Npx]` literals onto the nearest named rung - new code should reach
      for `text-2xs`/`text-xs`/`text-sm`/… never an arbitrary px value.
        text-2xs  11px  · dense table meta, timestamps, micro-badges */
   --text-2xs: 0.6875rem;      /* 11px */
@@ -139,6 +139,16 @@
   70% { transform: scale(0.9); }
   100% { transform: scale(1); }
 }
+/* Premium orb avatar - see widget PremiumOrb.jsx */
+@keyframes oyechats-orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.018); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oyechats-premium-orb,
+  .oyechats-premium-orb * { animation: none !important; }
+}
+
 @keyframes count-up {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -155,7 +165,7 @@
 
 /* ── Base ── */
 :root {
-  --bg: var(--color-surface-50);          /* warm paper #FAFAF7 — white cards sit on top */
+  --bg: var(--color-surface-50);          /* warm paper #FAFAF7 - white cards sit on top */
   --bg-card: #ffffff;                      /* pure white card (Minecloud) */
   --bg-card-hover: var(--color-surface-50);
   --bg-muted: var(--color-surface-100);
@@ -164,7 +174,7 @@
   --text: var(--color-surface-900);
   --text-secondary: var(--color-surface-500);
   --text-muted: var(--color-surface-400);
-  /* ── Focus — a calm indigo, intentionally OFF the volt-violet brand so the
+  /* ── Focus - a calm indigo, intentionally OFF the volt-violet brand so the
      focus indicator reads as a system affordance rather than more brand color.
      `--focus` = the solid hairline border/outline; `--focus-ring` = the soft
      glow. Single source of truth: every focus ring in the app routes through
@@ -186,7 +196,7 @@
   --text: var(--color-surface-50);
   --text-secondary: var(--color-surface-400);
   --text-muted: var(--color-surface-500);
-  --focus: #818cf8;                        /* indigo-400 — lighter for dark surfaces */
+  --focus: #818cf8;                        /* indigo-400 - lighter for dark surfaces */
   --focus-ring: rgba(129, 140, 248, 0.32);
   --ring: var(--focus);
   --sidebar-bg: #050505;
@@ -249,7 +259,7 @@ body {
   background: rgba(28, 25, 23, 0.5);
 }
 
-/* ── Gradient mesh for auth pages — Voltage Paper violet ── */
+/* ── Gradient mesh for auth pages - Voltage Paper violet ── */
 .gradient-mesh {
   background: linear-gradient(-45deg, #2E1065, #4C1D95, #7C3AED, #6D28D9);
   background-size: 400% 400%;
@@ -261,7 +271,7 @@ body {
   background: linear-gradient(135deg, #14101e 0%, #1c0f28 50%, #14101e 100%);
 }
 
-/* ── Glass card — matches website glass-2 style ── */
+/* ── Glass card - matches website glass-2 style ── */
 .glass-card {
   background: rgba(255, 255, 255, 0.03);
   backdrop-filter: blur(16px);
@@ -339,7 +349,7 @@ body {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Global keyboard-focus baseline (a11y — WCAG 2.4.7 Focus Visible).
+   Global keyboard-focus baseline (a11y - WCAG 2.4.7 Focus Visible).
 
    Previously the app shipped an opt-in `.focus-ring` class that was applied in
    ZERO places, so keyboard users navigated the entire dashboard with no
@@ -349,7 +359,7 @@ body {
    `:focus-visible` fires only for keyboard / programmatic focus, never on
    mouse click, so pointer users see no rings. The selector list is wrapped in
    `:where()` (zero specificity) so any component that renders its own focus
-   treatment overrides this with a plain class — and elements that manage
+   treatment overrides this with a plain class - and elements that manage
    their own ring can opt out with `.no-focus-ring`.
    ────────────────────────────────────────────────────────────────────────── */
 :where(
@@ -370,7 +380,7 @@ body {
 ):focus-visible {
   outline: 1.5px solid var(--ring);
   outline-offset: 1px;
-  /* No border-radius here — a CSS outline automatically follows the element's
+  /* No border-radius here - a CSS outline automatically follows the element's
      own border-radius, so forcing a fixed radius (was 6px) made the focus ring
      mismatch rounded controls like inputs (rounded-xl = 12px). */
 }
@@ -404,7 +414,7 @@ body {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Reduced-motion (a11y — WCAG 2.3.3 Animation from Interactions).
+   Reduced-motion (a11y - WCAG 2.3.3 Animation from Interactions).
 
    The app defines 12 keyframe animations (fade-up, bounce-in, shimmer, …) and
    animates background/color transitions globally. None of it honoured the OS
@@ -433,7 +443,7 @@ body {
    reads as interactive without per-component ``cursor-pointer`` classes.
 
    The disabled variants get ``not-allowed`` so the cursor honestly mirrors
-   the disabled state — important on the seat ± buttons, sub-cancel, etc.
+   the disabled state - important on the seat ± buttons, sub-cancel, etc.
    that toggle between active and gated. We exclude ``aria-disabled="true"``
    from the pointer set too, since several of our shadcn-style components
    convey disabled via aria-attribute rather than the HTML attribute.
@@ -465,7 +475,7 @@ fieldset:disabled *:not(label) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   WidgetChatPreview bot-message markdown — mirrors the real widget's
+   WidgetChatPreview bot-message markdown - mirrors the real widget's
    `.prose` rules (widget/src/index.css) so ReactMarkdown output in the Build
    Studio / Bot Settings live preview renders identically to the embeddable
    widget (bold, lists, links, inline code) instead of raw markdown syntax.

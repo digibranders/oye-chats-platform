@@ -53,7 +53,7 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
         {label}
       </span>
       <span className="min-w-0 truncate text-right text-[13px] font-medium text-[var(--ds-text)]">
-        {value || '—'}
+        {value || '-'}
       </span>
     </div>
   );
@@ -62,8 +62,8 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 /**
- * SettingsPage — the top-level Settings surface. One job: answer "How is MY
- * account set up?" — profile, appearance, and sign-in security. This is the
+ * SettingsPage - the top-level Settings surface. One job: answer "How is MY
+ * account set up?" - profile, appearance, and sign-in security. This is the
  * account/profile page, not the org one: workspace identity (company,
  * website, agent count) and agent-wide defaults live on
  * Workspace ▸ General instead (see `../workspace/GeneralPage`).
@@ -84,7 +84,7 @@ export function SettingsPage(): ReactElement {
   const [nameError, setNameError] = useState('');
   const [savingName, setSavingName] = useState(false);
 
-  // Load / reload. No synchronous setState in the effect body — the first
+  // Load / reload. No synchronous setState in the effect body - the first
   // setState always follows an await, so `loading` is a genuine derived phase.
   useEffect(() => {
     let active = true;

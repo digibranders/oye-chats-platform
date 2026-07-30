@@ -16,7 +16,7 @@ function barColor(star: number): string {
 }
 
 /**
- * SatisfactionBreakdown — post-chat visitor ratings across every agent: a
+ * SatisfactionBreakdown - post-chat visitor ratings across every agent: a
  * headline average plus a 5→1 star distribution. Each row is labelled for
  * assistive tech (e.g. "5 stars, 62%").
  */

@@ -79,15 +79,15 @@ interface UseOperatorSocketOptions {
 }
 
 /**
- * useOperatorSocket — owns the `/ws/operator` connection and every piece of
+ * useOperatorSocket - owns the `/ws/operator` connection and every piece of
  * real-time conversation state. Conversation state is keyed by session id and is
  * selection-agnostic: the panel decides which session to render. Handles the full
  * protocol (queue, accept, transfer, close, typing, presence, read receipts,
  * roster, qualified-session invalidation) plus reconnect-with-backoff and the
  * duplicate-tab (4001) close.
  *
- * All `setState` runs inside async socket/timer callbacks — never synchronously in
- * an effect body — to satisfy react-hooks/set-state-in-effect and to avoid
+ * All `setState` runs inside async socket/timer callbacks - never synchronously in
+ * an effect body - to satisfy react-hooks/set-state-in-effect and to avoid
  * updating state after unmount.
  */
 export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): OperatorSocketApi {
@@ -118,7 +118,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
   const operatorIdRef = useRef<number | null>(null);
   // Mirror of messagesBySession so `loadOlder` can read the current oldest DB id
   // (before its fetch) without depending on state in its callback. Synced in an
-  // effect — `loadOlder` only runs on a user click, well after commit.
+  // effect - `loadOlder` only runs on a user click, well after commit.
   const messagesBySessionRef = useRef<Record<string, OperatorMessage[]>>({});
   // Last-known waiting-queue size, so a `queue_update` only alerts when the
   // queue actually grew (not on every roster/state refresh that reships it).
@@ -268,7 +268,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         setVisitorReadAtBySession(dropKey);
         setHasMoreBySession(dropKey);
         setConnectResolutions(dropKey);
-        // Refs are not React state — clear them imperatively.
+        // Refs are not React state - clear them imperatively.
         delete typingSentAtRef.current[sid];
         delete sentReadIdRef.current[sid];
         const pendingTyping = typingTimeoutsRef.current[sid];
@@ -442,7 +442,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       if (event.code === DUPLICATE_TAB_CLOSE_CODE) {
         terminalCloseRef.current = true;
         if (mountedRef.current) setStatus('duplicate');
-        return; // another tab owns the channel — do not reconnect
+        return; // another tab owns the channel - do not reconnect
       }
       if (event.code === AUTH_FAILED_CLOSE_CODE) {
         terminalCloseRef.current = true;
@@ -453,7 +453,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         return;
       }
 
-      // Reflect not-OPEN immediately — even on the first drop — so the composer
+      // Reflect not-OPEN immediately - even on the first drop - so the composer
       // disables and the badge stops claiming "Live" before the backoff elapses.
       const delay = reconnectDelay(reconnectAttemptsRef.current);
       if (mountedRef.current) setStatus('reconnecting');
@@ -468,7 +468,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     };
 
     return () => {
-      // `mountedRef` is owned by the dedicated unmount effect — don't flip it here,
+      // `mountedRef` is owned by the dedicated unmount effect - don't flip it here,
       // or a reconnect (deps re-run) would wrongly mark the still-mounted hook dead.
       manualCloseRef.current = true;
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
@@ -497,7 +497,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
     if (!enabled) return;
     const wake = (): void => {
       // Never revive a socket closed on a terminal code (4001 duplicate-tab /
-      // 4003 auth-failed) — those deliberately do not reconnect. Reconnecting
+      // 4003 auth-failed) - those deliberately do not reconnect. Reconnecting
       // here would start a duplicate-tab war or re-hammer a rejected auth.
       if (terminalCloseRef.current) return;
       const socket = socketRef.current;
@@ -534,7 +534,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
       if (!trimmed) return false;
       const ok = send({ type: 'message', session_id: sessionId, content: trimmed });
       if (!ok) return false;
-      // Operator messages are routed to the visitor only — echo optimistically.
+      // Operator messages are routed to the visitor only - echo optimistically.
       const entry: OperatorMessage = {
         key: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         dbId: null,
@@ -559,7 +559,7 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
         content_type: file.content_type,
       });
       if (!ok) return false;
-      // Echo optimistically, mirroring sendMessage — the file is delivered to
+      // Echo optimistically, mirroring sendMessage - the file is delivered to
       // the visitor only, so the server does not bounce it back to us.
       const entry: OperatorMessage = {
         key: `local-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

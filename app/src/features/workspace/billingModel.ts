@@ -1,5 +1,5 @@
 /**
- * billingModel — typed view-models + formatters for the Workspace ▸ Billing page.
+ * billingModel - typed view-models + formatters for the Workspace ▸ Billing page.
  *
  * The reused billing endpoints (getCurrentSubscription / getSubscriptionPlans /
  * getInvoices / getBillingDetails) are declared as `Record<string, unknown>` in
@@ -8,7 +8,7 @@
  * touches a raw record.
  *
  * Money note: the platform bills on a single Razorpay INR rail (root CLAUDE.md
- * — "Payments: Razorpay (INR), single provider"), so plan/seat amounts come from
+ * - "Payments: Razorpay (INR), single provider"), so plan/seat amounts come from
  * the canonical `*_price_cents` (INR paise) columns. The parallel `*_usd_cents`
  * columns exist for an unshipped multi-currency rail and are intentionally not
  * read here.
@@ -48,7 +48,7 @@ function toBool(value: unknown): boolean {
 // ── View-model shapes ────────────────────────────────────────────────────────
 
 export interface PlanView {
-  /** DB primary key — required by the checkout money-path (change-plan/checkout/quote). */
+  /** DB primary key - required by the checkout money-path (change-plan/checkout/quote). */
   id: number;
   slug: string;
   name: string;
@@ -62,7 +62,7 @@ export interface PlanView {
   extraSeatPriceMinor: number;
   isPaid: boolean;
   /**
-   * True for a "contact sales" tier — priced on request, not self-serve
+   * True for a "contact sales" tier - priced on request, not self-serve
    * checkout. Derived from `slug === 'enterprise'` or a `contact_sales` /
    * `enterprise` feature flag, so a seeded enterprise plan routes to sales
    * instead of the Razorpay money-path.
@@ -131,9 +131,9 @@ export interface BillingDetailsView {
   stateCode: string | null;
   email: string | null;
   address: BillingAddress | null;
-  /** Account company name (from signup) — prefills the legal name when unset. */
+  /** Account company name (from signup) - prefills the legal name when unset. */
   companyName: string | null;
-  /** Account login email — where invoices go when billing email is unset. */
+  /** Account login email - where invoices go when billing email is unset. */
   accountEmail: string | null;
   /** True when the customer has entered no tax identity at all. */
   isEmpty: boolean;
@@ -291,9 +291,9 @@ export function formatCredits(count: number): string {
 }
 
 export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
