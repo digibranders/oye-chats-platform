@@ -1527,6 +1527,13 @@ def _profile_dict(profile: SellerProfile) -> dict[str, Any]:
         "lut_number": profile.lut_number,
         "invoice_prefix": profile.invoice_prefix,
         "logo_url": profile.logo_url,
+        # Companies Act s.12(3)(c) identity. Omitting these from the serializer
+        # made the console render them blank no matter what was stored, so an
+        # operator saving a CIN saw it vanish on the next load.
+        "cin": profile.cin,
+        "phone": profile.phone,
+        "website": profile.website,
+        "support_email": profile.support_email,
     }
 
 

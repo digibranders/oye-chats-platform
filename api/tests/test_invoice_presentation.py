@@ -165,3 +165,40 @@ def test_export_invoice_carries_the_rule_46_endorsement(db, enabled):
     inv = _issued(db, "exp2@test.dev", billing_country="DE")
     html = render_invoice_html(inv)
     assert "EXPORT" in html.upper()
+
+
+def test_every_seller_profile_field_is_exposed_by_the_api(db):
+    """The serializer must not silently drop fields.
+
+    ``_profile_dict`` omitted cin/phone/website/support_email, so the console
+    rendered them blank no matter what was stored — an operator who saved a CIN
+    watched it disappear on the next load. A field-by-field comparison against
+    the dataclass catches the next omission instead of a customer doing it.
+    """
+    import dataclasses
+
+    from app.api.superadmin_routes_v2 import _profile_dict
+    from app.services.seller_profile_service import SellerProfile
+
+    profile = save_seller_profile(
+        db,
+        {
+            "legal_name": "Digibranders Pvt Ltd",
+            "gstin": "27AAICD9268J1Z0",
+            "cin": "U72900MH2021PTC372344",
+            "phone": "+91 22 1234 5678",
+            "website": "https://oyechats.com",
+            "support_email": "support@oyechats.com",
+        },
+        actor_id=None,
+    )
+    payload = _profile_dict(profile)
+
+    # `configured` is internal state, not a profile field the console edits.
+    expected = {f.name for f in dataclasses.fields(SellerProfile)}
+    missing = expected - set(payload)
+    assert not missing, f"_profile_dict drops seller-profile fields: {sorted(missing)}"
+
+    assert payload["cin"] == "U72900MH2021PTC372344"
+    assert payload["phone"] == "+91 22 1234 5678"
+    assert payload["support_email"] == "support@oyechats.com"
