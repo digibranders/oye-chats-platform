@@ -40,6 +40,8 @@ export interface BillingData {
   /** True when the invoices endpoint failed (distinct from "no invoices"). */
   invoicesError: boolean;
   details: BillingDetailsView;
+  /** True once the client has consumed their lifetime free trial - gates the trial CTA. */
+  trialUsed: boolean;
 }
 
 export interface UseBillingDataResult {
@@ -88,6 +90,7 @@ async function loadBillingData(botId?: number | null): Promise<BillingData> {
     invoices: invoicesResult.rows.map((raw, index) => buildInvoice(raw, index)),
     invoicesError: invoicesResult.error,
     details: buildBillingDetails(detailsRaw),
+    trialUsed: envelope.trial_used === true,
   };
 }
 

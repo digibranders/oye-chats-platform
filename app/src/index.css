@@ -92,6 +92,7 @@
   --animate-spin-slow: spin 2s linear infinite;
   --animate-bounce-in: bounce-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   --animate-count-up: count-up 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-wave: wave 1.4s ease-in-out;
 }
 
 /* ── Keyframes ── */
@@ -132,6 +133,13 @@
   20%, 80% { transform: translateX(2px); }
   30%, 50%, 70% { transform: translateX(-4px); }
   40%, 60% { transform: translateX(4px); }
+}
+@keyframes wave {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  10%, 30% { transform: rotate(14deg); }
+  20% { transform: rotate(-8deg); }
+  40% { transform: rotate(-4deg); }
+  50% { transform: rotate(10deg); }
 }
 @keyframes bounce-in {
   0% { opacity: 0; transform: scale(0.3); }

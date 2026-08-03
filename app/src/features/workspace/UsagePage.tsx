@@ -13,6 +13,7 @@ import {
 import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton, cn } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import {
   aggregatePool,
   formatCredits,
@@ -75,7 +76,11 @@ function PlanLimitStat({ label, icon: Icon, value, caption }: PlanLimitStatProps
  * usage on this workspace-wide view, so they render as honest limit-only stats.
  */
 function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement {
-  const { entitlements, limitFor } = useEntitlements();
+  const { entitlements, limitFor, isFree } = useEntitlements();
+  // The Leads dashboard is feature-locked on Free (sidebar gate), so a Leads
+  // quota meter here would advertise a ceiling for a surface Free can't open.
+  // Hide the meter on Free; paid plans keep it.
+  const showLeads = !isFree;
 
   // Per-agent scope: read ceilings from the selected agent's own plan and pair
   // them with that agent's usage. Drops "Agents" (a workspace-level count with
@@ -93,7 +98,11 @@ function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           <QuotaMeter label="Members" used={usage.operators} limit={lim('operators')} />
           <QuotaMeter label="Documents" used={usage.documents} limit={lim('documents')} />
-          <QuotaMeter label="Leads" used={usage.leads} limit={lim('leads')} />
+          {showLeads && <QuotaMeter label="Leads" used={usage.leads} limit={lim('leads')} />}
+        </div>
+        {/* Informational limit boxes kept on their own row so they always pair
+            up, regardless of how many usage meters render above. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <PlanLimitStat
             label="Page scraping"
             icon={Globe}
@@ -121,7 +130,13 @@ function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <QuotaMeter label="Members" used={entitlements.usage.operators ?? 0} limit={limitFor('operators')} />
         <QuotaMeter label="Documents" used={entitlements.usage.documents ?? 0} limit={limitFor('documents')} />
-        <QuotaMeter label="Leads" used={entitlements.usage.leads ?? 0} limit={limitFor('leads')} />
+        {showLeads && (
+          <QuotaMeter label="Leads" used={entitlements.usage.leads ?? 0} limit={limitFor('leads')} />
+        )}
+      </div>
+      {/* Informational limit boxes kept on their own row so they always pair
+          up, regardless of how many usage meters render above. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <PlanLimitStat
           label="Page scraping"
           icon={Globe}
@@ -391,6 +406,11 @@ function RecentTopups({ rows }: { rows: LedgerRow[] }): ReactElement | null {
  */
 export function UsagePage(): ReactElement {
   const { selectedBot } = useBotContext();
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  // Top-up packs are a paid feature. Free workspaces get an upgrade nudge
+  // instead of the buy modal (the backend rejects the purchase anyway).
+  const canTopup = hasFeature('topup_allowed');
   const { phase, retry } = useUsageData(selectedBot?.id ?? null);
   const balance = phase.status === 'ready' ? phase.balance : null;
   // The credit pool for the current scope: the selected agent's own-plan pool,
@@ -422,10 +442,20 @@ export function UsagePage(): ReactElement {
   // `null` = closed. A target carries the pool the top-up is scoped to: the
   // shared account balance (`botId: null`) or one agent's isolated balance.
   const [topupTarget, setTopupTarget] = useState<TopupTarget | null>(null);
+  // Single top-up chokepoint for every "Buy credits" affordance (page action +
+  // the per-pool heroes). On a paid plan it opens the scoped top-up modal; on
+  // Free it opens the upgrade modal instead of the buy flow.
+  const handleTopup = (target: TopupTarget): void => {
+    if (canTopup) {
+      setTopupTarget(target);
+    } else {
+      openUpgradeModal('topup_credits');
+    }
+  };
   // The page-level "Buy credits" tops up the current scope: the selected agent's
   // pool when one is active, otherwise the shared account balance.
   const openScopedTopup = (): void =>
-    setTopupTarget(
+    handleTopup(
       selectedBot && selectedPool
         ? { botId: selectedPool.botId, botName: selectedPool.botId === null ? null : selectedPool.name }
         : { botId: null, botName: null },
@@ -464,7 +494,7 @@ export function UsagePage(): ReactElement {
             <AgentCreditHero
               pool={selectedPool}
               agentName={selectedBot.name}
-              onTopup={setTopupTarget}
+              onTopup={handleTopup}
             />
           ) : phase.balance.botCredits.length > 0 ? (
             <BotCreditsSection
@@ -472,13 +502,13 @@ export function UsagePage(): ReactElement {
                 ...(phase.balance.accountPool ? [phase.balance.accountPool] : []),
                 ...phase.balance.botCredits,
               ]}
-              onTopup={setTopupTarget}
+              onTopup={handleTopup}
             />
           ) : (
             <AgentCreditHero
               pool={aggregatePool(phase.balance)}
               agentName="All agents"
-              onTopup={setTopupTarget}
+              onTopup={handleTopup}
             />
           )}
 
