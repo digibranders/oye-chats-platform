@@ -34,6 +34,8 @@ export interface PlanCheckoutContext {
   currentPlanSlug: string;
   currentSubscriptionStatus: string | null;
   hasActiveSubscription: boolean;
+  /** True once the client has consumed their lifetime free trial - closes the trial path. */
+  trialUsed: boolean;
   /** Fired with a human-readable message after a successful mutation. */
   onSuccess: (message: string) => void;
   /** Fired to dismiss the surface (drawer close) after success. */
@@ -52,11 +54,16 @@ export interface PlanCheckoutResult {
 
 // Mirrors planMath.canStartTrial on a PlanView - kept byte-identical in intent
 // so the trial gate can never drift between the modal and the drawer.
+// ``trialUsed`` reflects the backend's lifetime one-trial-per-client rule
+// (from /subscriptions/current); without it the UI would offer a trial the
+// start-trial endpoint rejects with ``already_trialed``.
 export function isTrialEligible(
   plan: PlanView,
   currentPlanSlug: string,
   currentSubscriptionStatus: string | null,
+  trialUsed: boolean,
 ): boolean {
+  if (trialUsed) return false;
   if (plan.slug === currentPlanSlug) return false;
   if (plan.trialDays <= 0) return false;
   const onPaidPlan = Boolean(currentPlanSlug && currentPlanSlug !== 'free');
@@ -64,7 +71,8 @@ export function isTrialEligible(
 }
 
 export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
-  const { currentPlanSlug, currentSubscriptionStatus, hasActiveSubscription, onSuccess, onDone } = ctx;
+  const { currentPlanSlug, currentSubscriptionStatus, hasActiveSubscription, trialUsed, onSuccess, onDone } =
+    ctx;
   const { country: acctCountry } = useCurrency();
 
   const [submitting, setSubmitting] = useState(false);
@@ -100,7 +108,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         return;
       }
 
-      const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus);
+      const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus, trialUsed);
       const takeTrialPath = actionKind === 'trial' || (actionKind === 'auto' && trialEligible);
       if (takeTrialPath) {
         setError('');
@@ -234,7 +242,15 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         setSubmitting(false);
       }
     },
-    [acctCountry, currentPlanSlug, currentSubscriptionStatus, hasActiveSubscription, onSuccess, onDone],
+    [
+      acctCountry,
+      currentPlanSlug,
+      currentSubscriptionStatus,
+      hasActiveSubscription,
+      trialUsed,
+      onSuccess,
+      onDone,
+    ],
   );
 
   return { submitting, error, notice, submit, reset };

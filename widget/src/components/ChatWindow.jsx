@@ -1237,7 +1237,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setIsTyping(false);
             setMessages(prev => [...prev, {
                 id: Date.now() + 2,
-                text: "Sorry, I'm having trouble connecting to the server. Please check if the backend is running.",
+                text: "I'm sorry, I couldn't generate a response. Please try again.",
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null

@@ -38,7 +38,7 @@ import {
 import { useWorkspaceAnalytics, type WorkspaceAnalytics } from './useWorkspaceAnalytics';
 import { MessageTrendChart } from './MessageTrendChart';
 import { TopQuestionsList } from './TopQuestionsList';
-import { LeadFunnel } from './LeadFunnel';
+import { LeadJourneyFunnel } from './LeadJourneyFunnel';
 import { SatisfactionBreakdown } from './SatisfactionBreakdown';
 import { FeedbackPanel } from '../feedback/FeedbackPanel';
 
@@ -394,23 +394,7 @@ export function AnalyticsPage(): ReactElement {
               tabIndex={0}
               className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <MetricCard label="Total leads" value={data.leads.total.toLocaleString()} icon={Users} />
-                <MetricCard label="Warm lead" value={data.leads.mql.toLocaleString()} icon={Sparkles} />
-                <MetricCard label="Strong interest" value={data.leads.sal.toLocaleString()} icon={Activity} />
-                <MetricCard label="Ready to buy" value={data.leads.sql.toLocaleString()} icon={Zap} />
-              </div>
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title="Qualification funnel"
-                    description="How visitors progress from first contact to sales-ready"
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <LeadFunnel stats={data.leads} />
-                </CardContent>
-              </Card>
+              <LeadJourneyFunnel botId={selectedBot?.id ?? null} />
             </div>
           )}
 

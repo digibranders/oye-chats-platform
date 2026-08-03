@@ -33,6 +33,14 @@
   .oyechats-safe-bottom {
     padding-bottom: max(env(safe-area-inset-bottom), 1rem);
   }
+  /* Mobile (full-screen widget): tighten the floor beneath the footer/branding
+     so "Powered by" sits close to the edge. Notched devices still report a
+     larger real inset, which wins over this fallback and stays clear of the bar. */
+  @media (max-width: 767px) {
+    .oyechats-safe-bottom {
+      padding-bottom: max(env(safe-area-inset-bottom), 0.25rem);
+    }
+  }
 }
 
 /*

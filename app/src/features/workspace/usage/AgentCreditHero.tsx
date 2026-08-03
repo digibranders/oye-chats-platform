@@ -51,11 +51,7 @@ export function AgentCreditHero({ pool, agentName, onTopup }: AgentCreditHeroPro
             <span className="text-[44px] font-bold leading-none tracking-tight tabular-nums text-[var(--ds-text)]">
               {formatCredits(pool.totalRemaining)}
             </span>
-            {hasPlan && (
-              <span className="mb-1 text-[13px] text-[var(--ds-text-subtle)]">
-                of {formatCredits(pool.monthlyGrant)} monthly
-              </span>
-            )}
+            <span className="mb-1 text-[13px] text-[var(--ds-text-subtle)]">credits available now</span>
           </div>
           <p className="mt-1 text-[13px] text-[var(--ds-text-subtle)]">
             {formatCredits(pool.planRemaining)} from your plan

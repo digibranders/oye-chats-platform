@@ -21,14 +21,8 @@ export interface BillingOverviewProps {
   onChangePlan: () => void;
   onBuyCredits: () => void;
   onViewUsage: () => void;
-  /** Selected agent id: scopes the credits meter to that agent's pool (null = account-wide). */
+  /** Selected agent id: scopes the credits meter to that agent's pool. */
   botId?: number | null;
-  /**
-   * Disable "Change plan" - set while scoped to a single agent, since per-agent
-   * plan-switch runs through the (not-yet-built) per-agent Razorpay checkout.
-   * The account-level plan change stays available in the "All agents" scope.
-   */
-  changePlanDisabled?: boolean;
 }
 
 /**
@@ -57,7 +51,6 @@ export function BillingOverview({
   onBuyCredits,
   onViewUsage,
   botId = null,
-  changePlanDisabled = false,
 }: BillingOverviewProps): ReactElement {
   const [balance, setBalance] = useState<CreditBalance | null>(null);
 
@@ -148,7 +141,7 @@ export function BillingOverview({
           {/* Actions - one primary (change plan), one secondary (buy credits). */}
           <div className="mt-auto pt-5">
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={onChangePlan} disabled={changePlanDisabled}>
+              <Button onClick={onChangePlan}>
                 <ArrowUpRight size={15} aria-hidden="true" />
                 {isPaid ? 'Change plan' : 'Choose a plan'}
               </Button>
@@ -157,11 +150,6 @@ export function BillingOverview({
                 Buy credits
               </Button>
             </div>
-            {changePlanDisabled && (
-              <p className="mt-2 text-[12px] text-[var(--ds-text-subtle)]">
-                Per-agent plan changes are coming soon. Switch to “All agents” to change the account plan.
-              </p>
-            )}
           </div>
         </div>
       </Card>

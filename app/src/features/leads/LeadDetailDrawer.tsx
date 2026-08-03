@@ -24,6 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button, EmptyState, Skeleton, StatusBadge, Textarea, cn } from '../../design-system';
+import { useCountUp } from '../../hooks/useCountUp';
 import { type ChatMessage } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
 import { type LeadAnnotationController } from './useLeadAnnotations';
@@ -51,11 +52,15 @@ export interface LeadDetailDrawerProps {
 /** A compact circular score gauge (0–100), tinted by tier tone. */
 function ScoreRing({ score }: { score: number }): ReactElement {
   const clamped = Math.max(0, Math.min(100, score));
+  // Tally the score up from 0 whenever a lead is selected; the ring sweep and
+  // the number share this value so they animate in lockstep. Colour stays fixed
+  // to the FINAL tier so it doesn't flicker through tones while counting.
+  const animated = useCountUp(clamped);
   const size = 96;
   const stroke = 8;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (clamped / 100) * circumference;
+  const offset = circumference - (animated / 100) * circumference;
   const color = SCORE_TONE_VAR[scoreTone(clamped)];
 
   return (
@@ -85,7 +90,6 @@ function ScoreRing({ score }: { score: number }): ReactElement {
         strokeDasharray={circumference}
         strokeDashoffset={offset}
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 0.6s ease-out' }}
       />
       <text
         x="50%"
@@ -94,7 +98,7 @@ function ScoreRing({ score }: { score: number }): ReactElement {
         dominantBaseline="central"
         className="fill-[var(--ds-text)] text-xl font-bold"
       >
-        {clamped}
+        {animated}
       </text>
     </svg>
   );

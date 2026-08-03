@@ -142,9 +142,17 @@ export function ExperiencePage(): ReactElement {
   const handleSave = useCallback(async (): Promise<void> => {
     if (botId === null || !draft) return;
     const saveBotId = botId;
-    // The widget display name IS the agent name; when it changes, the shared
-    // agent list must be re-fetched so the sidebar and header stay in sync.
-    const nameChanged = baseline !== null && baseline.displayName !== draft.displayName;
+    // The widget display name IS the agent name, and the sidebar / header / bot
+    // switcher render each agent's configured avatar - so the shared agent list
+    // must be re-fetched whenever the name OR the avatar (type, uploaded logo,
+    // or orb colour) changes, to keep those surfaces in sync.
+    const identityChanged =
+      baseline !== null &&
+      (baseline.displayName !== draft.displayName ||
+        baseline.avatarType !== draft.avatarType ||
+        baseline.botLogo !== draft.botLogo ||
+        baseline.orbColor !== draft.orbColor ||
+        baseline.primaryColor !== draft.primaryColor);
     setSaving(true);
     setSaveError(null);
     try {
@@ -152,7 +160,7 @@ export function ExperiencePage(): ReactElement {
       if (botIdRef.current !== saveBotId) return;
       setBaseline(draft);
       setJustSaved(true);
-      if (nameChanged) void refresh();
+      if (identityChanged) void refresh();
     } catch (err) {
       if (botIdRef.current !== saveBotId) return;
       setSaveError(err instanceof Error ? err.message : 'Could not save. Please try again.');

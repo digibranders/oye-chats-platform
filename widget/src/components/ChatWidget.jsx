@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import Launcher from './Launcher';
-import { getChatbotSettings } from '../services/api';
+import { getChatbotSettings, recordPageVisit } from '../services/api';
 import { getController } from '../widget-controller.js';
+import { readWidgetOpen, writeWidgetOpen } from '../services/storage-keys';
 
 // Lazy-loaded — chat window ships in its own chunk, only fetched on first widget open.
 // This is the largest component (~1900 LOC plus react-markdown), so deferring it
@@ -56,10 +57,11 @@ function isWithinBusinessHours(businessHours) {
 
 // Read the persisted open state SYNCHRONOUSLY before the first render so a
 // page navigated to from a bot CTA renders the widget already open — no
-// "closed → opening → open" flicker. sessionStorage scope = same tab, so
-// this only kicks in for in-tab navigations, not for first-time visits.
+// "closed → opening → open" flicker. Resolves from sessionStorage (same-origin,
+// same tab) OR the shared parent-domain cookie (cross-subdomain), so the panel
+// stays open when the visitor hops from the main domain to a subdomain.
 const _readPersistedOpen = () => {
-  try { return sessionStorage.getItem('oyechats_widget_open') === '1'; } catch { return false; }
+  try { return readWidgetOpen(); } catch { return false; }
 };
 
 const ChatWidget = () => {
@@ -100,6 +102,16 @@ const ChatWidget = () => {
       }
     };
     fetchSettings();
+  }, []);
+
+  // ── Journey capture (runs on every page load, independent of the panel) ────
+  // The launcher renders on every host page whether or not the chat is open, so
+  // recording the visit here — not inside the (open-only) ChatWindow — is what
+  // makes "journey before chat" capture pages browsed BEFORE the chat opens.
+  // On MPA sites each page load remounts this; on SPA sites the installed
+  // history hooks capture subsequent route changes.
+  useEffect(() => {
+    recordPageVisit();
   }, []);
 
   // ── Live preview bridge ──────────────────────────────────────────────────
@@ -195,11 +207,14 @@ const ChatWidget = () => {
     };
   }, [unlockBodyScroll]);
 
-  // Persist the open/closed state in sessionStorage so that clicking a link
-  // in a bot answer (which navigates the host page in the same tab) reopens
-  // the widget with the conversation intact. sessionStorage scope = same tab,
-  // same browsing session — closes when the visitor closes the tab.
-  const OPEN_STATE_KEY = 'oyechats_widget_open';
+  // Persist the open/closed state so that clicking a link in a bot answer
+  // (which navigates the host page in the same tab) reopens the widget with the
+  // conversation intact. sessionStorage carries it across same-origin
+  // navigations; when the bot enables cross-subdomain sharing, `writeWidgetOpen`
+  // ALSO mirrors it into the shared parent-domain cookie so the panel survives a
+  // hop from the main domain to a subdomain. `shareDomain` comes from bot
+  // settings, so these callbacks re-bind once settings resolve.
+  const shareDomain = settings?.session_share_domain;
 
   const openChat = useCallback(() => {
     if (closeTimer.current) {
@@ -208,24 +223,24 @@ const ChatWidget = () => {
     }
     setIsVisible(true);
     lockBodyScroll();
-    try { sessionStorage.setItem(OPEN_STATE_KEY, '1'); } catch { /* private mode */ }
+    writeWidgetOpen(true, { shareDomain });
     // Allow React to paint widget-hidden state, then trigger open animation
     setTimeout(() => {
       setIsAnimating(true);
       // After open animation completes, use static class so component switches don't re-trigger animation
       setTimeout(() => setIsAnimating('done'), OPEN_DURATION);
     }, 20);
-  }, [lockBodyScroll]);
+  }, [lockBodyScroll, shareDomain]);
 
   const closeChat = useCallback(() => {
     setIsAnimating(false); // triggers close animation
-    try { sessionStorage.removeItem(OPEN_STATE_KEY); } catch { /* private mode */ }
+    writeWidgetOpen(false, { shareDomain });
     closeTimer.current = setTimeout(() => {
       setIsVisible(false); // unmount after animation
       closeTimer.current = null;
       unlockBodyScroll();
     }, CLOSE_DURATION);
-  }, [unlockBodyScroll]);
+  }, [unlockBodyScroll, shareDomain]);
 
   // On initial mount, if the chat was restored already-open from sessionStorage
   // (handled synchronously in the useState above for flicker-free first paint),
@@ -242,6 +257,17 @@ const ChatWidget = () => {
     // dependency array is intentionally empty — no exhaustive-deps lint rule.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Cover the race where the visitor opens the panel before bot settings (and
+  // thus the cross-subdomain share domain) resolve: openChat wrote sessionStorage
+  // only. Once settings arrive, mirror the still-open state into the shared
+  // cookie so the panel carries to a subdomain even then. No-op when closed or
+  // when sharing is off.
+  useEffect(() => {
+    if (isVisible && shareDomain) {
+      writeWidgetOpen(true, { shareDomain });
+    }
+  }, [isVisible, shareDomain]);
 
   const toggleChat = useCallback(() => {
     if (isVisible && (isAnimating === true || isAnimating === 'done')) {
