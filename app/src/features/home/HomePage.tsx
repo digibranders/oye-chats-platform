@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowRight,
   BarChart3,
-  BookOpen,
   CheckCircle2,
   Inbox,
   MessageSquare,
@@ -92,43 +91,11 @@ interface Recommendation extends Pick<ActionCardProps, 'title' | 'description' |
  * unblock broken agents → train → deploy → work leads/inbox → grow. There is
  * always at least one, so the section never renders empty.
  */
-function buildRecommendations(data: HomeData): Recommendation[] {
+function buildRecommendations(data: HomeData, agentScoped: boolean): Recommendation[] {
   const recs: Recommendation[] = [];
 
-  for (const agent of data.agents) {
-    if (recs.length >= 2) break;
-    const id = agent.bot.id;
-    if (agent.crawlFailed) {
-      recs.push({
-        key: `fix-${id}`,
-        icon: AlertTriangle,
-        title: `Fix training for ${agent.bot.name}`,
-        description: 'The last attempt to read this agent’s content failed. Retry it so it can answer.',
-        to: `/agents/${id}/knowledge`,
-        cta: 'Review knowledge',
-      });
-    } else if (!agent.trained) {
-      recs.push({
-        key: `train-${id}`,
-        icon: BookOpen,
-        title: `Train ${agent.bot.name}`,
-        description: 'Add a website or documents so this agent can start answering questions.',
-        to: `/agents/${id}/knowledge`,
-        cta: 'Add knowledge',
-      });
-    } else if (!agent.installed) {
-      recs.push({
-        key: `deploy-${id}`,
-        icon: Radio,
-        title: `Put ${agent.bot.name} live`,
-        description: 'Add the widget to your website to start capturing real conversations.',
-        to: `/agents/${id}/channels`,
-        cta: 'Deploy agent',
-      });
-    }
-  }
-
-  if (data.totals.hotLeads > 0 && recs.length < 3) {
+  // Follow up on hot leads - the primary operational nudge, shown when any exist.
+  if (agentScoped && data.totals.hotLeads > 0) {
     recs.push({
       key: 'leads',
       icon: Target,
@@ -139,40 +106,7 @@ function buildRecommendations(data: HomeData): Recommendation[] {
     });
   }
 
-  if (data.unreadMessages > 0 && recs.length < 3) {
-    recs.push({
-      key: 'inbox',
-      icon: Inbox,
-      title: `Reply to ${formatCount(data.unreadMessages)} new message${data.unreadMessages === 1 ? '' : 's'}`,
-      description: 'Visitors left messages while you were away. Answer them from your inbox.',
-      to: '/inbox',
-      cta: 'Open inbox',
-    });
-  }
-
-  // Evergreen fallbacks so the section is always actionable.
-  if (recs.length < 3) {
-    recs.push({
-      key: 'analytics',
-      icon: BarChart3,
-      title: 'See what’s working',
-      description: 'Dig into conversations, answer quality and lead trends across your agents.',
-      to: '/analytics',
-      cta: 'Open analytics',
-    });
-  }
-  if (recs.length < 3) {
-    recs.push({
-      key: 'new-agent',
-      icon: Plus,
-      title: 'Create another agent',
-      description: 'Spin up a new AI chatbot for a different site, product or audience.',
-      to: '/agents',
-      cta: 'New agent',
-    });
-  }
-
-  return recs.slice(0, 3);
+  return recs;
 }
 
 /** Headline observation for the aside, derived from workspace health. */
@@ -182,17 +116,8 @@ function buildHealthInsight(data: HomeData): {
   tone: InsightCardProps['tone'];
   icon: LucideIcon;
 } {
-  const attention = data.agents.filter((agent) => agent.health.needsAttention).length;
   const readyToDeploy = data.agents.filter((agent) => agent.trained && !agent.installed).length;
 
-  if (attention > 0) {
-    return {
-      icon: AlertTriangle,
-      tone: 'warning',
-      title: `${attention} agent${attention === 1 ? '' : 's'} need${attention === 1 ? 's' : ''} your attention`,
-      body: 'Finish setup so they can start answering visitors and capturing leads.',
-    };
-  }
   if (readyToDeploy > 0) {
     return {
       icon: Radio,
@@ -296,47 +221,43 @@ function HomeEmpty(): ReactElement {
 }
 
 /**
- * PlanUsageCard - a compact plan-and-capacity glance: the workspace's plan
- * badge plus usage-populated limit meters (see `useEntitlements` foundation
- * notes; `credits`, `page_scraping`, `chat_history_days` are NOT populated by
- * the backend `usage` map, so they're deliberately left off this summary rather
- * than shown with a fabricated "used" count). Free workspaces get a subtle
- * upgrade nudge into Workspace ▸ Billing.
+ * PlanUsageCard - a compact plan-and-capacity glance for a single agent: the
+ * workspace's plan badge plus usage-populated limit meters (see `useEntitlements`
+ * foundation notes; `credits`, `page_scraping`, `chat_history_days` are NOT
+ * populated by the backend `usage` map, so they're deliberately left off this
+ * summary rather than shown with a fabricated "used" count). Free workspaces get
+ * a subtle upgrade nudge into Workspace ▸ Billing.
  *
- * Scope follows the shell BotSwitcher: on "All agents" (`selectedBot` null) it
- * shows the workspace-wide plan totals (Agents / Members / Documents). With a
- * single agent selected it drops the account-level "Agents" line and scopes
- * Members (operator seats are per-bot) and Documents to that agent, matching
- * the rest of Home and the per-bot seat model on the Members page.
+ * Always agent-scoped: Members (operator seats are per-bot) and Documents are
+ * scoped to `selectedBot`, matching the rest of Home and the per-bot seat model
+ * on the Members page. The card is only mounted when an agent is selected — on
+ * "All agents" the account-wide meters read as unactionable over-limit red bars,
+ * so Home hides it and plan capacity lives in Workspace ▸ Billing instead.
  */
 function PlanUsageCard({
   selectedBot,
   data,
 }: {
-  selectedBot: Bot | null;
+  selectedBot: Bot;
   data: HomeData;
 }): ReactElement {
-  const { entitlements, isFree, planName, limitFor } = useEntitlements();
+  const { isFree, planName, limitFor } = useEntitlements();
 
-  // When scoped to one agent, pull that agent's per-bot counts from the loaded
-  // roster; fall back to a null summary (0s) if it isn't present yet.
-  const agent = selectedBot ? data.agents.find((a) => a.bot.id === selectedBot.id) ?? null : null;
-  const scoped = selectedBot != null;
-  const membersUsed = scoped ? agent?.operators ?? 0 : entitlements.usage.operators ?? 0;
-  const documentsUsed = scoped ? agent?.documents ?? 0 : entitlements.usage.documents ?? 0;
+  // Pull this agent's per-bot counts from the loaded roster; fall back to 0s if
+  // the roster row isn't present yet.
+  const agent = data.agents.find((a) => a.bot.id === selectedBot.id) ?? null;
+  const membersUsed = agent?.operators ?? 0;
+  const documentsUsed = agent?.documents ?? 0;
 
   return (
     <Card className="space-y-5 p-5">
       <SectionHeader
         title="Plan & usage"
-        description={scoped ? `Usage for ${selectedBot?.name ?? 'this agent'}` : undefined}
+        description={`Usage for ${selectedBot.name}`}
         actions={<PlanBadge planName={planName} />}
       />
 
       <div className="space-y-4">
-        {!scoped && (
-          <QuotaMeter label="Agents" used={entitlements.usage.bots ?? 0} limit={limitFor('bots')} />
-        )}
         <QuotaMeter label="Members" used={membersUsed} limit={limitFor('operators')} />
         <QuotaMeter label="Documents" used={documentsUsed} limit={limitFor('documents')} />
       </div>
@@ -397,7 +318,19 @@ export function HomePage(): ReactElement {
 
   return (
     <PageContainer
-      title={`${greeting(now)}${workspaceLabel}`}
+      title={
+        <>
+          {greeting(now)}
+          {workspaceLabel}
+          <span
+            className="ml-2 inline-block origin-[70%_70%] hover:animate-wave"
+            role="img"
+            aria-label="waving hand"
+          >
+            👋
+          </span>
+        </>
+      }
       description={`${formatToday(now)} · Here’s how your workspace is doing today.`}
       actions={headerActions}
       width="wide"
@@ -423,7 +356,7 @@ function HomeContent({
   selectedBot: Bot | null;
 }): ReactElement {
   const insight = buildHealthInsight(data);
-  const recommendations = buildRecommendations(data);
+  const recommendations = buildRecommendations(data, selectedBot != null);
   const activityItems = toActivityItems(data.activity);
   const { hasFeature } = useEntitlements();
 
@@ -506,9 +439,15 @@ function HomeContent({
 
         {/* Aside - plan usage, health insight, next steps, live activity */}
         <div className="space-y-8">
-          <section aria-label="Plan and usage">
-            <PlanUsageCard selectedBot={selectedBot} data={data} />
-          </section>
+          {/* Plan & usage is scoped to a single agent. On "All agents"
+              (selectedBot null) it's hidden: the account-wide Agents/Members
+              meters read as over-limit red bars that alarm without being
+              actionable here — plan capacity lives in Workspace ▸ Billing. */}
+          {selectedBot && (
+            <section aria-label="Plan and usage">
+              <PlanUsageCard selectedBot={selectedBot} data={data} />
+            </section>
+          )}
 
           {!hasFeature('bant') && (
             <section aria-label="Lead qualification">
@@ -537,23 +476,28 @@ function HomeContent({
             </div>
           </section>
 
-          <section aria-label="Recent activity" className="space-y-4">
-            <SectionHeader title="Recent activity" description="Feedback and new messages." />
-            {activityItems.length > 0 ? (
-              <Card className="p-5">
-                <ActivityTimeline items={activityItems} />
-              </Card>
-            ) : (
-              <Card className="flex items-center gap-3 p-5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-                  <ActivityIcon size={15} aria-hidden="true" />
-                </span>
-                <p className="text-[13px] text-[var(--ds-text-muted)]">
-                  No activity yet. Feedback and visitor messages will show up here.
-                </p>
-              </Card>
-            )}
-          </section>
+          {/* Recent activity is agent-scoped. On "All agents" it aggregates
+              cross-agent feedback/messages that read as noise here, so Home
+              hides it — it returns when a single agent is selected. */}
+          {selectedBot && (
+            <section aria-label="Recent activity" className="space-y-4">
+              <SectionHeader title="Recent activity" description="Feedback and new messages." />
+              {activityItems.length > 0 ? (
+                <Card className="p-5">
+                  <ActivityTimeline items={activityItems} />
+                </Card>
+              ) : (
+                <Card className="flex items-center gap-3 p-5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+                    <ActivityIcon size={15} aria-hidden="true" />
+                  </span>
+                  <p className="text-[13px] text-[var(--ds-text-muted)]">
+                    No activity yet. Feedback and visitor messages will show up here.
+                  </p>
+                </Card>
+              )}
+            </section>
+          )}
         </div>
       </div>
     </div>

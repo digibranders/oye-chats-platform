@@ -92,6 +92,8 @@ export interface PlanConfirmModalProps {
   currentPlanSlug: string;
   currentSubscriptionStatus: string | null;
   hasActiveSubscription: boolean;
+  /** True once the client has used their lifetime free trial - hides the trial CTA. */
+  trialUsed: boolean;
   /** Monthly price of the current plan (minor units) - decides upgrade vs downgrade. */
   currentMonthlyPriceMinor: number;
   onSuccess: (message: string) => void;
@@ -113,6 +115,7 @@ export function PlanConfirmModal({
   currentPlanSlug,
   currentSubscriptionStatus,
   hasActiveSubscription,
+  trialUsed,
   currentMonthlyPriceMinor,
   onSuccess,
 }: PlanConfirmModalProps): ReactElement | null {
@@ -120,6 +123,7 @@ export function PlanConfirmModal({
     currentPlanSlug,
     currentSubscriptionStatus,
     hasActiveSubscription,
+    trialUsed,
     onSuccess,
     onDone: onClose,
   });
@@ -256,7 +260,7 @@ export function PlanConfirmModal({
   if (!open || !plan) return null;
 
   const isCurrentPlan = plan.slug === currentPlanSlug;
-  const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus);
+  const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus, trialUsed);
   const intent = resolveIntent(
     plan,
     hasActiveSubscription,

@@ -41,7 +41,7 @@ import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
 import { type Lead } from '../../types/domain';
-import { type FunnelPeriod, useLeads } from './useLeads';
+import { useLeads } from './useLeads';
 import { useLeadDetail } from './useLeadDetail';
 import { useLeadAnnotations } from './useLeadAnnotations';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
@@ -53,13 +53,12 @@ import {
   TIER_ORDER,
   filterLeads,
   formatDateTime,
-  funnelHasData,
   leadDisplayName,
   leadInitials,
   normalizeTier,
   scoreTone,
 } from './leadModel';
-import type { FunnelStageView, LeadStatsSummary } from './leadModel';
+import type { LeadStatsSummary } from './leadModel';
 
 const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
   { value: 'named', label: 'Named leads' },
@@ -67,12 +66,33 @@ const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: strin
   { value: 'all', label: 'Everyone' },
 ];
 
-const FUNNEL_PERIOD_OPTIONS: ReadonlyArray<{ value: FunnelPeriod; label: string; note: string }> = [
-  { value: '7d', label: '7 days', note: 'last 7 days' },
-  { value: '30d', label: '30 days', note: 'last 30 days' },
-  { value: '90d', label: '90 days', note: 'last 90 days' },
-  { value: 'all', label: 'All time', note: 'all time' },
-];
+/** How the lead table is ordered. Exposed via the "Sort by" control. */
+const SORT_OPTIONS = [
+  { value: 'recent', label: 'Latest activity' },
+  { value: 'score', label: 'Highest score' },
+  { value: 'quality', label: 'Quality' },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]['value'];
+
+/** Epoch ms of a lead's last activity; undated/invalid sinks to 0 so it sorts last. */
+function leadActivityTime(lead: Lead): number {
+  const parsed = lead.last_active_at ? Date.parse(lead.last_active_at) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Comparator per sort key. Every option has a stable secondary tiebreak. */
+function leadComparator(sortBy: SortKey): (a: Lead, b: Lead) => number {
+  if (sortBy === 'score') {
+    return (a, b) => b.score - a.score || leadActivityTime(b) - leadActivityTime(a);
+  }
+  if (sortBy === 'quality') {
+    return (a, b) =>
+      TIER_ORDER.indexOf(normalizeTier(b.status)) - TIER_ORDER.indexOf(normalizeTier(a.status)) ||
+      b.score - a.score;
+  }
+  // 'recent' (default): most recent chat first, higher score breaks ties.
+  return (a, b) => leadActivityTime(b) - leadActivityTime(a) || b.score - a.score;
+}
 
 /** Escape one CSV field: quote it and double any embedded quotes (RFC 4180). */
 function csvField(value: string | number | null | undefined): string {
@@ -118,46 +138,6 @@ function downloadCsv(content: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** Small, self-contained left-to-right funnel summary. */
-function FunnelSummary({ stages }: { stages: FunnelStageView[] }): ReactElement {
-  return (
-    <ol className="space-y-2.5">
-      {stages.map((stage) => (
-        <li key={stage.key} className="flex items-center gap-3">
-          <div className="w-32 shrink-0">
-            <p className="text-[13px] font-medium text-[var(--ds-text)]">{stage.label}</p>
-            <p className="text-[11px] text-[var(--ds-text-subtle)]">{stage.sublabel}</p>
-          </div>
-          <div className="relative h-7 flex-1">
-            <div className="absolute inset-0 rounded-md bg-[var(--ds-bg-sunken)]" />
-            {stage.count > 0 && (
-              <div
-                className="absolute inset-y-0 left-0 flex items-center rounded-md bg-[var(--ds-accent-soft)] px-2"
-                style={{ width: `${stage.widthPct}%` }}
-              >
-                <span className="text-[12px] font-semibold tabular-nums text-[var(--ds-accent-text)]">
-                  {stage.count.toLocaleString()}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="w-16 shrink-0 text-right">
-            {stage.conversionFromPrev !== null ? (
-              <span className="text-[12px] font-semibold tabular-nums text-[var(--ds-text-muted)]">
-                {stage.conversionFromPrev.toFixed(0)}%
-              </span>
-            ) : (
-              <span className="text-[11px] uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                Top
-              </span>
-            )}
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 /** The quality pill cell, shared by the table. */
 function QualityCell({ lead }: { lead: Lead }): ReactElement {
   const tier = TIER_META[normalizeTier(lead.status)];
@@ -184,80 +164,14 @@ function ScoreCell({ score }: { score: number }): ReactElement {
   );
 }
 
-/** The metric row + funnel summary; only shown once stats resolve. */
-function LeadsOverview({
-  stats,
-  funnel,
-  funnelPeriod,
-  onFunnelPeriodChange,
-}: {
-  stats: LeadStatsSummary;
-  funnel: FunnelStageView[];
-  funnelPeriod: FunnelPeriod;
-  onFunnelPeriodChange: (period: FunnelPeriod) => void;
-}): ReactElement {
-  const activePeriod =
-    FUNNEL_PERIOD_OPTIONS.find((option) => option.value === funnelPeriod) ?? FUNNEL_PERIOD_OPTIONS[1];
+/** The metric row; only shown once stats resolve. */
+function LeadsOverview({ stats }: { stats: LeadStatsSummary }): ReactElement {
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Total leads" value={stats.total.toLocaleString()} icon={Users} />
-        <MetricCard
-          label="Qualified"
-          value={stats.qualified.toLocaleString()}
-          icon={BadgeCheck}
-        />
-        <MetricCard label="Ready to buy" value={stats.sql.toLocaleString()} icon={Trophy} />
-        <MetricCard label="Avg. score" value={`${stats.avgScore}`} icon={Gauge} />
-      </div>
-
-      {/* The funnel is shown for any workspace with leads. Its window is
-          selectable, so it stays mounted (with the selector reachable) even
-          when a given period has no activity yet. */}
-      {stats.total > 0 && (
-        <section className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h2 className="text-[14px] font-semibold text-[var(--ds-text)]">
-                How visitors become buyers
-              </h2>
-              <p className="text-[12px] text-[var(--ds-text-muted)]">
-                Where people drop off on the way from a first visit to a booked call ·{' '}
-                {activePeriod.note}
-              </p>
-            </div>
-            <div
-              role="group"
-              aria-label="Funnel time range"
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--ds-bg-sunken)] p-0.5"
-            >
-              {FUNNEL_PERIOD_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={funnelPeriod === option.value}
-                  onClick={() => onFunnelPeriodChange(option.value)}
-                  className={cn(
-                    'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
-                    funnelPeriod === option.value
-                      ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
-                      : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {funnelHasData(funnel) ? (
-            <FunnelSummary stages={funnel} />
-          ) : (
-            <p className="rounded-lg border border-dashed border-[var(--ds-border)] px-4 py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
-              No funnel activity in this period yet.
-            </p>
-          )}
-        </section>
-      )}
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <MetricCard label="Total leads" value={stats.total.toLocaleString()} icon={Users} />
+      <MetricCard label="Qualified" value={stats.qualified.toLocaleString()} icon={BadgeCheck} />
+      <MetricCard label="Ready to buy" value={stats.sql.toLocaleString()} icon={Trophy} />
+      <MetricCard label="Avg. score" value={`${stats.avgScore}`} icon={Gauge} />
     </div>
   );
 }
@@ -275,9 +189,6 @@ export function LeadsPage(): ReactElement {
     status,
     leads,
     stats,
-    funnel,
-    funnelPeriod,
-    setFunnelPeriod,
     error,
     reload,
     markViewedLocal,
@@ -289,6 +200,7 @@ export function LeadsPage(): ReactElement {
   const [tierFilter, setTierFilter] = useState<TierKey | null>(null);
   const [contactFilter, setContactFilter] = useState<ContactFilter>('all');
   const [query, setQuery] = useState('');
+  const [sortBy, setSortBy] = useState<SortKey>('recent');
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const detailData = useLeadDetail(selectedSessionId);
@@ -300,18 +212,15 @@ export function LeadsPage(): ReactElement {
   const [isExporting, setIsExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Sort by readiness so the list matches the page's promise ("sorted by how
-  // ready they are to buy"): hottest tier first, then higher score. The reused
-  // backend orders by recency, so we rank client-side. filterLeads returns a
-  // fresh array, so sorting in place never mutates the source `leads` state.
+  // Filter, then order by the chosen sort key (default: most recent chat first).
+  // filterLeads returns a fresh array, so sorting in place never mutates the
+  // source `leads` state.
   const filtered = useMemo(
     () =>
       filterLeads(leads, { tier: tierFilter, contact: contactFilter, query }).sort(
-        (a, b) =>
-          TIER_ORDER.indexOf(normalizeTier(b.status)) -
-            TIER_ORDER.indexOf(normalizeTier(a.status)) || b.score - a.score,
+        leadComparator(sortBy),
       ),
-    [leads, tierFilter, contactFilter, query],
+    [leads, tierFilter, contactFilter, query, sortBy],
   );
 
   const hasUnread = useMemo(() => leads.some((lead) => lead.unread === true), [leads]);
@@ -517,7 +426,7 @@ export function LeadsPage(): ReactElement {
     return (
       <PageContainer
         title="Leads"
-        description="The people who talked to your AI - sorted by how ready they are to buy."
+        description="The people who talked to your AI - most recent chats first."
       >
         <div className="mx-auto w-full max-w-md py-12">
           <LockedFeatureCard intent="view_leads" icon={Users} />
@@ -567,7 +476,7 @@ export function LeadsPage(): ReactElement {
   return (
     <PageContainer
       title="Leads"
-      description="The people who talked to your AI - sorted by how ready they are to buy."
+      description="The people who talked to your AI - most recent chats first."
       actions={
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => void handleMarkAllRead()} disabled={!hasUnread}>
@@ -614,12 +523,7 @@ export function LeadsPage(): ReactElement {
 
       {status === 'ready' && stats && (
         <>
-          <LeadsOverview
-            stats={stats}
-            funnel={funnel}
-            funnelPeriod={funnelPeriod}
-            onFunnelPeriodChange={setFunnelPeriod}
-          />
+          <LeadsOverview stats={stats} />
 
           {/* Filters */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -680,6 +584,19 @@ export function LeadsPage(): ReactElement {
                 onChange={(next) => setContactFilter(next as ContactFilter)}
                 className="h-9 w-auto shrink-0 text-[13px]"
                 options={CONTACT_FILTER_OPTIONS.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+              />
+              <label htmlFor="lead-sort" className="sr-only">
+                Sort leads by
+              </label>
+              <Select
+                id="lead-sort"
+                value={sortBy}
+                onChange={(next) => setSortBy(next as SortKey)}
+                className="h-9 w-auto shrink-0 text-[13px]"
+                options={SORT_OPTIONS.map((option) => ({
                   value: option.value,
                   label: option.label,
                 }))}

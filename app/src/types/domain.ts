@@ -35,6 +35,10 @@ export interface Bot {
   company_name?: string;
   primary_color?: string;
   bot_logo?: string | null;
+  /** Configured avatar style: 'upload' (bot_logo image) | 'orb' | 'mascot'. */
+  avatar_type?: string | null;
+  /** Orb avatar colour (used when avatar_type === 'orb'); falls back to primary_color. */
+  orb_color?: string | null;
   recommended_colors?: string[];
   widget_installed_at?: string | null;
   crawl_completed_at?: string | null;
@@ -50,6 +54,8 @@ export interface CurrentUser {
   id: number;
   name?: string;
   email?: string;
+  /** Provider avatar (e.g. Google profile picture) when the account signed in via OAuth; null for password accounts. */
+  avatar_url?: string | null;
   /** Set only for clients with an unconfirmed change-email request in flight; null/undefined otherwise. Always unset for operators. */
   pending_email?: string | null;
   company_name?: string | null;

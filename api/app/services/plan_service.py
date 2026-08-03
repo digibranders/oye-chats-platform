@@ -515,6 +515,35 @@ class TrialUnavailable(Exception):
         self.message = message or reason
 
 
+def has_used_trial(session: Session, client_id: int) -> bool:
+    """Whether the client has ever started or consumed a free trial.
+
+    One free trial per client, lifetime. Matches any historical subscription
+    row that either started a trial (``trial_start`` set) or currently sits in
+    a trial state (``trialing`` / ``trial_expired``), so a customer can't reset
+    the offer by canceling and re-clicking, nor sidestep it via a different
+    plan slug.
+
+    This is the single source of truth for the lifetime-trial gate: both
+    ``start_trial`` (enforcement) and the ``/subscriptions/current`` payload
+    read it, so the UI never advertises a trial the backend will reject.
+    """
+    return (
+        session.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.client_id == client_id,
+                or_(
+                    Subscription.trial_start.is_not(None),
+                    Subscription.status.in_(("trialing", "trial_expired")),
+                ),
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
 def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscription:
     """Move a client onto the paid plan's configured trial window.
 
@@ -557,27 +586,13 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
         )
 
     # Lifetime ban on re-trialing — one free trial per client, across every
-    # trial-eligible plan. We match any historical row that either started
-    # a trial (``trial_start IS NOT NULL``) or currently sits in a trial
-    # state (``trialing`` / ``trial_expired``), so a customer who already
-    # burned their Standard trial can't reset by canceling and re-clicking,
-    # and can't sidestep the rule by pointing at a different plan slug.
-    prior_trial = (
-        session.execute(
-            select(Subscription)
-            .where(
-                Subscription.client_id == client_id,
-                or_(
-                    Subscription.trial_start.is_not(None),
-                    Subscription.status.in_(("trialing", "trial_expired")),
-                ),
-            )
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-    if prior_trial is not None:
+    # trial-eligible plan. ``has_used_trial`` matches any historical row that
+    # either started a trial or currently sits in a trial state, so a customer
+    # who already burned their Standard trial can't reset by canceling and
+    # re-clicking, and can't sidestep the rule by pointing at a different plan
+    # slug. The ``/subscriptions/current`` payload reads the same helper so the
+    # UI never offers a trial this branch would refuse.
+    if has_used_trial(session, client_id):
         raise TrialUnavailable(
             "already_trialed",
             message=(

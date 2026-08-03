@@ -34,11 +34,7 @@ export function UsageHero({ balance, onBuyCredits }: UsageHeroProps): ReactEleme
             <span className="text-[44px] font-bold leading-none tracking-tight tabular-nums text-[var(--ds-text)]">
               {formatCredits(balance.totalRemaining)}
             </span>
-            {hasPlan && (
-              <span className="mb-1 text-[13px] text-[var(--ds-text-subtle)]">
-                of {formatCredits(balance.monthlyGrant)} monthly
-              </span>
-            )}
+            <span className="mb-1 text-[13px] text-[var(--ds-text-subtle)]">credits available now</span>
           </div>
           <p className="mt-1 text-[13px] text-[var(--ds-text-subtle)]">
             {formatCredits(balance.planRemaining)} from your plan

@@ -36,6 +36,8 @@ import {
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { useBillingData } from './useBillingData';
 import { TopupModal } from './billing/TopupModal';
 import { SeatChangeDialog } from './billing/SeatChangeDialog';
@@ -80,6 +82,11 @@ export function BillingPage(): ReactElement {
   const navigate = useNavigate();
   const { feedback: notice, notify: showNotice, dismiss: dismissNotice } = useFeedback();
 
+  // Top-up packs are a paid feature. Free workspaces get an upgrade nudge in
+  // place of the buy modal (the backend rejects the purchase anyway).
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+
   const subscription = data?.subscription ?? null;
   const plan = data?.plan ?? null;
 
@@ -95,6 +102,17 @@ export function BillingPage(): ReactElement {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [trialNudgeDismissed, setTrialNudgeDismissed] = useState(false);
+
+  // Gated "Buy credits" entry point shared by the header action and the
+  // overview credits card: opens the top-up modal on paid plans, the upgrade
+  // modal on Free.
+  const handleBuyCredits = (): void => {
+    if (hasFeature('topup_allowed')) {
+      setTopupOpen(true);
+    } else {
+      openUpgradeModal('topup_credits');
+    }
+  };
 
   // Every successful mutation lands here: surface the message, refetch billing.
   const handleSuccess = (message: string): void => {
@@ -182,7 +200,7 @@ export function BillingPage(): ReactElement {
       description="Manage your subscription, payment methods and invoices."
       actions={
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setTopupOpen(true)}>
+          <Button variant="outline" onClick={handleBuyCredits}>
             <Wallet size={16} aria-hidden="true" />
             Buy credits
           </Button>
@@ -271,10 +289,9 @@ export function BillingPage(): ReactElement {
                 paymentSub={paymentSub}
                 creditsPerMonth={plan?.creditsPerMonth ?? 0}
                 onChangePlan={() => setActiveTab('plans')}
-                onBuyCredits={() => setTopupOpen(true)}
+                onBuyCredits={handleBuyCredits}
                 onViewUsage={() => void navigate('/workspace/usage')}
                 botId={billingBotId}
-                changePlanDisabled={billingBotId != null}
               />
 
               {/* Operator seats - only meaningful once the plan includes them. */}
@@ -340,6 +357,7 @@ export function BillingPage(): ReactElement {
         currentPlanSlug={plan?.slug ?? 'free'}
         currentSubscriptionStatus={subscription?.status ?? null}
         hasActiveSubscription={Boolean(subscription?.hasActive)}
+        trialUsed={data?.trialUsed ?? false}
         currentMonthlyPriceMinor={plan?.monthlyPriceMinor ?? 0}
         onSuccess={handleSuccess}
       />

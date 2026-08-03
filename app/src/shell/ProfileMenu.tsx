@@ -1,9 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot as BotIcon, Calendar, LogOut, Mail, Settings } from 'lucide-react';
 import { cn, Popover, Skeleton, StatusBadge } from '../design-system';
 import { getCurrentUser } from '../services/api';
-import { useEntitlements } from '../hooks/useEntitlements';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import type { CurrentUser } from '../types/domain';
@@ -35,20 +34,34 @@ interface AvatarCircleProps {
   name: string;
   size: number;
   online?: boolean;
+  /** Provider avatar (e.g. Google picture). Falls back to initials when absent or it fails to load. */
+  imageUrl?: string | null;
 }
 
-/** Initials avatar with an optional online-status ring, sized for the trigger or the panel header. */
-function AvatarCircle({ name, size, online = false }: AvatarCircleProps) {
+/** Provider-photo (or initials) avatar with an optional online-status ring, sized for the trigger or the panel header. */
+function AvatarCircle({ name, size, online = false, imageUrl }: AvatarCircleProps) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImage = Boolean(imageUrl) && !imgFailed;
   return (
     <span
       aria-hidden="true"
       style={{ width: size, height: size }}
       className={cn(
-        'relative flex shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent)] font-semibold text-[var(--ds-accent-fg)]',
+        'relative flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--ds-accent)] font-semibold text-[var(--ds-accent-fg)]',
         size >= AVATAR_HEADER_SIZE ? 'text-[14px]' : 'text-[12px]',
       )}
     >
-      {getInitials(name)}
+      {showImage ? (
+        <img
+          src={imageUrl ?? undefined}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        getInitials(name)
+      )}
       {online && (
         <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--ds-bg-surface)] bg-[var(--ds-success)]" />
       )}
@@ -68,9 +81,6 @@ function AvatarCircle({ name, size, online = false }: AvatarCircleProps) {
 export function ProfileMenu() {
   const navigate = useNavigate();
   const fallbackName = getAuthItem('admin_name') ?? 'Admin';
-  const { entitlements, loading: entitlementsLoading } = useEntitlements();
-  const planName = entitlementsLoading ? null : entitlements.plan_name;
-
   const [profile, setProfile] = useState<CurrentUser | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
@@ -93,6 +103,22 @@ export function ProfileMenu() {
         hasFetchedRef.current = false;
       })
       .finally(() => setProfileLoading(false));
+  }, []);
+
+  // Load the profile once on mount (not only on menu-open) so the always-visible
+  // TopBar avatar can show the provider photo immediately rather than initials.
+  // State is written only in the async callback (never synchronously in the
+  // effect body); `hasFetchedRef` is shared with loadProfile so opening the menu
+  // never refetches, and a failure resets it so an open can still retry.
+  useEffect(() => {
+    if (hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
+    void getCurrentUser()
+      .then((data) => setProfile(data))
+      .catch((error: unknown) => {
+        console.error('ProfileMenu: failed to load profile', error);
+        hasFetchedRef.current = false;
+      });
   }, []);
 
   const handleSettings = useCallback(
@@ -136,7 +162,12 @@ export function ProfileMenu() {
           aria-label="Account menu"
           className="ml-1 flex h-9 w-9 items-center justify-center rounded-full transition-opacity hover:opacity-90"
         >
-          <AvatarCircle name={displayName} size={AVATAR_TRIGGER_SIZE} online={isOnline} />
+          <AvatarCircle
+            name={displayName}
+            size={AVATAR_TRIGGER_SIZE}
+            online={isOnline}
+            imageUrl={profile?.avatar_url}
+          />
         </button>
       )}
     >
@@ -144,7 +175,12 @@ export function ProfileMenu() {
         <div>
           {/* Identity header */}
           <div className="flex items-center gap-3 border-b border-[var(--ds-border)] px-4 py-4">
-            <AvatarCircle name={displayName} size={AVATAR_HEADER_SIZE} online={isOnline} />
+            <AvatarCircle
+              name={displayName}
+              size={AVATAR_HEADER_SIZE}
+              online={isOnline}
+              imageUrl={profile?.avatar_url}
+            />
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <p className="min-w-0 truncate text-[14px] font-semibold text-[var(--ds-text)]">
@@ -153,11 +189,6 @@ export function ProfileMenu() {
                 {showOperatorRole && (
                   <StatusBadge tone="accent" className="shrink-0 uppercase">
                     {profile?.role}
-                  </StatusBadge>
-                )}
-                {planName && (
-                  <StatusBadge tone="neutral" className="shrink-0">
-                    {planName} Plan
                   </StatusBadge>
                 )}
               </div>
