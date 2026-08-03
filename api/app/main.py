@@ -326,6 +326,54 @@ def _fallback_count_1h() -> int | None:
         return None
 
 
+# Invoicing v2's flags default ON, so the SELLER PROFILE is the real activation
+# gate (``invoice_service.finalize_invoice``). An unset profile silently turns
+# every charge into an un-numbered legacy row with no tax document — invisible
+# until a customer or a CA asks for an invoice. Surfaced here so it is
+# monitorable. Deliberately NOT folded into ``fully_ok``: it is a configuration
+# gap, not an outage, and must not page oncall as "API down".
+_BILLING_PROBE_TTL_SECONDS = float(os.getenv("HEALTH_BILLING_PROBE_TTL_SECONDS", "300"))
+_billing_probe_lock = threading.Lock()
+_billing_probe_cache: dict = {"ts": 0.0, "value": None}
+
+
+def _billing_readiness(session) -> dict:  # noqa: ANN001 - any Session-like works
+    """Is invoicing actually issuing documents?"""
+    from app.services.seller_profile_service import get_seller_profile
+
+    try:
+        if get_seller_profile(session).configured:
+            return {"invoicing_active": True, "reason": None}
+        return {"invoicing_active": False, "reason": "seller profile not configured"}
+    except Exception as exc:  # noqa: BLE001 - health checks must never fail on this
+        return {"invoicing_active": False, "reason": f"probe failed: {type(exc).__name__}"}
+
+
+def _cached_billing_readiness() -> dict:
+    """TTL-cached wrapper around :func:`_billing_readiness`.
+
+    Cheap, but polled ~2880x/day across both external monitors; the underlying
+    answer changes about once ever. 5 minutes is fast enough to catch a
+    just-configured profile during a deploy and slow enough to cost nothing.
+    Mirrors the caching already used for the LLM probe above.
+    """
+    now = time.monotonic()
+    with _billing_probe_lock:
+        cached = _billing_probe_cache
+        if cached["value"] is not None and now - cached["ts"] < _BILLING_PROBE_TTL_SECONDS:
+            return cached["value"]
+
+    from app.db.session import get_session
+
+    with get_session() as session:
+        value = _billing_readiness(session)
+
+    with _billing_probe_lock:
+        _billing_probe_cache["ts"] = now
+        _billing_probe_cache["value"] = value
+    return value
+
+
 def _gather_health() -> tuple[dict, bool, bool]:
     """Collect subsystem health.
 
@@ -429,6 +477,8 @@ def _gather_health() -> tuple[dict, bool, bool]:
             "fallback_count_1h": _fallback_count_1h(),
         },
         "pool": pool_stats,
+        # Configuration signal, not an outage signal — excluded from fully_ok.
+        "billing": (_cached_billing_readiness() if db_ok else {"invoicing_active": False, "reason": "db unreachable"}),
         "version": "1.0.0",
     }
     return payload, ready_to_serve, fully_ok
