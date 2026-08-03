@@ -99,6 +99,11 @@ export function BillingDetailsModal({
     };
 
   const foreign = isForeignCountry(form.billing_country);
+  // A GSTIN turns the name field into a statutory match: the recipient name on
+  // a tax invoice must equal the GST registration, or the buyer's GSTR-2B
+  // reconciliation fails and they lose the input tax credit. No GSTIN simply
+  // means the customer isn't GST-registered, which is perfectly normal (B2C).
+  const gstinEntered = !foreign && Boolean(form.gstin.trim());
   const gstinSet = Boolean(form.gstin.trim());
 
   // Live place-of-supply echo: reassures the user their GSTIN/state resolves to
@@ -170,11 +175,19 @@ export function BillingDetailsModal({
         </p>
       ) : (
         <form id="billing-details-form" onSubmit={(e) => void handleSave(e)} className="space-y-4">
-          <Field label="Legal name" error={errors.legal_name}>
+          <Field
+            label={gstinEntered ? 'Registered business name' : 'Legal name'}
+            hint={
+              gstinEntered
+                ? 'Exactly as it appears on your GST certificate - a mismatch can block your input tax credit.'
+                : 'Printed on your invoices. Leave GSTIN blank if you aren’t GST registered.'
+            }
+            error={errors.legal_name}
+          >
             <Input
               value={form.legal_name}
               onChange={setField('legal_name')}
-              placeholder="Acme Pvt Ltd"
+              placeholder={gstinEntered ? 'Name as per GST certificate' : 'Acme Pvt Ltd'}
               autoComplete="organization"
               aria-invalid={errors.legal_name ? true : undefined}
               className={cn(errors.legal_name && INVALID_INPUT_CLASS)}
@@ -218,7 +231,7 @@ export function BillingDetailsModal({
                   ? 'Not applicable outside India.'
                   : gstinStateName
                     ? `Place of supply: ${gstinStateName}.`
-                    : 'Your state is derived from this.'
+                    : 'Leave blank if you aren’t GST registered. Your state is derived from this.'
               }
               error={errors.gstin}
             >

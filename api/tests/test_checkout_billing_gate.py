@@ -8,12 +8,27 @@ input tax credit, which is a commercial problem before it is a compliance one.
 """
 
 import os
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import pytest
 
 from app.db.models import Client
 
 pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachable Postgres at DB_URL")
+
+
+@contextmanager
+def _routes_session(session):
+    """Point the route module's get_session at the test session."""
+    from app.api import subscription_routes
+
+    @contextmanager
+    def _cm():
+        yield session
+
+    with patch.object(subscription_routes, "get_session", _cm):
+        yield
 
 
 def _client_row(db, email, **fields):
@@ -117,3 +132,60 @@ def test_gstin_is_not_required(db):
     from app.api.subscription_routes import _missing_billing_fields
 
     assert _missing_billing_fields(_client_row(db, "b2c@test.dev", **_FULL_IN)) == []
+
+
+# ── GSTIN implies a registered name ──────────────────────────────────────────
+
+
+def test_gstin_without_a_legal_name_is_rejected(db):
+    """A registered buyer must name themselves.
+
+    The recipient name on a tax invoice has to match the GST registration, or
+    the buyer's GSTR-2B reconciliation fails and they cannot claim the input
+    tax credit. Enforced server-side too, so a client bypassing the form hits
+    the same rule.
+    """
+    from fastapi import HTTPException
+
+    from app.api.subscription_routes import BillingDetailsBody, update_billing_details
+
+    client = _client_row(db, "gstin-noname@test.dev", billing_country="IN")
+
+    with _routes_session(db), pytest.raises(HTTPException) as exc:
+        update_billing_details(
+            BillingDetailsBody(gstin="27AAPFU0939F1ZV"),
+            client=client,
+        )
+    assert exc.value.status_code == 422
+    assert "legal_name" in str(exc.value.detail)
+
+
+def test_gstin_with_a_legal_name_is_accepted(db):
+    from app.api.subscription_routes import BillingDetailsBody, update_billing_details
+
+    client = _client_row(db, "gstin-named@test.dev", billing_country="IN")
+
+    with _routes_session(db):
+        update_billing_details(
+            BillingDetailsBody(gstin="27AAPFU0939F1ZV", legal_name="Fynix Digital Pvt Ltd"),
+            client=client,
+        )
+
+    db.refresh(client)
+    assert client.gstin == "27AAPFU0939F1ZV"
+    assert client.legal_name == "Fynix Digital Pvt Ltd"
+    assert client.billing_state_code == "27"  # derived from the GSTIN
+
+
+def test_no_gstin_needs_no_registered_name_rule(db):
+    """An unregistered B2C buyer is perfectly normal."""
+    from app.api.subscription_routes import BillingDetailsBody, update_billing_details
+
+    client = _client_row(db, "b2c-noname@test.dev", billing_country="IN")
+
+    with _routes_session(db):
+        update_billing_details(BillingDetailsBody(legal_name="Gaurav"), client=client)
+
+    db.refresh(client)
+    assert client.legal_name == "Gaurav"
+    assert client.gstin is None

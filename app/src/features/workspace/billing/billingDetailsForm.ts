@@ -101,8 +101,14 @@ export function validateBillingDetailsForm(form: BillingDetailsForm): BillingDet
   const trim = (v: string | undefined): string => (v || '').trim();
   const foreign = isForeignCountry(form.billing_country);
 
+  const gstinEntered = !foreign && Boolean(trim(form.gstin));
   if (!trim(form.legal_name)) {
-    errors.legal_name = 'Legal name is required - it’s printed on your invoices.';
+    // A GSTIN makes this stricter, not just required: the recipient name on a
+    // tax invoice has to match the GST registration, or the buyer's GSTR-2B
+    // reconciliation fails and they cannot claim the input tax credit.
+    errors.legal_name = gstinEntered
+      ? 'Enter the registered business name for this GSTIN, exactly as on your GST certificate.'
+      : 'Legal name is required - it’s printed on your invoices.';
   }
 
   const email = trim(form.billing_email);

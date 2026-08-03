@@ -832,6 +832,27 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
                     detail="billing_country must be IN when a GSTIN is set (clear the GSTIN first)",
                 )
 
+            # A registered buyer must name themselves. The recipient name on a
+            # tax invoice has to match the GST registration or the buyer's
+            # GSTR-2B reconciliation fails and they cannot claim the input tax
+            # credit — so a GSTIN without a legal name is an incomplete
+            # registration, not merely a cosmetic gap. (No GSTIN is fine: that
+            # is an unregistered B2C buyer.)
+            #
+            # Checked LAST in this block: a contradictory GSTIN/state or
+            # GSTIN/country pair is a harder error than an incomplete one, and
+            # reporting "you're missing a name" to someone whose GSTIN
+            # contradicts their state would send them fixing the wrong field.
+            eff_legal_name = fields.get("legal_name") if "legal_name" in fields else row.legal_name
+            if not str(eff_legal_name or "").strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "legal_name is required when a GSTIN is provided — it must match the "
+                        "registered business name on your GST certificate."
+                    ),
+                )
+
         if "legal_name" in fields:
             row.legal_name = (fields["legal_name"] or "").strip() or None
         if gstin_provided:
