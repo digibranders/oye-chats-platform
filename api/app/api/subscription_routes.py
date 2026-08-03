@@ -54,12 +54,22 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     """Resolve the subscription a mutation should act on (remediation N3).
 
     When ``bot_id`` is given, target that bot's own subscription so a client with
-    several per-bot subscriptions can cancel/resume/reseat a specific one. When
-    omitted, fall back to the account's highest-tier subscription (legacy
-    behaviour for single-subscription clients).
+    several per-bot subscriptions can cancel/resume/reseat a specific one. An
+    agent with NO subscription of its own draws on the account plan, so we fall
+    back to it — matching ``get_current_subscription`` and
+    ``_resolve_invoice_scope``.
+
+    That fallback is the whole point: without it the READ path fell back while
+    the WRITE path did not, so Billing displayed the account plan (correctly)
+    next to Cancel / Reactivate / Add-seat buttons that all 404'd with
+    "No active subscription found" whenever an agent was selected in the
+    switcher. The mutation must act on the subscription the customer is
+    actually looking at.
     """
     if bot_id is not None:
-        return get_subscription_for_bot(session, client_id, bot_id)
+        scoped = get_subscription_for_bot(session, client_id, bot_id)
+        if scoped is not None:
+            return scoped
     return get_client_subscription(session, client_id)
 
 
