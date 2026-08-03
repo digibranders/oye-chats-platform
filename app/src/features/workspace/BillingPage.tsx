@@ -336,7 +336,12 @@ export function BillingPage(): ReactElement {
           )}
 
           {activeTab === 'invoices' && (
-            <InvoicesTab invoices={data.invoices} hasError={data.invoicesError} onRetry={reload} />
+            <InvoicesTab
+              invoices={data.invoices}
+              hasError={data.invoicesError}
+              onRetry={reload}
+              botId={billingBotId}
+            />
           )}
 
           {activeTab === 'details' && (
@@ -570,10 +575,13 @@ function InvoicesTab({
   invoices,
   hasError,
   onRetry,
+  botId,
 }: {
   invoices: InvoiceView[];
   hasError: boolean;
   onRetry: () => void;
+  /** Same agent scope the parent loaded with - see refetchInvoices. */
+  botId: number | null;
 }): ReactElement {
   // Locally-polled overlay over the server-provided invoices. `null` means
   // "render the parent's list as-is"; a poll swaps in fresh rows so a pending
@@ -597,12 +605,15 @@ function InvoicesTab({
   const preparingCount = useMemo(() => rows.filter(isInvoicePreparing).length, [rows]);
 
   // Silent, in-place refetch of just the invoices list - never the parent's
-  // page-blanking reload.
+  // page-blanking reload. MUST carry the same scope as the parent load: an
+  // unscoped refetch here would silently swap the list between agent-scoped
+  // and account-wide results, so Refresh could show different rows than the
+  // page it sits on.
   const refetchInvoices = useCallback(async (): Promise<void> => {
-    const raw = await getInvoices();
+    const raw = await getInvoices(botId ?? undefined);
     const next = (Array.isArray(raw) ? raw : []).map((row, index) => buildInvoice(row, index));
     setPolled(next);
-  }, []);
+  }, [botId]);
 
   // Auto-poll while any invoice's PDF is still rendering. The timer re-arms via
   // the `pollAttempts` dependency for a bounded ~5s cadence; the effect stops
