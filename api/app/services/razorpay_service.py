@@ -45,15 +45,18 @@ from sqlalchemy.orm import Session
 
 from app.config import (
     CHECKOUT_TEST_CLIENT_IDS,
+    EXTRA_SEAT_PRICE_USD_CENTS,
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
     RAZORPAY_SEAT_PLAN_ID,
+    RAZORPAY_SEAT_PLAN_ID_USD,
     RAZORPAY_SEAT_PLAN_PRICE_CENTS,
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.core.dates import add_months
+from app.core.pricing import charge_currency, format_amount
 from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
 from app.services import credit_service, email_service, invoice_service
 
@@ -70,6 +73,8 @@ logger = logging.getLogger(__name__)
 # ₹1.00 is Razorpay's own minimum; combined with the 50% discount cap this
 # makes a near-free plan unreachable from any code configuration.
 MIN_DISCOUNTED_PLAN_PAISE = 100
+# Same floor for the USD rail, in cents — Razorpay's international minimum.
+MIN_DISCOUNTED_PLAN_CENTS_USD = 50
 
 
 class RazorpayBillingError(Exception):
@@ -294,6 +299,19 @@ def verify_topup_signature(
 # ── Subscriptions ─────────────────────────────────────────────────────────────
 
 
+def _plan_id_for_rail(plan: Plan, billing_cycle: str, currency: str) -> str | None:
+    """Razorpay plan id for ``plan`` on the ``currency`` rail, or None if unset.
+
+    Returning None (rather than falling back to the other rail) is the whole
+    point: a Razorpay plan's currency is fixed at creation, so an INR id used
+    for a USD customer would debit rupees against a dollar quote. The caller
+    turns None into a hard error.
+    """
+    if currency == "USD":
+        return plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
+    return plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
+
+
 def create_subscription(
     session: Session,
     client: Client,
@@ -334,7 +352,14 @@ def create_subscription(
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
 
-    razorpay_plan_id = plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
+    # Which rail this customer is charged on. Resolved from the client here —
+    # not passed in by the caller — for the same reason ``discount_bps`` is:
+    # EVERY subscription path (first checkout, change-plan, upgrade, downgrade
+    # cutover, per-bot) flows through this function, so resolving centrally is
+    # what guarantees none of them can silently mint an INR mandate for an
+    # international customer.
+    currency = charge_currency(getattr(client, "billing_country", None))
+    razorpay_plan_id = _plan_id_for_rail(plan, billing_cycle, currency)
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         if not RAZORPAY_TEST_PLAN_ID:
             raise ValueError(
@@ -351,7 +376,7 @@ def create_subscription(
         razorpay_plan_id = RAZORPAY_TEST_PLAN_ID
     elif not razorpay_plan_id:
         raise ValueError(
-            f"Plan '{plan.name}' has no Razorpay plan id configured for {billing_cycle} billing. "
+            f"Plan '{plan.name}' has no {currency} Razorpay plan id configured for {billing_cycle} billing. "
             "Create the plan in the Razorpay dashboard and set the id from super admin."
         )
 
@@ -368,7 +393,7 @@ def create_subscription(
     # Apply a recurring customer discount by swapping in a discounted plan.
     # Test-client override is excluded from discounts so QA flows stay clean.
     if discount_bps and client.id not in CHECKOUT_TEST_CLIENT_IDS:
-        razorpay_plan_id = resolve_discounted_plan(session, plan, billing_cycle, discount_bps)
+        razorpay_plan_id = resolve_discounted_plan(session, plan, billing_cycle, discount_bps, currency=currency)
 
     # Razorpay rejects total_count > 100 for annual plans; monthly accepts
     # up to 120 (12 cycles × 10 years). Fall back to the cycle-specific
@@ -492,34 +517,52 @@ def resolve_discounted_plan(
     base_plan: Plan,
     billing_cycle: str,
     discount_bps: int,
+    *,
+    currency: str = "INR",
 ) -> str:
     """Return a Razorpay plan_id for base_plan discounted by discount_bps.
 
-    Looks up the (base_plan_id, billing_cycle, discount_bps) cache first.
-    On a miss, creates a new Razorpay plan at the discounted paise amount,
+    Looks up the (base_plan_id, billing_cycle, discount_bps, currency) cache
+    first. On a miss, creates a new Razorpay plan at the discounted amount,
     inserts it into the cache, and returns the new plan_id.
 
     Razorpay Offers have no create API, so recurring discounts are modelled
     as discounted plans — a lower plan amount recurs automatically every
     cycle with no per-cycle coupon redemption required.
 
+    ``currency`` selects the rail: the discount is computed off that rail's
+    base price (``*_price_usd_cents`` for USD) and the minted plan carries that
+    currency. It is part of the cache key because a Razorpay plan's currency is
+    fixed at creation — reusing an INR plan for a USD customer would debit
+    rupees against a dollar quote.
+
     Discount math: discounted = base - floor(base × bps / 10000).
-    Integer floor keeps paise whole; the tiny rounding difference (<₹1) is
-    in the customer's favour.
+    Integer floor keeps minor units whole; the tiny rounding difference (<1
+    major unit) is in the customer's favour.
     """
     if not (0 < discount_bps < 10000):
         raise ValueError(f"discount_bps must be 1–9999, got {discount_bps}")
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"billing_cycle must be 'monthly' or 'annual', got {billing_cycle!r}")
+    if currency not in ("INR", "USD"):
+        raise ValueError(f"currency must be 'INR' or 'USD', got {currency!r}")
 
-    base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
+    if currency == "USD":
+        base_amount = int(
+            (base_plan.annual_price_usd_cents if billing_cycle == "annual" else base_plan.monthly_price_usd_cents) or 0
+        )
+        minimum = MIN_DISCOUNTED_PLAN_CENTS_USD
+    else:
+        base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
+        minimum = MIN_DISCOUNTED_PLAN_PAISE
     discounted_paise = base_amount - (base_amount * discount_bps) // 10000
     # Minimum-price floor (remediation C3): even with the discount cap, never
     # create a near-free recurring plan. Razorpay also rejects sub-₹1 charges.
-    if discounted_paise < MIN_DISCOUNTED_PLAN_PAISE:
+    if discounted_paise < minimum:
         raise ValueError(
-            f"discounted price ₹{discounted_paise / 100:.2f} is below the ₹{MIN_DISCOUNTED_PLAN_PAISE / 100:.2f} "
-            f"minimum (base ₹{base_amount / 100:.2f}, {discount_bps} bps)"
+            f"discounted price {format_amount(discounted_paise, currency)} is below the "
+            f"{format_amount(minimum, currency)} minimum "
+            f"(base {format_amount(base_amount, currency)}, {discount_bps} bps)"
         )
 
     cached = session.scalars(
@@ -527,6 +570,7 @@ def resolve_discounted_plan(
         .where(DiscountedPlanCache.base_plan_id == base_plan.id)
         .where(DiscountedPlanCache.billing_cycle == billing_cycle)
         .where(DiscountedPlanCache.discount_bps == discount_bps)
+        .where(DiscountedPlanCache.currency == currency)
     ).first()
     # A cache hit is only valid if the cached amount still equals the price the
     # CURRENT base plan produces. Otherwise the base price changed since we
@@ -543,20 +587,21 @@ def resolve_discounted_plan(
             "period": period,
             "interval": 1,
             "item": {
-                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}%",
+                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}% {currency}",
                 "amount": discounted_paise,
-                "currency": "INR",
+                "currency": currency,
             },
             "notes": {
                 "base_plan_id": str(base_plan.id),
                 "discount_bps": str(discount_bps),
+                "currency": currency,
             },
         }
     )
 
     if cached is not None:
-        # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps)
-        # constraint means we can't insert a second row for the same key.
+        # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps,
+        # currency) constraint means we can't insert a second row for the same key.
         cached.razorpay_plan_id = plan["id"]
         cached.amount_paise = discounted_paise
     else:
@@ -565,6 +610,7 @@ def resolve_discounted_plan(
                 base_plan_id=base_plan.id,
                 billing_cycle=billing_cycle,
                 discount_bps=discount_bps,
+                currency=currency,
                 razorpay_plan_id=plan["id"],
                 amount_paise=discounted_paise,
             )
@@ -612,21 +658,28 @@ def create_seat_addon_subscription(
     (e.g. ₹949×2 instead of ₹949+₹449). The Extra-Seat plan's amount IS the
     per-seat price (₹449 — ``RAZORPAY_SEAT_PLAN_PRICE_CENTS``), so
     ``price × extra_seats`` is exactly right here.
+
+    Seats follow the customer's rail: an international client bills against the
+    USD seat plan, so the add-on currency can never disagree with the main
+    subscription's.
     """
     if extra_seats < 1:
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
 
-    if not RAZORPAY_SEAT_PLAN_ID:
+    currency = charge_currency(getattr(client, "billing_country", None))
+    seat_plan_id = RAZORPAY_SEAT_PLAN_ID_USD if currency == "USD" else RAZORPAY_SEAT_PLAN_ID
+    if not seat_plan_id:
+        env_var = "RAZORPAY_SEAT_PLAN_ID_USD" if currency == "USD" else "RAZORPAY_SEAT_PLAN_ID"
         raise RazorpayBillingError(
-            "Extra-seat billing is not configured (RAZORPAY_SEAT_PLAN_ID is unset). "
-            "Set it to the environment's ₹499 seat add-on plan id."
+            f"Extra-seat billing is not configured for the {currency} rail ({env_var} is unset). "
+            "Set it to the environment's seat add-on plan id."
         )
 
     rzp = _get_razorpay()
     try:
         subscription = rzp.subscription.create(
             data={
-                "plan_id": RAZORPAY_SEAT_PLAN_ID,
+                "plan_id": seat_plan_id,
                 "total_count": 120,
                 "customer_notify": 1,
                 "quantity": int(extra_seats),
@@ -661,15 +714,20 @@ def _seat_checkout_payload(
     unauthorized pending purchase (finding A C1) so we never need a Razorpay
     round-trip just to rebuild it — the JS SDK only needs subscription_id + key.
     ``short_url`` (Razorpay's hosted checkout) is included when known so a webhook
-    path can email the customer a re-authorization link."""
-    seat_rupees = RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100
+    path can email the customer a re-authorization link.
+
+    The quoted per-seat price follows the client's rail, so the description can
+    never advertise rupees against a dollar charge."""
+    currency = charge_currency(getattr(client, "billing_country", None))
+    seat_minor = EXTRA_SEAT_PRICE_USD_CENTS if currency == "USD" else RAZORPAY_SEAT_PLAN_PRICE_CENTS
+    seat_display = format_amount(seat_minor, currency)
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
         "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
-        "description": f"{extra_seats} extra seat(s) — ₹{seat_rupees}/seat/month",
+        "description": f"{extra_seats} extra seat(s) — {seat_display}/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",

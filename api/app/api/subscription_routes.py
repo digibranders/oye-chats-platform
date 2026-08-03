@@ -20,6 +20,7 @@ from app.api.auth import get_current_client_strict as get_current_client
 from app.config import (
     BILLING_PROVIDER,
     DISPLAY_USD_TO_INR,
+    INTL_PAYMENTS_ENABLED,
     RAZORPAY_ENABLED,
 )
 from app.core.dates import add_months, trial_days_remaining
@@ -720,6 +721,9 @@ class CheckoutRequest(BaseModel):
 # rails we haven't tested against (netbanking quirks, wallet KYC limits, etc).
 # Cards: Visa / Mastercard / Amex / Rupay. UPI: GPay / PhonePe / Paytm / BHIM.
 _RAZORPAY_METHODS_INR = ("card", "upi")
+# International rail: foreign cards only. UPI is domestic-only and cannot
+# settle a USD charge, so offering it would open a modal that always fails.
+_RAZORPAY_METHODS_USD = ("card",)
 
 
 def _amount_for_cycle(plan, billing_cycle: str) -> int:
@@ -810,9 +814,31 @@ def checkout_quote(
                 "reason": "free_plan",
             }
 
-        # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
-        # in Phase 2. Flag intl_usd_pending so the UI renders a Contact-sales CTA
-        # instead of opening a Razorpay modal that can't charge them yet.
+        # Foreign buyer, paid plan: charge on the USD rail only when the account
+        # is enabled for international payments AND this tier actually has a USD
+        # Razorpay plan wired for the cycle. Checking the id here (not just the
+        # flag) keeps the quote honest — promising a checkout the charge path
+        # would reject with "no USD Razorpay plan id" is worse than the CTA.
+        usd_plan_id = (
+            plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
+        )
+        if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id:
+            return {
+                "country": country,
+                "currency": currency,
+                "amount_minor": amount_minor,
+                "amount_display": amount_display,
+                "billing_cycle": billing_cycle,
+                "provider": "razorpay",
+                # Cards only — UPI is a domestic rail and cannot settle a USD charge.
+                "methods": list(_RAZORPAY_METHODS_USD),
+                "checkout_supported": True,
+                "contact_sales": None,
+            }
+
+        # Foreign buyer we cannot charge yet (international payments off, or no
+        # USD plan for this tier). Flag intl_usd_pending so the UI renders a
+        # Contact-sales CTA instead of opening a Razorpay modal that would fail.
         if not is_domestic:
             return {
                 "country": country,
@@ -898,15 +924,21 @@ def _resolve_confirmed_billing_country_or_409(
     request_country: str | None,
     client: Client,
     http_request: Request,
+    allow_usd: bool = False,
 ) -> str:
     """Resolve + gate the confirmed billing country shared by EVERY money-moving
     Razorpay path (checkout, top-up, ...).
 
-    Phase 1 charges INR (IN) only: a confirmed non-IN buyer 409s with the same
-    ``intl_usd_pending`` contract the frontend already renders as a Contact-sales
-    CTA, so a top-up can never land on the domestic INR rail for a buyer whose
-    supply ``invoice_service`` will later classify as an export (GST
-    mis-classification/short-payment).
+    ``allow_usd`` is the caller's declaration that IT can actually charge a
+    non-IN buyer, and defaults to False so a new money path is gated until it
+    proves otherwise. Subscription checkout passes ``INTL_PAYMENTS_ENABLED``
+    (the USD rail bills against the plan's USD Razorpay ids); top-up passes
+    False because ``razorpay_service.create_topup_order`` is still INR-only —
+    letting it through would charge a foreign buyer rupees on a supply
+    ``invoice_service`` classifies as an export (GST mis-classification /
+    short-payment). When USD is not allowed, a confirmed non-IN buyer 409s with
+    the ``intl_usd_pending`` contract the frontend already renders as a
+    Contact-sales CTA.
 
     Resolution order mirrors ``checkout_quote``: explicit per-request confirmation
     wins, then the account's stored country, then the domestic default (IN) for
@@ -928,7 +960,7 @@ def _resolve_confirmed_billing_country_or_409(
             detected_country,
         )
 
-    if confirmed_country != "IN":
+    if confirmed_country != "IN" and not allow_usd:
         raise HTTPException(
             status_code=409,
             detail={
@@ -956,16 +988,17 @@ def create_checkout(
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
 
-    # Confirmed billing country routes currency/plan/invoice. Phase 1 charges
-    # INR (IN) only; a confirmed non-IN buyer is directed to sales until the
-    # Phase-2 USD rail is live. Unknown (no confirm + no stored country) defaults
+    # Confirmed billing country routes currency/plan/invoice. A non-IN buyer is
+    # charged on the USD rail once INTL_PAYMENTS_ENABLED is on, and directed to
+    # sales while it is off. Unknown (no confirm + no stored country) defaults
     # to domestic; a country already on the client is honoured as the fallback.
-    # Shared with /credits/topup so both money-moving paths gate identically —
-    # see _resolve_confirmed_billing_country_or_409.
+    # Shared with /credits/topup, which passes allow_usd=False because its order
+    # path is still INR-only — see _resolve_confirmed_billing_country_or_409.
     confirmed_country = _resolve_confirmed_billing_country_or_409(
         request_country=request.billing_country,
         client=client,
         http_request=http_request,
+        allow_usd=INTL_PAYMENTS_ENABLED,
     )
 
     _assert_no_stacking(client, request.coupon_code)
@@ -2116,6 +2149,11 @@ def initiate_topup(
         request_country=request.billing_country,
         client=client,
         http_request=http_request,
+        # Explicitly closed even when INTL_PAYMENTS_ENABLED opens subscription
+        # checkout: create_topup_order still charges the INR pack price, so a
+        # foreign buyer must keep 409ing here until top-up packs carry a USD
+        # amount of their own.
+        allow_usd=False,
     )
 
     with get_session() as session:

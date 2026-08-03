@@ -1966,7 +1966,14 @@ class DiscountedPlanCache(Base):
     base_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="CASCADE"), nullable=False)
     billing_cycle = Column(String, nullable=False)  # "monthly" | "annual"
     discount_bps = Column(Integer, nullable=False)  # e.g. 1500 = 15 %
+    # Rail this cached plan bills on. Part of the dedup key: a Razorpay plan's
+    # currency is fixed at creation, so the INR and USD discounted plans for the
+    # same base/cycle/discount are different objects and must not share a row —
+    # sharing one would bill an international customer in rupees.
+    currency = Column(String(3), default="INR", server_default="INR", nullable=False)
     razorpay_plan_id = Column(String, nullable=False)
+    # Minor units in ``currency`` — paise for INR, cents for USD. The column
+    # name predates the USD rail.
     amount_paise = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -1975,6 +1982,7 @@ class DiscountedPlanCache(Base):
             "base_plan_id",
             "billing_cycle",
             "discount_bps",
+            "currency",
             name="uq_discounted_plan",
         ),
         CheckConstraint(

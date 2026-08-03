@@ -133,14 +133,40 @@ wires them up by mistake.
 | `plan_TLF4XFj8uJLsql` | Standard Monthly USD 19 | **₹19** monthly | Wrong currency |
 | `plan_TLF3nxE1CGe9p2` | Starter Annual USD 84 | **₹84** yearly | Wrong currency |
 
-### ⚠️ USD checkout is not chargeable yet
+### Switching the USD rail on
 
-The plans exist, but the Razorpay account cannot yet take a recurring international
-payment: **International Cards is not enabled** (still a "Request for international
-cards" button) and **PayPal — the only activated international method — does not
-support subscriptions**. International Bank Transfers is also incomplete (video KYC
-failed). Until international cards are approved *with recurring/subscriptions
-enabled*, USD checkout will fail at the payment step even with correct plan ids.
+The code path is wired and gated by one env var:
+
+```bash
+INTL_PAYMENTS_ENABLED=true
+```
+
+While it is **off** (the default), a confirmed non-IN buyer gets the existing
+`intl_usd_pending` 409 and the Contact-sales CTA. While it is **on**, checkout
+routes them to the USD plan ids above. What follows the flag automatically:
+
+| Path | Behaviour on the USD rail |
+|------|---------------------------|
+| `/subscriptions/checkout`, `/change-plan`, per-bot, cutovers | `create_subscription` resolves the rail from `client.billing_country` — the same field `invoice_service` reads for place-of-supply, so charge currency and invoice classification can never disagree |
+| Extra operator seats | Bills against `RAZORPAY_SEAT_PLAN_ID_USD` at `EXTRA_SEAT_PRICE_USD_CENTS` |
+| Referral / affiliate discounts | `discounted_plan_cache` is keyed by currency (migration `c5a8d3e0b912`), so the two rails mint and cache separate discounted plans |
+| `/checkout/quote` | Returns `checkout_supported: true` with `methods: ["card"]` — UPI is domestic-only and cannot settle a USD charge |
+| **Top-ups** (`/credits/topup`) | **Still 409s for non-IN buyers even with the flag on** — `create_topup_order` charges the INR pack price, so opening it would bill a foreign buyer in rupees on a supply invoiced as an export. Needs USD top-up packs first. |
+
+A tier with no USD plan id fails loudly (`ValueError`, surfaced as a 400) rather
+than falling back to the INR plan — the quote checks the id for the same reason,
+so it never promises a checkout the charge path would reject.
+
+### ⚠️ Do not flip the flag yet — the account cannot take the payment
+
+The plans exist and the code is ready, but the Razorpay account cannot yet take a
+recurring international payment: **International Cards is not enabled** (still a
+"Request for international cards" button) and **PayPal — the only activated
+international method — does not support subscriptions**. International Bank
+Transfers is also incomplete (video KYC failed). Until international cards are
+approved *with recurring/subscriptions enabled*, USD checkout will reach Razorpay
+and fail at the payment step. Keep `INTL_PAYMENTS_ENABLED=false` in production
+until then.
 
 ---
 
