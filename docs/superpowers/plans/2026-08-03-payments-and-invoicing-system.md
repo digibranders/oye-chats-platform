@@ -732,6 +732,14 @@ git commit -m "fix(billing): mark-paid respects invoice immutability; drop shado
 
 ### Task 5: Activate invoicing (operational, not code)
 
+> **Executed 2026-08-03 on the dev DB.** Profile saved as `Oyechats pvt ltd`, GSTIN `27AAICD9268J1Z0`, Thane West address, prefix `DB`, SAC `997331`, 18%. Backfill numbered **3** invoices (`DB/26-27/000001-3`); tax math verified (`taxable + tax == total`, intra-state CGST/SGST with correct largest-remainder paisa split); all three PDFs render (~48 KB each) with a Rule 46-compliant layout including `Place of supply: 27 – Maharashtra`.
+>
+> **The supplied GSTIN `27AAICD9268J1ZO` failed checksum** — final char was the letter `O` where the algorithm requires the digit `0`. There is exactly one valid check digit for that body, so this was an unambiguous O/0 slip; corrected to `…Z0`. **Verify against the GST registration certificate before using it in production.**
+>
+> Deliberately NOT done: PDFs were rendered to a scratch directory, not uploaded to R2, and **no invoice emails were sent** — running the worker sweep would email real documents to the account holder. `pdf_url` is still NULL, so the customer UI shows the rows without a Download link until the ARQ worker runs.
+>
+> **Decision now locked in dev, still open for production: the invoice prefix.** `DB` (Digibranders) is the code default and is now baked into the dev FY 26-27 series. Production gets exactly one chance to choose before its first invoice — a numbered series cannot be renamed afterwards without breaking Rule 46(b) consecutiveness.
+
 - [ ] **Step 1: Save the seller profile locally**
 
 Open the super-admin console at `/billing-settings` and save: legal name, GSTIN, registered address, state code, SAC (`997331`), invoice prefix. Or via API:
