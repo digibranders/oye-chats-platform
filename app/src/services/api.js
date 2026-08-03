@@ -2122,9 +2122,20 @@ export const cancelSubscription = async (reason = null, botId = null) => {
     }
 };
 
-export const resumeSubscription = async () => {
+/**
+ * Reactivate a subscription that was scheduled to cancel.
+ *
+ * MUST carry the same `botId` scope `cancelSubscription` used. Without it the
+ * backend resolves the account subscription, which for a customer with
+ * per-agent plans is a DIFFERENT row than the one Cancel just acted on — so
+ * Reactivate either 400s ("not scheduled for cancellation") or mints a fresh
+ * Razorpay mandate against the wrong subscription.
+ */
+export const resumeSubscription = async (botId = null) => {
     try {
-        const response = await api.post('/subscriptions/resume');
+        const body = {};
+        if (botId != null) body.bot_id = botId;
+        const response = await api.post('/subscriptions/resume', body);
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to resume subscription');

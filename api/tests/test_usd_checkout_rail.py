@@ -303,6 +303,12 @@ def _make_db_client(db, *, email: str, billing_country: str | None = None):
         hashed_password="h",
         is_verified=True,
         billing_country=billing_country,
+        # Billing identity is a precondition for paid checkout (Rule 46 buyer
+        # fields must be on record before the charge -- the invoice is issued
+        # from a webhook, so there is no second chance to ask).
+        legal_name="Test Buyer Pvt Ltd",
+        billing_address={"line1": "1 MG Road", "city": "Pune", "postal_code": "411001"},
+        billing_state_code="27",
     )
     db.add(client)
     db.flush()

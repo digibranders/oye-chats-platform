@@ -34,7 +34,13 @@ import {
   useFeedback,
 } from '../../design-system';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
-import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../services/api';
+import {
+  cancelScheduledChange,
+  getInvoices,
+  resumeSubscription,
+  verifyRazorpaySubscription,
+} from '../../services/api';
+import { openRazorpayCheckout } from '../../lib/razorpay';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
@@ -100,6 +106,9 @@ export function BillingPage(): ReactElement {
     delta: 1,
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Set when checkout was refused for an incomplete buyer identity, so the
+  // details form can explain WHY it opened rather than appearing unprompted.
+  const [detailsPrompt, setDetailsPrompt] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [trialNudgeDismissed, setTrialNudgeDismissed] = useState(false);
 
@@ -115,6 +124,26 @@ export function BillingPage(): ReactElement {
   };
 
   // Every successful mutation lands here: surface the message, refetch billing.
+  /**
+   * Checkout refused because the account isn't invoiceable yet. Not an error -
+   * close the plan modal, open the billing-details form, and say why. An
+   * invoice is issued from a payment webhook, so this identity has to be on
+   * record before the charge, not after.
+   */
+  const handleBillingDetailsRequired = (missing: string[]): void => {
+    const LABELS: Record<string, string> = {
+      legal_name: 'registered name',
+      billing_address: 'billing address',
+      billing_state_code: 'state',
+    };
+    const wanted = missing.map((f) => LABELS[f] ?? f);
+    const list =
+      wanted.length > 1 ? `${wanted.slice(0, -1).join(', ')} and ${wanted.at(-1)}` : wanted[0] ?? 'billing details';
+    setConfirmPlan(null);
+    setDetailsPrompt(`Add your ${list} so we can issue a valid tax invoice for this purchase.`);
+    setDetailsOpen(true);
+  };
+
   const handleSuccess = (message: string): void => {
     showNotice({ tone: 'info', message });
     reload();
@@ -138,12 +167,80 @@ export function BillingPage(): ReactElement {
     }
   };
 
+  /**
+   * Reactivate a subscription that is scheduled to cancel.
+   *
+   * Razorpay has NO un-cancel for an at-cycle-end cancellation, so `/resume`
+   * deliberately does NOT clear the local flags and instead returns
+   * `mandate_action: "reauthorise_required"` with a fresh checkout payload.
+   * This handler used to ignore that response and claim "reactivated - it will
+   * keep renewing", which was simply untrue: no mandate was authorised, so the
+   * "won't renew" banner correctly stayed put and the customer was told the
+   * opposite of what happened. The backend went to real lengths to be honest
+   * here (see its docstring and test_billing_bl3_resume.py); the UI has to
+   * carry that through rather than paper over it.
+   */
   const handleReactivate = async (): Promise<void> => {
     setLifecycleBusy('reactivate');
     setLifecycleError(null);
     try {
-      await resumeSubscription();
-      handleSuccess('Subscription reactivated - it will keep renewing.');
+      const res = (await resumeSubscription(billingBotId)) as Record<string, unknown>;
+      const checkout = (res?.checkout ?? res) as Record<string, unknown>;
+      const needsMandate = String(res?.mandate_action || '') === 'reauthorise_required';
+
+      if (needsMandate) {
+        if (!checkout?.key_id || !checkout?.subscription_id) {
+          setLifecycleError(
+            'Reactivation is temporarily unavailable. Please try again in a moment.',
+          );
+          return;
+        }
+        // Stage 1 - authorise the new mandate. A throw here means nothing was
+        // authorised, which is safe to surface as-is.
+        let cb: Awaited<ReturnType<typeof openRazorpayCheckout>>;
+        try {
+          cb = await openRazorpayCheckout({
+            key: String(checkout.key_id),
+            subscription_id: String(checkout.subscription_id),
+            name: checkout.name as string | undefined,
+            description: checkout.description as string | undefined,
+            prefill: checkout.prefill as Record<string, unknown> | undefined,
+            theme: checkout.theme as Record<string, unknown> | undefined,
+            method: { card: true, upi: true },
+          });
+        } catch (cbErr: unknown) {
+          if ((cbErr as { code?: string })?.code === 'dismissed') {
+            setLifecycleError(
+              'Reactivation cancelled - your plan still ends on the date shown above.',
+            );
+            return;
+          }
+          throw cbErr;
+        }
+
+        // Stage 2 - the mandate is already authorised, so a verification
+        // failure must not read as a failure to the customer. The activation
+        // webhook is the authoritative reconciler.
+        try {
+          await verifyRazorpaySubscription({
+            razorpay_payment_id: cb.razorpay_payment_id,
+            razorpay_subscription_id:
+              cb.razorpay_subscription_id || String(checkout.subscription_id),
+            razorpay_signature: cb.razorpay_signature,
+          });
+        } catch {
+          handleSuccess('Payment authorised - we’re finalising your reactivation.');
+          return;
+        }
+        handleSuccess('Subscription reactivated - it will keep renewing.');
+        return;
+      }
+
+      // No mandate needed (e.g. the gateway sub was still live). Trust the
+      // server's own message rather than asserting an outcome.
+      handleSuccess(
+        (res?.message as string) || 'Subscription reactivated - it will keep renewing.',
+      );
     } catch (err) {
       setLifecycleError(err instanceof Error ? err.message : 'Couldn’t reactivate your subscription.');
     } finally {
@@ -360,6 +457,7 @@ export function BillingPage(): ReactElement {
         trialUsed={data?.trialUsed ?? false}
         currentMonthlyPriceMinor={plan?.monthlyPriceMinor ?? 0}
         onSuccess={handleSuccess}
+        onBillingDetailsRequired={handleBillingDetailsRequired}
       />
 
       <TopupModal
@@ -383,8 +481,15 @@ export function BillingPage(): ReactElement {
 
       <BillingDetailsModal
         open={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
-        onSuccess={handleSuccess}
+        prompt={detailsPrompt}
+        onClose={() => {
+          setDetailsOpen(false);
+          setDetailsPrompt(null);
+        }}
+        onSuccess={(message) => {
+          setDetailsPrompt(null);
+          handleSuccess(message);
+        }}
       />
 
       <CancelSubscriptionModal

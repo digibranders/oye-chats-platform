@@ -24,6 +24,12 @@ export interface BillingDetailsModalProps {
   onClose: () => void;
   /** Fired after a successful save with a status message. */
   onSuccess: (message: string) => void;
+  /**
+   * Why the form opened, when it was triggered by a blocked checkout rather
+   * than by the customer. Replaces the generic description so the modal never
+   * appears unexplained mid-purchase.
+   */
+  prompt?: string | null;
 }
 
 /**
@@ -32,7 +38,12 @@ export interface BillingDetailsModalProps {
  * the legacy card), and propagates the country to `CurrencyProvider` so prices
  * across the app flip to the charged currency immediately. Not a payment flow.
  */
-export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetailsModalProps): ReactElement | null {
+export function BillingDetailsModal({
+  open,
+  onClose,
+  onSuccess,
+  prompt,
+}: BillingDetailsModalProps): ReactElement | null {
   const { country: acctCountry, setCountry: setGlobalCountry } = useCurrency();
   const [details, setDetails] = useState<BillingDetailsRaw | null>(null);
   const [form, setForm] = useState<BillingDetailsForm>(() => detailsToForm(null));
@@ -135,7 +146,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
       dismissible={!saving}
       size="lg"
       title="Billing details"
-      description="The legal identity printed on your invoices and used for tax."
+      description={prompt || 'The legal identity printed on your invoices and used for tax.'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>

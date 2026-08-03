@@ -665,6 +665,51 @@ def _billing_details_dict(client: Client) -> dict:
     }
 
 
+def _missing_billing_fields(client: Client) -> list[str]:
+    """Which statutory buyer fields are absent, in display order.
+
+    GST Rule 46 requires the recipient's name and address on a tax invoice, and
+    the place of supply (the buyer's state) drives the CGST/SGST vs IGST split.
+    We collect these BEFORE the charge because the invoice is issued from a
+    webhook — there is no second chance to ask who was billed.
+
+    A GSTIN is deliberately NOT required: B2C customers are legitimate. It
+    matters only for input tax credit, and the buyer can add it later.
+
+    State code is India-only; an export has no Indian place of supply. A NULL
+    country defaults to IN throughout the billing stack, so the stricter rule
+    applies rather than silently passing.
+    """
+    missing: list[str] = []
+    if not (client.legal_name or "").strip():
+        missing.append("legal_name")
+    address = client.billing_address
+    if not (isinstance(address, dict) and str(address.get("line1") or "").strip()):
+        missing.append("billing_address")
+    if (client.billing_country or "IN").upper() == "IN" and not (client.billing_state_code or "").strip():
+        missing.append("billing_state_code")
+    return missing
+
+
+def _require_billing_identity(client: Client) -> None:
+    """409 unless the buyer identity needed for a Rule 46 invoice is on record.
+
+    409, not 400: the request is well-formed, the ACCOUNT is not ready. The
+    machine-readable ``code`` lets the UI open the billing-details modal with
+    the first missing field focused instead of showing a dead-end toast.
+    """
+    missing = _missing_billing_fields(client)
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "billing_details_required",
+                "missing": missing,
+                "message": "Add your billing details so we can issue a valid tax invoice.",
+            },
+        )
+
+
 @router.get("/payment-recovery")
 def payment_recovery(client: Client = Depends(get_current_client), bot_id: int | None = None):
     """Recovery state + hosted link for a failing subscription.
@@ -1118,6 +1163,11 @@ def create_checkout(
     )
 
     _assert_no_stacking(client, request.coupon_code)
+
+    # Collect the Rule 46 buyer identity BEFORE the charge: the invoice is
+    # issued from the payment webhook, so this is the last point at which we
+    # can ask who is being billed.
+    _require_billing_identity(client)
 
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
@@ -2271,6 +2321,13 @@ def initiate_topup(
         # amount of their own.
         allow_usd=False,
     )
+
+    # A top-up is invoiced exactly like a subscription charge, so both money
+    # paths collect the Rule 46 buyer identity. Ordered AFTER the country gate
+    # on purpose: an unservable country is the more fundamental refusal, and
+    # asking a foreign buyer to complete Indian billing details we will then
+    # reject anyway would be a dead end.
+    _require_billing_identity(client)
 
     with get_session() as session:
         provider = _resolve_provider()
