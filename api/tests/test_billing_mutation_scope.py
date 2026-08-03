@@ -125,9 +125,9 @@ def test_a_foreign_bot_id_never_reaches_another_workspace(db):
     assert resolved.client_id == owner.id
 
 
-def test_read_and_write_paths_agree_on_the_same_subscription(db):
-    """The invariant behind the bug. If these two ever diverge again, Billing
-    shows one plan and acts on another (or on nothing)."""
+def test_read_and_write_agree_for_the_single_account_subscription_case(db):
+    """The topology that produced the reported bug: one account subscription,
+    an agent with none. Read and write must resolve to the same row."""
     from app.api.subscription_routes import _resolve_target_subscription
     from app.services.plan_service import get_client_subscription, get_subscription_for_bot
 
@@ -136,11 +136,57 @@ def test_read_and_write_paths_agree_on_the_same_subscription(db):
     _sub(db, client, plan)
     bot = _bot(db, client, "bot-mut-agree")
 
-    # What /subscription/current renders for this bot.
     displayed = get_subscription_for_bot(db, client.id, bot.id) or get_client_subscription(db, client.id)
-    # What a mutation would act on.
     targeted = _resolve_target_subscription(db, client.id, bot.id)
 
     assert displayed is not None
     assert targeted is not None
     assert displayed.id == targeted.id
+
+
+def test_fallback_never_targets_another_agents_subscription(db):
+    """The defect this guards against is a wrong-target DESTRUCTIVE write.
+
+    ``get_client_subscription`` spans per-bot rows and returns the highest
+    PRICED one — right for entitlements (H2), catastrophic as a mutation
+    target. With an unpaid agent selected it resolves to whichever agent is on
+    the priciest plan, so ``/cancel`` would cancel THAT agent's Razorpay
+    mandate. Razorpay has no un-cancel, so the customer cannot undo it.
+
+    Priced so the per-bot plan is the EXPENSIVE one: that is exactly the
+    ordering under which the buggy resolver picks the wrong row, and the only
+    ordering that makes this test meaningful.
+    """
+    from app.api.subscription_routes import _resolve_target_subscription
+
+    client = _client(db, "mut-crossagent@e.com")
+    account_plan = _plan(db, "starter-mut-cross", price=44900)  # cheaper
+    agent_plan = _plan(db, "pro-mut-cross", price=139900)  # pricier
+    account_sub = _sub(db, client, account_plan)
+    agent_a = _bot(db, client, "bot-mut-cross-a")
+    agent_a_sub = _sub(db, client, agent_plan, bot_id=agent_a.id)
+    agent_b = _bot(db, client, "bot-mut-cross-b")  # no subscription of its own
+
+    resolved = _resolve_target_subscription(db, client.id, agent_b.id)
+
+    assert resolved is not None
+    assert resolved.id == account_sub.id, "must fall back to the ACCOUNT subscription"
+    assert resolved.bot_id is None
+    assert resolved.id != agent_a_sub.id, "cancelling agent B must never touch agent A"
+
+
+def test_account_scoped_resolution_ignores_a_pricier_per_bot_row(db):
+    """Same guarantee for the bot_id=None path (the 'All agents' view)."""
+    from app.api.subscription_routes import _resolve_target_subscription
+
+    client = _client(db, "mut-none-cross@e.com")
+    account_plan = _plan(db, "starter-mut-none", price=44900)
+    agent_plan = _plan(db, "pro-mut-none", price=139900)
+    account_sub = _sub(db, client, account_plan)
+    agent = _bot(db, client, "bot-mut-none")
+    _sub(db, client, agent_plan, bot_id=agent.id)
+
+    resolved = _resolve_target_subscription(db, client.id, None)
+
+    assert resolved.id == account_sub.id
+    assert resolved.bot_id is None

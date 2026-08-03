@@ -32,6 +32,7 @@ from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service
 from app.services.plan_service import (
+    get_account_subscription,
     get_active_plans,
     get_client_plan,
     get_client_subscription,
@@ -66,12 +67,20 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     "No active subscription found" whenever an agent was selected in the
     switcher. The mutation must act on the subscription the customer is
     actually looking at.
+
+    The fallback goes through ``get_account_subscription`` (``bot_id IS NULL``)
+    and NOT ``get_client_subscription``. The latter spans per-bot rows and
+    returns the highest-PRICED one — correct for entitlements (H2), disastrous
+    as a mutation target: with an unpaid agent selected it would resolve to a
+    DIFFERENT agent's subscription, and ``/cancel`` would cancel that agent's
+    Razorpay mandate. Razorpay has no un-cancel, so that is not customer
+    recoverable. Same reasoning as the account-scoped guard in ``/checkout``.
     """
     if bot_id is not None:
         scoped = get_subscription_for_bot(session, client_id, bot_id)
         if scoped is not None:
             return scoped
-    return get_client_subscription(session, client_id)
+    return get_account_subscription(session, client_id)
 
 
 def effective_resets_at(sub: Subscription | None) -> datetime | None:
