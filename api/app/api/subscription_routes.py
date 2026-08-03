@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import config as app_config
 from app.api.auth import get_current_client_or_operator, require_verified_email
@@ -518,21 +519,43 @@ def get_subscription_usage(client: Client = Depends(get_current_client)):
         }
 
 
+def _resolve_invoice_scope(session: Session, client_id: int, bot_id: int | None) -> int | None:
+    """Resolve which invoices a Billing view should show.
+
+    Mirrors ``get_current_subscription``'s fallback exactly: an agent with no
+    subscription of its own draws on the ACCOUNT plan, so it must show the
+    account's invoices. Without this the Billing page renders an account
+    subscription beside an agent-scoped (empty) invoice list — the two panels
+    can never agree, which is what made a paying customer see "No invoices yet"
+    while their plan showed Active.
+
+    ``get_subscription_for_bot`` filters by ``client_id``, so a foreign bot id
+    resolves to None (account-wide for the caller); the query's own
+    ``client_id`` filter still prevents any cross-workspace read.
+    """
+    if bot_id is None:
+        return None
+    return bot_id if get_subscription_for_bot(session, client_id, bot_id) is not None else None
+
+
 @router.get("/invoices")
 def list_invoices(client: Client = Depends(get_current_client), bot_id: int | None = None):
     """Return the client's payment history (most recent first).
 
-    When ``bot_id`` is given, the history is scoped to that agent's invoices
-    (``Invoice.bot_id``); the ``client_id`` filter still applies so a foreign
-    id yields an empty list rather than another workspace's invoices. Omit
-    ``bot_id`` for the account-wide history.
+    When ``bot_id`` is given AND that agent has its own subscription, the
+    history is scoped to that agent's invoices (``Invoice.bot_id``). An agent
+    without its own subscription falls back to the account-wide history,
+    matching how ``/current`` resolves the subscription it is shown beside —
+    see ``_resolve_invoice_scope``. Omit ``bot_id`` for the account-wide
+    history.
     """
     with get_session() as session:
+        scope_bot_id = _resolve_invoice_scope(session, client.id, bot_id)
         stmt = (
             select(Invoice)
             .where(
                 Invoice.client_id == client.id,
-                *([Invoice.bot_id == bot_id] if bot_id is not None else []),
+                *([Invoice.bot_id == scope_bot_id] if scope_bot_id is not None else []),
             )
             .order_by(Invoice.created_at.desc())
             .limit(50)
