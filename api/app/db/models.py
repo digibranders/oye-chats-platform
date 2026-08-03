@@ -40,6 +40,15 @@ class Client(Base):
     billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
     billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
     billing_email = Column(String, nullable=True)  # falls back to login email
+    # Razorpay Customer id — the identity anchor for saved payment instruments.
+    # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without
+    # this there is no saved-card capability at all.
+    #
+    # Distinct from ``Subscription.razorpay_customer_id``, which is a PASSIVE
+    # mirror scraped out of webhook payloads and is routinely NULL even on a
+    # live mandate. This column is the one we create and own; the subscription
+    # copy stays for webhook correlation.
+    razorpay_customer_id = Column(String, unique=True, index=True, nullable=True)
     # Nullable because OAuth-only signups never set a password. The
     # /auth/google/callback path always creates the Client row first and
     # never assigns a hashed_password; password login for that account
