@@ -19,16 +19,14 @@ def _mirrored(db, email="tok@test.dev", token_id="token_A"):
     client = Client(name="T", email=email, api_key=f"k-{email}", razorpay_customer_id="cust_1")
     db.add(client)
     db.flush()
-    # Current PaymentMethod shape. Phase 2 reshapes it for RBI compliance
-    # (network/issuer replacing brand, expiry dropped); the revoke handler keys
-    # only off razorpay_token_id, so it is unaffected either way.
     pm = PaymentMethod(
         client_id=client.id,
         provider="razorpay",
         type="card",
         last4="4242",
-        brand="visa",
+        network="Visa",
         razorpay_token_id=token_id,
+        razorpay_customer_id="cust_1",
     )
     db.add(pm)
     db.flush()

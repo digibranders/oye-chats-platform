@@ -1447,10 +1447,14 @@ def list_payment_methods(
                 "provider": m.provider,
                 "type": m.type,
                 "last4": m.last4,
-                "brand": m.brand,
-                "expiry_month": m.expiry_month,
-                "expiry_year": m.expiry_year,
+                # RBI card-on-file permits last4 + network + issuer and nothing
+                # more — expiry and cardholder name must not be stored, so they
+                # are not available to serialize.
+                "network": m.network,
+                "issuer": m.issuer,
+                "upi_handle": m.upi_handle,
                 "is_default": m.is_default,
+                "synced_at": m.synced_at.isoformat() if m.synced_at else None,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in methods

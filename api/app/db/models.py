@@ -1509,27 +1509,42 @@ class InvoiceCounter(Base):
 
 
 class PaymentMethod(Base):
-    """Stored payment methods for a client — synced from Razorpay."""
+    """A saved payment instrument — a DISPLAY MIRROR of Razorpay's token list.
+
+    Razorpay is the source of truth (``GET /v1/customers/{id}/tokens``); this
+    table exists so the app and the super-admin console can render an
+    instrument list without a live gateway call, and so a revoked token can be
+    pruned the moment its webhook lands.
+
+    RBI card-on-file rules permit a merchant to retain ONLY the last four
+    digits, the network, and issuer metadata. Cardholder name, BIN/IIN and
+    **expiry** must not be stored after 1 Oct 2022 — hence no expiry columns
+    here. Anything richer has to be fetched live and discarded; if you find
+    yourself adding a column for it, that is the bug.
+    """
 
     __tablename__ = "payment_methods"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # Provider
-    provider = Column(String, nullable=False)  # razorpay
-    type = Column(String, nullable=False)  # card|upi|bank
+    provider = Column(String, nullable=False, default="razorpay")
+    type = Column(String, nullable=False)  # card|upi|emandate
     last4 = Column(String(4), nullable=True)
-    brand = Column(String, nullable=True)  # visa|mastercard|amex|etc
-    expiry_month = Column(Integer, nullable=True)
-    expiry_year = Column(Integer, nullable=True)
+    network = Column(String, nullable=True)  # Visa|MasterCard|RuPay|Amex
+    issuer = Column(String, nullable=True)  # bank code, e.g. HDFC
+    upi_handle = Column(String, nullable=True)  # VPA, for mandate display
 
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Provider references
     razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
+    razorpay_customer_id = Column(String, index=True, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Last time this row was reconciled against Razorpay. Drives the read-through
+    # TTL so the Billing page does not make a gateway call on every load.
+    synced_at = Column(DateTime(timezone=True), nullable=True)
 
     client = relationship("Client")
 
