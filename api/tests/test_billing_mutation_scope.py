@@ -105,24 +105,43 @@ def test_a_client_with_no_subscription_at_all_still_resolves_to_none(db):
     assert _resolve_target_subscription(db, client.id, bot.id) is None
 
 
-def test_a_foreign_bot_id_never_reaches_another_workspace(db):
-    """get_subscription_for_bot filters by client_id, so a foreign bot resolves
-    to None and we fall back to the CALLER's own account subscription — never
-    the other workspace's."""
+def test_a_foreign_bot_id_is_rejected_rather_than_silently_retargeted(db):
+    """404, not a silent fallback.
+
+    Both resolvers filter by client_id, so there was never a cross-tenant leak.
+    The harm was subtler: an unowned bot id fell through to the CALLER's own
+    account subscription, so a mistyped or copied id silently retargeted a
+    destructive action -- cancel, seat change -- onto something they never
+    named.
+    """
+    from fastapi import HTTPException
+
     from app.api.subscription_routes import _resolve_target_subscription
 
     owner = _client(db, "mut-owner@e.com")
     other = _client(db, "mut-other@e.com")
     owner_plan = _plan(db, "pro-mut-owner")
     other_plan = _plan(db, "pro-mut-other", price=94900)
-    owner_sub = _sub(db, owner, owner_plan)
+    _sub(db, owner, owner_plan)
     other_bot = _bot(db, other, "bot-mut-other")
     _sub(db, other, other_plan, bot_id=other_bot.id)
 
-    resolved = _resolve_target_subscription(db, owner.id, other_bot.id)
+    with pytest.raises(HTTPException) as exc:
+        _resolve_target_subscription(db, owner.id, other_bot.id)
+    assert exc.value.status_code == 404
 
-    assert resolved.id == owner_sub.id
-    assert resolved.client_id == owner.id
+
+def test_a_nonexistent_bot_id_is_rejected(db):
+    from fastapi import HTTPException
+
+    from app.api.subscription_routes import _resolve_target_subscription
+
+    client = _client(db, "mut-ghost@e.com")
+    _sub(db, client, _plan(db, "pro-mut-ghost"))
+
+    with pytest.raises(HTTPException) as exc:
+        _resolve_target_subscription(db, client.id, 999_999_999)
+    assert exc.value.status_code == 404
 
 
 def test_read_and_write_agree_for_the_single_account_subscription_case(db):

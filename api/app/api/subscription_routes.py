@@ -28,7 +28,7 @@ from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount, seat_price
-from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
+from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service, razorpay_customer_service
 from app.services.plan_service import (
@@ -77,10 +77,25 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     recoverable. Same reasoning as the account-scoped guard in ``/checkout``.
     """
     if bot_id is not None:
+        # Ownership first. Without this a bot_id the caller does NOT own falls
+        # straight through to their own account subscription — so a mistyped or
+        # copied id silently retargets a destructive action (cancel, seat
+        # change) onto something the caller never named. There is no
+        # cross-tenant leak either way (both resolvers filter by client_id);
+        # the harm is acting on the wrong subscription without saying so.
+        if not _client_owns_bot(session, client_id, bot_id):
+            raise HTTPException(status_code=404, detail="Agent not found.")
         scoped = get_subscription_for_bot(session, client_id, bot_id)
         if scoped is not None:
             return scoped
     return get_account_subscription(session, client_id)
+
+
+def _client_owns_bot(session, client_id: int, bot_id: int) -> bool:
+    """Does this bot belong to this workspace?"""
+    return (
+        session.execute(select(Bot.id).where(Bot.id == bot_id, Bot.client_id == client_id).limit(1)).first() is not None
+    )
 
 
 def effective_resets_at(sub: Subscription | None) -> datetime | None:

@@ -36,10 +36,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import requests
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -64,6 +66,15 @@ if TYPE_CHECKING:
     import razorpay
 
 logger = logging.getLogger(__name__)
+
+# (connect, read) seconds for every Razorpay HTTP call. Connect is short --
+# a gateway refusing sockets will not recover in 30s. Read is generous,
+# because a spurious timeout part-way through a subscription create is far
+# worse than a slow one: the mandate may already exist at the gateway.
+RAZORPAY_HTTP_TIMEOUT = (
+    float(os.getenv("RAZORPAY_CONNECT_TIMEOUT_SECONDS", "5")),
+    float(os.getenv("RAZORPAY_READ_TIMEOUT_SECONDS", "30")),
+)
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -129,6 +140,26 @@ class RazorpayTransientError(RazorpayBillingError):
 # ── Client init ───────────────────────────────────────────────────────────────
 
 
+class _TimeoutSession(requests.Session):
+    """A ``requests`` session that refuses to block forever.
+
+    The Razorpay SDK sets no timeout: its ``Client.request`` forwards
+    ``**options`` straight to ``session.get/post``, and its constructor
+    ``**options`` only configure base_url and retries. With no timeout,
+    ``requests`` waits indefinitely on a half-open socket.
+
+    That is not theoretical here. The dunning cron makes one serial gateway
+    call per past-due subscription; a single hung connection stalls the whole
+    job until ARQ kills it at ``job_timeout``, and for the expiry sweep a
+    killed job means the batch never commits. Overriding ``request`` catches
+    every verb, since ``.get()``/``.post()`` all funnel through it.
+    """
+
+    def request(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+        kwargs.setdefault("timeout", RAZORPAY_HTTP_TIMEOUT)
+        return super().request(*args, **kwargs)
+
+
 def _get_razorpay() -> razorpay.Client:
     """Lazily import and configure the Razorpay SDK.
 
@@ -141,7 +172,7 @@ def _get_razorpay() -> razorpay.Client:
 
     import razorpay  # local import keeps the dep optional at boot time
 
-    return razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    return razorpay.Client(session=_TimeoutSession(), auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 
 # ── Top-up Orders (one-time payment) ──────────────────────────────────────────
