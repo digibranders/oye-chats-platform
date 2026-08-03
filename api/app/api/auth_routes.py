@@ -342,6 +342,10 @@ class CurrentUserResponse(BaseModel):
     kind: str  # "client" | "operator"
     name: str
     email: str
+    # Provider avatar (e.g. the Google profile picture) for accounts that
+    # signed in / up via OAuth; None for password-only accounts. Rendered in
+    # the TopBar avatar, with initials as the fallback.
+    avatar_url: str | None = None
     # Set only for clients with an unconfirmed /client/change-email/request
     # in flight; None otherwise (always None for operators, who don't own
     # this flow). Lets the Settings UI resume the "verify your new email"
@@ -465,6 +469,16 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
         ).scalar_one_or_none()
         is_online = operator_row.is_online if operator_row else False
 
+        # Google (OAuth) profile picture, when this account is linked to a
+        # provider. Informational only — used for the TopBar avatar; falls back
+        # to initials in the UI when None (password-only accounts).
+        from app.db.models import OAuthAccount
+
+        oauth_row = session.execute(
+            select(OAuthAccount).where(OAuthAccount.client_id == client.id, OAuthAccount.provider == "google").limit(1)
+        ).scalar_one_or_none()
+        avatar_url = oauth_row.picture_url if oauth_row else None
+
         # Resolve the trial snapshot in the same transaction. ``None`` for
         # paid customers and seeded superadmins; the dashboard treats that
         # as "no trial UI". For ``trial_expired`` we still return the
@@ -476,6 +490,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             kind="client",
             name=client.name,
             email=client.email,
+            avatar_url=avatar_url,
             pending_email=client.pending_email,
             company_name=client.company_name,
             website=client.website,

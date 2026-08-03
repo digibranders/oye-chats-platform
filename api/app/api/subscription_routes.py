@@ -34,6 +34,7 @@ from app.services.plan_service import (
     get_client_plan,
     get_client_subscription,
     get_subscription_for_bot,
+    has_used_trial,
     lock_client_for_billing,
 )
 
@@ -361,6 +362,11 @@ def get_current_subscription(
                 "default_provider": BILLING_PROVIDER,
                 "razorpay_enabled": RAZORPAY_ENABLED,
             },
+            # Whether this client has already consumed their lifetime free
+            # trial. Lets the Billing UI gate the trial CTA (show "Subscribe"
+            # instead of "Start free trial") so it never offers a trial the
+            # start-trial endpoint would reject with ``already_trialed``.
+            "trial_used": has_used_trial(session, client_id),
         }
 
 

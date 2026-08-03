@@ -681,7 +681,7 @@ const ChatInput = ({
                 regardless of how wide either side becomes. Hidden in
                 live/waiting modes where consent is implied by the handoff. */}
             {!isLive && !isWaiting && !pendingConfirm && (
-                <div className="grid grid-cols-3 items-center gap-3 mt-3.5 pt-1 px-1">
+                <div className="grid grid-cols-3 items-center gap-3 mt-1 pt-0 md:mt-3.5 md:pt-1 px-1">
                     <div className="flex items-center gap-3 min-w-0 justify-self-start">
                         {onHandoff && (
                             <button
@@ -730,7 +730,7 @@ const ChatInput = ({
                             href="https://oyechats.com"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end whitespace-nowrap"
+                            className="whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
                         >
                             Powered by{' '}
                             <span style={{ color: 'rgb(49% 23% 93%)' }}>OyeChats</span>

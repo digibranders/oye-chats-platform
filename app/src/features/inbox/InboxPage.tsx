@@ -1,8 +1,11 @@
 import { useState, type ReactElement } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Inbox as InboxIcon } from 'lucide-react';
 import { PageContainer } from '../../design-system';
 import { Tabs, type TabItem } from '../../design-system/components/Tabs';
 import { FeatureGate } from '../../design-system/components/FeatureGate';
+import { LockedFeatureCard } from '../../design-system/components/LockedFeatureCard';
+import { useEntitlements } from '../../hooks/useEntitlements';
 import { useBotContext } from '../../context/BotContext';
 import { OfflineMessagesPanel } from './OfflineMessagesPanel';
 import { LiveChatPanel } from './LiveChatPanel';
@@ -31,6 +34,7 @@ const TAB_KEYS: readonly InboxTab[] = ['messages', 'live', 'replies'];
 export function InboxPage(): ReactElement {
   const { selectedBot } = useBotContext();
   const botId = selectedBot?.id;
+  const { isFree } = useEntitlements();
   const [searchParams] = useSearchParams();
   // Honour a deep link (e.g. the incoming-chat banner routes to
   // `/inbox?tab=live`) as the initial tab; falls back to Messages.
@@ -39,6 +43,24 @@ export function InboxPage(): ReactElement {
     requestedTab && TAB_KEYS.includes(requestedTab) ? requestedTab : 'messages',
   );
   const operator = useOperatorStatus(botId);
+
+  // Support / live chat is a paid workspace. The sidebar renders the nav item
+  // locked on Free, but a Free user who deep-links `/inbox` lands here - so
+  // guard the whole surface with the same upgrade teaser instead of showing an
+  // empty (Free never has live chat or offline messages) support console.
+  // Placed after every hook so hook order stays stable across the plan resolving.
+  if (isFree) {
+    return (
+      <PageContainer
+        title="Support"
+        description="See what your visitors are saying and respond fast."
+      >
+        <div className="mx-auto w-full max-w-md py-12">
+          <LockedFeatureCard intent="view_support" icon={InboxIcon} />
+        </div>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer

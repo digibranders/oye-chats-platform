@@ -522,6 +522,21 @@ const _installJourneyHooks = () => {
 };
 
 /**
+ * Record the visitor's current page in the journey and wire up SPA route hooks
+ * — independent of whether the chat panel is mounted.
+ *
+ * Called on widget LOAD (the launcher renders on every page, chat open or not)
+ * so "journey before chat" captures the pages a visitor browses BEFORE opening
+ * the chat, not just the page where they happened to open it. Idempotent: the
+ * history hooks install once, and same-path bursts dedupe.
+ */
+export const recordPageVisit = () => {
+    if (typeof window === 'undefined') return;
+    _appendJourneyEntry(window.location.pathname);
+    _installJourneyHooks();
+};
+
+/**
  * Collect page context from the host page (URL, referrer, UTM params, journey).
  * Called on widget load and again when a session is created — reads from
  * window.location and document.referrer, and appends the current path to

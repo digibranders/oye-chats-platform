@@ -5,6 +5,7 @@ import {
   EmptyState,
   FeatureGate,
   Input,
+  LockedFeatureCard,
   SectionHeader,
   Select,
   Skeleton,
@@ -12,6 +13,7 @@ import {
   cn,
 } from '../../../design-system';
 import { useAgent } from '../../../context/AgentContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getBot, updateBot } from '../../../services/api';
 import {
   type BotConfigDraft,
@@ -73,6 +75,10 @@ export interface BotConfigSectionProps {
 export function BotConfigSection({ variant }: BotConfigSectionProps): ReactElement {
   const { agent, loading: agentLoading, error: agentError } = useAgent();
   const botId = agent?.id ?? null;
+  // The pre-chat lead form is a paid feature (leads are Free-plan-gated across
+  // the app). `loading` guards the initial entitlements fetch so a paid
+  // workspace never flashes the locked teaser before its plan resolves.
+  const { isFree, loading: entitlementsLoading } = useEntitlements();
 
   const botIdRef = useRef(botId);
   botIdRef.current = botId;
@@ -202,18 +208,22 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
           />
         </FeatureGate>
 
-        <LeadFormCard
-          value={draft.leadForm.enabled}
-          fields={draft.leadForm.fields}
-          onToggle={(enabled) => patchSlice('leadForm', (prev) => ({ ...prev, enabled }))}
-          onFieldsChange={(fields) => patchSlice('leadForm', (prev) => ({ ...prev, fields }))}
-          dirty={!sliceEqual(draft.leadForm, baseline.leadForm)}
-          status={status.leadForm}
-          onSave={() => {
-            const value = draft.leadForm;
-            void runSave('leadForm', () => leadFormPatch(value), (prev) => ({ ...prev, leadForm: value }));
-          }}
-        />
+        {!entitlementsLoading && isFree ? (
+          <LockedFeatureCard intent="leads_form" />
+        ) : (
+          <LeadFormCard
+            value={draft.leadForm.enabled}
+            fields={draft.leadForm.fields}
+            onToggle={(enabled) => patchSlice('leadForm', (prev) => ({ ...prev, enabled }))}
+            onFieldsChange={(fields) => patchSlice('leadForm', (prev) => ({ ...prev, fields }))}
+            dirty={!sliceEqual(draft.leadForm, baseline.leadForm)}
+            status={status.leadForm}
+            onSave={() => {
+              const value = draft.leadForm;
+              void runSave('leadForm', () => leadFormPatch(value), (prev) => ({ ...prev, leadForm: value }));
+            }}
+          />
+        )}
       </div>
     );
   }

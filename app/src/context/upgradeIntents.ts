@@ -38,6 +38,7 @@ export type UpgradeIntentKey =
   | 'widget_behavior'
   | 'branding_removable'
   | 'auto_recrawl'
+  | 'topup_credits'
   | 'live_chat_appearance'
   | 'live_chat';
 
@@ -270,6 +271,18 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
       'Per-bot toggle with a clean run history',
     ],
     recommendedPlan: 'Standard',
+  }),
+  topup_credits: () => ({
+    eyebrow: 'Top-up credits are a paid feature',
+    title: 'Upgrade to buy top-up credits',
+    description:
+      'Free workspaces run on their monthly credit allowance. Upgrade to a paid plan to buy top-up credit packs on demand - they never expire for 12 months and roll over month-to-month.',
+    highlights: [
+      'Buy credit packs on demand - never pause your AI Chatbot mid-month',
+      'Top-up credits roll over and stay valid for 12 months',
+      'Larger packs include up to +30% bonus credits',
+    ],
+    recommendedPlan: 'Starter',
   }),
   live_chat_appearance: () => ({
     eyebrow: 'Live chat is a paid feature',

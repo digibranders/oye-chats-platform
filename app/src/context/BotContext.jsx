@@ -32,33 +32,28 @@ export function BotProvider({ children }) {
                 localStorage.removeItem(STORAGE_KEY);
             } else {
                 setSelectedBot((currentSelectedBot) => {
-                    // Explicit "All agents" selection - preserve it across
-                    // refreshes and workspace switches; only collapse to a
-                    // single bot when the workspace has exactly one bot (in
-                    // which case "All" and "that bot" are the same thing).
-                    const savedRaw = localStorage.getItem(STORAGE_KEY);
-                    if (currentSelectedBot === null && savedRaw === ALL_BOTS_SENTINEL) {
-                        return data.length === 1 ? data[0] : null;
-                    }
+                    // The dashboard is always scoped to exactly one agent - the
+                    // "All agents" aggregate scope was removed - so resolve to a
+                    // concrete bot whenever any exist, never null.
+
+                    // Keep the current in-memory selection if that bot survives
+                    // the refresh (avoids a needless rescope on a plain reload).
                     if (currentSelectedBot) {
                         const stillSelected = data.find((bot) => bot.id === currentSelectedBot.id);
-                        // If the previously-selected bot is gone (deleted /
-                        // workspace switch), fall back to All-agents when the
-                        // user has more than one; otherwise to their only bot.
-                        return stillSelected || (data.length === 1 ? data[0] : null);
+                        if (stillSelected) return stillSelected;
                     }
 
-                    // No in-memory selection yet - restore from localStorage.
-                    if (savedRaw === ALL_BOTS_SENTINEL) return data.length === 1 ? data[0] : null;
-                    if (savedRaw) {
+                    // Restore a persisted per-bot choice when it's still valid.
+                    const savedRaw = localStorage.getItem(STORAGE_KEY);
+                    if (savedRaw && savedRaw !== ALL_BOTS_SENTINEL) {
                         const saved = data.find((bot) => bot.id === Number(savedRaw));
                         if (saved) return saved;
                     }
-                    // Fresh session with no persisted choice - single-bot
-                    // workspaces auto-pick their only bot; multi-bot ones
-                    // default to All agents so the shell reads as
-                    // workspace-wide until the user narrows it.
-                    return data.length === 1 ? data[0] : null;
+
+                    // Fresh session, a deleted selection, a workspace switch, or a
+                    // legacy "all" sentinel from before the aggregate scope was
+                    // removed - default to the first agent.
+                    return data[0];
                 });
             }
             // Return the freshly-loaded list so callers (e.g. the create flow)

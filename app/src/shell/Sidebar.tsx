@@ -3,17 +3,24 @@ import { NavLink } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { OyeChatsMark } from './OyeChatsMark';
 import { PRIMARY_NAV, SECONDARY_NAV, navForRole, type NavItem } from './nav.config';
-import { cn } from '../design-system';
+import { cn, StatusBadge } from '../design-system';
 import { useEntitlements } from '../hooks/useEntitlements';
+import { useSelectedBotPlan } from '../hooks/useSelectedBotPlan';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import type { UpgradeIntentKey } from '../context/upgradeIntents';
 
-/** The one primary-nav route that is Free-plan-gated today (backend
- *  `plan_entitlements_service.py`: Free hides the Leads link entirely and the
- *  `/leads` API 403s for Free). A plain constant rather than a lookup table
- *  since it's currently a single destination - extend to a `Record<string,
- *  UpgradeIntentKey>` if a second gated primary-nav item shows up. */
-const LEADS_NAV_ROUTE = '/leads';
+/** Primary-nav routes that are Free-plan-gated: the destination is a paid
+ *  feature, so a Free workspace renders the item as a `LockedNavItem` that opens
+ *  the upgrade modal (with the mapped intent's copy) instead of routing. Backend
+ *  enforces the same gate (`plan_entitlements_service.py`; the `/leads` API and
+ *  live-chat endpoints 403 for Free), so this is UX, not the security boundary.
+ *  - `/inbox`  Support / live chat is paid (`live_chat` feature).
+ *  - `/leads`  Leads dashboard + qualification are paid. */
+const FREE_LOCKED_NAV: Record<string, UpgradeIntentKey> = {
+  '/inbox': 'view_support',
+  '/leads': 'view_leads',
+};
 
 export interface SidebarProps {
   /** Desktop icon-rail mode. Ignored on mobile (drawer is always full width). */
@@ -141,9 +148,10 @@ function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): React
  * only for the active state (accent-only per mandate). Responsive: an
  * icon-collapsible rail on desktop, an off-canvas drawer on mobile.
  *
- * The Leads destination is Free-plan-gated (backend `plan_entitlements_service.py`):
- * a Free workspace renders it as a `LockedNavItem` that opens the upgrade
- * modal instead of navigating; every other item is unaffected.
+ * Paid destinations (Support / live chat and Leads - see `FREE_LOCKED_NAV`) are
+ * Free-plan-gated (backend `plan_entitlements_service.py`): a Free workspace
+ * renders them as `LockedNavItem`s that open the upgrade modal instead of
+ * navigating; every other item is unaffected.
  */
 export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: SidebarProps) {
   const showLabels = isMobile || !collapsed;
@@ -154,6 +162,10 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
   const { isOperator } = useWorkspace();
   const primaryNav = navForRole(PRIMARY_NAV, isOperator);
   const secondaryNav = navForRole(SECONDARY_NAV, isOperator);
+  // Plan of the agent picked in the shell switcher; sits above the Settings
+  // divider as account context. Only rendered in the expanded rail (the
+  // collapsed icon rail has no room for a text chip).
+  const planName = useSelectedBotPlan();
 
   // When the mobile drawer is closed it's translated off-canvas but its links
   // would still be focusable / in the AX tree - `inert` removes it entirely.
@@ -181,19 +193,29 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
 
       {/* Primary navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {primaryNav.map((item) =>
-          isFree && item.to === LEADS_NAV_ROUTE ? (
+        {primaryNav.map((item) => {
+          const lockIntent = isFree ? FREE_LOCKED_NAV[item.to] : undefined;
+          return lockIntent ? (
             <LockedNavItem
               key={item.to}
               item={item}
               showLabels={showLabels}
-              onClick={() => openUpgradeModal('view_leads')}
+              onClick={() => openUpgradeModal(lockIntent)}
             />
           ) : (
             <NavLinkItem key={item.to} item={item} showLabels={showLabels} onNavigate={onNavigate} />
-          ),
-        )}
+          );
+        })}
       </nav>
+
+      {/* Plan chip - the selected agent's subscription, shown as account
+          context directly above the Settings divider. Left-aligned with the nav
+          rows; the badge sizes to its own text. */}
+      {showLabels && planName && (
+        <div className="shrink-0 px-3 pb-1 pt-2">
+          <StatusBadge tone="neutral">{planName} Plan</StatusBadge>
+        </div>
+      )}
 
       {/* Secondary navigation - bottom-anchored, below the primary object-nav.
           Preferences only (e.g. Settings); account/workspace switching stays

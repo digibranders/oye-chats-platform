@@ -7,8 +7,10 @@ import {
   Button,
   Skeleton,
   EmptyState,
+  LockedFeatureCard,
 } from '../../../design-system';
 import { useAgent } from '../../../context/AgentContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import {
   getClientSettings,
   updateClientSettings,
@@ -58,6 +60,11 @@ function draftsEqual(a: AdvancedDraft, b: AdvancedDraft): boolean {
 export function AdvancedPage(): ReactElement {
   const { agent, loading: agentLoading, error: agentError } = useAgent();
   const agentId = agent?.id ?? null;
+
+  // Advanced is a paid surface. `loading` guards the initial entitlements fetch
+  // (defaults to the restrictive Free fallback) so a paid workspace deep-linking
+  // here never flashes the locked card before its real plan resolves.
+  const { isFree, loading: entitlementsLoading } = useEntitlements();
 
   const [draft, setDraft] = useState<AdvancedDraft | null>(null);
   const [initial, setInitial] = useState<AdvancedDraft | null>(null);
@@ -231,6 +238,19 @@ export function AdvancedPage(): ReactElement {
       setSaving(false);
     }
   }, [agentId, draft, initial]);
+
+  // ── Free-plan guard ──────────────────────────────────────────────────────────
+  // Backstops the locked tab in AgentLayout for direct URL hits / back-button.
+  // Placed after every hook so hook order stays stable across the plan resolving.
+  if (!entitlementsLoading && isFree) {
+    return (
+      <div>
+        <PageContainer>
+          <LockedFeatureCard intent="advanced_settings" />
+        </PageContainer>
+      </div>
+    );
+  }
 
   // ── States: no agent / loading / error ──────────────────────────────────────
   if (agentId === null && !agentLoading) {
