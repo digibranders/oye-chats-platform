@@ -288,6 +288,14 @@ RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 #   always move as a pair.
 RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
 
+# RAZORPAY_SEAT_PLAN_ID_USD — the same add-on for the USD (international) rail.
+#   A Razorpay plan's currency is fixed at creation, so the INR seat plan above
+#   cannot bill an international customer; this is a separate plan charging
+#   ``EXTRA_SEAT_PRICE_USD_CENTS``. Same invariants as the INR id: env-driven,
+#   no baked-in default, and the id moves together with its price. Empty/unset
+#   means seat add-ons are unavailable on the USD rail.
+RAZORPAY_SEAT_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID_USD") or None
+
 # Canonical extra-operator-seat price — the SINGLE source of truth for both what
 # the customer is charged and what every surface displays, so the two can never
 # drift (finding H3 / J). All extra seats bill against the one global seat plan

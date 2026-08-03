@@ -1,7 +1,7 @@
 # Razorpay Plan IDs — Canonical Reference
 
 **Single source of truth** for which Razorpay plan IDs are wired into each environment.
-Last updated: **16 Jul 2026** — new-pricing relaunch; all pre-relaunch plans purged.
+Last updated: **3 Aug 2026** — USD (international) rail created in Test + Live.
 
 > **Relaunch context.** OyeChats is relaunching on new pricing
 > (**Starter ₹449 · Standard ₹949 · Professional ₹1,399**). The production database is
@@ -71,10 +71,76 @@ Seat add-on (live, unchanged ₹499): `RAZORPAY_SEAT_PLAN_ID=plan_T5rNFpt3vSkl4R
 
 ---
 
-## USD plans ⏳ NOT CREATED YET
+## USD plans — international rail ✅ CREATED (3 Aug 2026)
 
-Deferred until the Razorpay account is enabled for USD plans. Prices:
-$9 / $19 / $39 monthly; $84 / $180 / $372 yearly (Starter / Standard / Professional).
+Separate Razorpay plan objects priced in USD. A plan's currency is fixed at creation,
+so these are the ONLY ids that can serve an international charge — the INR ids above
+cannot. Stored on `plans.razorpay_plan_id_monthly_usd` / `razorpay_plan_id_annual_usd`
+(migration `b4e7c2f9a801`), seeded with the `--*-usd` flags of
+`scripts/set_razorpay_plan_ids.py`.
+
+Amounts match the `*_usd_cents` columns in `scripts/seed_plans.py` — a deliberate USD
+headline, never FX-converted. Annual = 12 × the discounted monthly ($7 / $15 / $31).
+
+### Live Mode (`rzp_live_…`)
+
+| Plan | Plan ID | Amount | Cycle |
+|------|---------|--------|-------|
+| Starter Monthly | `plan_TLF32pi2eo9RAG` | $9 | Monthly |
+| Starter Annual | `plan_TLF55omvXJIr5w` | $84 | Yearly |
+| Standard Monthly | `plan_TLF5RZlXtS00zU` | $19 | Monthly |
+| Standard Annual | `plan_TLF6HQmR1um1aY` | $180 | Yearly |
+| Professional Monthly | `plan_TLF6f2FuSkTHjK` | $39 | Monthly |
+| Professional Annual | `plan_TLF72mxUqNXlb5` | $372 | Yearly |
+
+Seat add-on (live): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLF7UFHVzhJU0R` ($5/seat/month).
+
+### Test Mode (`rzp_test_…`)
+
+| Plan | Plan ID | Amount | Cycle |
+|------|---------|--------|-------|
+| Starter Monthly | `plan_TLFB8lG6zmggVB` | $9 | Monthly |
+| Starter Annual | `plan_TLFBQoPTonDDwh` | $84 | Yearly |
+| Standard Monthly | `plan_TLFBQzoxkBVVar` | $19 | Monthly |
+| Standard Annual | `plan_TLFBRC1uN9YHjj` | $180 | Yearly |
+| Professional Monthly | `plan_TLFBROcMoO4A9R` | $39 | Monthly |
+| Professional Annual | `plan_TLFBRaOh3Dv5rq` | $372 | Yearly |
+
+Seat add-on (test): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLFBRlMIoz1QeC` ($5/seat/month).
+
+### Seed the USD ids
+
+```bash
+cd api && uv run python scripts/set_razorpay_plan_ids.py \
+  --starter-monthly-usd      plan_XXXXXXXXXXXXXXXX \
+  --starter-annual-usd       plan_XXXXXXXXXXXXXXXX \
+  --standard-monthly-usd     plan_XXXXXXXXXXXXXXXX \
+  --standard-annual-usd      plan_XXXXXXXXXXXXXXXX \
+  --professional-monthly-usd plan_XXXXXXXXXXXXXXXX \
+  --professional-annual-usd  plan_XXXXXXXXXXXXXXXX \
+  --apply
+```
+
+### ⚠️ Live plans created in error — DO NOT USE
+
+Three plans from the 3 Aug live batch are misconfigured. Razorpay plans cannot be
+edited or deleted, so they stay in the dashboard; they are listed here only so nobody
+wires them up by mistake.
+
+| Plan ID | Named | Actually created as | Fault |
+|---------|-------|---------------------|-------|
+| `plan_TLF5tOp8DljHNG` | Standard Annual USD 180 | $180 **monthly** | Wrong billing cycle |
+| `plan_TLF4XFj8uJLsql` | Standard Monthly USD 19 | **₹19** monthly | Wrong currency |
+| `plan_TLF3nxE1CGe9p2` | Starter Annual USD 84 | **₹84** yearly | Wrong currency |
+
+### ⚠️ USD checkout is not chargeable yet
+
+The plans exist, but the Razorpay account cannot yet take a recurring international
+payment: **International Cards is not enabled** (still a "Request for international
+cards" button) and **PayPal — the only activated international method — does not
+support subscriptions**. International Bank Transfers is also incomplete (video KYC
+failed). Until international cards are approved *with recurring/subscriptions
+enabled*, USD checkout will fail at the payment step even with correct plan ids.
 
 ---
 
@@ -83,6 +149,7 @@ $9 / $19 / $39 monthly; $84 / $180 / $372 yearly (Starter / Standard / Professio
 | Purpose | Env var | Status |
 |---------|---------|--------|
 | Extra seat (₹499/mo add-on) | `RAZORPAY_SEAT_PLAN_ID` | Create in Test + Live; env-driven, **no hardcoded default** in `config.py` |
+| Extra seat ($5/mo add-on, USD rail) | `RAZORPAY_SEAT_PLAN_ID_USD` | ✅ Created in Test + Live (ids in the USD section above); env-driven, no hardcoded default |
 | ₹1 test checkout | `RAZORPAY_TEST_PLAN_ID` | Create in Live if `CHECKOUT_TEST_CLIENT_IDS` is used; env-driven |
 
 ---

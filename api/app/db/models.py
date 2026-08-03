@@ -1113,6 +1113,14 @@ class Plan(Base):
     razorpay_plan_id_monthly = Column(String, nullable=True)
     razorpay_plan_id_annual = Column(String, nullable=True)
 
+    # Razorpay plan IDs for the USD (international) rail. Separate Razorpay
+    # plans priced in USD — a plan's currency is fixed at creation, so the INR
+    # ids above cannot serve a USD charge. NULL means the USD rail is not
+    # configured for this tier and USD checkout must fail loudly rather than
+    # silently charging INR. Per-environment (test vs live), like the INR ids.
+    razorpay_plan_id_monthly_usd = Column(String, nullable=True)
+    razorpay_plan_id_annual_usd = Column(String, nullable=True)
+
     # Fixed USD headline pricing (cents). Independent of the INR columns —
     # set deliberately, NEVER converted live. Shown to non-Indian visitors.
     # NULL → caller falls back to a DISPLAY_USD_TO_INR conversion for legacy
