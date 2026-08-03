@@ -416,7 +416,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                         </div>
                         {settings.feature_flags?.show_branding !== false && (
                             <a
-                                href="https://oyechats.com"
+                                href="https://www.oyechats.com"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"

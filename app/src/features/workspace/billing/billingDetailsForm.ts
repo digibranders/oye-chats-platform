@@ -1,6 +1,6 @@
 /**
  * Billing-details form logic - ported verbatim from the legacy
- * `components/billing/BillingDetailsCard.jsx` so the redesigned form issues the
+ * the pre-2.0 billing-details card so the redesigned form issues the
  * exact same PATCH the backend expects (only changed fields; explicit null to
  * clear; GSTIN uppercased; state server-derived from the GSTIN when set).
  */

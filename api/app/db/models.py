@@ -368,7 +368,9 @@ class Bot(Base):
 
     # Widget branding — customizable branding text and URL
     branding_text = Column(String, default="Powered by OyeChats", server_default="Powered by OyeChats", nullable=False)
-    branding_url = Column(String, default="https://oyechats.com", server_default="https://oyechats.com", nullable=False)
+    branding_url = Column(
+        String, default="https://www.oyechats.com", server_default="https://www.oyechats.com", nullable=False
+    )
 
     # Service-scoped answers. When ``services`` is non-empty the bot is constrained
     # to only answer about those services. ``services_url`` is appended as a CTA

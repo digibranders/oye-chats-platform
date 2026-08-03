@@ -22,7 +22,7 @@
 | From name | `EMAIL_FROM_NAME` (default `OyeChats`) |
 | From address | `EMAIL_FROM_ADDRESS` (default `notifications@oyechats.com`) — no-reply sender |
 | Support address (shown in body / "Contact us") | `SUPPORT_EMAIL` (default `developer@oyechats.com`) |
-| Marketing links | `MARKETING_URL` (default `https://oyechats.com`) |
+| Marketing links | `MARKETING_URL` (default `https://www.oyechats.com`) |
 | Dashboard links | `APP_URL` (default `https://app.oyechats.com`) |
 | Invoice-email gate | `INVOICE_EMAILS_ENABLED` (default `true`) |
 

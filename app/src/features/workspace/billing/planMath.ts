@@ -1,6 +1,6 @@
 /**
  * Pure billing/plan math - ported verbatim from the legacy
- * `components/billing/PlanModal.jsx` so the redesigned (new design-system)
+ * the pre-2.0 plan modal so the redesigned (new design-system)
  * checkout surface charges EXACTLY what the old one did. Presentation is
  * rebuilt in the DS; this money logic is preserved unchanged and typed.
  *

@@ -403,7 +403,7 @@ async def fetch_recommended_colors(url: str, *, top_n: int = _DEFAULT_TOP_N) -> 
                 # Some CDNs return an SPA shell to headless UA strings; a
                 # plain browser UA gives us the same first-paint HTML the
                 # visitor sees, which is where the brand palette lives.
-                "User-Agent": ("Mozilla/5.0 (compatible; OyeChatsBrandBot/1.0; +https://oyechats.com)"),
+                "User-Agent": ("Mozilla/5.0 (compatible; OyeChatsBrandBot/1.0; +https://www.oyechats.com)"),
                 "Accept": "text/html,application/xhtml+xml",
             },
         ) as client:

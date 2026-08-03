@@ -184,8 +184,8 @@ EMAIL_ENABLED = bool(BREVO_API_KEY)
 # ─────────────────────────────────────────────────────────────────────────────
 # Brand & public URLs (used by email templates and any other branded surface)
 # ─────────────────────────────────────────────────────────────────────────────
-# Public marketing site root, e.g. "https://oyechats.com". No trailing slash.
-MARKETING_URL = os.getenv("MARKETING_URL", "https://oyechats.com").rstrip("/")
+# Public marketing site root, e.g. "https://www.oyechats.com". No trailing slash.
+MARKETING_URL = os.getenv("MARKETING_URL", "https://www.oyechats.com").rstrip("/")
 # Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
 # Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
 APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")

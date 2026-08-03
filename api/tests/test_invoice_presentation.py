@@ -65,7 +65,7 @@ def test_valid_cin_and_contact_round_trip(db):
         {
             "legal_name": "Digibranders Pvt Ltd",
             "cin": "U62099MH2023PTC123456",
-            "website": "https://oyechats.com",
+            "website": "https://www.oyechats.com",
             "support_email": "support@oyechats.com",
         },
         actor_id=None,
@@ -187,7 +187,7 @@ def test_every_seller_profile_field_is_exposed_by_the_api(db):
             "gstin": "27AAICD9268J1Z0",
             "cin": "U72900MH2021PTC372344",
             "phone": "+91 22 1234 5678",
-            "website": "https://oyechats.com",
+            "website": "https://www.oyechats.com",
             "support_email": "support@oyechats.com",
         },
         actor_id=None,

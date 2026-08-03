@@ -40,7 +40,7 @@ import { ReferralsModal } from './ReferralsModal';
  * click. Overridable per-environment; defaults to the production site.
  */
 const REFERRAL_BASE_URL: string =
-  (import.meta.env.VITE_MARKETING_URL as string | undefined) ?? 'https://oyechats.com';
+  (import.meta.env.VITE_MARKETING_URL as string | undefined) ?? 'https://www.oyechats.com';
 
 function toMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
