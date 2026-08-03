@@ -51,21 +51,8 @@ interface PlanLimitStatProps {
 }
 
 /** An informational limit tile - a ceiling with no matching usage count. */
-function PlanLimitStat({ label, icon: Icon, value, caption }: PlanLimitStatProps): ReactElement {
-  return (
-    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-          <Icon size={16} aria-hidden="true" />
-        </span>
-      </div>
-      <div className="mt-3">
-        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">{value}</span>
-        <p className="mt-1 text-[13px] text-[var(--ds-text-subtle)]">{caption}</p>
-      </div>
-    </div>
-  );
+function PlanLimitStat({ label, icon, value, caption }: PlanLimitStatProps): ReactElement {
+  return <MetricCard label={label} icon={icon} value={value} caption={caption} />;
 }
 
 /**
@@ -159,24 +146,15 @@ interface ActivityCardProps {
  * credits it burned as a neutral caption. A subtle hover lift signals it's a
  * living metric without implying it's clickable.
  */
-function ActivityCard({ label, icon: Icon, eventCount, creditsUsed }: ActivityCardProps): ReactElement {
+function ActivityCard({ label, icon, eventCount, creditsUsed }: ActivityCardProps): ReactElement {
   return (
-    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)] transition-colors hover:border-[var(--ds-border-strong)]">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-          <Icon size={16} aria-hidden="true" />
-        </span>
-      </div>
-      <div className="mt-3">
-        <span className="text-2xl font-bold tracking-tight tabular-nums text-[var(--ds-text)]">
-          {formatCredits(eventCount)}
-        </span>
-        <p className="mt-1 text-[13px] font-medium tabular-nums text-[var(--ds-text-subtle)]">
-          {formatCredits(creditsUsed)} credits
-        </p>
-      </div>
-    </div>
+    <MetricCard
+      label={label}
+      icon={icon}
+      value={formatCredits(eventCount)}
+      caption={`${formatCredits(creditsUsed)} credits`}
+      interactive
+    />
   );
 }
 
