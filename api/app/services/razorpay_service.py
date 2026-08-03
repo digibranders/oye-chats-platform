@@ -1335,6 +1335,9 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         "payment.dispute.created": _handle_dispute_created,
         "payment.dispute.lost": _handle_dispute_lost,
         "payment.dispute.won": _handle_dispute_won,
+        # Saved-instrument lifecycle. A revoked token must disappear from the
+        # customer's saved list immediately, not at the next read-sync.
+        **{event: _handle_token_revoked for event in TOKEN_REVOKED_EVENTS},
     }
     handler = handlers.get(event_name)
     if handler is None:
@@ -2562,6 +2565,41 @@ def _handle_payment_failed(session: Session, payload: dict[str, Any]) -> str:
         pay.get("error_description") or pay.get("error_reason"),
     )
     return "payment.failed logged"
+
+
+# Razorpay token lifecycle. Both events mean the same thing to us: the
+# instrument is no longer chargeable, so it must stop being offered.
+TOKEN_REVOKED_EVENTS = ("token.cancelled", "token.paused")
+
+
+def _handle_token_revoked(session: Session, payload: dict[str, Any]) -> str:
+    """Prune a saved instrument that Razorpay says is no longer usable.
+
+    ``payment_methods`` is a display MIRROR -- Razorpay is the source of truth.
+    Without this handler a card revoked at the issuer or in Razorpay's
+    dashboard keeps appearing in the customer's saved list until the next
+    read-sync, so the UI offers an instrument that cannot be charged.
+
+    Never raises on unknown input: a token we never mirrored, or one already
+    pruned, is a successful no-op. Raising would dead-letter the event and make
+    Razorpay retry it forever.
+    """
+    from app.db.models import PaymentMethod
+
+    entity = (payload.get("token") or {}).get("entity") or {}
+    token_id = entity.get("id")
+    if not token_id:
+        return "token event missing token id"
+
+    deleted = (
+        session.query(PaymentMethod)
+        .filter(PaymentMethod.razorpay_token_id == token_id)
+        .delete(synchronize_session=False)
+    )
+    session.flush()
+    if deleted:
+        logger.info("Pruned %d saved instrument(s) for revoked token %s", deleted, token_id)
+    return f"Token {token_id} revoked ({deleted} mirror row(s) pruned)"
 
 
 # ── Refund handling ─────────────────────────────────────────────────────────
