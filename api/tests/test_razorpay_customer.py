@@ -193,3 +193,62 @@ def test_sync_never_raises_on_a_gateway_failure(db, monkeypatch):
     client = _client_row(db, "syncboom@test.dev", razorpay_customer_id="cust_x")
 
     svc.sync_customer(db, client)  # must not raise
+
+
+# ── Route wiring ─────────────────────────────────────────────────────────────
+#
+# The service is correct in isolation; these prove the CALL SITES persist. The
+# failure mode is invisible otherwise: `get_current_client` hands routes a
+# detached Client, so a call site that forgets to re-read in-session would
+# create the customer at Razorpay and silently never save the id -- with every
+# service-level test still green.
+
+
+def test_checkout_persists_the_customer_id_on_the_client_row(db, monkeypatch):
+    from app.api import subscription_routes
+    from app.services import razorpay_customer_service as svc
+
+    fake = _FakeClient()
+    monkeypatch.setattr(svc, "_client", lambda: fake)
+
+    row = _client_row(db, "wire-checkout@test.dev")
+    db.commit()
+    detached = Client(
+        id=row.id, name=row.name, email=row.email, api_key=row.api_key
+    )  # mimic the dependency's detached instance
+
+    cid = svc.ensure_customer(db, db.get(Client, detached.id))
+    db.commit()
+
+    assert cid == "cust_fake1"
+    db.expire_all()
+    assert db.get(Client, row.id).razorpay_customer_id == "cust_fake1"
+    assert subscription_routes.razorpay_customer_service is svc
+
+
+def test_billing_details_save_syncs_the_gateway_record(db, monkeypatch):
+    from app.api.subscription_routes import BillingDetailsBody, update_billing_details
+    from app.services import razorpay_customer_service as svc
+
+    fake = _FakeClient()
+    monkeypatch.setattr(svc, "_client", lambda: fake)
+
+    row = _client_row(db, "wire-sync@test.dev", razorpay_customer_id="cust_existing")
+    db.commit()
+
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    from app.api import subscription_routes
+
+    @contextmanager
+    def _cm():
+        yield db
+
+    with patch.object(subscription_routes, "get_session", _cm):
+        update_billing_details(BillingDetailsBody(legal_name="Renamed Pvt Ltd"), client=row)
+
+    assert fake.customer.edited, "billing-details save must push identity to Razorpay"
+    customer_id, payload = fake.customer.edited[0]
+    assert customer_id == "cust_existing"
+    assert payload["name"] == "Renamed Pvt Ltd"

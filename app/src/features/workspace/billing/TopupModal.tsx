@@ -126,6 +126,13 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
         description: result.description as string | undefined,
         prefill: (result.prefill as Record<string, unknown>) || {},
         theme: (result.theme as Record<string, unknown>) || { color: '#7C3AED' },
+        // Tokenise on success so repeat top-ups need only a CVV. Razorpay
+        // requires BOTH: customer_id says whose token this is, save=1 opts this
+        // payment into tokenisation. Consent is collected inside Razorpay's own
+        // UI - we never see the card number, and RBI rules mean we never store
+        // more than the last four digits.
+        customer_id: result.customer_id as string | undefined,
+        save: result.customer_id ? 1 : undefined,
       });
       try {
         await verifyTopupPayment({

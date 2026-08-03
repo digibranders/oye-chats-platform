@@ -30,7 +30,7 @@ from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount, seat_price
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
-from app.services import credit_service, invoice_service
+from app.services import credit_service, invoice_service, razorpay_customer_service
 from app.services.plan_service import (
     get_account_subscription,
     get_active_plans,
@@ -869,6 +869,12 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
             row.billing_email = (fields["billing_email"] or "").strip() or None
         session.commit()
         session.refresh(row)
+        # Keep the gateway's customer record aligned with the invoice buyer
+        # snapshot, so the Razorpay dashboard and the tax document never
+        # disagree about who was billed. Best-effort by design: the local row is
+        # authoritative for invoicing, and a Razorpay outage must not fail the
+        # customer's own edit.
+        razorpay_customer_service.sync_customer(session, row)
         # Keep the dependency-injected object in sync for the response.
         for attr in (
             "legal_name",
@@ -1259,6 +1265,21 @@ def create_checkout(
             discount_bps, _ = discount_service.resolve_customer_discount_bps(session, client)
         else:
             discount_bps = 0
+        # Create the gateway Customer before minting the subscription. It is the
+        # anchor every saved payment instrument hangs off
+        # (/v1/customers/{id}/tokens), so without it saved cards are
+        # structurally impossible. Non-fatal: a subscription does not need a
+        # pre-made customer, and losing it only costs the saved-instrument
+        # feature, which the next checkout retries. Never block a purchase.
+        #
+        # Re-read in-session: `client` from the dependency is DETACHED, so
+        # writing to it would be silently discarded (see ensure_customer).
+        customer_id = None
+        try:
+            customer_id = razorpay_customer_service.ensure_customer(session, session.get(Client, client.id))
+        except razorpay_customer_service.RazorpayCustomerError:
+            logger.warning("checkout: could not ensure Razorpay customer for client %s", client.id)
+
         try:
             result = razorpay_service.create_subscription(
                 session, client, plan, request.billing_cycle, discount_bps=discount_bps
@@ -1286,6 +1307,9 @@ def create_checkout(
                 )
             )
         session.commit()
+        if isinstance(result, dict) and customer_id:
+            # Checkout needs this to tokenise a card (customer_id + save=1).
+            result["customer_id"] = customer_id
         return result
 
 
@@ -2395,6 +2419,16 @@ def initiate_topup(
         if provider == "razorpay":
             from app.services import razorpay_service
 
+            # Gateway Customer first: it is what a saved card token attaches
+            # to, and a top-up is the natural place to offer saving one.
+            # Non-fatal -- losing it only costs the saved-instrument feature.
+            # Re-read in-session; the dependency's `client` is DETACHED.
+            customer_id = None
+            try:
+                customer_id = razorpay_customer_service.ensure_customer(session, session.get(Client, client.id))
+            except razorpay_customer_service.RazorpayCustomerError:
+                logger.warning("topup: could not ensure Razorpay customer for client %s", client.id)
+
             try:
                 result = razorpay_service.create_topup_order(session, client, pack, bot_id=target_bot_id)
             except ValueError as exc:
@@ -2402,6 +2436,9 @@ def initiate_topup(
             except razorpay_service.RazorpayBillingError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             session.commit()
+            if isinstance(result, dict) and customer_id:
+                # Checkout needs this to tokenise a card (customer_id + save=1).
+                result["customer_id"] = customer_id
             return result
 
 
