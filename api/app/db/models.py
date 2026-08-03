@@ -1528,7 +1528,7 @@ class PaymentMethod(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    provider = Column(String, nullable=False, default="razorpay")
+    provider = Column(String, nullable=False, default="razorpay", server_default="razorpay")
     type = Column(String, nullable=False)  # card|upi|emandate
     last4 = Column(String(4), nullable=True)
     network = Column(String, nullable=True)  # Visa|MasterCard|RuPay|Amex
@@ -1539,7 +1539,9 @@ class PaymentMethod(Base):
 
     # Provider references
     razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
-    razorpay_customer_id = Column(String, index=True, nullable=True)
+    # Provenance only — which gateway customer this token came from. Not
+    # indexed: reads go via client_id or token id, both already indexed.
+    razorpay_customer_id = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # Last time this row was reconciled against Razorpay. Drives the read-through

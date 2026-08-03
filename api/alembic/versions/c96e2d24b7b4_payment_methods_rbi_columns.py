@@ -45,6 +45,16 @@ def _assert_empty() -> None:
     that stops being true between authoring and deploy, failing the migration
     is far better than discovering it after the data is gone.
     """
+    # Offline (`--sql`) renders a script instead of executing: op.get_bind()
+    # hands back a MockConnection whose execute() returns None, so the guard
+    # would crash with an opaque AttributeError AND emit a meaningless
+    # SELECT into the generated script. Refuse explicitly instead -- a DBA must
+    # never be handed DROP statements with the safety check silently stripped.
+    if op.get_context().as_sql:
+        raise RuntimeError(
+            "This migration drops card metadata and must run ONLINE so it can verify "
+            "payment_methods is empty; --sql (offline) is not supported."
+        )
     count = op.get_bind().execute(sa.text("SELECT count(*) FROM payment_methods")).scalar_one()
     if count:
         raise RuntimeError(
@@ -58,14 +68,13 @@ def upgrade() -> None:
     op.add_column("payment_methods", sa.Column("network", sa.String(), nullable=True))
     op.add_column("payment_methods", sa.Column("issuer", sa.String(), nullable=True))
     op.add_column("payment_methods", sa.Column("upi_handle", sa.String(), nullable=True))
+    # razorpay_customer_id records which gateway customer a token came from
+    # (provenance, and how you would spot a rotated customer id). It is
+    # deliberately NOT indexed: nothing queries by it — the service reads by
+    # client_id and deletes by token id, both already indexed — so an index
+    # here would be pure write amplification.
     op.add_column("payment_methods", sa.Column("razorpay_customer_id", sa.String(), nullable=True))
     op.add_column("payment_methods", sa.Column("synced_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_index(
-        op.f("ix_payment_methods_razorpay_customer_id"),
-        "payment_methods",
-        ["razorpay_customer_id"],
-        unique=False,
-    )
     op.drop_column("payment_methods", "brand")
     op.drop_column("payment_methods", "expiry_year")
     op.drop_column("payment_methods", "expiry_month")
@@ -75,7 +84,6 @@ def downgrade() -> None:
     op.add_column("payment_methods", sa.Column("expiry_month", sa.INTEGER(), nullable=True))
     op.add_column("payment_methods", sa.Column("expiry_year", sa.INTEGER(), nullable=True))
     op.add_column("payment_methods", sa.Column("brand", sa.VARCHAR(), nullable=True))
-    op.drop_index(op.f("ix_payment_methods_razorpay_customer_id"), table_name="payment_methods")
     op.drop_column("payment_methods", "synced_at")
     op.drop_column("payment_methods", "razorpay_customer_id")
     op.drop_column("payment_methods", "upi_handle")

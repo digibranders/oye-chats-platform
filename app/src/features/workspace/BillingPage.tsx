@@ -50,6 +50,7 @@ import { SeatChangeDialog } from './billing/SeatChangeDialog';
 import { CancelSubscriptionModal } from './billing/CancelSubscriptionModal';
 import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingOverview } from './billing/BillingOverview';
+import { PaymentMethodsPanel } from './billing/PaymentMethodsPanel';
 import { PlansPanel } from './billing/PlansPanel';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
@@ -390,6 +391,11 @@ export function BillingPage(): ReactElement {
                 onViewUsage={() => void navigate('/workspace/usage')}
                 botId={billingBotId}
               />
+
+              {/* What they're paying WITH. Deliberately below the plan card:
+                  the mandate and any saved top-up cards are two different
+                  things on Razorpay, and the panel keeps them visibly apart. */}
+              <PaymentMethodsPanel provider={provider} hasPaidPlan={Boolean(plan?.isPaid)} />
 
               {/* Operator seats - only meaningful once the plan includes them. */}
               {includedSeats > 0 && (

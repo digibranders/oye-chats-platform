@@ -18,6 +18,7 @@ from app.core.rate_limit import limiter
 from app.db.models import Client, PaymentMethod
 from app.db.session import get_session
 from app.services.payment_method_service import (
+    NoSavedInstruments,
     PaymentMethodError,
     cached_rows,
     delete_payment_method,
@@ -98,6 +99,11 @@ def remove_payment_method(token_id: str, request: Request, client: Client = Depe
             raise HTTPException(status_code=404, detail="Account not found.")
         try:
             delete_payment_method(session, row, token_id)
+        except NoSavedInstruments as exc:
+            # 404, not 502: nothing to revoke is a local fact, and reporting it
+            # as a gateway error would tell the customer our payment provider
+            # is broken when it is fine.
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PaymentMethodError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         session.commit()

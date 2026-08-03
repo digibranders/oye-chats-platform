@@ -1995,6 +1995,33 @@ export const getInvoices = async (botId) => {
  * mandate or no hosted page), null (the gateway couldn't be reached, so we
  * don't know). Never render a button on null or false.
  */
+/**
+ * Saved payment instruments for ONE-OFF payments (credit top-ups).
+ *
+ * Not the subscription mandate: Razorpay cannot swap the instrument on a live
+ * subscription, so changing THAT runs the re-mandate flow via /resume.
+ * Conflating the two would promise a swap the gateway cannot perform.
+ */
+export const getPaymentMethods = async ({ refresh = false } = {}) => {
+    try {
+        const params = refresh ? { refresh: 'true' } : {};
+        const response = await api.get('/payment-methods', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load saved payment methods');
+    }
+};
+
+/** Revoke a saved instrument at Razorpay, then drop our mirror row. */
+export const deletePaymentMethod = async (tokenId) => {
+    try {
+        const response = await api.delete(`/payment-methods/${encodeURIComponent(tokenId)}`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to remove the payment method');
+    }
+};
+
 export const getPaymentRecovery = async (botId) => {
     try {
         const params = {};

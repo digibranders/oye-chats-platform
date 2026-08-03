@@ -38,6 +38,15 @@ class PaymentMethodError(RuntimeError):
     """The gateway refused a token operation."""
 
 
+class NoSavedInstruments(PaymentMethodError):
+    """This account has no gateway customer, so there is nothing to revoke.
+
+    A distinct type because it is a local precondition, not a gateway failure:
+    mapping it to 502 would tell the customer our payment provider is broken
+    when in fact they simply have nothing saved.
+    """
+
+
 def _client():
     """Indirection so tests can substitute a fake without patching razorpay."""
     from app.services.razorpay_service import _get_razorpay
@@ -146,7 +155,7 @@ def delete_payment_method(session: Session, client: Client, token_id: str) -> No
     """
     customer_id = client.razorpay_customer_id
     if not customer_id:
-        raise PaymentMethodError("No saved payment methods for this account")
+        raise NoSavedInstruments("No saved payment methods for this account")
 
     try:
         _client().token.delete(customer_id, token_id)

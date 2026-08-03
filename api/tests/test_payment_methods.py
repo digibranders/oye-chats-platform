@@ -242,3 +242,70 @@ def test_the_oldest_row_decides_staleness(db):
     old = PaymentMethod(provider="razorpay", type="card", synced_at=now - timedelta(hours=2))
 
     assert svc.is_stale([fresh, old]) is True
+
+
+def test_deleting_without_a_gateway_customer_is_not_a_gateway_error(db, monkeypatch):
+    """404, not 502. Nothing-to-revoke is a local precondition; reporting it as
+    a gateway failure would tell the customer our provider is broken."""
+    from app.services import payment_method_service as svc
+
+    class _NeverCall:
+        token = type(
+            "T", (), {"delete": staticmethod(lambda cid, tid: (_ for _ in ()).throw(AssertionError("called")))}
+        )()
+
+    monkeypatch.setattr(svc, "_client", lambda: _NeverCall())
+    free = Client(name="Free", email="free-del@test.dev", api_key="key-free-del")
+    db.add(free)
+    db.flush()
+
+    with pytest.raises(svc.NoSavedInstruments):
+        svc.delete_payment_method(db, free, "token_x")
+
+
+# ── Destructive-migration guard ──────────────────────────────────────────────
+
+
+def test_the_reshape_migration_refuses_to_run_on_a_populated_table(db):
+    """The one line standing between a deploy and irreversible loss of card
+    metadata. Without a test it is exactly the kind of guard that gets
+    'simplified away' by someone who cannot see what it protects."""
+    import importlib.util
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "c96e2d24b7b4_payment_methods_rbi_columns.py"
+    spec = importlib.util.spec_from_file_location("mig_c96e2d24b7b4", path)
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    ctx = MagicMock()
+    ctx.as_sql = False
+    bind = MagicMock()
+    bind.execute.return_value.scalar_one.return_value = 3  # three rows present
+
+    with patch.object(mig.op, "get_context", return_value=ctx), patch.object(mig.op, "get_bind", return_value=bind):
+        with pytest.raises(RuntimeError, match="3 row"):
+            mig._assert_empty()
+
+        bind.execute.return_value.scalar_one.return_value = 0
+        mig._assert_empty()  # empty table: proceeds
+
+
+def test_the_reshape_migration_refuses_offline_mode(db):
+    """Offline (--sql) cannot verify the table is empty, so it must refuse
+    rather than emit DROP statements with the guard silently stripped."""
+    import importlib.util
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "c96e2d24b7b4_payment_methods_rbi_columns.py"
+    spec = importlib.util.spec_from_file_location("mig_offline_c96e2d24b7b4", path)
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    ctx = MagicMock()
+    ctx.as_sql = True
+
+    with patch.object(mig.op, "get_context", return_value=ctx), pytest.raises(RuntimeError, match="offline"):
+        mig._assert_empty()

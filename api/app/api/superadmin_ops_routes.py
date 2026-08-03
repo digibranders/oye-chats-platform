@@ -1414,6 +1414,18 @@ def test_webhook_registration(
 # ── Payment methods (stored card / UPI / bank refs) ──────────────────────────
 
 
+def _mask_vpa(handle: str | None) -> str | None:
+    """``gaurav@okhdfcbank`` -> ``•••@okhdfcbank``.
+
+    Keeps the bank suffix, which is the only part support actually reads, and
+    drops the identifier, which is usually a phone number or a real name.
+    """
+    if not handle or "@" not in handle:
+        return handle
+    _, _, bank = handle.partition("@")
+    return f"•••@{bank}"
+
+
 @router.get("/payment-methods")
 def list_payment_methods(
     client_id: int | None = None,
@@ -1422,8 +1434,14 @@ def list_payment_methods(
     """Stored payment methods across clients (card / UPI / bank).
 
     Newest first, capped at 500, filterable by ``client_id``. Provider token
-    references (``razorpay_token_id``) are never
-    returned — only the non-sensitive display fields. Client names batch-loaded.
+    references (``razorpay_token_id``) are never returned.
+
+    UPI handles are MASKED. A VPA is routinely the customer's mobile number or
+    their name (``9876543210@ybl``), so returning it verbatim from a
+    cross-tenant endpoint would spread personal data far wider than the support
+    task needs — a DPDP concern rather than an RBI one. The bank suffix is
+    enough to answer "which UPI app is this?"; nobody triaging a payment needs
+    the identifier itself.
     """
     with get_session() as session:
         stmt = select(PaymentMethod).order_by(PaymentMethod.created_at.desc())
@@ -1452,7 +1470,7 @@ def list_payment_methods(
                 # are not available to serialize.
                 "network": m.network,
                 "issuer": m.issuer,
-                "upi_handle": m.upi_handle,
+                "upi_handle": _mask_vpa(m.upi_handle),
                 "is_default": m.is_default,
                 "synced_at": m.synced_at.isoformat() if m.synced_at else None,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
