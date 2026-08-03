@@ -1207,6 +1207,15 @@ class Subscription(Base):
     # ``data_deleted``); values are ISO-8601 timestamps of when each was
     # sent. Missing key == not yet sent. Lets every cron re-run safely.
     trial_emails_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
+    # Idempotency log for the dunning cadence, mirroring ``trial_emails_sent``.
+    # Keys are cadence stages (``failed_0``, ``halted_3``, ``warning_5``,
+    # ``suspended``); values are ISO-8601 send timestamps. Missing key == not
+    # yet sent, so every cron re-run is safe.
+    #
+    # Deliberately NOT reusing ``trial_emails_sent``: the two lifecycles are
+    # independent, and a customer who recovers, later churns, and returns must
+    # get a fresh dunning sequence without their trial history being cleared.
+    dunning_emails_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
 
     # Cancellation
     canceled_at = Column(DateTime(timezone=True), nullable=True)
