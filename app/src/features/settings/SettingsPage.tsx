@@ -1,14 +1,15 @@
 import { type FormEvent, type ReactElement, type ReactNode, useEffect, useState } from 'react';
-import { AlertTriangle, Check, Mail, Pencil, Shield, UserRound, X, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, Check, Mail, Pencil, Shield, UserRound, type LucideIcon } from 'lucide-react';
 import {
   Button,
   Card,
   EmptyState,
+  FeedbackBanner,
   Input,
   PageContainer,
   SectionHeader,
   Skeleton,
-  cn,
+  useFeedback,
 } from '../../design-system';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
@@ -33,8 +34,6 @@ type LoadPhase =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'ready'; readonly user: CurrentUser };
-
-type Feedback = { readonly tone: 'success' | 'error'; readonly message: string };
 
 // ── Small presentational pieces ──────────────────────────────────────────────
 
@@ -76,7 +75,7 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
 export function SettingsPage(): ReactElement {
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const { feedback, notify, dismiss } = useFeedback();
 
   // Name editing
   const [nameEditing, setNameEditing] = useState(false);
@@ -117,13 +116,13 @@ export function SettingsPage(): ReactElement {
     setName(user?.name ?? '');
     setNameError('');
     // Clear any banner from a previous save so it can't linger next to a fresh edit.
-    setFeedback(null);
+    dismiss();
     setNameEditing(true);
   };
 
   const cancelNameEditing = (): void => {
     setNameEditing(false);
-    setFeedback(null);
+    dismiss();
   };
 
   const handleSaveName = async (event: FormEvent): Promise<void> => {
@@ -147,7 +146,7 @@ export function SettingsPage(): ReactElement {
           : current,
       );
       setNameEditing(false);
-      setFeedback({ tone: 'success', message: 'Your name has been updated.' });
+      notify({ tone: 'success', message: 'Your name has been updated.' });
     } catch (error) {
       setNameError(toMessage(error, 'Failed to update your name.'));
     } finally {
@@ -164,30 +163,8 @@ export function SettingsPage(): ReactElement {
 
   return (
     <PageContainer title="Settings" description="Your account, profile and sign-in security.">
-      {/* Live feedback for the name mutation. The region stays mounted (even
-          when empty) so screen readers announce content as it appears. */}
-      <div aria-live="polite">
-        {feedback && (
-          <div
-            className={cn(
-              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px]',
-              feedback.tone === 'success'
-                ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-                : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
-            )}
-          >
-            <span>{feedback.message}</span>
-            <button
-              type="button"
-              onClick={() => setFeedback(null)}
-              aria-label="Dismiss message"
-              className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X size={15} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Live feedback for the name mutation. */}
+      <FeedbackBanner feedback={feedback} onDismiss={dismiss} />
 
       {phase.status === 'loading' && <LoadingState />}
 

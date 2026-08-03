@@ -8,7 +8,6 @@ import {
   Download,
   ExternalLink,
   FileText,
-  Info,
   LayoutDashboard,
   Loader2,
   Minus,
@@ -26,11 +25,13 @@ import {
   Card,
   CardContent,
   EmptyState,
+  FeedbackBanner,
   PageContainer,
   SectionHeader,
   Skeleton,
   StatusBadge,
   cn,
+  useFeedback,
 } from '../../design-system';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { cancelScheduledChange, getInvoices, resumeSubscription } from '../../services/api';
@@ -77,7 +78,7 @@ export function BillingPage(): ReactElement {
   const billingBotId = selectedBot?.id ?? null;
   const { loading, error, data, reload } = useBillingData(billingBotId);
   const navigate = useNavigate();
-  const [notice, setNotice] = useState<string | null>(null);
+  const { feedback: notice, notify: showNotice, dismiss: dismissNotice } = useFeedback();
 
   const subscription = data?.subscription ?? null;
   const plan = data?.plan ?? null;
@@ -97,7 +98,7 @@ export function BillingPage(): ReactElement {
 
   // Every successful mutation lands here: surface the message, refetch billing.
   const handleSuccess = (message: string): void => {
-    setNotice(message);
+    showNotice({ tone: 'info', message });
     reload();
   };
 
@@ -192,28 +193,8 @@ export function BillingPage(): ReactElement {
         </div>
       }
     >
-      {/* Scaffold notice for Razorpay-gated actions. Kept permanently mounted
-          (no `empty:hidden`) so the aria-live region is in the a11y tree before
-          content is injected - several screen readers skip announcing regions
-          that were display:none at mutation time. */}
-      <div aria-live="polite">
-        {notice && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--ds-info)] bg-[var(--ds-info-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]">
-            <span className="flex items-start gap-2">
-              <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-info)]" />
-              {notice}
-            </span>
-            <button
-              type="button"
-              onClick={() => setNotice(null)}
-              aria-label="Dismiss message"
-              className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X size={15} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Confirmation for Razorpay-gated actions. */}
+      <FeedbackBanner feedback={notice} onDismiss={dismissNotice} />
 
       {loading && <LoadingState />}
 
