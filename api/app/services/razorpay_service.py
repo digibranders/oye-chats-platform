@@ -2475,7 +2475,6 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
             return f"Top-up {rzp_payment_id} already recorded"
 
     amount_paise = int((pay_entity or {}).get("amount") or (order_entity or {}).get("amount") or 0)
-    amount_inr = int(notes.get("amount_inr") or (amount_paise // 100))
 
     # Defense-in-depth (NV2): the credits to grant come from server-set order
     # notes, but the money actually captured comes from Razorpay. Reconcile the
@@ -2507,12 +2506,14 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             target_bot_id = None
 
-    # Name the pack the way the customer bought it ($-display when the order
-    # notes carry it, INR otherwise) plus the credits it grants. Legal amounts
-    # on the document remain INR regardless.
-    display_price = str(notes.get("display_price") or "").strip()
-    pack_label = f"{display_price} pack" if display_price else f"₹{amount_inr} pack"
-    topup_description = f"Credits top-up — {pack_label} ({credits:,} credits)"
+    # Describe the SUPPLY, not the marketing SKU. The pack used to be labelled
+    # with its display price ("$49 pack"), which landed a USD figure on an INR
+    # tax invoice charging ₹3,999 — a number that is neither the taxable value,
+    # nor the total, nor the currency of supply. On a Rule 46 document that
+    # invites exactly one question in an audit or a dispute: what was supplied,
+    # and for how much? The amount column already carries the price, so the
+    # credit quantity is the whole description.
+    topup_description = f"Credits top-up — {credits:,} credits"
 
     invoice = Invoice(
         client_id=client_id,

@@ -113,6 +113,14 @@ def _seller_snapshot(seller: SellerProfile) -> dict:
         "gst_enabled": seller.gst_enabled,
         "lut_active": seller.lut_active,
         "lut_number": seller.lut_number,
+        # Companies Act s.12(3)(c) identity, snapshotted like everything else so
+        # a later profile edit never rewrites an issued document. Absent on
+        # invoices numbered before these fields existed — the PDF renders each
+        # one only when present.
+        "cin": seller.cin,
+        "phone": seller.phone,
+        "website": seller.website,
+        "support_email": seller.support_email,
     }
 
 
