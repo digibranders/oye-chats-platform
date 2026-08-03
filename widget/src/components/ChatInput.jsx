@@ -730,7 +730,7 @@ const ChatInput = ({
                             href="https://oyechats.com"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
+                            className="text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end whitespace-nowrap"
                         >
                             Powered by{' '}
                             <span style={{ color: 'rgb(49% 23% 93%)' }}>OyeChats</span>
