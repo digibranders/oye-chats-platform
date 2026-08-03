@@ -1986,6 +1986,26 @@ export const getInvoices = async (botId) => {
  * Fetch the buyer tax identity printed on invoices (invoicing v2).
  * @returns {Promise<{legal_name, company_name, gstin, billing_address, billing_country, billing_state_code, billing_email}>}
  */
+/**
+ * Recovery state for a failing subscription — drives the app-wide past-due
+ * banner. Read-only and safe to poll: the backend resolves Razorpay's EXISTING
+ * hosted page and never mints a second mandate.
+ *
+ * `recoverable` is tri-state: true (link usable), false (settled — terminal
+ * mandate or no hosted page), null (the gateway couldn't be reached, so we
+ * don't know). Never render a button on null or false.
+ */
+export const getPaymentRecovery = async (botId) => {
+    try {
+        const params = {};
+        if (botId != null) params.bot_id = botId;
+        const response = await api.get('/subscriptions/payment-recovery', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load payment status');
+    }
+};
+
 export const getBillingDetails = async () => {
     try {
         const response = await api.get('/subscriptions/billing-details');

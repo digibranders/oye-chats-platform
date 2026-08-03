@@ -6,6 +6,7 @@ import { CommandPalette } from './CommandPalette';
 import { FeedbackLauncher } from './FeedbackLauncher';
 import { IncomingChatBanner } from './IncomingChatBanner';
 import { InstallAppBanner } from './InstallAppBanner';
+import { PastDueBanner } from '../features/workspace/billing/PastDueBanner';
 import { cn } from '../design-system';
 
 const MOBILE_BREAKPOINT = 768;
@@ -87,6 +88,9 @@ export function AppShell() {
 
       <div className={cn('flex min-h-screen flex-col transition-[margin] duration-300', contentMargin)}>
         <TopBar isMobile={isMobile} onToggleSidebar={toggleSidebar} onOpenSearch={openSearch} />
+        {/* Above the routed outlet, not inside Billing: the customer who most
+            needs this warning is the one who never opens the Billing page. */}
+        <PastDueBanner />
         <main className="flex-1 px-4 pt-3 pb-6 md:px-6 md:pt-4 md:pb-8">
           <Outlet />
         </main>

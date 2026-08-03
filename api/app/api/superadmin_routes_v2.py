@@ -35,6 +35,7 @@ from app.db.models import (
     LeadInfo,
     LLMCallLog,
     Operator,
+    Plan,
     PricingConfig,
     Subscription,
 )
@@ -1844,6 +1845,59 @@ def gstr_export_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="gstr-{month}.csv"'},
     )
+
+
+@router.get("/billing/dunning")
+def dunning_overview(_admin: Client = Depends(get_superadmin)):
+    """Who is currently failing payment, how far into grace, and what it is worth.
+
+    The operator's save-call queue. ``emails_sent`` shows how far the automated
+    cadence has got, so support can see whether a customer has already been
+    warned before phoning them.
+
+    Also surfaces the recovered-cycle gap: Razorpay does NOT re-attempt the
+    missed charge when a halted subscription returns to active, so every
+    recovery leaves one cycle uncollected unless it is charged manually.
+    """
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+
+    with get_session() as session:
+        rows = session.execute(
+            select(Subscription, Client.email, Plan.name)
+            .join(Client, Subscription.client_id == Client.id)
+            .outerjoin(Plan, Subscription.plan_id == Plan.id)
+            .where(Subscription.status == "past_due")
+            .order_by(Subscription.past_due_since)
+        ).all()
+
+        now = datetime.now(UTC)
+        items: list[dict[str, Any]] = []
+        for sub, email, plan_name in rows:
+            since = sub.past_due_since
+            if since is not None and since.tzinfo is None:
+                since = since.replace(tzinfo=UTC)
+            elapsed = (now - since).days if since else None
+            items.append(
+                {
+                    "subscription_id": sub.id,
+                    "client_id": sub.client_id,
+                    "client_email": email,
+                    "plan_name": plan_name,
+                    "billing_cycle": sub.billing_cycle,
+                    "past_due_since": since.isoformat() if since else None,
+                    "days_elapsed": elapsed,
+                    "days_left": max(0, PAYMENT_FAILED_GRACE_DAYS - elapsed) if elapsed is not None else None,
+                    "emails_sent": sorted((sub.dunning_emails_sent or {}).keys()),
+                    "at_risk_minor": sub.plan.monthly_price_cents if sub.plan else 0,
+                    "currency": (sub.plan.currency if sub.plan else None) or "INR",
+                }
+            )
+        return {
+            "count": len(items),
+            "at_risk_minor_total": sum(i["at_risk_minor"] for i in items),
+            "grace_days": PAYMENT_FAILED_GRACE_DAYS,
+            "items": items,
+        }
 
 
 @router.get("/billing/reconciliation")
