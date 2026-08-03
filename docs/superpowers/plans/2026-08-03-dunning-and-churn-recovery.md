@@ -1225,7 +1225,17 @@ git commit -am "feat(dunning): payments-at-risk overview for the super-admin"
   1. Create a test subscription and let a charge fail so it enters `pending`.
   2. Confirm our day-0 email fires and no recovery link is fetched.
   3. Let retries exhaust to `halted`.
-  4. **Confirm `subscription.fetch(...).short_url` on a halted subscription actually serves the card-update page.** The docs describe the hosted page but do not state that `short_url` is how you reach it. If it is not, `get_recovery_link` needs a different source and Tasks 2/4/7 change — find this out before writing the UI.
+  4. **Confirm `subscription.fetch(...).short_url` on a halted subscription actually serves the card-update page.**
+
+     *Partial finding, 2026-08-03* — `scripts/verify_recovery_short_url.py` was run against the
+     test account (19 subscriptions). `short_url` is present on **every** subscription regardless
+     of status: 5/5 active, 3/3 cancelled, 11/11 created. So it is a durable handle on the
+     subscription entity, not a one-time checkout artifact that is consumed at authorisation —
+     which is necessary for the assumption to hold, and mildly encouraging.
+     It is **not** sufficient: a URL that survives on a *cancelled* subscription could equally be
+     a dead checkout link. Note this is also why `get_recovery_link` gates on STATUS and not
+     merely on the presence of a URL — that part is already right.
+     The test account had nothing in `pending`/`halted`, so the decisive question is still open. The docs describe the hosted page but do not state that `short_url` is how you reach it. If it is not, `get_recovery_link` needs a different source and Tasks 2/4/7 change — find this out before writing the UI.
   5. Complete recovery through that page; confirm the subscription returns to `active` and **no second subscription exists**.
   6. Confirm the missed cycle was *not* charged (§2.4), and that it shows up in the Task 10 overview.
 
