@@ -48,7 +48,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (21 distinct emails)
+## 2. Email Catalogue (25 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -175,6 +175,46 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Metered | No |
 | Context | Seats bill on a SEPARATE mandate (P0-3); a cutover mints a new, uncharged seat sub that must be re-authorized (finding A follow-up) |
 
+#### C4. Payment failed — day 0 (dunning)
+| | |
+|---|---|
+| Function | `send_payment_failed_email(to_email, name, plan_name, amount)` |
+| Subject | `We couldn't process your payment — we'll retry` |
+| Body | The charge was declined; we retry automatically. Asks for NOTHING and carries no link |
+| Trigger | `task_dunning_emails` cron, day 0 of `past_due` (marker `failed_0`) |
+| Metered | No |
+| Context | Razorpay is still auto-retrying (`pending`, ~daily for T+3), so most of these self-resolve. Alarming the customer here creates support load for a problem that usually fixes itself; skipping the recovery link also spares one gateway call per past-due customer per pass |
+
+#### C5. Payment action required — day 3 (dunning)
+| | |
+|---|---|
+| Function | `send_payment_action_required_email(to_email, name, plan_name, amount, recovery_url, days_left)` |
+| Subject | `Action needed: update your payment method` |
+| Body | Retries exhausted; agents keep working for N more days. Links to Razorpay's hosted recovery page |
+| Trigger | `task_dunning_emails` cron, day 3 of `past_due` (marker `halted_3`) |
+| Metered | No |
+| Context | `recovery_url` is the EXISTING subscription's `short_url` — a halted sub recovers in place via Razorpay's hosted page and must never be re-minted (that would double-charge). See `dunning_service.get_recovery_link` |
+
+#### C6. Payment final warning — day 5 (dunning)
+| | |
+|---|---|
+| Function | `send_payment_final_warning_email(to_email, name, plan_name, recovery_url, days_left)` |
+| Subject | `Your AI agents stop <today / in N days>` |
+| Body | The deadline is the message: agents stop responding and the widget goes offline |
+| Trigger | `task_dunning_emails` cron, day 5 of `past_due` (marker `warning_5`) |
+| Metered | No |
+| Context | Day count is floored by `_stop_phrase` so it can never render "in 0 days". The cadence catches up to the newest unsent bucket, so a missed tick still delivers this rather than dropping it |
+
+#### C7. Subscription suspended (dunning end-of-life)
+| | |
+|---|---|
+| Function | `send_subscription_suspended_email(to_email, name, plan_name, recovery_url)` |
+| Subject | `Your OyeChats subscription has been suspended` |
+| Body | Grace elapsed and agents are offline; data is safe; still recoverable |
+| Trigger | `task_expire_past_due_subscriptions` cron on the flip to `expired` (marker `suspended`) |
+| Metered | No |
+| Context | `recovery_url` is optional — the gateway may be unreachable or the mandate terminal, in which case it falls back to prose rather than rendering a dead button |
+
 ### D. Lead / Qualification / Live Chat
 
 #### D1. Qualified lead alert
@@ -291,7 +331,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **21 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (3), Lead/Live-chat (6), Affiliate (2), Team (1).
+- **25 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (7), Lead/Live-chat (6), Affiliate (2), Team (1).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF).

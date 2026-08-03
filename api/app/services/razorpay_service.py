@@ -1991,10 +1991,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         return f"Subscription {razorpay_sub_id} is {local.status} — activation ignored"
 
     # Existing local row — update fields and ensure first-month credits exist.
-    # Card rescued out of dunning: drop the past_due anchor so a future
-    # failure starts a fresh grace window instead of inheriting this one.
+    # Card rescued out of dunning: drop the anchor AND the cadence markers so a
+    # future failure starts a fresh grace window and a fresh email sequence
+    # instead of inheriting this one.
     if local.status == "past_due":
-        local.past_due_since = None
+        _clear_dunning_state(local)
     local.status = "active"
     if current_period_start:
         local.current_period_start = current_period_start
@@ -2191,6 +2192,12 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.current_period_start = new_period_start
     if new_period_end:
         local.current_period_end = new_period_end
+    # A successful charge is the NORMAL rescue out of dunning (the activated
+    # path only covers a re-authorised mandate), so the episode must be reset
+    # here too — otherwise the next failure inherits stale markers and the
+    # customer is suspended without a single email.
+    if local.status == "past_due":
+        _clear_dunning_state(local)
     local.status = "active"
     session.flush()
     return f"Subscription {razorpay_sub_id} charged"
@@ -2272,6 +2279,26 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     local.status = "expired"
     session.flush()
     return f"Subscription {sub_entity.get('id')} completed"
+
+
+def _clear_dunning_state(local: Subscription) -> None:
+    """Reset the dunning episode when a subscription is rescued.
+
+    BOTH fields must be cleared together. ``past_due_since`` alone is not
+    enough: ``dunning_emails_sent`` carries the per-episode idempotency markers
+    (``failed_0``/``halted_3``/``warning_5``), so leaving them set means a
+    customer who fails, recovers, and fails again months later matches every
+    marker on the new episode and is silently sent NOTHING before being
+    expired on day 7.
+
+    Idempotent and safe to call on any status — a row that was never past due
+    simply has nothing to clear.
+    """
+    local.past_due_since = None
+    if local.dunning_emails_sent:
+        # Reassign rather than mutate: SQLAlchemy does not track in-place
+        # changes to a JSONB dict.
+        local.dunning_emails_sent = {}
 
 
 def _enter_past_due(local: Subscription) -> None:

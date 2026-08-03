@@ -640,6 +640,74 @@ def _billing_details_dict(client: Client) -> dict:
     }
 
 
+@router.get("/payment-recovery")
+def payment_recovery(client: Client = Depends(get_current_client), bot_id: int | None = None):
+    """Recovery state + hosted link for a failing subscription.
+
+    Drives the app-wide past-due banner and its CTA. Read-only and safe to
+    poll: it resolves Razorpay's EXISTING hosted page and never mutates
+    anything — in particular it never mints a second mandate, which would
+    double-charge a customer whose original subscription is still recoverable
+    (see ``dunning_service``).
+
+    Scope resolution mirrors ``/current`` and ``_resolve_invoice_scope``: an
+    agent with no subscription of its own draws on the ACCOUNT plan, so we fall
+    back to it. Without that fallback the banner would stay silent for a
+    past-due account whenever an agent happened to be selected in the switcher.
+    """
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+    from app.services.dunning_service import DunningError, get_recovery_link
+
+    with get_session() as session:
+        sub = None
+        if bot_id is not None:
+            sub = get_subscription_for_bot(session, client.id, bot_id)
+        if sub is None:
+            sub = get_client_subscription(session, client.id)
+
+        if sub is None or sub.status != "past_due":
+            return {
+                "past_due": False,
+                "recoverable": False,
+                "recovery_url": None,
+                "days_left": None,
+                "plan_name": None,
+            }
+
+        days_left = None
+        if sub.past_due_since is not None:
+            since = sub.past_due_since
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=UTC)
+            elapsed = (datetime.now(UTC) - since).days
+            days_left = max(0, PAYMENT_FAILED_GRACE_DAYS - elapsed)
+
+        plan_name = sub.plan.name if sub.plan else None
+
+        try:
+            link = get_recovery_link(sub.razorpay_subscription_id)
+        except DunningError:
+            # Gateway hiccup. Still tell the customer they are past due — that
+            # part is locally known and true — but ``recoverable: None`` says
+            # "we couldn't check", which must not be rendered as a dead button
+            # or as "your subscription is gone".
+            return {
+                "past_due": True,
+                "recoverable": None,
+                "recovery_url": None,
+                "days_left": days_left,
+                "plan_name": plan_name,
+            }
+
+        return {
+            "past_due": True,
+            "recoverable": link.recoverable,
+            "recovery_url": link.url,
+            "days_left": days_left,
+            "plan_name": plan_name,
+        }
+
+
 @router.get("/billing-details")
 def get_billing_details(client: Client = Depends(get_current_client)):
     """The buyer identity used on tax invoices (invoicing v2 Phase 1)."""
