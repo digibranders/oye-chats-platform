@@ -95,7 +95,9 @@ def test_tax_invoice_html_carries_rule46_fields():
     assert "₹137.21" in html  # CGST and SGST
     assert "₹274.42" in html  # total tax
     assert "₹1,799.00" in html  # grand total
-    assert "CGST @ 9.0%" in html and "SGST @ 9.0%" in html
+    # Rates render without a trailing ".0" — "CGST @ 9.0%" reads as an
+    # unfinished template on a statutory document (see _fmt_rate).
+    assert "CGST @ 9%" in html and "SGST @ 9%" in html
     assert "Rupees One Thousand Seven Hundred Ninety Nine Only" in html
     assert "Place of supply: 27" in html
     # Issue date rendered in IST (12:00 UTC = 17:30 IST, same calendar day).
@@ -107,7 +109,7 @@ def test_igst_row_for_inter_state():
     html = render_invoice_html(
         _tax_invoice(cgst_minor=0, sgst_minor=0, igst_minor=27442, supply_kind="inter", place_of_supply="29")
     )
-    assert "IGST @ 18.0%" in html
+    assert "IGST @ 18%" in html
     assert "CGST" not in html
 
 
@@ -235,6 +237,86 @@ def test_export_without_lut_prints_igst_paid_endorsement():
     )
     html = render_invoice_html(inv)
     assert "SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX" in html
+
+
+# ── foreign-currency (export) documents ───────────────────────────────────────
+
+
+def _usd_export(**overrides) -> Invoice:
+    """A $9.00 export that Razorpay converted to ₹805.07 (89.4522 INR/USD)."""
+    base = dict(
+        amount_cents=900,
+        currency="usd",
+        is_export=True,
+        supply_kind="export",
+        place_of_supply=None,
+        taxable_value_minor=900,
+        cgst_minor=0,
+        sgst_minor=0,
+        igst_minor=0,
+        total_tax_minor=0,
+        inr_amount_minor=80_507,
+        inr_taxable_value_minor=80_507,
+        inr_total_tax_minor=0,
+        fx_rate_micros=89_452_222,
+        fx_rate_source="razorpay_base_amount",
+        description="Starter — monthly",
+        line_items=[{"description": "Starter — monthly", "amount_minor": 900}],
+        seller_snapshot={**_tax_invoice().seller_snapshot, "lut_active": True, "lut_number": "LUT-2026-1"},
+        buyer_snapshot={**_tax_invoice().buyer_snapshot, "gstin": None, "billing_country": "US"},
+    )
+    base.update(overrides)
+    return _tax_invoice(**base)
+
+
+def test_export_document_is_denominated_in_the_supply_currency():
+    html = render_invoice_html(_usd_export())
+    assert "$9.00" in html
+    # The rupee sign must not appear as the document total — that is the whole
+    # bug class this replaces (a dollar charge printed as rupees).
+    assert "₹9.00" not in html
+
+
+def test_export_document_carries_the_inr_mirror_and_rate():
+    html = render_invoice_html(_usd_export())
+    assert "1 USD = ₹89.4522" in html
+    assert "₹805.07" in html
+    assert "Rule 34(2)" in html
+
+
+def test_igst_paid_export_shows_the_remittable_tax_in_rupees():
+    # Without a LUT the IGST is real money owed to the government, in rupees.
+    # The rupee figure is what gets remitted, so it has to be on the document.
+    html = render_invoice_html(
+        _usd_export(
+            taxable_value_minor=763,
+            igst_minor=137,
+            total_tax_minor=137,
+            inr_taxable_value_minor=68_226,
+            inr_total_tax_minor=12_281,
+            seller_snapshot={**_tax_invoice().seller_snapshot, "lut_active": False, "lut_number": None},
+        )
+    )
+    assert "IGST @ 18% (INR)" in html
+    assert "₹122.81" in html
+    assert "SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX" in html
+
+
+def test_foreign_document_never_states_its_total_as_rupees_in_words():
+    # "Amount in words" is rupee wording; on a $9 document it would read
+    # "Rupees Nine Only" and contradict the total three lines above it.
+    html = render_invoice_html(_usd_export())
+    assert "Rupees Nine Only" not in html
+    # The rupee wording belongs to the INR equivalent, and only there.
+    assert "Rupees Eight Hundred Five and Seven Paise Only" in html
+
+
+def test_inr_document_still_states_its_total_in_words():
+    html = render_invoice_html(_tax_invoice())
+    assert "Amount in words:" in html
+    assert "Rupees One Thousand Seven Hundred Ninety Nine Only" in html
+    # No FX block on a rupee document — there is nothing to convert.
+    assert "Rule 34(2)" not in html
 
 
 def test_state_name_helper():

@@ -376,7 +376,7 @@ class BotResponse(BaseModel):
     widget_messages: dict = {}
     widget_config: dict = {}
     branding_text: str = "Powered by OyeChats"
-    branding_url: str = "https://oyechats.com"
+    branding_url: str = "https://www.oyechats.com"
     # Configurable visitor-facing messages
     welcome_title: str = "Hi there 👋"
     welcome_subtitle: str = "How can we help you today?"
@@ -462,7 +462,7 @@ def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
         widget_messages=bot.widget_messages or {},
         widget_config=bot.widget_config or {},
         branding_text=bot.branding_text or "Powered by OyeChats",
-        branding_url=bot.branding_url or "https://oyechats.com",
+        branding_url=bot.branding_url or "https://www.oyechats.com",
         welcome_title=bot.welcome_title or "Hi there 👋",
         welcome_subtitle=bot.welcome_subtitle or "How can we help you today?",
         waiting_message=bot.waiting_message or "Connecting you to support...",
@@ -633,7 +633,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
         "branding_text": bot.branding_text or "Powered by OyeChats",
-        "branding_url": bot.branding_url or "https://oyechats.com",
+        "branding_url": bot.branding_url or "https://www.oyechats.com",
         "welcome_title": bot.welcome_title or "Hi there 👋",
         "welcome_subtitle": bot.welcome_subtitle or "How can we help you today?",
         "waiting_message": bot.waiting_message or "Connecting you to support...",
@@ -1102,7 +1102,7 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
       <span class="toolbar-key">{masked_key}</span>
       <span class="toolbar-badge">Preview</span>
       <div class="toolbar-spacer"></div>
-      <a class="toolbar-brand" href="https://oyechats.com" target="_blank" rel="noopener">Powered by OyeChats</a>
+      <a class="toolbar-brand" href="https://www.oyechats.com" target="_blank" rel="noopener">Powered by OyeChats</a>
     </div>
     <iframe
       id="preview-frame"
@@ -1326,7 +1326,7 @@ def list_bots(
                     widget_messages=b.widget_messages or {},
                     widget_config=b.widget_config or {},
                     branding_text=b.branding_text or "Powered by OyeChats",
-                    branding_url=b.branding_url or "https://oyechats.com",
+                    branding_url=b.branding_url or "https://www.oyechats.com",
                     welcome_title=b.welcome_title or "Hi there 👋",
                     welcome_subtitle=b.welcome_subtitle or "How can we help you today?",
                     waiting_message=b.waiting_message or "Connecting you to support...",

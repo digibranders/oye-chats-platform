@@ -68,6 +68,18 @@ class SellerProfile:
     lut_number: str | None = None
     invoice_prefix: str = "DB"
     logo_url: str | None = None
+    # Companies Act 2013 s.12(3)(c): every company must print its CIN,
+    # registered office address, telephone, email and website on all business
+    # letters, billheads and official publications. An invoice is a billhead,
+    # so these belong on the document — this is a Companies Act obligation,
+    # separate from anything GST requires.
+    cin: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    # Billing contact printed on the document. Falls back to config.SUPPORT_EMAIL
+    # so the invoice can never drift from the address the rest of the product
+    # tells customers to use.
+    support_email: str | None = None
 
     @property
     def gst_enabled(self) -> bool:
@@ -107,6 +119,10 @@ def get_seller_profile(session: Session) -> SellerProfile:
         lut_number=data.get("lut_number") or None,
         invoice_prefix=_clamped_prefix(data.get("invoice_prefix", defaults.invoice_prefix), defaults.invoice_prefix),
         logo_url=data.get("logo_url") or None,
+        cin=data.get("cin") or None,
+        phone=data.get("phone") or None,
+        website=data.get("website") or None,
+        support_email=data.get("support_email") or None,
     )
 
 
@@ -187,6 +203,22 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
     if lut_active and not lut_number:
         raise SellerProfileError("lut_number is required when lut_active is true")
 
+    # CIN is 21 chars: L/U + 5-digit industry code + 2-letter state + 4-digit
+    # year + 3-letter ownership + 6-digit registration number. Validated so a
+    # typo cannot reach a statutory document, but optional — a non-company
+    # seller (LLP, proprietorship) has no CIN.
+    cin = str(payload.get("cin") or "").strip().upper() or None
+    if cin and not re.fullmatch(r"[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}", cin):
+        raise SellerProfileError("cin must be a 21-character Corporate Identity Number")
+
+    support_email = str(payload.get("support_email") or "").strip() or None
+    if support_email and "@" not in support_email:
+        raise SellerProfileError("support_email must be an email address")
+
+    website = str(payload.get("website") or "").strip() or None
+    if website and not website.startswith(("http://", "https://")):
+        raise SellerProfileError("website must start with http:// or https://")
+
     return {
         "legal_name": legal_name,
         "trade_name": str(payload.get("trade_name", defaults.trade_name)).strip() or defaults.trade_name,
@@ -201,6 +233,10 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
         "lut_number": lut_number,
         "invoice_prefix": prefix,
         "logo_url": (str(payload.get("logo_url")).strip() or None) if payload.get("logo_url") else None,
+        "cin": cin,
+        "phone": (str(payload.get("phone")).strip() or None) if payload.get("phone") else None,
+        "website": website,
+        "support_email": support_email,
     }
 
 

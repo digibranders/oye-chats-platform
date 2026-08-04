@@ -40,6 +40,7 @@ TYPE_OFFLINE_MESSAGE = "offline_message_received"
 TYPE_HANDOFF_REQUEST = "handoff_request"
 TYPE_FEEDBACK_RESOLVED = "feedback_resolved"
 TYPE_CRAWL_COMPLETED = "crawl_completed"
+TYPE_PAYMENT_FAILED = "payment_failed"
 
 KNOWN_TYPES = frozenset(
     {
@@ -49,8 +50,14 @@ KNOWN_TYPES = frozenset(
         TYPE_HANDOFF_REQUEST,
         TYPE_FEEDBACK_RESOLVED,
         TYPE_CRAWL_COMPLETED,
+        TYPE_PAYMENT_FAILED,
     }
 )
+
+# Workspace ▸ Billing. The Admin 2.0 rebuild moved this from the old
+# ``/settings?tab=billing``, which no longer resolves — every notification
+# deep-link must use this constant so a future move is a one-line change.
+BILLING_LINK = "/workspace/billing"
 
 # Soft cap on stored history. Anything older than the most recent
 # ``MAX_HISTORY`` per workspace is pruned opportunistically when a new
@@ -283,7 +290,7 @@ def notify_plan_purchased(
         type_=TYPE_PLAN_PURCHASED,
         title=f"Plan activated: {plan_name}{cycle}",
         body="Your subscription is live. Check your usage and limits in Billing.",
-        link="/settings?tab=billing",
+        link=BILLING_LINK,
         data={
             "plan_name": plan_name,
             "billing_cycle": billing_cycle,
@@ -379,6 +386,41 @@ def notify_feedback_resolved(
             "message_preview": preview,
             "has_response": bool(admin_response),
         },
+    )
+
+
+def notify_payment_failed(
+    session: Session,
+    *,
+    client_id: int,
+    plan_name: str,
+    days_left: int,
+    recoverable: bool,
+) -> dict[str, Any]:
+    """In-app counterpart to the dunning emails.
+
+    Email deliverability is imperfect and the billing email may differ from the
+    login email — a customer who never opens email still opens the product, so
+    the in-app signal is not a nice-to-have.
+
+    ``recoverable`` reflects whether Razorpay's hosted recovery page is
+    reachable for this subscription; when it isn't we must not imply a
+    one-click fix exists.
+    """
+    day_word = "day" if days_left == 1 else "days"
+    body = (
+        f"We couldn't collect payment for {plan_name}. Your agents keep working for {days_left} more {day_word}."
+        if recoverable
+        else f"We couldn't collect payment for {plan_name}. Update your billing details to continue."
+    )
+    return create_notification(
+        session,
+        client_id=client_id,
+        type_=TYPE_PAYMENT_FAILED,
+        title="Payment failed — action needed",
+        body=body,
+        link=BILLING_LINK,
+        data={"plan_name": plan_name, "days_left": days_left, "recoverable": recoverable},
     )
 
 

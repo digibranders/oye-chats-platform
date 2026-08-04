@@ -32,7 +32,7 @@ from app.core.ssrf import fetch_text_safely, probe_url_alive
 
 logger = logging.getLogger(__name__)
 
-_USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
+_USER_AGENT = "OyeChats-Bot/1.0 (+https://www.oyechats.com)"
 
 
 def _parse_robots_rules(robots_text: str | None) -> RobotFileParser:

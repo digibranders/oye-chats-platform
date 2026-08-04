@@ -1,6 +1,7 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -40,6 +41,15 @@ class Client(Base):
     billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
     billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
     billing_email = Column(String, nullable=True)  # falls back to login email
+    # Razorpay Customer id — the identity anchor for saved payment instruments.
+    # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without
+    # this there is no saved-card capability at all.
+    #
+    # Distinct from ``Subscription.razorpay_customer_id``, which is a PASSIVE
+    # mirror scraped out of webhook payloads and is routinely NULL even on a
+    # live mandate. This column is the one we create and own; the subscription
+    # copy stays for webhook correlation.
+    razorpay_customer_id = Column(String, unique=True, index=True, nullable=True)
     # Nullable because OAuth-only signups never set a password. The
     # /auth/google/callback path always creates the Client row first and
     # never assigns a hashed_password; password login for that account
@@ -359,7 +369,9 @@ class Bot(Base):
 
     # Widget branding — customizable branding text and URL
     branding_text = Column(String, default="Powered by OyeChats", server_default="Powered by OyeChats", nullable=False)
-    branding_url = Column(String, default="https://oyechats.com", server_default="https://oyechats.com", nullable=False)
+    branding_url = Column(
+        String, default="https://www.oyechats.com", server_default="https://www.oyechats.com", nullable=False
+    )
 
     # Service-scoped answers. When ``services`` is non-empty the bot is constrained
     # to only answer about those services. ``services_url`` is appended as a CTA
@@ -1113,6 +1125,14 @@ class Plan(Base):
     razorpay_plan_id_monthly = Column(String, nullable=True)
     razorpay_plan_id_annual = Column(String, nullable=True)
 
+    # Razorpay plan IDs for the USD (international) rail. Separate Razorpay
+    # plans priced in USD — a plan's currency is fixed at creation, so the INR
+    # ids above cannot serve a USD charge. NULL means the USD rail is not
+    # configured for this tier and USD checkout must fail loudly rather than
+    # silently charging INR. Per-environment (test vs live), like the INR ids.
+    razorpay_plan_id_monthly_usd = Column(String, nullable=True)
+    razorpay_plan_id_annual_usd = Column(String, nullable=True)
+
     # Fixed USD headline pricing (cents). Independent of the INR columns —
     # set deliberately, NEVER converted live. Shown to non-Indian visitors.
     # NULL → caller falls back to a DISPLAY_USD_TO_INR conversion for legacy
@@ -1199,6 +1219,15 @@ class Subscription(Base):
     # ``data_deleted``); values are ISO-8601 timestamps of when each was
     # sent. Missing key == not yet sent. Lets every cron re-run safely.
     trial_emails_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
+    # Idempotency log for the dunning cadence, mirroring ``trial_emails_sent``.
+    # Keys are cadence stages (``failed_0``, ``halted_3``, ``warning_5``,
+    # ``suspended``); values are ISO-8601 send timestamps. Missing key == not
+    # yet sent, so every cron re-run is safe.
+    #
+    # Deliberately NOT reusing ``trial_emails_sent``: the two lifecycles are
+    # independent, and a customer who recovers, later churns, and returns must
+    # get a fresh dunning sequence without their trial history being cleared.
+    dunning_emails_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
 
     # Cancellation
     canceled_at = Column(DateTime(timezone=True), nullable=True)
@@ -1404,6 +1433,25 @@ class Invoice(Base):
     total_tax_minor = Column(Integer, nullable=True)
     hsn_sac = Column(String(8), nullable=True)
     is_export = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    # ── INR mirror for a non-INR (export) document ───────────────────────────
+    # The document is issued in the currency of supply; GST is REPORTED in
+    # rupees (GSTR-1 Table 6A), and IGST on an export made without a LUT is
+    # remitted in rupees. These carry that mirror so the return never has to
+    # re-derive a rate years later. All NULL on an INR invoice, where
+    # ``amount_cents``/``taxable_value_minor`` are already the reportable
+    # figures.
+    #
+    # ``inr_amount_minor`` is Razorpay's ``base_amount`` verbatim — the paise
+    # it actually converted and settles on — so the document ties to the
+    # settlement and the FIRC exactly. The rate is stored alongside it (INR per
+    # one foreign unit, x1e6, integer — never a float on a statutory record)
+    # purely so the arithmetic is reproducible on the face of the invoice.
+    inr_amount_minor = Column(Integer, nullable=True)
+    inr_taxable_value_minor = Column(Integer, nullable=True)
+    inr_total_tax_minor = Column(Integer, nullable=True)
+    fx_rate_micros = Column(BigInteger, nullable=True)
+    fx_rate_source = Column(String(32), nullable=True)  # razorpay_base_amount
     line_items = Column(JSONB, nullable=True)
     credit_note_of_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
     # Razorpay's own invoice entity for this charge (payment.invoice_id from
@@ -1481,27 +1529,44 @@ class InvoiceCounter(Base):
 
 
 class PaymentMethod(Base):
-    """Stored payment methods for a client — synced from Razorpay."""
+    """A saved payment instrument — a DISPLAY MIRROR of Razorpay's token list.
+
+    Razorpay is the source of truth (``GET /v1/customers/{id}/tokens``); this
+    table exists so the app and the super-admin console can render an
+    instrument list without a live gateway call, and so a revoked token can be
+    pruned the moment its webhook lands.
+
+    RBI card-on-file rules permit a merchant to retain ONLY the last four
+    digits, the network, and issuer metadata. Cardholder name, BIN/IIN and
+    **expiry** must not be stored after 1 Oct 2022 — hence no expiry columns
+    here. Anything richer has to be fetched live and discarded; if you find
+    yourself adding a column for it, that is the bug.
+    """
 
     __tablename__ = "payment_methods"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # Provider
-    provider = Column(String, nullable=False)  # razorpay
-    type = Column(String, nullable=False)  # card|upi|bank
+    provider = Column(String, nullable=False, default="razorpay", server_default="razorpay")
+    type = Column(String, nullable=False)  # card|upi|emandate
     last4 = Column(String(4), nullable=True)
-    brand = Column(String, nullable=True)  # visa|mastercard|amex|etc
-    expiry_month = Column(Integer, nullable=True)
-    expiry_year = Column(Integer, nullable=True)
+    network = Column(String, nullable=True)  # Visa|MasterCard|RuPay|Amex
+    issuer = Column(String, nullable=True)  # bank code, e.g. HDFC
+    upi_handle = Column(String, nullable=True)  # VPA, for mandate display
 
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Provider references
     razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
+    # Provenance only — which gateway customer this token came from. Not
+    # indexed: reads go via client_id or token id, both already indexed.
+    razorpay_customer_id = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Last time this row was reconciled against Razorpay. Drives the read-through
+    # TTL so the Billing page does not make a gateway call on every load.
+    synced_at = Column(DateTime(timezone=True), nullable=True)
 
     client = relationship("Client")
 
@@ -1958,7 +2023,14 @@ class DiscountedPlanCache(Base):
     base_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="CASCADE"), nullable=False)
     billing_cycle = Column(String, nullable=False)  # "monthly" | "annual"
     discount_bps = Column(Integer, nullable=False)  # e.g. 1500 = 15 %
+    # Rail this cached plan bills on. Part of the dedup key: a Razorpay plan's
+    # currency is fixed at creation, so the INR and USD discounted plans for the
+    # same base/cycle/discount are different objects and must not share a row —
+    # sharing one would bill an international customer in rupees.
+    currency = Column(String(3), default="INR", server_default="INR", nullable=False)
     razorpay_plan_id = Column(String, nullable=False)
+    # Minor units in ``currency`` — paise for INR, cents for USD. The column
+    # name predates the USD rail.
     amount_paise = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -1967,6 +2039,7 @@ class DiscountedPlanCache(Base):
             "base_plan_id",
             "billing_cycle",
             "discount_bps",
+            "currency",
             name="uq_discounted_plan",
         ),
         CheckConstraint(

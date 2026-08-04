@@ -26,6 +26,7 @@ import {
   Button,
   DataTable,
   EmptyState,
+  FeedbackBanner,
   InsightCard,
   Input,
   LockedFeatureCard,
@@ -35,7 +36,9 @@ import {
   StatusBadge,
   Tabs,
   cn,
+  useFeedback,
   type Column,
+  type Feedback,
 } from '../../design-system';
 import {
   createWebhook,
@@ -214,7 +217,6 @@ function truncateUrl(url: string, max = 72): string {
   return url.length > max ? `${url.slice(0, max)}…` : url;
 }
 
-type Feedback = { readonly tone: 'success' | 'error'; readonly message: string };
 type TabKey = 'webhooks' | 'crm' | 'meetings' | 'email';
 
 // ── Local Switch (accessible toggle) ──────────────────────────────────────────
@@ -1418,7 +1420,9 @@ export function IntegrationsPage(): ReactElement {
   const { isFree } = useEntitlements();
 
   const [tab, setTab] = useState<TabKey>('webhooks');
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  // Scoped to the selected agent - integrations are configured per agent, so a
+  // confirmation must not survive a switch to a different one.
+  const { feedback, notify, dismiss } = useFeedback({ resetKey: selectedBotId });
   const [refreshToken, setRefreshToken] = useState(0);
   const [result, setResult] = useState<WebhookResult | null>(null);
 
@@ -1487,30 +1491,7 @@ export function IntegrationsPage(): ReactElement {
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
-  const feedbackBanner: ReactNode = (
-    <div aria-live="polite" className="empty:hidden">
-      {feedback && (
-        <div
-          className={cn(
-            'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px]',
-            feedback.tone === 'success'
-              ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-              : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
-          )}
-        >
-          <span>{feedback.message}</span>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            aria-label="Dismiss message"
-            className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
-          >
-            <X size={15} aria-hidden="true" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  const feedbackBanner: ReactNode = <FeedbackBanner feedback={feedback} onDismiss={dismiss} />;
 
   // No agent selected yet.
   if (!selectedBotId) {
@@ -1601,7 +1582,7 @@ export function IntegrationsPage(): ReactElement {
           loading={webhooksLoading}
           error={webhooksError}
           onReload={reloadWebhooks}
-          onFeedback={setFeedback}
+          onFeedback={notify}
           botId={selectedBotId}
         />
       </div>
@@ -1614,7 +1595,7 @@ export function IntegrationsPage(): ReactElement {
         hidden={tab !== 'crm'}
         className="focus-visible:outline-none"
       >
-        <CrmPanel onFeedback={setFeedback} onAddWebhook={() => setTab('webhooks')} />
+        <CrmPanel onFeedback={notify} onAddWebhook={() => setTab('webhooks')} />
       </div>
 
       {selectedBot && (
@@ -1630,7 +1611,7 @@ export function IntegrationsPage(): ReactElement {
             key={selectedBot.id}
             bot={selectedBot}
             onSaved={refreshBots}
-            onFeedback={setFeedback}
+            onFeedback={notify}
           />
         </div>
       )}
@@ -1648,7 +1629,7 @@ export function IntegrationsPage(): ReactElement {
             key={selectedBot.id}
             bot={selectedBot}
             onSaved={refreshBots}
-            onFeedback={setFeedback}
+            onFeedback={notify}
           />
         </div>
       )}

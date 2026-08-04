@@ -154,13 +154,106 @@ def test_snapshots_captured(db, enabled):
     assert inv.line_items[0]["amount_minor"] == 179900
 
 
-def test_non_inr_currency_is_skipped(db, enabled):
+# ── non-INR (export) documents ────────────────────────────────────────────────
+#
+# A foreign charge is issued in the currency of supply and carries an INR
+# mirror, because GSTR-1 Table 6A reports exports in rupees and IGST on a
+# non-LUT export is remitted in rupees. The mirror is built from Razorpay's
+# ``base_amount`` — the paise it actually converted at the processing bank's
+# rate on the payment date, which is the Rule 34(2) GAAP rate for a service.
+#
+# $9.00 came back as ₹805.07, i.e. 89.452222 INR/USD.
+_USD_MINOR = 900
+_INR_MINOR = 80_507
+_RATE_MICROS = 89_452_222
+
+
+def test_export_in_usd_is_finalized_with_an_inr_mirror(db, enabled):
+    _seller(db, lut_active=True, lut_number="LUT-2026-1")
+    c = _client(db, "fin-usd-lut@test.example", billing_country="US")
+    inv = _invoice(db, c.id, amount=_USD_MINOR, currency="usd", inr_amount_minor=_INR_MINOR)
+
+    assert invoice_service.finalize_invoice(db, inv) is True
+    assert inv.invoice_type == "tax_invoice"
+    assert inv.invoice_number is not None
+    assert inv.is_export is True
+    # The DOCUMENT is denominated in the currency of supply.
+    assert inv.taxable_value_minor == _USD_MINOR
+    assert inv.total_tax_minor == 0  # zero-rated under LUT
+    # The RETURN is denominated in rupees.
+    assert inv.inr_amount_minor == _INR_MINOR
+    assert inv.inr_taxable_value_minor == _INR_MINOR
+    assert inv.inr_total_tax_minor == 0
+    assert inv.fx_rate_micros == _RATE_MICROS
+    assert inv.fx_rate_source == "razorpay_base_amount"
+
+
+def test_export_without_lut_carves_igst_in_both_currencies(db, enabled):
+    # Rule 96A: an export made WITHOUT a LUT is made on payment of IGST. The
+    # tax is shown on the document in the currency of supply, and remitted to
+    # the government in rupees — so both breakups have to exist and both have
+    # to reconcile against their own total.
+    _seller(db)  # lut_active defaults False
+    c = _client(db, "fin-usd-nolut@test.example", billing_country="US")
+    inv = _invoice(db, c.id, amount=_USD_MINOR, currency="usd", inr_amount_minor=_INR_MINOR)
+
+    assert invoice_service.finalize_invoice(db, inv) is True
+    assert (inv.taxable_value_minor, inv.igst_minor) == (763, 137)
+    assert inv.taxable_value_minor + inv.total_tax_minor == _USD_MINOR
+    assert (inv.inr_taxable_value_minor, inv.inr_total_tax_minor) == (68_226, 12_281)
+    assert inv.inr_taxable_value_minor + inv.inr_total_tax_minor == _INR_MINOR
+
+
+def test_non_inr_on_a_domestic_supply_is_refused(db, enabled):
+    # A dollar charge whose buyer is now in India: the customer moved, so the
+    # supply is domestic while the live mandate still bills USD. Numbering it
+    # would produce a domestic tax invoice denominated in dollars with rupee
+    # tax columns. Refuse and leave it for ops to re-point the mandate.
     _seller(db)
-    c = _client(db, "fin-usd@test.example", billing_state_code="27")
-    inv = _invoice(db, c.id, currency="usd")
+    c = _client(db, "fin-usd-domestic@test.example", billing_state_code="27", billing_country="IN")
+    inv = _invoice(db, c.id, amount=_USD_MINOR, currency="usd", inr_amount_minor=_INR_MINOR)
+
     assert invoice_service.finalize_invoice(db, inv) is False
     assert inv.invoice_number is None
     assert inv.invoice_type == "legacy"
+
+
+def test_non_inr_without_a_captured_conversion_is_refused(db, enabled):
+    # No ``base_amount`` means no defensible Rule 34 rate. A document we cannot
+    # report is worse than a document issued late — the sweep retries, and the
+    # anomaly report surfaces it.
+    _seller(db, lut_active=True, lut_number="LUT-2026-1")
+    c = _client(db, "fin-usd-nofx@test.example", billing_country="US")
+    inv = _invoice(db, c.id, amount=_USD_MINOR, currency="usd", inr_amount_minor=None)
+
+    assert invoice_service.finalize_invoice(db, inv) is False
+    assert inv.invoice_number is None
+
+
+def test_non_inr_with_an_implausible_rate_is_refused(db, enabled):
+    # base_amount delivered in rupees rather than paise → 8,945 INR/USD. A
+    # 100x-off taxable value on a filed return is unrecoverable; refuse.
+    _seller(db, lut_active=True, lut_number="LUT-2026-1")
+    c = _client(db, "fin-usd-badfx@test.example", billing_country="US")
+    inv = _invoice(db, c.id, amount=_USD_MINOR, currency="usd", inr_amount_minor=_INR_MINOR * 100)
+
+    assert invoice_service.finalize_invoice(db, inv) is False
+    assert inv.invoice_number is None
+
+
+def test_inr_invoice_leaves_the_fx_mirror_null(db, enabled):
+    # On a rupee document ``amount_cents``/``taxable_value_minor`` ARE the
+    # reportable figures. A mirror here would be a second source of truth for
+    # the same number — NULL, not a copy.
+    _seller(db)
+    c = _client(db, "fin-inr-nofx@test.example", billing_state_code="27", billing_country="IN")
+    inv = _invoice(db, c.id)
+    assert invoice_service.finalize_invoice(db, inv) is True
+    assert inv.inr_amount_minor is None
+    assert inv.inr_taxable_value_minor is None
+    assert inv.inr_total_tax_minor is None
+    assert inv.fx_rate_micros is None
+    assert inv.fx_rate_source is None
 
 
 def test_unconfigured_seller_stays_legacy(db, enabled):

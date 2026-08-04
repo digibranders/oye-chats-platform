@@ -18,6 +18,7 @@ import {
   Button,
   DataTable,
   EmptyState,
+  FeedbackBanner,
   Input,
   LockedFeatureCard,
   MetricCard,
@@ -30,7 +31,7 @@ import {
   StatusBadge,
   Tabs,
   Textarea,
-  cn,
+  useFeedback,
   type Column,
 } from '../../design-system';
 import {
@@ -115,7 +116,6 @@ type LoadPhase =
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'ready'; readonly data: TeamData };
 
-type Feedback = { readonly tone: 'success' | 'error'; readonly message: string };
 type TabKey = 'people' | 'departments';
 
 // ── Small presentational pieces ──────────────────────────────────────────────
@@ -163,7 +163,9 @@ export function MembersPage(): ReactElement {
 
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  // Scoped to the selected agent's roster - drop the message the moment the
+  // agent changes so a stale confirmation never bleeds across contexts.
+  const { feedback, notify, dismiss } = useFeedback({ resetKey: selectedBotId });
   const [tab, setTab] = useState<TabKey>('people');
 
   // Mirror the latest committed phase so the async loader can tell an initial
@@ -173,24 +175,6 @@ export function MembersPage(): ReactElement {
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
-
-  // Feedback is scoped to the selected agent's roster - drop it the moment the
-  // agent changes so a stale message never bleeds across contexts. Render-time
-  // state adjustment (the React-sanctioned reset pattern), guarded to run once
-  // per change so it can't loop.
-  const [feedbackBotId, setFeedbackBotId] = useState(selectedBotId);
-  if (feedbackBotId !== selectedBotId) {
-    setFeedbackBotId(selectedBotId);
-    setFeedback(null);
-  }
-
-  // Success toasts are transient confirmations; auto-dismiss them so they don't
-  // linger while the user moves on. Errors persist until dismissed or replaced.
-  useEffect(() => {
-    if (feedback?.tone !== 'success') return;
-    const timer = window.setTimeout(() => setFeedback(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [feedback]);
 
   // Invite form
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -269,7 +253,7 @@ export function MembersPage(): ReactElement {
         // background flake keep the last-good data and surface the failure as a
         // non-destructive banner.
         if (phaseRef.current.status === 'ready') {
-          setFeedback({
+          notify({
             tone: 'error',
             message: toMessage(
               error,
@@ -287,7 +271,9 @@ export function MembersPage(): ReactElement {
     return () => {
       active = false;
     };
-  }, [refreshToken, isFree]);
+    // `notify` is a stable callback from useFeedback - listed to satisfy the
+    // exhaustive-deps rule without re-running the fetch.
+  }, [refreshToken, isFree, notify]);
 
   const reload = (): void => setRefreshToken((token) => token + 1);
   const retry = (): void => {
@@ -359,7 +345,7 @@ export function MembersPage(): ReactElement {
   const handleInvite = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (!selectedBotId) return;
-    setFeedback(null);
+    dismiss();
     setInviteBusy(true);
     try {
       await createOperatorInvite({
@@ -368,42 +354,42 @@ export function MembersPage(): ReactElement {
         role: inviteRole,
         departmentId: inviteDept ? Number(inviteDept) : null,
       });
-      setFeedback({ tone: 'success', message: `Invitation sent to ${inviteEmail.trim()}.` });
+      notify({ tone: 'success', message: `Invitation sent to ${inviteEmail.trim()}.` });
       setInviteOpen(false);
       setInviteEmail('');
       setInviteRole('operator');
       setInviteDept('');
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to send the invitation.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to send the invitation.') });
     } finally {
       setInviteBusy(false);
     }
   };
 
   const handleResend = async (invite: OperatorInvite): Promise<void> => {
-    setFeedback(null);
+    dismiss();
     setRowBusyId(invite.id);
     try {
       await resendOperatorInvite(invite.id);
-      setFeedback({ tone: 'success', message: `Invitation to ${invite.email} resent.` });
+      notify({ tone: 'success', message: `Invitation to ${invite.email} resent.` });
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to resend the invitation.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to resend the invitation.') });
     } finally {
       setRowBusyId(null);
     }
   };
 
   const handleRevoke = async (invite: OperatorInvite): Promise<void> => {
-    setFeedback(null);
+    dismiss();
     setRowBusyId(invite.id);
     try {
       await revokeOperatorInvite(invite.id);
-      setFeedback({ tone: 'success', message: `Invitation to ${invite.email} revoked.` });
+      notify({ tone: 'success', message: `Invitation to ${invite.email} revoked.` });
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to revoke the invitation.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to revoke the invitation.') });
     } finally {
       setRowBusyId(null);
     }
@@ -420,7 +406,7 @@ export function MembersPage(): ReactElement {
   const handleSaveEdit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (!editing || !maxChatsValid) return;
-    setFeedback(null);
+    dismiss();
     setEditBusy(true);
     try {
       await updateOperator(editing.id, {
@@ -428,27 +414,27 @@ export function MembersPage(): ReactElement {
         department_id: editDept ? Number(editDept) : null,
         max_concurrent_chats: maxChats,
       });
-      setFeedback({ tone: 'success', message: `${editing.name} updated.` });
+      notify({ tone: 'success', message: `${editing.name} updated.` });
       setEditing(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to update this operator.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to update this operator.') });
     } finally {
       setEditBusy(false);
     }
   };
 
   const handleRemove = async (operator: Operator): Promise<void> => {
-    setFeedback(null);
+    dismiss();
     setRowBusyId(operator.id);
     try {
       await deleteOperator(operator.id);
-      setFeedback({ tone: 'success', message: `${operator.name} removed from the team.` });
+      notify({ tone: 'success', message: `${operator.name} removed from the team.` });
       setRemovingId(null);
       if (editing?.id === operator.id) setEditing(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to remove this operator.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to remove this operator.') });
     } finally {
       setRowBusyId(null);
     }
@@ -456,14 +442,14 @@ export function MembersPage(): ReactElement {
 
   const handleSelfJoin = async (): Promise<void> => {
     if (!selectedBotId) return;
-    setFeedback(null);
+    dismiss();
     setSelfBusy(true);
     try {
       await addSelfAsOperator(selectedBotId);
-      setFeedback({ tone: 'success', message: 'You’re now taking live chats on this agent.' });
+      notify({ tone: 'success', message: 'You’re now taking live chats on this agent.' });
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to add you to the roster.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to add you to the roster.') });
     } finally {
       setSelfBusy(false);
     }
@@ -471,24 +457,24 @@ export function MembersPage(): ReactElement {
 
   const handleCreateDept = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    setFeedback(null);
+    dismiss();
     setDeptBusy(true);
     try {
       await createDepartment({ name: deptName.trim(), description: deptDesc.trim() || null });
-      setFeedback({ tone: 'success', message: `Department “${deptName.trim()}” created.` });
+      notify({ tone: 'success', message: `Department “${deptName.trim()}” created.` });
       setDeptOpen(false);
       setDeptName('');
       setDeptDesc('');
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to create the department.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to create the department.') });
     } finally {
       setDeptBusy(false);
     }
   };
 
   const openEditDept = (department: Department): void => {
-    setFeedback(null);
+    dismiss();
     setEditingDept(department);
     setEditDeptName(department.name);
     setEditDeptDesc(department.description ?? '');
@@ -515,7 +501,7 @@ export function MembersPage(): ReactElement {
         business_hours: editDeptHours && editDeptHours.enabled ? editDeptHours : null,
       });
       setEditingDept(null);
-      setFeedback({ tone: 'success', message: `Department “${name}” updated.` });
+      notify({ tone: 'success', message: `Department “${name}” updated.` });
       reload();
     } catch (error) {
       setEditDeptError(toMessage(error, 'Failed to update the department.'));
@@ -525,15 +511,15 @@ export function MembersPage(): ReactElement {
   };
 
   const handleDeleteDept = async (department: Department): Promise<void> => {
-    setFeedback(null);
+    dismiss();
     setDeptRowBusyId(department.id);
     try {
       await deleteDepartment(department.id);
-      setFeedback({ tone: 'success', message: `Department “${department.name}” deleted.` });
+      notify({ tone: 'success', message: `Department “${department.name}” deleted.` });
       setDeptRemovingId(null);
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to delete the department.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to delete the department.') });
     } finally {
       setDeptRowBusyId(null);
     }
@@ -657,28 +643,7 @@ export function MembersPage(): ReactElement {
       )}
 
       {/* Live feedback for every mutation. */}
-      <div aria-live="polite" className="empty:hidden">
-        {feedback && (
-          <div
-            className={cn(
-              'flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-[13px]',
-              feedback.tone === 'success'
-                ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-                : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
-            )}
-          >
-            <span>{feedback.message}</span>
-            <button
-              type="button"
-              onClick={() => setFeedback(null)}
-              aria-label="Dismiss message"
-              className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X size={15} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      </div>
+      <FeedbackBanner feedback={feedback} onDismiss={dismiss} />
 
       {phase.status === 'loading' && <LoadingState />}
 
@@ -705,7 +670,7 @@ export function MembersPage(): ReactElement {
             ariaLabel="Operators sections"
             value={tab}
             onChange={(key) => {
-              setFeedback(null);
+              dismiss();
               setTab(key as TabKey);
             }}
             tabs={[

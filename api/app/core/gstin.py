@@ -85,3 +85,61 @@ def is_valid_gstin(raw: str) -> bool:
     if gstin[:2] not in VALID_STATE_CODES:
         return False
     return gstin[-1] == compute_check_char(gstin[:-1])
+
+
+# ISO 3166-1 alpha-2 → country name, for the export-invoice "country of
+# destination" that Rule 46 requires. Deliberately a curated list rather than a
+# dependency: the invoice only ever needs the markets the product actually
+# sells into, and an unknown code falls back to the code itself so the field is
+# never silently blank on a statutory document.
+COUNTRY_NAMES: dict[str, str] = {
+    "AE": "United Arab Emirates",
+    "AU": "Australia",
+    "BD": "Bangladesh",
+    "BR": "Brazil",
+    "CA": "Canada",
+    "CH": "Switzerland",
+    "DE": "Germany",
+    "DK": "Denmark",
+    "ES": "Spain",
+    "FR": "France",
+    "GB": "United Kingdom",
+    "HK": "Hong Kong",
+    "ID": "Indonesia",
+    "IE": "Ireland",
+    "IL": "Israel",
+    "IN": "India",
+    "IT": "Italy",
+    "JP": "Japan",
+    "KE": "Kenya",
+    "LK": "Sri Lanka",
+    "MY": "Malaysia",
+    "NG": "Nigeria",
+    "NL": "Netherlands",
+    "NP": "Nepal",
+    "NZ": "New Zealand",
+    "PH": "Philippines",
+    "PK": "Pakistan",
+    "PL": "Poland",
+    "QA": "Qatar",
+    "SA": "Saudi Arabia",
+    "SE": "Sweden",
+    "SG": "Singapore",
+    "TH": "Thailand",
+    "TR": "Türkiye",
+    "US": "United States",
+    "VN": "Vietnam",
+    "ZA": "South Africa",
+}
+
+
+def country_name(code: str | None) -> str | None:
+    """ISO alpha-2 → country name, falling back to the code itself.
+
+    Returns ``None`` only for a genuinely empty code, so a caller can omit the
+    line rather than print "Country of destination: ".
+    """
+    normalized = (code or "").strip().upper()
+    if not normalized:
+        return None
+    return COUNTRY_NAMES.get(normalized, normalized)

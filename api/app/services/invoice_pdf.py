@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, select_autoescape
 
-from app.core.gstin import state_name
+from app.core.gstin import country_name, state_name
 from app.db.models import Invoice
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -96,6 +96,54 @@ def amount_in_words_inr(minor: int) -> str:
     return f"{words} Only"
 
 
+# Minor-unit symbols for the currencies the invoice engine can issue in. INR is
+# the only live rail today; the rest exist so the USD rail (Plan C) cannot ship
+# a document that prints a rupee sign on a dollar amount.
+_CURRENCY_SYMBOLS = {"INR": "₹", "USD": "$", "EUR": "€", "GBP": "£", "AED": "AED ", "SGD": "S$"}
+
+
+def _fmt_rate(bps: int | None, *, half: bool = False) -> str:
+    """Basis points → ``18`` / ``9`` / ``2.5``, never ``18.0``.
+
+    A trailing ".0" on a statutory document reads as an unfinished template.
+    ``half`` splits the rate for the CGST/SGST pair.
+    """
+    value = (bps or 0) / (200 if half else 100)
+    return f"{value:.10g}"
+
+
+def _fmt_money(minor: int | None, currency: str | None) -> str:
+    """Minor units → display string in the invoice's OWN currency.
+
+    Indian lakh grouping applies to INR only; every other currency uses
+    thousands grouping, because "$1,52,458.00" is not a number anyone outside
+    India reads correctly — and on a statutory export document it misstates
+    the figure's presentation.
+    """
+    code = (currency or "INR").upper()
+    if code == "INR":
+        return _fmt_inr(minor)
+    if minor is None:
+        return ""
+    if minor < 0:
+        raise ValueError("_fmt_money expects a non-negative amount (credit notes pass magnitudes)")
+    major, cents = divmod(int(minor), 100)
+    symbol = _CURRENCY_SYMBOLS.get(code, f"{code} ")
+    return f"{symbol}{major:,}.{cents:02d}"
+
+
+def _fmt_fx_rate(micros: int | None) -> str:
+    """Rate micros → ``89.4522``.
+
+    Four decimals: enough to reproduce the stored paise figure from the foreign
+    amount at the charge sizes billed here, and the precision a bank advice /
+    FIRC quotes, so the two documents visibly agree.
+    """
+    if not micros:
+        return ""
+    return f"{micros / 1_000_000:.4f}"
+
+
 def _fmt_inr(minor: int | None) -> str:
     """Paise → ``₹1,52,458.00``-style Indian-grouped display."""
     if minor is None:
@@ -157,6 +205,7 @@ _TEMPLATE = """\
   .foot { margin-top: 12mm; padding-top: 3.5mm; border-top: 0.6pt solid #e2e8f0;
           display: flex; justify-content: space-between; font-size: 8.5pt; }
   .sign { text-align: right; }
+  .copy-mark { letter-spacing: 0.6px; margin-top: 1mm; }
 </style>
 </head>
 <body>
@@ -173,6 +222,7 @@ _TEMPLATE = """\
     </div>
     <div class="right">
       <div class="doc-title">{{ title }}</div>
+      {% if is_tax_invoice %}<div class="muted small copy-mark">ORIGINAL FOR RECIPIENT</div>{% endif %}
       <div class="muted">No: <strong style="color:#0f172a">{{ inv.invoice_number }}</strong></div>
       <div class="muted">Date: {{ issue_date }}</div>
       {% if against -%}
@@ -192,6 +242,9 @@ _TEMPLATE = """\
       <div class="muted">{{ line }}</div>
       {%- endfor %}
       {% if seller.gstin %}<div>GSTIN: {{ seller.gstin }}</div>{% endif %}
+      {% if seller.cin %}<div class="muted">CIN: {{ seller.cin }}</div>{% endif %}
+      {% if seller.phone %}<div class="muted">{{ seller.phone }}</div>{% endif %}
+      {% if seller.website %}<div class="muted">{{ seller.website }}</div>{% endif %}
     </div>
     <div class="block" style="text-align:right">
       <h3>Bill to</h3>
@@ -238,7 +291,22 @@ _TEMPLATE = """\
     <tr class="grand"><td>Total</td><td class="num">{{ total }}</td></tr>
   </table>
 
+  {% if in_words -%}
   <div class="words"><strong>Amount in words:</strong> {{ in_words }}</div>
+  {%- endif %}
+
+  {% if fx_rows -%}
+  {# The document is denominated in the currency of supply; the return is filed
+     in rupees. Printing the conversion ON the invoice is what lets an assessing
+     officer reproduce the reported figure years later, and lets the bank's
+     FIRC/eFIRA be tied to this document. #}
+  <table class="totals">
+    {% for row in fx_rows -%}
+    <tr{% if row.grand %} class="grand"{% endif %}><td class="label">{{ row.label }}</td><td class="num">{{ row.amount }}</td></tr>
+    {%- endfor %}
+  </table>
+  <div class="words muted">{{ fx_basis }}</div>
+  {%- endif %}
 
   {% if export_legend -%}
   <div class="legend">{{ export_legend }}</div>
@@ -246,12 +314,17 @@ _TEMPLATE = """\
 
   <div class="foot">
     <div class="muted">
-      <div>Questions about this document? developer@oyechats.com</div>
-      <div>This is a computer-generated document.</div>
+      <div>Questions about this document? {{ support_email }}</div>
+      {# Rule 46(p) requires a signature, but its proviso waives it for an
+         electronic invoice issued under the IT Act 2000. This declaration is
+         what invokes the waiver. The old layout printed a generic
+         "computer-generated" line AND an empty "Authorised signatory" block,
+         which read as an UNSIGNED invoice rather than one needing no
+         signature -- the worst of both. #}
+      <div>This is a computer-generated invoice and does not require a physical signature.</div>
     </div>
     <div class="sign">
       <div>For {{ seller.legal_name }}</div>
-      <div style="margin-top: 12mm;" class="muted">Authorised signatory</div>
     </div>
   </div>
 </body>
@@ -294,17 +367,22 @@ def render_invoice_html(invoice: Invoice) -> str:
                 except ValueError:
                     against_date = None
 
+    # Every amount on this document formats in the invoice's OWN currency.
+    def money(minor: int | None) -> str:
+        return _fmt_money(minor, invoice.currency)
+
     tax_rows = []
     export_legend = None
     if is_tax_invoice:
-        rate_pct = (invoice.tax_rate_bps or 0) / 100
         if invoice.supply_kind == "intra":
+            half = _fmt_rate(invoice.tax_rate_bps, half=True)
             tax_rows = [
-                {"label": f"CGST @ {rate_pct / 2}%", "amount": _fmt_inr(invoice.cgst_minor)},
-                {"label": f"SGST @ {rate_pct / 2}%", "amount": _fmt_inr(invoice.sgst_minor)},
+                {"label": f"CGST @ {half}%", "amount": money(invoice.cgst_minor)},
+                {"label": f"SGST @ {half}%", "amount": money(invoice.sgst_minor)},
             ]
         elif invoice.total_tax_minor:
-            tax_rows = [{"label": f"IGST @ {rate_pct}%", "amount": _fmt_inr(invoice.igst_minor)}]
+            full = _fmt_rate(invoice.tax_rate_bps)
+            tax_rows = [{"label": f"IGST @ {full}%", "amount": money(invoice.igst_minor)}]
         if invoice.is_export:
             if seller.get("lut_active"):
                 lut = f" ({seller['lut_number']})" if seller.get("lut_number") else ""
@@ -325,12 +403,16 @@ def render_invoice_html(invoice: Invoice) -> str:
         period = f"{p_start.astimezone(IST):%d %b %Y} – {p_end.astimezone(IST):%d %b %Y}"
 
     lines = [
-        {"description": item.get("description") or "Service", "amount": _fmt_inr(item.get("amount_minor"))}
+        {"description": item.get("description") or "Service", "amount": money(item.get("amount_minor"))}
         for item in (invoice.line_items or [{"description": invoice.description, "amount_minor": invoice.amount_cents}])
     ]
 
     # Compliance/reference strip. Plain "Label: value" strings (no inner
     # markup) — GSTR reviewers and tests both match the literal phrases.
+    from app.config import SUPPORT_EMAIL
+
+    support_email = seller.get("support_email") or SUPPORT_EMAIL
+
     meta_items = []
     if is_tax_invoice:
         if invoice.place_of_supply:
@@ -339,11 +421,55 @@ def render_invoice_html(invoice: Invoice) -> str:
             name = state_name(invoice.place_of_supply)
             pos = f"{invoice.place_of_supply} – {name}" if name else invoice.place_of_supply
             meta_items.append(f"Place of supply: {pos}")
+        elif invoice.is_export:
+            # finalize_invoice stores NULL for an export (there is no Indian
+            # state), but Rule 46 still wants a place of supply on the document
+            # and GSTR-1 Table 6A reports exports under code 96. Rendered here
+            # rather than stored, so 96 never leaks into VALID_STATE_CODES —
+            # that set also validates GSTINs and buyer state codes.
+            meta_items.append("Place of supply: 96 – Outside India")
         meta_items.append("Reverse charge: No")
+        if invoice.is_export:
+            # Rule 46 requires the country of destination on an export invoice.
+            destination = country_name(buyer.get("billing_country"))
+            if destination:
+                meta_items.append(f"Country of destination: {destination}")
     if period:
         meta_items.append(f"Service period: {period}")
     if invoice.razorpay_payment_id:
         meta_items.append(f"Payment ref: {invoice.razorpay_payment_id}")
+
+    # ── INR mirror (non-INR documents only) ──────────────────────────────────
+    # The supply is invoiced in its own currency; GST is reported — and IGST on
+    # a non-LUT export remitted — in rupees. Rule 34(2) fixes the rate for a
+    # service at the GAAP rate on the date of the time of supply, so the rate
+    # and the resulting figures belong ON the document rather than in a
+    # spreadsheet somewhere.
+    fx_rows: list[dict[str, object]] = []
+    fx_basis = ""
+    code = (invoice.currency or "inr").upper()
+    if invoice.inr_amount_minor is not None and code != "INR":
+        if invoice.fx_rate_micros:
+            fx_rows.append({"label": "Exchange rate", "amount": f"1 {code} = ₹{_fmt_fx_rate(invoice.fx_rate_micros)}"})
+        if invoice.inr_taxable_value_minor is not None:
+            fx_rows.append({"label": "Taxable value (INR)", "amount": _fmt_inr(invoice.inr_taxable_value_minor)})
+        if invoice.inr_total_tax_minor:
+            fx_rows.append(
+                {
+                    "label": f"IGST @ {_fmt_rate(invoice.tax_rate_bps)}% (INR)",
+                    "amount": _fmt_inr(invoice.inr_total_tax_minor),
+                }
+            )
+        fx_rows.append({"label": "Total (INR)", "amount": _fmt_inr(invoice.inr_amount_minor), "grand": True})
+        fx_basis = (
+            f"INR equivalent at the rate of exchange on the date of supply (Rule 34(2), CGST Rules): "
+            f"{amount_in_words_inr(invoice.inr_amount_minor)}"
+        )
+
+    # "Amount in words" is rupee wording. On a foreign-currency document it
+    # would state the dollar total as rupees — so the rupee wording moves into
+    # the INR block above, where it is actually true.
+    in_words = amount_in_words_inr(invoice.amount_cents) if code == "INR" else ""
 
     return _template.render(
         inv=invoice,
@@ -359,12 +485,15 @@ def render_invoice_html(invoice: Invoice) -> str:
         meta_items=meta_items,
         is_tax_invoice=is_tax_invoice,
         lines=lines,
-        taxable=_fmt_inr(invoice.taxable_value_minor),
+        taxable=money(invoice.taxable_value_minor),
         tax_rows=tax_rows,
-        total_tax=_fmt_inr(invoice.total_tax_minor),
-        total=_fmt_inr(invoice.amount_cents),
-        in_words=amount_in_words_inr(invoice.amount_cents),
+        total_tax=money(invoice.total_tax_minor),
+        total=money(invoice.amount_cents),
+        in_words=in_words,
+        fx_rows=fx_rows,
+        fx_basis=fx_basis,
         export_legend=export_legend,
+        support_email=support_email,
     )
 
 

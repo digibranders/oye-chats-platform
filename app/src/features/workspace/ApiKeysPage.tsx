@@ -37,15 +37,16 @@ import {
   RefreshCw,
   ShieldCheck,
   Terminal,
-  X,
 } from 'lucide-react';
 import {
   Button,
   Card,
+  FeedbackBanner,
   InsightCard,
   PageContainer,
   Skeleton,
   StatusBadge,
+  useFeedback,
 } from '../../design-system';
 import { getClientApiKey, regenerateClientApiKey } from '../../services/api';
 
@@ -72,9 +73,6 @@ type LoadPhase =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'ready'; readonly masked: string };
-
-/** Transient failure surfaced in the persistent live region (errors only). */
-type Feedback = { readonly message: string };
 
 function toMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
@@ -179,7 +177,7 @@ function CopyButton({
 export function ApiKeysPage(): ReactElement {
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const { feedback, notify, dismiss } = useFeedback();
 
   // Rotation lifecycle.
   const [confirming, setConfirming] = useState(false);
@@ -219,7 +217,7 @@ export function ApiKeysPage(): ReactElement {
 
   const handleRegenerate = async (): Promise<void> => {
     setRegenerating(true);
-    setFeedback(null);
+    dismiss();
     try {
       const data = await regenerateClientApiKey();
       setPhase({ status: 'ready', masked: data.api_key_masked });
@@ -229,7 +227,7 @@ export function ApiKeysPage(): ReactElement {
       // Success is communicated by the one-time reveal box (visually) and the
       // persistent status region (for AT); no redundant banner is shown.
     } catch (error) {
-      setFeedback({ message: toMessage(error, 'Failed to regenerate the API key.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to regenerate the API key.') });
     } finally {
       setRegenerating(false);
     }
@@ -254,30 +252,9 @@ export function ApiKeysPage(): ReactElement {
         {revealedKey ? REVEAL_ANNOUNCEMENT : ''}
       </p>
 
-      {/* Persistent live region for rotation/copy errors. Kept mounted (no
-          `empty:hidden`) so screen readers announce injected content. */}
-      <div aria-live="polite">
-        {feedback && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-4 py-3 text-[13px] text-[var(--ds-text)]">
-            <span className="flex items-start gap-2">
-              <AlertTriangle
-                size={16}
-                aria-hidden="true"
-                className="mt-0.5 shrink-0 text-[var(--ds-danger)]"
-              />
-              {feedback.message}
-            </span>
-            <button
-              type="button"
-              onClick={() => setFeedback(null)}
-              aria-label="Dismiss message"
-              className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X size={15} aria-hidden="true" />
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Rotation / copy failures. Errors never auto-dismiss - they stay until
+          the user dismisses them or the next attempt replaces them. */}
+      <FeedbackBanner feedback={feedback} onDismiss={dismiss} />
 
       {/* ── Secret key ──────────────────────────────────────────────────────── */}
       <Card className="p-6">
@@ -336,7 +313,7 @@ export function ApiKeysPage(): ReactElement {
                     copied={keyCopy.copied}
                     variant="primary"
                     onCopied={keyCopy.mark}
-                    onError={() => setFeedback({ message: 'Could not copy to clipboard.' })}
+                    onError={() => notify({ tone: 'error', message: 'Could not copy to clipboard.' })}
                   />
                 </div>
                 <p className="mt-2 text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
@@ -409,7 +386,7 @@ export function ApiKeysPage(): ReactElement {
                 size="sm"
                 onClick={() => {
                   setConfirming(true);
-                  setFeedback(null);
+                  dismiss();
                 }}
               >
                 <RefreshCw size={14} aria-hidden="true" />
@@ -446,7 +423,7 @@ export function ApiKeysPage(): ReactElement {
               label="Copy example request"
               copied={curlCopy.copied}
               onCopied={curlCopy.mark}
-              onError={() => setFeedback({ message: 'Could not copy to clipboard.' })}
+              onError={() => notify({ tone: 'error', message: 'Could not copy to clipboard.' })}
             />
           </div>
           <pre className="px-4 py-3">

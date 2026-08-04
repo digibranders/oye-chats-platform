@@ -50,6 +50,22 @@ def display_price(
     return converted, "USD"
 
 
+def charge_currency(country: str | None) -> str:
+    """Return the currency a billing country is actually CHARGED in.
+
+    Deliberately stricter than :func:`display_price`'s country rule: an unknown
+    country (``None``/blank) means "not confirmed", and an unconfirmed customer
+    is a domestic one — every account that predates the country-confirmation
+    step has a NULL ``billing_country`` and an INR mandate. Defaulting those to
+    USD would repoint live customers at the wrong rail, so display may guess
+    USD for an unknown visitor while the charge path never does.
+
+    ``"IN"`` (any case/whitespace) → ``"INR"``; any other country → ``"USD"``.
+    """
+    normalized = (country or "").strip().upper()
+    return "USD" if normalized and normalized != "IN" else "INR"
+
+
 def seat_price(
     *,
     inr_cents: int,

@@ -4,6 +4,13 @@ After creating plans in the Razorpay dashboard, run this script to store
 the plan IDs on the matching plan rows. Checkout will fail with a clear
 error until every paid plan has its IDs set.
 
+Two rails are stored side by side: the INR rail (``--<tier>-<cycle>``, charged
+to Indian customers) and the USD rail (``--<tier>-<cycle>-usd``, charged to
+international customers). They are separate Razorpay plan objects because a
+plan's currency is fixed at creation, so an INR plan id can never serve a USD
+charge. Either rail may be left unset; USD checkout fails loudly when its ids
+are missing rather than falling back to INR.
+
 Usage (dry-run — shows what would be written):
     cd platform/api
     uv run python scripts/set_razorpay_plan_ids.py \\
@@ -24,8 +31,17 @@ Optional extras:
     --professional-monthly plan_XXXXXXXXXXXXXXXX
     --professional-annual  plan_XXXXXXXXXXXXXXXX
 
-The extra-seat add-on plan is NOT stored on a plan row — it is configured via
-the ``RAZORPAY_SEAT_PLAN_ID`` environment variable (per Razorpay account/mode).
+USD rail (international customers):
+    --starter-monthly-usd      plan_XXXXXXXXXXXXXXXX
+    --starter-annual-usd       plan_XXXXXXXXXXXXXXXX
+    --standard-monthly-usd     plan_XXXXXXXXXXXXXXXX
+    --standard-annual-usd      plan_XXXXXXXXXXXXXXXX
+    --professional-monthly-usd plan_XXXXXXXXXXXXXXXX
+    --professional-annual-usd  plan_XXXXXXXXXXXXXXXX
+
+The extra-seat add-on plans are NOT stored on a plan row — they are configured
+via the ``RAZORPAY_SEAT_PLAN_ID`` (INR) and ``RAZORPAY_SEAT_PLAN_ID_USD``
+environment variables (per Razorpay account/mode).
 
 To clear a plan ID (set it back to NULL), pass the literal string 'null'.
 
@@ -39,6 +55,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -47,46 +64,74 @@ from sqlalchemy import select
 from app.db.models import Plan
 from app.db.session import get_session
 
-_SLUG_TO_ARGS: dict[str, tuple[str, str]] = {
-    "starter": ("starter_monthly", "starter_annual"),
-    "standard": ("standard_monthly", "standard_annual"),
-    "professional": ("professional_monthly", "professional_annual"),
+_SLUGS: tuple[str, ...] = ("starter", "standard", "professional")
+
+# CLI flag suffix → Plan column, per rail. The flag for a given tier is
+# ``--<slug>-<suffix>`` and its argparse attribute is ``<slug>_<suffix>``.
+_INR_COLUMNS: dict[str, str] = {
+    "monthly": "razorpay_plan_id_monthly",
+    "annual": "razorpay_plan_id_annual",
 }
+_USD_COLUMNS: dict[str, str] = {
+    "monthly-usd": "razorpay_plan_id_monthly_usd",
+    "annual-usd": "razorpay_plan_id_annual_usd",
+}
+_ALL_COLUMNS: dict[str, str] = {**_INR_COLUMNS, **_USD_COLUMNS}
+
+# Sentinel distinguishing "--flag null" (write NULL) from an absent flag
+# (leave the column untouched). Without it, clearing an id is indistinguishable
+# from not passing the flag at all.
+_CLEAR = object()
 
 
-def _coerce(val: str | None) -> str | None:
-    """Return None if val is falsy or the literal string 'null'."""
-    if val is None or val.strip().lower() == "null":
+def _coerce(val: str | None) -> Any:
+    """Return None if the flag was absent, ``_CLEAR`` for 'null', else the id."""
+    if val is None:
         return None
-    return val.strip()
+    stripped = val.strip()
+    if stripped.lower() == "null":
+        return _CLEAR
+    return stripped
+
+
+def _render(value: Any) -> str:
+    """Human-readable form of a parsed flag value for the diff output."""
+    return "(cleared)" if value is _CLEAR else repr(value)
+
+
+def _print_rail(title: str, plan_map: dict[str, Plan], columns: dict[str, str]) -> None:
+    monthly_col, annual_col = columns.values()
+    print(f"\n{title}:")
+    print(f"{'Slug':<12} {'Monthly':<32} {'Annual':<32}")
+    print("-" * 76)
+    for slug in _SLUGS:
+        p = plan_map.get(slug)
+        if p:
+            mo = getattr(p, monthly_col) or "(none)"
+            yr = getattr(p, annual_col) or "(none)"
+            print(f"{slug:<12} {mo:<32} {yr:<32}")
 
 
 def run(args: argparse.Namespace, *, apply: bool) -> int:
-    updates: dict[str, dict[str, str | None]] = {}
+    updates: dict[str, dict[str, Any]] = {}
 
-    for slug, (mo_attr, yr_attr) in _SLUG_TO_ARGS.items():
-        mo = _coerce(getattr(args, mo_attr, None))
-        yr = _coerce(getattr(args, yr_attr, None))
-        if mo is not None or yr is not None:
-            updates[slug] = {
-                "razorpay_plan_id_monthly": mo,
-                "razorpay_plan_id_annual": yr,
-            }
+    for slug in _SLUGS:
+        ids = {}
+        for suffix, column in _ALL_COLUMNS.items():
+            value = _coerce(getattr(args, f"{slug}_{suffix.replace('-', '_')}", None))
+            if value is not None:
+                ids[column] = value
+        if ids:
+            updates[slug] = ids
 
     with get_session() as session:
-        plans = session.scalars(select(Plan).where(Plan.slug.in_(list(_SLUG_TO_ARGS.keys())))).all()
+        plans = session.scalars(select(Plan).where(Plan.slug.in_(_SLUGS))).all()
         plan_map = {p.slug: p for p in plans}
 
         if not updates:
             print("Current Razorpay plan IDs in DB:")
-            print(f"{'Slug':<12} {'Monthly':<32} {'Annual':<32}")
-            print("-" * 76)
-            for slug in ("starter", "standard", "professional"):
-                p = plan_map.get(slug)
-                if p:
-                    mo = p.razorpay_plan_id_monthly or "(none)"
-                    yr = p.razorpay_plan_id_annual or "(none)"
-                    print(f"{slug:<12} {mo:<32} {yr:<32}")
+            _print_rail("INR rail", plan_map, _INR_COLUMNS)
+            _print_rail("USD rail", plan_map, _USD_COLUMNS)
             return 0
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}")
@@ -96,18 +141,12 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             if p is None:
                 print(f"  WARNING: plan slug='{slug}' not found in DB — skipping")
                 continue
-            mo = ids.get("razorpay_plan_id_monthly")
-            yr = ids.get("razorpay_plan_id_annual")
             print(f"  {slug}:")
-            if mo is not None:
-                print(f"    monthly: {p.razorpay_plan_id_monthly or '(none)'!r} → {mo!r}")
-            if yr is not None:
-                print(f"    annual:  {p.razorpay_plan_id_annual or '(none)'!r} → {yr!r}")
-            if apply:
-                if mo is not None:
-                    p.razorpay_plan_id_monthly = mo
-                if yr is not None:
-                    p.razorpay_plan_id_annual = yr
+            for column, value in ids.items():
+                label = column.removeprefix("razorpay_plan_id_")
+                print(f"    {label + ':':<14} {getattr(p, column) or '(none)'!r} → {_render(value)}")
+                if apply:
+                    setattr(p, column, None if value is _CLEAR else value)
 
         if apply:
             session.commit()
@@ -121,12 +160,15 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="Commit changes (default: dry-run).")
-    parser.add_argument("--starter-monthly", metavar="PLAN_ID", help="plan_XXX for Starter monthly")
-    parser.add_argument("--starter-annual", metavar="PLAN_ID", help="plan_XXX for Starter annual")
-    parser.add_argument("--standard-monthly", metavar="PLAN_ID", help="plan_XXX for Standard monthly")
-    parser.add_argument("--standard-annual", metavar="PLAN_ID", help="plan_XXX for Standard annual")
-    parser.add_argument("--professional-monthly", metavar="PLAN_ID", help="plan_XXX for Professional monthly")
-    parser.add_argument("--professional-annual", metavar="PLAN_ID", help="plan_XXX for Professional annual")
+    for slug in _SLUGS:
+        for suffix in _ALL_COLUMNS:
+            cycle, _, rail = suffix.partition("-")
+            currency = "USD" if rail else "INR"
+            parser.add_argument(
+                f"--{slug}-{suffix}",
+                metavar="PLAN_ID",
+                help=f"plan_XXX for {slug.capitalize()} {cycle} ({currency})",
+            )
 
     args = parser.parse_args()
     return run(args, apply=args.apply)

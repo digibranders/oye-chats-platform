@@ -727,7 +727,7 @@ const ChatInput = ({
                     </p>
                     {showBranding ? (
                         <a
-                            href="https://oyechats.com"
+                            href="https://www.oyechats.com"
                             target="_blank"
                             rel="noopener noreferrer"
                             className="whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"

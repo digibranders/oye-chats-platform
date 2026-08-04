@@ -36,24 +36,29 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import requests
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import (
     CHECKOUT_TEST_CLIENT_IDS,
+    EXTRA_SEAT_PRICE_USD_CENTS,
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
     RAZORPAY_SEAT_PLAN_ID,
+    RAZORPAY_SEAT_PLAN_ID_USD,
     RAZORPAY_SEAT_PLAN_PRICE_CENTS,
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.core.dates import add_months
+from app.core.pricing import charge_currency, format_amount
 from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
 from app.services import credit_service, email_service, invoice_service
 
@@ -61,6 +66,15 @@ if TYPE_CHECKING:
     import razorpay
 
 logger = logging.getLogger(__name__)
+
+# (connect, read) seconds for every Razorpay HTTP call. Connect is short --
+# a gateway refusing sockets will not recover in 30s. Read is generous,
+# because a spurious timeout part-way through a subscription create is far
+# worse than a slow one: the mandate may already exist at the gateway.
+RAZORPAY_HTTP_TIMEOUT = (
+    float(os.getenv("RAZORPAY_CONNECT_TIMEOUT_SECONDS", "5")),
+    float(os.getenv("RAZORPAY_READ_TIMEOUT_SECONDS", "30")),
+)
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -70,6 +84,8 @@ logger = logging.getLogger(__name__)
 # ₹1.00 is Razorpay's own minimum; combined with the 50% discount cap this
 # makes a near-free plan unreachable from any code configuration.
 MIN_DISCOUNTED_PLAN_PAISE = 100
+# Same floor for the USD rail, in cents — Razorpay's international minimum.
+MIN_DISCOUNTED_PLAN_CENTS_USD = 50
 
 
 class RazorpayBillingError(Exception):
@@ -124,6 +140,26 @@ class RazorpayTransientError(RazorpayBillingError):
 # ── Client init ───────────────────────────────────────────────────────────────
 
 
+class _TimeoutSession(requests.Session):
+    """A ``requests`` session that refuses to block forever.
+
+    The Razorpay SDK sets no timeout: its ``Client.request`` forwards
+    ``**options`` straight to ``session.get/post``, and its constructor
+    ``**options`` only configure base_url and retries. With no timeout,
+    ``requests`` waits indefinitely on a half-open socket.
+
+    That is not theoretical here. The dunning cron makes one serial gateway
+    call per past-due subscription; a single hung connection stalls the whole
+    job until ARQ kills it at ``job_timeout``, and for the expiry sweep a
+    killed job means the batch never commits. Overriding ``request`` catches
+    every verb, since ``.get()``/``.post()`` all funnel through it.
+    """
+
+    def request(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+        kwargs.setdefault("timeout", RAZORPAY_HTTP_TIMEOUT)
+        return super().request(*args, **kwargs)
+
+
 def _get_razorpay() -> razorpay.Client:
     """Lazily import and configure the Razorpay SDK.
 
@@ -136,7 +172,7 @@ def _get_razorpay() -> razorpay.Client:
 
     import razorpay  # local import keeps the dep optional at boot time
 
-    return razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    return razorpay.Client(session=_TimeoutSession(), auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 
 # ── Top-up Orders (one-time payment) ──────────────────────────────────────────
@@ -294,6 +330,19 @@ def verify_topup_signature(
 # ── Subscriptions ─────────────────────────────────────────────────────────────
 
 
+def _plan_id_for_rail(plan: Plan, billing_cycle: str, currency: str) -> str | None:
+    """Razorpay plan id for ``plan`` on the ``currency`` rail, or None if unset.
+
+    Returning None (rather than falling back to the other rail) is the whole
+    point: a Razorpay plan's currency is fixed at creation, so an INR id used
+    for a USD customer would debit rupees against a dollar quote. The caller
+    turns None into a hard error.
+    """
+    if currency == "USD":
+        return plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
+    return plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
+
+
 def create_subscription(
     session: Session,
     client: Client,
@@ -334,7 +383,14 @@ def create_subscription(
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
 
-    razorpay_plan_id = plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
+    # Which rail this customer is charged on. Resolved from the client here —
+    # not passed in by the caller — for the same reason ``discount_bps`` is:
+    # EVERY subscription path (first checkout, change-plan, upgrade, downgrade
+    # cutover, per-bot) flows through this function, so resolving centrally is
+    # what guarantees none of them can silently mint an INR mandate for an
+    # international customer.
+    currency = charge_currency(getattr(client, "billing_country", None))
+    razorpay_plan_id = _plan_id_for_rail(plan, billing_cycle, currency)
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         if not RAZORPAY_TEST_PLAN_ID:
             raise ValueError(
@@ -351,7 +407,7 @@ def create_subscription(
         razorpay_plan_id = RAZORPAY_TEST_PLAN_ID
     elif not razorpay_plan_id:
         raise ValueError(
-            f"Plan '{plan.name}' has no Razorpay plan id configured for {billing_cycle} billing. "
+            f"Plan '{plan.name}' has no {currency} Razorpay plan id configured for {billing_cycle} billing. "
             "Create the plan in the Razorpay dashboard and set the id from super admin."
         )
 
@@ -368,7 +424,7 @@ def create_subscription(
     # Apply a recurring customer discount by swapping in a discounted plan.
     # Test-client override is excluded from discounts so QA flows stay clean.
     if discount_bps and client.id not in CHECKOUT_TEST_CLIENT_IDS:
-        razorpay_plan_id = resolve_discounted_plan(session, plan, billing_cycle, discount_bps)
+        razorpay_plan_id = resolve_discounted_plan(session, plan, billing_cycle, discount_bps, currency=currency)
 
     # Razorpay rejects total_count > 100 for annual plans; monthly accepts
     # up to 120 (12 cycles × 10 years). Fall back to the cycle-specific
@@ -492,34 +548,52 @@ def resolve_discounted_plan(
     base_plan: Plan,
     billing_cycle: str,
     discount_bps: int,
+    *,
+    currency: str = "INR",
 ) -> str:
     """Return a Razorpay plan_id for base_plan discounted by discount_bps.
 
-    Looks up the (base_plan_id, billing_cycle, discount_bps) cache first.
-    On a miss, creates a new Razorpay plan at the discounted paise amount,
+    Looks up the (base_plan_id, billing_cycle, discount_bps, currency) cache
+    first. On a miss, creates a new Razorpay plan at the discounted amount,
     inserts it into the cache, and returns the new plan_id.
 
     Razorpay Offers have no create API, so recurring discounts are modelled
     as discounted plans — a lower plan amount recurs automatically every
     cycle with no per-cycle coupon redemption required.
 
+    ``currency`` selects the rail: the discount is computed off that rail's
+    base price (``*_price_usd_cents`` for USD) and the minted plan carries that
+    currency. It is part of the cache key because a Razorpay plan's currency is
+    fixed at creation — reusing an INR plan for a USD customer would debit
+    rupees against a dollar quote.
+
     Discount math: discounted = base - floor(base × bps / 10000).
-    Integer floor keeps paise whole; the tiny rounding difference (<₹1) is
-    in the customer's favour.
+    Integer floor keeps minor units whole; the tiny rounding difference (<1
+    major unit) is in the customer's favour.
     """
     if not (0 < discount_bps < 10000):
         raise ValueError(f"discount_bps must be 1–9999, got {discount_bps}")
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"billing_cycle must be 'monthly' or 'annual', got {billing_cycle!r}")
+    if currency not in ("INR", "USD"):
+        raise ValueError(f"currency must be 'INR' or 'USD', got {currency!r}")
 
-    base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
+    if currency == "USD":
+        base_amount = int(
+            (base_plan.annual_price_usd_cents if billing_cycle == "annual" else base_plan.monthly_price_usd_cents) or 0
+        )
+        minimum = MIN_DISCOUNTED_PLAN_CENTS_USD
+    else:
+        base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
+        minimum = MIN_DISCOUNTED_PLAN_PAISE
     discounted_paise = base_amount - (base_amount * discount_bps) // 10000
     # Minimum-price floor (remediation C3): even with the discount cap, never
     # create a near-free recurring plan. Razorpay also rejects sub-₹1 charges.
-    if discounted_paise < MIN_DISCOUNTED_PLAN_PAISE:
+    if discounted_paise < minimum:
         raise ValueError(
-            f"discounted price ₹{discounted_paise / 100:.2f} is below the ₹{MIN_DISCOUNTED_PLAN_PAISE / 100:.2f} "
-            f"minimum (base ₹{base_amount / 100:.2f}, {discount_bps} bps)"
+            f"discounted price {format_amount(discounted_paise, currency)} is below the "
+            f"{format_amount(minimum, currency)} minimum "
+            f"(base {format_amount(base_amount, currency)}, {discount_bps} bps)"
         )
 
     cached = session.scalars(
@@ -527,6 +601,7 @@ def resolve_discounted_plan(
         .where(DiscountedPlanCache.base_plan_id == base_plan.id)
         .where(DiscountedPlanCache.billing_cycle == billing_cycle)
         .where(DiscountedPlanCache.discount_bps == discount_bps)
+        .where(DiscountedPlanCache.currency == currency)
     ).first()
     # A cache hit is only valid if the cached amount still equals the price the
     # CURRENT base plan produces. Otherwise the base price changed since we
@@ -543,20 +618,21 @@ def resolve_discounted_plan(
             "period": period,
             "interval": 1,
             "item": {
-                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}%",
+                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}% {currency}",
                 "amount": discounted_paise,
-                "currency": "INR",
+                "currency": currency,
             },
             "notes": {
                 "base_plan_id": str(base_plan.id),
                 "discount_bps": str(discount_bps),
+                "currency": currency,
             },
         }
     )
 
     if cached is not None:
-        # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps)
-        # constraint means we can't insert a second row for the same key.
+        # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps,
+        # currency) constraint means we can't insert a second row for the same key.
         cached.razorpay_plan_id = plan["id"]
         cached.amount_paise = discounted_paise
     else:
@@ -565,6 +641,7 @@ def resolve_discounted_plan(
                 base_plan_id=base_plan.id,
                 billing_cycle=billing_cycle,
                 discount_bps=discount_bps,
+                currency=currency,
                 razorpay_plan_id=plan["id"],
                 amount_paise=discounted_paise,
             )
@@ -612,21 +689,28 @@ def create_seat_addon_subscription(
     (e.g. ₹949×2 instead of ₹949+₹449). The Extra-Seat plan's amount IS the
     per-seat price (₹449 — ``RAZORPAY_SEAT_PLAN_PRICE_CENTS``), so
     ``price × extra_seats`` is exactly right here.
+
+    Seats follow the customer's rail: an international client bills against the
+    USD seat plan, so the add-on currency can never disagree with the main
+    subscription's.
     """
     if extra_seats < 1:
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
 
-    if not RAZORPAY_SEAT_PLAN_ID:
+    currency = charge_currency(getattr(client, "billing_country", None))
+    seat_plan_id = RAZORPAY_SEAT_PLAN_ID_USD if currency == "USD" else RAZORPAY_SEAT_PLAN_ID
+    if not seat_plan_id:
+        env_var = "RAZORPAY_SEAT_PLAN_ID_USD" if currency == "USD" else "RAZORPAY_SEAT_PLAN_ID"
         raise RazorpayBillingError(
-            "Extra-seat billing is not configured (RAZORPAY_SEAT_PLAN_ID is unset). "
-            "Set it to the environment's ₹499 seat add-on plan id."
+            f"Extra-seat billing is not configured for the {currency} rail ({env_var} is unset). "
+            "Set it to the environment's seat add-on plan id."
         )
 
     rzp = _get_razorpay()
     try:
         subscription = rzp.subscription.create(
             data={
-                "plan_id": RAZORPAY_SEAT_PLAN_ID,
+                "plan_id": seat_plan_id,
                 "total_count": 120,
                 "customer_notify": 1,
                 "quantity": int(extra_seats),
@@ -661,15 +745,20 @@ def _seat_checkout_payload(
     unauthorized pending purchase (finding A C1) so we never need a Razorpay
     round-trip just to rebuild it — the JS SDK only needs subscription_id + key.
     ``short_url`` (Razorpay's hosted checkout) is included when known so a webhook
-    path can email the customer a re-authorization link."""
-    seat_rupees = RAZORPAY_SEAT_PLAN_PRICE_CENTS // 100
+    path can email the customer a re-authorization link.
+
+    The quoted per-seat price follows the client's rail, so the description can
+    never advertise rupees against a dollar charge."""
+    currency = charge_currency(getattr(client, "billing_country", None))
+    seat_minor = EXTRA_SEAT_PRICE_USD_CENTS if currency == "USD" else RAZORPAY_SEAT_PLAN_PRICE_CENTS
+    seat_display = format_amount(seat_minor, currency)
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
         "short_url": short_url,
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats operator seats",
-        "description": f"{extra_seats} extra seat(s) — ₹{seat_rupees}/seat/month",
+        "description": f"{extra_seats} extra seat(s) — {seat_display}/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",
@@ -1162,6 +1251,7 @@ def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str,
         razorpay_payment_id=payment_id,
         description="Operator seat add-on",
         paid_at=_capture_paid_at(pay_entity),
+        inr_amount_minor=_base_amount_minor(pay_entity),
     )
     session.add(invoice)
     session.flush()
@@ -1277,6 +1367,9 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         "payment.dispute.created": _handle_dispute_created,
         "payment.dispute.lost": _handle_dispute_lost,
         "payment.dispute.won": _handle_dispute_won,
+        # Saved-instrument lifecycle. A revoked token must disappear from the
+        # customer's saved list immediately, not at the next read-sync.
+        **{event: _handle_token_revoked for event in TOKEN_REVOKED_EVENTS},
     }
     handler = handlers.get(event_name)
     if handler is None:
@@ -1312,6 +1405,37 @@ def _capture_paid_at(pay: dict[str, Any] | None) -> datetime:
     except (TypeError, ValueError, OSError, OverflowError):
         logger.warning("unparseable payment created_at=%r; falling back to now()", captured)
     return datetime.now(UTC)
+
+
+def _base_amount_minor(pay: dict[str, Any] | None) -> int | None:
+    """Razorpay's realised INR conversion of a non-INR payment, in paise.
+
+    On a non-INR payment Razorpay returns ``base_amount`` (paise) and
+    ``base_currency`` (INR) alongside ``amount``/``currency`` — the amount it
+    converted at the processing bank's rate on the payment date, and the figure
+    it settles on. That rate is what Rule 34(2) asks for on a service supplied
+    in foreign currency, so we capture it AT CAPTURE TIME: it is unavailable
+    from anywhere else later, and without it the export cannot become a
+    reportable GST document at all.
+
+    ``None`` for an INR payment (where the field is absent by design and the
+    charge amount is already the reportable one), and for any payload whose
+    ``base_currency`` is not INR — a base currency we do not report in is not
+    something to silently treat as rupees.
+    """
+    if not pay:
+        return None
+    if str(pay.get("base_currency") or "").upper() not in ("INR", ""):
+        return None
+    raw = pay.get("base_amount")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("unparseable payment base_amount=%r; export invoice will stay legacy", raw)
+        return None
+    return value if value >= 0 else None
 
 
 def _extract_order_entity(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1933,10 +2057,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         return f"Subscription {razorpay_sub_id} is {local.status} — activation ignored"
 
     # Existing local row — update fields and ensure first-month credits exist.
-    # Card rescued out of dunning: drop the past_due anchor so a future
-    # failure starts a fresh grace window instead of inheriting this one.
+    # Card rescued out of dunning: drop the anchor AND the cadence markers so a
+    # future failure starts a fresh grace window and a fresh email sequence
+    # instead of inheriting this one.
     if local.status == "past_due":
-        local.past_due_since = None
+        _clear_dunning_state(local)
     local.status = "active"
     if current_period_start:
         local.current_period_start = current_period_start
@@ -1966,6 +2091,7 @@ def _ensure_subscription_charge_invoice(
     period_end: datetime | None,
     razorpay_invoice_id: str | None = None,
     paid_at: datetime | None = None,
+    inr_amount_minor: int | None = None,
 ) -> Invoice | None:
     """Create + finalize the payment-history invoice for a subscription charge.
 
@@ -1998,6 +2124,9 @@ def _ensure_subscription_charge_invoice(
         # Finding G: date from the real capture instant so the FY serial + doc
         # date land in the correct GST period at a month/FY boundary.
         paid_at=paid_at or datetime.now(UTC),
+        # Razorpay's realised INR conversion — only present on a non-INR
+        # charge, and the only thing that lets an export be finalized.
+        inr_amount_minor=inr_amount_minor,
     )
     session.add(invoice)
     session.flush()
@@ -2041,6 +2170,7 @@ def record_verified_subscription_charge(
             period_end=local.current_period_end,
             razorpay_invoice_id=pay.get("invoice_id"),
             paid_at=_capture_paid_at(pay),
+            inr_amount_minor=_base_amount_minor(pay),
         )
     except Exception:  # noqa: BLE001
         logger.exception("verify: failed to record first-charge invoice for payment %s", razorpay_payment_id)
@@ -2095,6 +2225,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             period_end=new_period_end,
             razorpay_invoice_id=pay_entity.get("invoice_id"),
             paid_at=_capture_paid_at(pay_entity),
+            inr_amount_minor=_base_amount_minor(pay_entity),
         )
         period_invoice_id = period_invoice.id if period_invoice else None
 
@@ -2133,6 +2264,12 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.current_period_start = new_period_start
     if new_period_end:
         local.current_period_end = new_period_end
+    # A successful charge is the NORMAL rescue out of dunning (the activated
+    # path only covers a re-authorised mandate), so the episode must be reset
+    # here too — otherwise the next failure inherits stale markers and the
+    # customer is suspended without a single email.
+    if local.status == "past_due":
+        _clear_dunning_state(local)
     local.status = "active"
     session.flush()
     return f"Subscription {razorpay_sub_id} charged"
@@ -2214,6 +2351,26 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     local.status = "expired"
     session.flush()
     return f"Subscription {sub_entity.get('id')} completed"
+
+
+def _clear_dunning_state(local: Subscription) -> None:
+    """Reset the dunning episode when a subscription is rescued.
+
+    BOTH fields must be cleared together. ``past_due_since`` alone is not
+    enough: ``dunning_emails_sent`` carries the per-episode idempotency markers
+    (``failed_0``/``halted_3``/``warning_5``), so leaving them set means a
+    customer who fails, recovers, and fails again months later matches every
+    marker on the new episode and is silently sent NOTHING before being
+    expired on day 7.
+
+    Idempotent and safe to call on any status — a row that was never past due
+    simply has nothing to clear.
+    """
+    local.past_due_since = None
+    if local.dunning_emails_sent:
+        # Reassign rather than mutate: SQLAlchemy does not track in-place
+        # changes to a JSONB dict.
+        local.dunning_emails_sent = {}
 
 
 def _enter_past_due(local: Subscription) -> None:
@@ -2390,7 +2547,6 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
             return f"Top-up {rzp_payment_id} already recorded"
 
     amount_paise = int((pay_entity or {}).get("amount") or (order_entity or {}).get("amount") or 0)
-    amount_inr = int(notes.get("amount_inr") or (amount_paise // 100))
 
     # Defense-in-depth (NV2): the credits to grant come from server-set order
     # notes, but the money actually captured comes from Razorpay. Reconcile the
@@ -2422,12 +2578,14 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             target_bot_id = None
 
-    # Name the pack the way the customer bought it ($-display when the order
-    # notes carry it, INR otherwise) plus the credits it grants. Legal amounts
-    # on the document remain INR regardless.
-    display_price = str(notes.get("display_price") or "").strip()
-    pack_label = f"{display_price} pack" if display_price else f"₹{amount_inr} pack"
-    topup_description = f"Credits top-up — {pack_label} ({credits:,} credits)"
+    # Describe the SUPPLY, not the marketing SKU. The pack used to be labelled
+    # with its display price ("$49 pack"), which landed a USD figure on an INR
+    # tax invoice charging ₹3,999 — a number that is neither the taxable value,
+    # nor the total, nor the currency of supply. On a Rule 46 document that
+    # invites exactly one question in an audit or a dispute: what was supplied,
+    # and for how much? The amount column already carries the price, so the
+    # credit quantity is the whole description.
+    topup_description = f"Credits top-up — {credits:,} credits"
 
     invoice = Invoice(
         client_id=client_id,
@@ -2439,6 +2597,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         razorpay_payment_id=rzp_payment_id,
         description=topup_description,
         paid_at=_capture_paid_at(pay_entity),  # finding G: real capture instant
+        inr_amount_minor=_base_amount_minor(pay_entity),
     )
     session.add(invoice)
     session.flush()
@@ -2476,6 +2635,41 @@ def _handle_payment_failed(session: Session, payload: dict[str, Any]) -> str:
         pay.get("error_description") or pay.get("error_reason"),
     )
     return "payment.failed logged"
+
+
+# Razorpay token lifecycle. Both events mean the same thing to us: the
+# instrument is no longer chargeable, so it must stop being offered.
+TOKEN_REVOKED_EVENTS = ("token.cancelled", "token.paused")
+
+
+def _handle_token_revoked(session: Session, payload: dict[str, Any]) -> str:
+    """Prune a saved instrument that Razorpay says is no longer usable.
+
+    ``payment_methods`` is a display MIRROR -- Razorpay is the source of truth.
+    Without this handler a card revoked at the issuer or in Razorpay's
+    dashboard keeps appearing in the customer's saved list until the next
+    read-sync, so the UI offers an instrument that cannot be charged.
+
+    Never raises on unknown input: a token we never mirrored, or one already
+    pruned, is a successful no-op. Raising would dead-letter the event and make
+    Razorpay retry it forever.
+    """
+    from app.db.models import PaymentMethod
+
+    entity = (payload.get("token") or {}).get("entity") or {}
+    token_id = entity.get("id")
+    if not token_id:
+        return "token event missing token id"
+
+    deleted = (
+        session.query(PaymentMethod)
+        .filter(PaymentMethod.razorpay_token_id == token_id)
+        .delete(synchronize_session=False)
+    )
+    session.flush()
+    if deleted:
+        logger.info("Pruned %d saved instrument(s) for revoked token %s", deleted, token_id)
+    return f"Token {token_id} revoked ({deleted} mirror row(s) pruned)"
 
 
 # ── Refund handling ─────────────────────────────────────────────────────────

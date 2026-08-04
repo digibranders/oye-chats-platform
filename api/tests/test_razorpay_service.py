@@ -600,14 +600,23 @@ def test_payment_captured_grants_topup_when_purpose_marker_present():
     # grant_topup(session, client_id, amount, note=...)
     assert args[1] == 9
     assert args[2] == 2000
-    # No display_price in notes (legacy order) → INR pack label fallback.
-    assert "Credits top-up — ₹1599 pack (2,000 credits)" in kwargs.get("note", "")
+    # The description names the SUPPLY, not the marketing SKU — no price in
+    # the label at all (see the invoice-presentation review).
+    assert "Credits top-up — 2,000 credits" in kwargs.get("note", "")
 
 
-def test_payment_captured_topup_names_usd_pack_from_display_price():
-    """Orders created after the USD-reprice carry ``notes.display_price``; the
-    invoice/grant description names the pack the customer actually chose while
-    all legal amounts stay INR."""
+def test_payment_captured_topup_never_puts_a_display_price_on_the_document():
+    """``notes.display_price`` must NOT reach the invoice description.
+
+    This previously rendered "Credits top-up — $249 pack" on an INR tax invoice
+    charging ₹19,999 — a figure that is neither the taxable value, nor the
+    total, nor the currency of supply. On a Rule 46 document that invites
+    exactly one question in an audit or a customer dispute: what was supplied,
+    and for how much? The amount column already carries the price, so the
+    credit quantity is the whole description.
+
+    Reversal of a deliberate earlier choice; the display price stays in the
+    checkout UI where it belongs, not on the statutory document."""
     from app.services import razorpay_service
 
     payload = {
@@ -635,9 +644,14 @@ def test_payment_captured_topup_names_usd_pack_from_display_price():
 
     grant.assert_called_once()
     _, kwargs = grant.call_args
-    assert "Credits top-up — $249 pack (32,500 credits)" in kwargs.get("note", "")
+    # The ledger note appends the Razorpay reference for reconciliation;
+    # what matters is that no display price appears in either string.
+    note = kwargs.get("note", "")
+    assert note.startswith("Credits top-up — 32,500 credits")
+    assert "$" not in note and "249" not in note
     invoice = session.add.call_args[0][0]
-    assert invoice.description == "Credits top-up — $249 pack (32,500 credits)"
+    assert invoice.description == "Credits top-up — 32,500 credits"
+    assert "$" not in invoice.description
     assert invoice.amount_cents == 1999900  # legal value stays INR paise
 
 

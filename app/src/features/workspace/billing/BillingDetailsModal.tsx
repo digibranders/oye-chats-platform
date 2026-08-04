@@ -24,6 +24,12 @@ export interface BillingDetailsModalProps {
   onClose: () => void;
   /** Fired after a successful save with a status message. */
   onSuccess: (message: string) => void;
+  /**
+   * Why the form opened, when it was triggered by a blocked checkout rather
+   * than by the customer. Replaces the generic description so the modal never
+   * appears unexplained mid-purchase.
+   */
+  prompt?: string | null;
 }
 
 /**
@@ -32,7 +38,12 @@ export interface BillingDetailsModalProps {
  * the legacy card), and propagates the country to `CurrencyProvider` so prices
  * across the app flip to the charged currency immediately. Not a payment flow.
  */
-export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetailsModalProps): ReactElement | null {
+export function BillingDetailsModal({
+  open,
+  onClose,
+  onSuccess,
+  prompt,
+}: BillingDetailsModalProps): ReactElement | null {
   const { country: acctCountry, setCountry: setGlobalCountry } = useCurrency();
   const [details, setDetails] = useState<BillingDetailsRaw | null>(null);
   const [form, setForm] = useState<BillingDetailsForm>(() => detailsToForm(null));
@@ -88,6 +99,11 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
     };
 
   const foreign = isForeignCountry(form.billing_country);
+  // A GSTIN turns the name field into a statutory match: the recipient name on
+  // a tax invoice must equal the GST registration, or the buyer's GSTR-2B
+  // reconciliation fails and they lose the input tax credit. No GSTIN simply
+  // means the customer isn't GST-registered, which is perfectly normal (B2C).
+  const gstinEntered = !foreign && Boolean(form.gstin.trim());
   const gstinSet = Boolean(form.gstin.trim());
 
   // Live place-of-supply echo: reassures the user their GSTIN/state resolves to
@@ -135,7 +151,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
       dismissible={!saving}
       size="lg"
       title="Billing details"
-      description="The legal identity printed on your invoices and used for tax."
+      description={prompt || 'The legal identity printed on your invoices and used for tax.'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
@@ -159,11 +175,19 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
         </p>
       ) : (
         <form id="billing-details-form" onSubmit={(e) => void handleSave(e)} className="space-y-4">
-          <Field label="Legal name" error={errors.legal_name}>
+          <Field
+            label={gstinEntered ? 'Registered business name' : 'Legal name'}
+            hint={
+              gstinEntered
+                ? 'Exactly as it appears on your GST certificate - a mismatch can block your input tax credit.'
+                : 'Printed on your invoices. Leave GSTIN blank if you aren’t GST registered.'
+            }
+            error={errors.legal_name}
+          >
             <Input
               value={form.legal_name}
               onChange={setField('legal_name')}
-              placeholder="Acme Pvt Ltd"
+              placeholder={gstinEntered ? 'Name as per GST certificate' : 'Acme Pvt Ltd'}
               autoComplete="organization"
               aria-invalid={errors.legal_name ? true : undefined}
               className={cn(errors.legal_name && INVALID_INPUT_CLASS)}
@@ -207,7 +231,7 @@ export function BillingDetailsModal({ open, onClose, onSuccess }: BillingDetails
                   ? 'Not applicable outside India.'
                   : gstinStateName
                     ? `Place of supply: ${gstinStateName}.`
-                    : 'Your state is derived from this.'
+                    : 'Leave blank if you aren’t GST registered. Your state is derived from this.'
               }
               error={errors.gstin}
             >

@@ -1,10 +1,14 @@
-"""Confirm-country gate on /checkout — Phase 1 charges INR (IN) only.
+"""Confirm-country gate on /checkout.
 
 The confirmed billing_country decides currency, plan set, and invoice type, so
-it is captured and gated *before* the mandate is authorised: a confirmed non-IN
-country returns a structured ``intl_usd_pending`` (409) so the UI shows
-Contact-sales instead of a broken payment, and a confirmed IN country is
-persisted on the client for invoice place-of-supply.
+it is captured and gated *before* the mandate is authorised: while
+``INTL_PAYMENTS_ENABLED`` is off a confirmed non-IN country returns a structured
+``intl_usd_pending`` (409) so the UI shows Contact-sales instead of a broken
+payment, and a confirmed IN country is persisted on the client for invoice
+place-of-supply.
+
+The flag-on behaviour (non-IN routed to the USD Razorpay plans) is covered by
+tests/test_usd_checkout_rail.py.
 
 Real-Postgres route tests via the shared ``db`` fixture; mirrors
 tests/test_billing_bl2_bl4.py. Skips without DB_URL.
@@ -37,7 +41,19 @@ def _make_client(db, *, email: str) -> Client:
     # ``is_verified=True`` so these country-routing tests clear the B2
     # email-verification gate on /checkout and exercise the currency/plan logic
     # they actually target (a fresh client defaults to unverified).
-    client = Client(name="c", email=email, api_key=email, hashed_password="h", is_verified=True)
+    # Billing identity is a precondition for paid checkout (Rule 46 buyer
+    # fields must be on record before the charge -- the invoice is issued
+    # from a webhook, so there is no second chance to ask).
+    client = Client(
+        name="c",
+        email=email,
+        api_key=email,
+        hashed_password="h",
+        is_verified=True,
+        legal_name="Test Buyer Pvt Ltd",
+        billing_address={"line1": "1 MG Road", "city": "Pune", "postal_code": "411001"},
+        billing_state_code="27",
+    )
     db.add(client)
     db.flush()
     return client
@@ -70,7 +86,7 @@ def _api(db, client) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_checkout_rejects_foreign_country_in_phase1(db):
+def test_checkout_rejects_foreign_country_while_intl_payments_disabled(db):
     from app.api import subscription_routes
 
     client = _make_client(db, email="gate-us@e.com")
@@ -78,7 +94,10 @@ def test_checkout_rejects_foreign_country_in_phase1(db):
     db.commit()
 
     api = _api(db, client)
-    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "INTL_PAYMENTS_ENABLED", False),
+    ):
         res = api.post(
             "/subscriptions/checkout",
             json={"plan_id": plan.id, "billing_cycle": "monthly", "billing_country": "US"},

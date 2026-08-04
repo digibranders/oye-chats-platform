@@ -132,6 +132,35 @@ def get_client_subscription(session: Session, client_id: int) -> Subscription | 
     return session.execute(stmt).scalars().first()
 
 
+def get_account_subscription(session: Session, client_id: int) -> Subscription | None:
+    """The client's ACCOUNT-level subscription (``bot_id IS NULL``).
+
+    Distinct from :func:`get_client_subscription`, which deliberately spans
+    per-bot subscriptions and returns the highest-priced one so account
+    ENTITLEMENTS never silently downgrade (remediation H2). That set is correct
+    for entitlements and WRONG as a mutation target: with an unpaid agent
+    selected it can return a DIFFERENT agent's subscription, so a "cancel"
+    would kill that agent's gateway mandate instead — and Razorpay has no
+    un-cancel.
+
+    ``ix_subscriptions_client_legacy_active`` (partial unique on ``client_id``
+    WHERE ``bot_id IS NULL`` AND status active/trialing/past_due) guarantees at
+    most one such row is live per client, so "the account subscription" is a
+    single well-defined thing.
+    """
+    stmt = (
+        select(Subscription)
+        .where(
+            Subscription.client_id == client_id,
+            Subscription.bot_id.is_(None),
+            Subscription.status.in_(("active", "trialing", "past_due")),
+        )
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalars().first()
+
+
 def get_subscription_for_bot(session: Session, client_id: int, bot_id: int) -> Subscription | None:
     """Return the active subscription funding a specific bot (remediation N3).
 

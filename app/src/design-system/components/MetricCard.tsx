@@ -13,8 +13,12 @@ export interface MetricCardProps {
   delta?: string;
   /** Direction of `delta`. Drives arrow + color: up=positive, down=negative. */
   trend?: MetricTrend;
+  /** Neutral supporting line under the value, e.g. "12 credits". */
+  caption?: string;
   /** Optional leading glyph. */
   icon?: LucideIcon;
+  /** Adds a hover border lift, signalling a living metric. */
+  interactive?: boolean;
   className?: string;
 }
 
@@ -26,37 +30,69 @@ const trendStyles: Record<MetricTrend, { icon: LucideIcon; text: string }> = {
 
 /**
  * MetricCard - a single KPI tile (mandate shared component). One number, its
- * label, and an optional trend delta. Compose several in a responsive grid to
- * build a stats row.
+ * label, and an optional trend delta or caption. Compose several in a
+ * responsive grid to build a stats row.
+ *
+ * Deliberately compact: a stats row is scanned, not read, so the tile spends
+ * its height on the number and nothing else. The icon is a bare glyph rather
+ * than a tinted chip - the chip set the row height on its own and added
+ * decoration a number tile doesn't need.
  */
-export function MetricCard({ label, value, delta, trend, icon: Icon, className }: MetricCardProps) {
+export function MetricCard({
+  label,
+  value,
+  delta,
+  trend,
+  caption,
+  icon: Icon,
+  interactive = false,
+  className,
+}: MetricCardProps) {
   const trendStyle = trend ? trendStyles[trend] : null;
   const TrendIcon = trendStyle?.icon;
+
+  // The value row carries exactly one secondary figure. A delta outranks a
+  // caption there; a caption only claims its own line when both are supplied.
+  const deltaNode =
+    delta && trendStyle && TrendIcon ? (
+      <span
+        className={cn('flex shrink-0 items-center gap-1 text-[12px] font-semibold', trendStyle.text)}
+      >
+        <TrendIcon size={13} aria-hidden="true" />
+        {delta}
+      </span>
+    ) : null;
 
   return (
     <div
       className={cn(
-        'rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]',
+        'rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]',
+        interactive && 'transition-colors hover:border-[var(--ds-border-strong)]',
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-[12px] font-medium text-[var(--ds-text-muted)]">{label}</p>
         {Icon && (
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-            <Icon size={16} aria-hidden="true" />
-          </span>
+          <Icon size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
         )}
       </div>
-      <div className="mt-3 flex items-end justify-between gap-3">
-        <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">{value}</span>
-        {delta && trendStyle && TrendIcon && (
-          <span className={cn('flex items-center gap-1 text-[13px] font-semibold', trendStyle.text)}>
-            <TrendIcon size={14} aria-hidden="true" />
-            {delta}
-          </span>
-        )}
+      <div className="mt-2 flex items-baseline justify-between gap-2">
+        <span className="text-[20px] font-semibold leading-none tracking-tight tabular-nums text-[var(--ds-text)]">
+          {value}
+        </span>
+        {deltaNode ??
+          (caption && (
+            <span className="shrink-0 text-[12px] tabular-nums text-[var(--ds-text-subtle)]">
+              {caption}
+            </span>
+          ))}
       </div>
+      {deltaNode && caption && (
+        <p className="mt-1.5 truncate text-[12px] tabular-nums text-[var(--ds-text-subtle)]">
+          {caption}
+        </p>
+      )}
     </div>
   );
 }

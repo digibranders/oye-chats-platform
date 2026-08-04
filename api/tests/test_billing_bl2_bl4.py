@@ -47,7 +47,19 @@ def _make_client(db, *, email: str) -> Client:
     # ``is_verified=True`` so these checkout-guard tests clear the B2
     # email-verification gate on /checkout (a fresh client defaults to
     # unverified) and exercise the subscription-state logic they target.
-    client = Client(name="c", email=email, api_key=email, hashed_password="h", is_verified=True)
+    # Billing identity is a precondition for paid checkout (Rule 46 buyer
+    # fields must be on record before the charge -- the invoice is issued
+    # from a webhook, so there is no second chance to ask).
+    client = Client(
+        name="c",
+        email=email,
+        api_key=email,
+        hashed_password="h",
+        is_verified=True,
+        legal_name="Test Buyer Pvt Ltd",
+        billing_address={"line1": "1 MG Road", "city": "Pune", "postal_code": "411001"},
+        billing_state_code="27",
+    )
     db.add(client)
     db.flush()
     return client

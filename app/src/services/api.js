@@ -1986,6 +1986,53 @@ export const getInvoices = async (botId) => {
  * Fetch the buyer tax identity printed on invoices (invoicing v2).
  * @returns {Promise<{legal_name, company_name, gstin, billing_address, billing_country, billing_state_code, billing_email}>}
  */
+/**
+ * Recovery state for a failing subscription — drives the app-wide past-due
+ * banner. Read-only and safe to poll: the backend resolves Razorpay's EXISTING
+ * hosted page and never mints a second mandate.
+ *
+ * `recoverable` is tri-state: true (link usable), false (settled — terminal
+ * mandate or no hosted page), null (the gateway couldn't be reached, so we
+ * don't know). Never render a button on null or false.
+ */
+/**
+ * Saved payment instruments for ONE-OFF payments (credit top-ups).
+ *
+ * Not the subscription mandate: Razorpay cannot swap the instrument on a live
+ * subscription, so changing THAT runs the re-mandate flow via /resume.
+ * Conflating the two would promise a swap the gateway cannot perform.
+ */
+export const getPaymentMethods = async ({ refresh = false } = {}) => {
+    try {
+        const params = refresh ? { refresh: 'true' } : {};
+        const response = await api.get('/payment-methods', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load saved payment methods');
+    }
+};
+
+/** Revoke a saved instrument at Razorpay, then drop our mirror row. */
+export const deletePaymentMethod = async (tokenId) => {
+    try {
+        const response = await api.delete(`/payment-methods/${encodeURIComponent(tokenId)}`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to remove the payment method');
+    }
+};
+
+export const getPaymentRecovery = async (botId) => {
+    try {
+        const params = {};
+        if (botId != null) params.bot_id = botId;
+        const response = await api.get('/subscriptions/payment-recovery', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load payment status');
+    }
+};
+
 export const getBillingDetails = async () => {
     try {
         const response = await api.get('/subscriptions/billing-details');
@@ -2102,9 +2149,20 @@ export const cancelSubscription = async (reason = null, botId = null) => {
     }
 };
 
-export const resumeSubscription = async () => {
+/**
+ * Reactivate a subscription that was scheduled to cancel.
+ *
+ * MUST carry the same `botId` scope `cancelSubscription` used. Without it the
+ * backend resolves the account subscription, which for a customer with
+ * per-agent plans is a DIFFERENT row than the one Cancel just acted on — so
+ * Reactivate either 400s ("not scheduled for cancellation") or mints a fresh
+ * Razorpay mandate against the wrong subscription.
+ */
+export const resumeSubscription = async (botId = null) => {
     try {
-        const response = await api.post('/subscriptions/resume');
+        const body = {};
+        if (botId != null) body.bot_id = botId;
+        const response = await api.post('/subscriptions/resume', body);
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to resume subscription');

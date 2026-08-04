@@ -71,50 +71,29 @@ router = APIRouter(prefix="/superadmin", tags=["superadmin-ops"])
 # ── Invoices ─────────────────────────────────────────────────────────────────
 
 
-def _invoice_provider(inv: Invoice) -> str:
-    """Derive the billing provider from the stored gateway reference.
+# NOTE: ``GET /superadmin/invoices`` used to live here. It was unreachable —
+# superadmin_routes_v2 registers the same path on the same prefix and main.py
+# includes that router FIRST, so this handler never matched and its ``?status=``
+# filter silently no-opped against v2's paginated response. Removed rather than
+# renamed: v2's version is the one the console calls and the one that
+# understands invoice_type / include_legacy.
 
-    A Razorpay payment id marks a real gateway charge; everything else (manual
-    super-admin grants, legacy rows) is reported as ``manual``.
+
+def _apply_mark_paid(inv: Invoice) -> None:
+    """Mark an invoice paid without violating the immutability guard.
+
+    ``paid_at`` is a frozen column once an invoice is numbered (models.py
+    ``_INVOICE_FROZEN_EXEMPT``) — and rightly so: a numbered document's supply
+    date is what its FY serial and GSTR period were derived from, so moving it
+    would silently misfile the document. A numbered invoice is by definition
+    already paid (it is created from a captured charge), so manual
+    reconciliation only ever applies to un-numbered legacy rows. For those we
+    stamp both fields; for numbered rows we move ``status`` only, which IS
+    exempt.
     """
-    return "razorpay" if inv.razorpay_payment_id else "manual"
-
-
-def _invoice_dict(inv: Invoice, client_name: str | None) -> dict[str, Any]:
-    return {
-        "id": inv.id,
-        "client_id": inv.client_id,
-        "client_name": client_name,
-        "amount_cents": _to_usd_cents(inv.amount_cents, inv.currency),
-        "currency": "USD",
-        "status": inv.status,
-        "provider": _invoice_provider(inv),
-        "provider_invoice_id": inv.razorpay_payment_id,
-        "created_at": inv.created_at.isoformat() if inv.created_at else None,
-        "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
-    }
-
-
-@router.get("/invoices")
-def list_invoices(
-    status_filter: str | None = Query(default=None, alias="status"),
-    client_id: int | None = None,
-    _admin: Client = Depends(get_superadmin),
-):
-    """List invoices (USD-normalised) with optional status / client filters."""
-    with get_session() as session:
-        stmt = (
-            select(Invoice, Client.name)
-            .outerjoin(Client, Invoice.client_id == Client.id)
-            .order_by(desc(Invoice.created_at))
-        )
-        if status_filter:
-            stmt = stmt.where(Invoice.status == status_filter)
-        if client_id:
-            stmt = stmt.where(Invoice.client_id == client_id)
-        stmt = stmt.limit(500)
-        rows = session.execute(stmt).all()
-        return [_invoice_dict(inv, client_name) for inv, client_name in rows]
+    inv.status = "paid"
+    if inv.invoice_number is None:
+        inv.paid_at = datetime.now(UTC)
 
 
 @router.post("/invoices/{invoice_id}/refund")
@@ -180,8 +159,7 @@ def mark_invoice_paid(
             raise HTTPException(status_code=404, detail="Invoice not found")
 
         before = {"status": inv.status, "paid_at": inv.paid_at.isoformat() if inv.paid_at else None}
-        inv.status = "paid"
-        inv.paid_at = datetime.now(UTC)
+        _apply_mark_paid(inv)
         session.flush()
 
         record_audit(
@@ -191,7 +169,10 @@ def mark_invoice_paid(
             target_type="invoice",
             target_id=invoice_id,
             before=before,
-            after={"status": "paid", "paid_at": inv.paid_at.isoformat()},
+            # paid_at stays NULL-able: a numbered invoice keeps whatever supply
+            # date it was issued with (which finalize may have taken from
+            # period_end), and _apply_mark_paid deliberately does not touch it.
+            after={"status": "paid", "paid_at": inv.paid_at.isoformat() if inv.paid_at else None},
             request=request,
         )
         session.commit()
@@ -1433,6 +1414,18 @@ def test_webhook_registration(
 # ── Payment methods (stored card / UPI / bank refs) ──────────────────────────
 
 
+def _mask_vpa(handle: str | None) -> str | None:
+    """``gaurav@okhdfcbank`` -> ``•••@okhdfcbank``.
+
+    Keeps the bank suffix, which is the only part support actually reads, and
+    drops the identifier, which is usually a phone number or a real name.
+    """
+    if not handle or "@" not in handle:
+        return handle
+    _, _, bank = handle.partition("@")
+    return f"•••@{bank}"
+
+
 @router.get("/payment-methods")
 def list_payment_methods(
     client_id: int | None = None,
@@ -1441,8 +1434,14 @@ def list_payment_methods(
     """Stored payment methods across clients (card / UPI / bank).
 
     Newest first, capped at 500, filterable by ``client_id``. Provider token
-    references (``razorpay_token_id``) are never
-    returned — only the non-sensitive display fields. Client names batch-loaded.
+    references (``razorpay_token_id``) are never returned.
+
+    UPI handles are MASKED. A VPA is routinely the customer's mobile number or
+    their name (``9876543210@ybl``), so returning it verbatim from a
+    cross-tenant endpoint would spread personal data far wider than the support
+    task needs — a DPDP concern rather than an RBI one. The bank suffix is
+    enough to answer "which UPI app is this?"; nobody triaging a payment needs
+    the identifier itself.
     """
     with get_session() as session:
         stmt = select(PaymentMethod).order_by(PaymentMethod.created_at.desc())
@@ -1466,10 +1465,14 @@ def list_payment_methods(
                 "provider": m.provider,
                 "type": m.type,
                 "last4": m.last4,
-                "brand": m.brand,
-                "expiry_month": m.expiry_month,
-                "expiry_year": m.expiry_year,
+                # RBI card-on-file permits last4 + network + issuer and nothing
+                # more — expiry and cardholder name must not be stored, so they
+                # are not available to serialize.
+                "network": m.network,
+                "issuer": m.issuer,
+                "upi_handle": _mask_vpa(m.upi_handle),
                 "is_default": m.is_default,
+                "synced_at": m.synced_at.isoformat() if m.synced_at else None,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in methods
