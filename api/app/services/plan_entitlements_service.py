@@ -336,7 +336,11 @@ def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
     other gate in this module.
     """
     try:
-        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+        # The lookup still runs (deny-by-default on failure), but every resolved
+        # plan — Free included — now reaches the leads dashboard. Free gets a
+        # deliberately reduced surface in the UI (conversation view only, no
+        # quality/location/detail); the paid tiers get the full dashboard.
+        get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
             "leads_dashboard_gate: entitlements lookup failed for client=%s — denying",
@@ -344,7 +348,7 @@ def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug != "free"
+    return True
 
 
 def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:

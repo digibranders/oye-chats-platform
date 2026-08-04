@@ -3,7 +3,7 @@ import { Check, Copy, Mail, Sparkles } from 'lucide-react';
 import { Card, SectionHeader, buttonVariants, cn } from '../../design-system';
 
 /** Where bespoke requests land. Mirrors the platform's published contact address. */
-const CONTACT_EMAIL = 'developer@oyechats.com';
+const CONTACT_EMAIL = 'support@oyechats.com';
 const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Custom request')}`;
 
 // ── Section ──────────────────────────────────────────────────────────────────

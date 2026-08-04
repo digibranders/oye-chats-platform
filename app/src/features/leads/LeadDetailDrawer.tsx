@@ -23,7 +23,7 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { Button, EmptyState, Skeleton, StatusBadge, Textarea, cn } from '../../design-system';
+import { Button, EmptyState, LockedFeatureCard, Skeleton, StatusBadge, Textarea, cn } from '../../design-system';
 import { useCountUp } from '../../hooks/useCountUp';
 import { type ChatMessage } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
@@ -41,6 +41,19 @@ import {
 export interface LeadDetailDrawerProps {
   data: LeadDetailData;
   onClose: () => void;
+  /**
+   * Which face of the drawer to show. `'detail'` (default) is the full lead
+   * profile WITHOUT the transcript; `'chat'` shows ONLY the conversation
+   * (opened by the list's "View chat" action). The two are intentionally
+   * split so each surface answers one question.
+   */
+  view?: 'detail' | 'chat';
+  /**
+   * Free plan: the lead-intelligence detail is a paid surface. When `true`, the
+   * `'detail'` face renders an upgrade teaser instead of the score / contact /
+   * qualification sections. The `'chat'` face (conversation) is never locked.
+   */
+  locked?: boolean;
   /**
    * Operator-private notes & tags for this lead (localStorage-backed). Optional
    * so the drawer still renders standalone; when present, a "Private notes"
@@ -276,6 +289,8 @@ function LeadAnnotationsSection({
 export function LeadDetailDrawer({
   data,
   onClose,
+  view = 'detail',
+  locked = false,
   annotations,
 }: LeadDetailDrawerProps): ReactElement {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -357,7 +372,7 @@ export function LeadDetailDrawer({
       >
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-5 py-4">
           <h2 id={headingId} className="text-base font-bold text-[var(--ds-text)]">
-            Lead details
+            {view === 'chat' ? 'Conversation' : 'Lead details'}
           </h2>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
             <X size={18} aria-hidden="true" />
@@ -384,6 +399,14 @@ export function LeadDetailDrawer({
 
         {status === 'ready' && detail && (
           <div className="space-y-6 p-5">
+            {/* Free plan: the lead-intelligence detail is locked behind an
+                upgrade teaser. The conversation ('chat' view) stays open. */}
+            {view === 'detail' && locked && (
+              <LockedFeatureCard intent="view_leads" />
+            )}
+
+            {view === 'detail' && !locked && (
+              <>
             {/* Quality verdict */}
             {(() => {
               const tier = TIER_META[normalizeTier(detail.status)];
@@ -485,8 +508,11 @@ export function LeadDetailDrawer({
 
             {/* Source attribution + behavioural signals (rendered only when present) */}
             <LeadInsights detail={detail} />
+              </>
+            )}
 
-            {/* Transcript */}
+            {/* Conversation transcript — the ONLY thing the "View chat" face shows */}
+            {view === 'chat' && (
             <section className="space-y-3">
               <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
                 <MessageSquare size={13} aria-hidden="true" />
@@ -504,9 +530,10 @@ export function LeadDetailDrawer({
                 </p>
               )}
             </section>
+            )}
 
-            {/* Operator-private notes & tags (remounts per lead via key). */}
-            {annotations && (
+            {/* Operator-private notes & tags — unlocked detail face only. */}
+            {view === 'detail' && !locked && annotations && (
               <LeadAnnotationsSection key={detail.session_id} controller={annotations} />
             )}
 

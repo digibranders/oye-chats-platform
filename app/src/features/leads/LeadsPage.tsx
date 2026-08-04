@@ -18,6 +18,8 @@ import {
   ChevronRight,
   Download,
   Gauge,
+  Lock,
+  MessageSquare,
   Trophy,
   Users,
   X,
@@ -25,7 +27,6 @@ import {
 import {
   Button,
   EmptyState,
-  LockedFeatureCard,
   PageContainer,
   Select,
   Skeleton,
@@ -39,6 +40,7 @@ import { MetricCard } from '../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
 import { type Lead } from '../../types/domain';
 import { useLeads } from './useLeads';
@@ -48,7 +50,6 @@ import { LeadDetailDrawer } from './LeadDetailDrawer';
 import {
   type ContactFilter,
   type TierKey,
-  SCORE_TONE_VAR,
   TIER_META,
   TIER_ORDER,
   filterLeads,
@@ -56,7 +57,6 @@ import {
   leadDisplayName,
   leadInitials,
   normalizeTier,
-  scoreTone,
 } from './leadModel';
 import type { LeadStatsSummary } from './leadModel';
 
@@ -147,20 +147,27 @@ function QualityCell({ lead }: { lead: Lead }): ReactElement {
   return <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>;
 }
 
-function ScoreCell({ score }: { score: number }): ReactElement {
-  const clamped = Math.max(0, Math.min(100, score));
+/**
+ * LockedValue - a Free-plan stand-in for a paid lead-intelligence cell
+ * (quality score, location). The column stays VISIBLE so Free users see the
+ * feature exists; the value is replaced by a lock affordance that opens the
+ * upgrade modal instead of the real data.
+ */
+function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
   return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--ds-bg-sunken)]">
-        <div
-          className="h-full rounded-full"
-          style={{ width: `${clamped}%`, backgroundColor: SCORE_TONE_VAR[scoreTone(clamped)] }}
-        />
-      </div>
-      <span className="text-[12px] font-semibold tabular-nums text-[var(--ds-text-muted)]">
-        {clamped}
-      </span>
-    </div>
+    <button
+      type="button"
+      title="Upgrade to unlock"
+      aria-label="Upgrade to unlock"
+      onClick={(event) => {
+        event.stopPropagation();
+        onUpgrade();
+      }}
+      className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)]"
+    >
+      <Lock size={12} aria-hidden="true" />
+      Locked
+    </button>
   );
 }
 
@@ -180,6 +187,7 @@ export function LeadsPage(): ReactElement {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
   const { isFree } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
 
   // Free-plan workspaces never get the list - the backend's `/leads` route
   // 403s for them. `useLeads` takes `enabled: false` so it never issues that
@@ -193,7 +201,7 @@ export function LeadsPage(): ReactElement {
     reload,
     markViewedLocal,
     markAllReadLocal,
-  } = useLeads(botId, !isFree);
+  } = useLeads(botId);
 
   const annotations = useLeadAnnotations();
 
@@ -203,6 +211,9 @@ export function LeadsPage(): ReactElement {
   const [sortBy, setSortBy] = useState<SortKey>('recent');
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Which face the drawer opens on: the full lead profile ('detail', row click)
+  // or the conversation only ('chat', the row's "View chat" button).
+  const [drawerView, setDrawerView] = useState<'detail' | 'chat'>('detail');
   const detailData = useLeadDetail(selectedSessionId);
 
   // Bulk-select for "Export selected". Keyed by session id so a selection
@@ -256,14 +267,35 @@ export function LeadsPage(): ReactElement {
     setSelectedIds(new Set());
   }, [leads, selectedIds, annotations]);
 
-  function openLead(lead: Lead): void {
-    setSelectedSessionId(lead.session_id);
-    if (lead.unread) {
-      markViewedLocal(lead.session_id);
-      // Fire-and-forget: the badge already updated optimistically.
-      void markLeadViewed(lead.session_id).catch(() => undefined);
-    }
-  }
+  const markSeen = useCallback(
+    (lead: Lead): void => {
+      if (lead.unread) {
+        markViewedLocal(lead.session_id);
+        // Fire-and-forget: the badge already updated optimistically.
+        void markLeadViewed(lead.session_id).catch(() => undefined);
+      }
+    },
+    [markViewedLocal],
+  );
+
+  // Row click → full lead profile (no transcript). "View chat" → transcript only.
+  const openLead = useCallback(
+    (lead: Lead): void => {
+      setDrawerView('detail');
+      setSelectedSessionId(lead.session_id);
+      markSeen(lead);
+    },
+    [markSeen],
+  );
+
+  const openChat = useCallback(
+    (lead: Lead): void => {
+      setDrawerView('chat');
+      setSelectedSessionId(lead.session_id);
+      markSeen(lead);
+    },
+    [markSeen],
+  );
 
   async function handleExport(): Promise<void> {
     setIsExporting(true);
@@ -292,7 +324,8 @@ export function LeadsPage(): ReactElement {
   }
 
   const columns: Column<Lead>[] = useMemo(
-    () => [
+    () => {
+      const all: Column<Lead>[] = [
       {
         key: 'select',
         header: (
@@ -377,19 +410,41 @@ export function LeadsPage(): ReactElement {
       {
         key: 'status',
         header: 'Quality',
-        render: (lead) => <QualityCell lead={lead} />,
+        render: (lead) =>
+          isFree ? (
+            <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
+          ) : (
+            <QualityCell lead={lead} />
+          ),
       },
       {
-        key: 'score',
-        header: 'Score',
-        render: (lead) => <ScoreCell score={lead.score} />,
+        key: 'view_chat',
+        header: 'Chat',
+        render: (lead) => (
+          <button
+            type="button"
+            onClick={(event) => {
+              // Stop the row's onRowClick from double-firing; the button opens
+              // the same lead drawer (which carries the full chat transcript).
+              event.stopPropagation();
+              openChat(lead);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ds-border)] px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:border-[var(--ds-border-strong)] hover:text-[var(--ds-text)]"
+          >
+            <MessageSquare size={13} aria-hidden="true" />
+            View chat
+          </button>
+        ),
       },
       {
         key: 'location',
         header: 'Location',
-        render: (lead) => (
-          <span className="text-[12px] text-[var(--ds-text-muted)]">{lead.location || '-'}</span>
-        ),
+        render: (lead) =>
+          isFree ? (
+            <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
+          ) : (
+            <span className="text-[12px] text-[var(--ds-text-muted)]">{lead.location || '-'}</span>
+          ),
       },
       {
         key: 'last_active_at',
@@ -413,28 +468,28 @@ export function LeadsPage(): ReactElement {
           />
         ),
       },
+      ];
+      // Free tier keeps every column VISIBLE — the Quality/Location cells
+      // render a locked affordance (see their `render`), and the row opens a
+      // locked lead-detail drawer. Nothing is hidden; the paid bits are gated.
+      return all;
+    },
+    [
+      allFilteredSelected,
+      selectedIds,
+      toggleSelect,
+      toggleSelectAll,
+      annotations,
+      openChat,
+      isFree,
+      openUpgradeModal,
     ],
-    [allFilteredSelected, selectedIds, toggleSelect, toggleSelectAll, annotations],
   );
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  // Free plan: never render the list (or its loading/error states) - show the
-  // upgrade teaser, full stop. Takes priority over every other guard below so
-  // a Free user who deep-links `/leads` always lands here, not on a skeleton
-  // or empty state for data that was never fetched.
-  if (isFree) {
-    return (
-      <PageContainer
-        title="Leads"
-        description="The people who talked to your AI - most recent chats first."
-      >
-        <div className="mx-auto w-full max-w-md py-12">
-          <LockedFeatureCard intent="view_leads" icon={Users} />
-        </div>
-      </PageContainer>
-    );
-  }
-
+  // Free plan now reaches Leads too, with a reduced surface: the list hides the
+  // quality/location columns (see `columns`) and rows open the conversation
+  // (`openChat`) instead of the full lead-intelligence drawer.
   if (botsLoading && bots.length === 0) {
     return (
       <PageContainer title="Leads">
@@ -673,6 +728,8 @@ export function LeadsPage(): ReactElement {
       {selectedSessionId !== null && (
         <LeadDetailDrawer
           data={detailData}
+          view={drawerView}
+          locked={isFree}
           onClose={() => setSelectedSessionId(null)}
           annotations={annotations.controllerFor(selectedSessionId)}
         />
