@@ -1054,11 +1054,18 @@ def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, 
 
 def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | None = None) -> None:
     """Send the customer their finalized invoice/receipt with the PDF attached."""
-    from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
+    from app.services.invoice_pdf import _fmt_money as _fmt_invoice_money
 
     doc_label = {"tax_invoice": "Tax invoice", "credit_note": "Credit note"}.get(invoice.invoice_type, "Receipt")
     is_credit_note = invoice.invoice_type == "credit_note"
-    amount = _fmt_invoice_inr(invoice.amount_cents)
+
+    # Format in the document's OWN currency. This used to hardcode rupees, so a
+    # $9 export was announced to the customer as "₹9.00" — a figure that matches
+    # neither the attached PDF nor their card statement.
+    def money(minor: int | None) -> str:
+        return _fmt_invoice_money(minor, invoice.currency)
+
+    amount = money(invoice.amount_cents)
     seller_raw = (invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME
     seller_name = esc(seller_raw)  # for HTML body
 
@@ -1067,7 +1074,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
         rows.append(
             (
                 "GST reversed" if is_credit_note else "GST included",
-                _fmt_invoice_inr(invoice.total_tax_minor),
+                money(invoice.total_tax_minor),
             )
         )
 
