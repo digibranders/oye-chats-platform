@@ -40,6 +40,13 @@ export interface PlanCheckoutContext {
   onSuccess: (message: string) => void;
   /** Fired to dismiss the surface (drawer close) after success. */
   onDone: () => void;
+  /**
+   * Fired when the backend refuses checkout because the buyer's statutory
+   * billing identity is incomplete (409 `billing_details_required`). Not an
+   * error state: the account simply isn't invoiceable yet, so the host should
+   * open the billing-details form rather than show a dead-end message.
+   */
+  onBillingDetailsRequired?: (missing: string[]) => void;
 }
 
 export interface PlanCheckoutResult {
@@ -71,8 +78,15 @@ export function isTrialEligible(
 }
 
 export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
-  const { currentPlanSlug, currentSubscriptionStatus, hasActiveSubscription, trialUsed, onSuccess, onDone } =
-    ctx;
+  const {
+    currentPlanSlug,
+    currentSubscriptionStatus,
+    hasActiveSubscription,
+    trialUsed,
+    onSuccess,
+    onDone,
+    onBillingDetailsRequired,
+  } = ctx;
   const { country: acctCountry } = useCurrency();
 
   const [submitting, setSubmitting] = useState(false);
@@ -223,6 +237,26 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           );
           return;
         }
+        // Not a failure - the account is simply not invoiceable yet. An
+        // invoice is issued from a webhook, so the buyer identity has to be on
+        // record BEFORE the charge; hand off to the billing-details form
+        // instead of stranding the customer on an error.
+        if (
+          detail &&
+          typeof detail === 'object' &&
+          (detail as { code?: string }).code === 'billing_details_required'
+        ) {
+          const missing = (detail as { missing?: string[] }).missing ?? [];
+          if (onBillingDetailsRequired) {
+            onBillingDetailsRequired(missing);
+          } else {
+            setError(
+              (detail as { message?: string }).message ||
+                'Add your billing details so we can issue a valid tax invoice.',
+            );
+          }
+          return;
+        }
         if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'seat_overflow') {
           const d = detail as {
             message?: string;
@@ -246,6 +280,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       acctCountry,
       currentPlanSlug,
       currentSubscriptionStatus,
+      onBillingDetailsRequired,
       hasActiveSubscription,
       trialUsed,
       onSuccess,

@@ -37,6 +37,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_dispatch_handoff_push,
     task_dispatch_offline_message_push,
     task_dispatch_transfer_push,
+    task_dunning_emails,
     task_expire_old_topups,
     task_expire_past_due_subscriptions,
     task_expire_trials,
@@ -142,6 +143,7 @@ class WorkerSettings:
         task_expire_trials,
         task_trial_reminder_emails,
         task_delete_expired_trial_data,
+        task_dunning_emails,
         task_expire_past_due_subscriptions,
         task_dispatch_handoff_push,
         task_dispatch_offline_message_push,
@@ -184,6 +186,11 @@ class WorkerSettings:
         # Dunning auto-expire — once a day at 00:25 UTC, after the trial
         # crons so a same-day card rescue beats the grace-elapsed cut.
         cron(task_expire_past_due_subscriptions, hour=0, minute=25),
+        # Dunning cadence. 09:30 UTC = 15:00 IST — a working-hours send for
+        # the Indian customer base, and deliberately hours AFTER the 00:25
+        # expiry sweep so a subscription that dies today gets the suspension
+        # email rather than a cadence email.
+        cron(task_dunning_emails, hour=9, minute=30),
         # Invoice PDF sweep — every 5 min; renders/uploads documents for
         # freshly finalized invoices (invoicing v2, no-op while flag is off).
         cron(task_render_invoice_pdfs, minute=set(range(1, 60, 5))),

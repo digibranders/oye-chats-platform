@@ -225,6 +225,52 @@ def _reject_seat_price_drift(data: dict) -> None:
         )
 
 
+# RBI Digital Payments — E-mandate Framework, 2026 (notified 21 Apr 2026):
+# a recurring debit above this amount requires Additional Factor of
+# Authentication on EVERY charge, so the renewal stops being silent and the
+# customer must re-authenticate each cycle. The Rs 1,00,000 ceiling applies
+# only to insurance, mutual funds and credit card bills — SaaS does not
+# qualify. Expressed in paise to match the price columns.
+EMANDATE_AFA_CEILING_MINOR = 1_500_000
+
+
+def emandate_warning(amount_minor: int | None, currency: str | None) -> str | None:
+    """Warn when a per-charge amount would forfeit AFA-exempt auto-debit.
+
+    Deliberately a WARNING, not a hard block: pricing above the ceiling is a
+    legitimate business decision (an enterprise tier may accept per-renewal
+    re-authentication, or bill by invoice instead of by mandate). The failure
+    this prevents is crossing the line *unknowingly* — Professional annual sits
+    at Rs 13,428, only 10.5% below it.
+
+    Non-INR is out of scope: the threshold is a rupee figure and cannot be
+    compared against a USD amount. The 2026 framework does cover cross-border,
+    so the FX-converted test lands with the USD rail once Razorpay confirms how
+    the ceiling applies to foreign-issued cards.
+    """
+    if (currency or "INR").upper() != "INR":
+        return None
+    if int(amount_minor or 0) <= EMANDATE_AFA_CEILING_MINOR:
+        return None
+    return (
+        f"₹{int(amount_minor) / 100:,.0f} per charge exceeds the RBI e-mandate AFA-exempt "
+        f"ceiling of ₹15,000. Auto-debit will require the customer to authenticate every "
+        f"renewal. Consider monthly billing or invoice-based collection for this tier."
+    )
+
+
+def _emandate_warnings(plan: Plan) -> list[str]:
+    """Every amount this plan can debit in one transaction."""
+    return [
+        w
+        for w in (
+            emandate_warning(plan.monthly_price_cents, plan.currency),
+            emandate_warning(plan.annual_price_cents, plan.currency),
+        )
+        if w
+    ]
+
+
 @router.post("/plans")
 def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_superadmin)):
     """Create a new pricing plan."""
@@ -276,7 +322,11 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
 
         logger.info(f"Superadmin {superadmin.id} created plan '{plan.name}' (id={plan.id})")
 
-        return {"message": f"Plan '{plan.name}' created successfully.", "plan_id": plan.id}
+        return {
+            "message": f"Plan '{plan.name}' created successfully.",
+            "plan_id": plan.id,
+            "warnings": _emandate_warnings(plan),
+        }
 
 
 @router.put("/plans/{plan_id}")
@@ -379,7 +429,10 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         logger.info(f"Superadmin {superadmin.id} updated plan {plan_id} ({plan.name})")
 
-        return {"message": f"Plan '{plan.name}' updated successfully."}
+        return {
+            "message": f"Plan '{plan.name}' updated successfully.",
+            "warnings": _emandate_warnings(plan),
+        }
 
 
 @router.delete("/plans/{plan_id}")

@@ -11,6 +11,7 @@ documents are immutable — corrections are credit notes, never edits.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app import config
+from app.core.fx import (
+    MAX_PLAUSIBLE_RATE_MICROS,
+    MICROS,
+    MIN_PLAUSIBLE_RATE_MICROS,
+    FxError,
+    convert_minor,
+    implied_rate_micros,
+    is_plausible_rate,
+)
 from app.core.tax import compute_tax, supply_kind
 from app.db.models import Client, Invoice, InvoiceCounter
 from app.services.seller_profile_service import SellerProfile, get_seller_profile
@@ -113,6 +123,14 @@ def _seller_snapshot(seller: SellerProfile) -> dict:
         "gst_enabled": seller.gst_enabled,
         "lut_active": seller.lut_active,
         "lut_number": seller.lut_number,
+        # Companies Act s.12(3)(c) identity, snapshotted like everything else so
+        # a later profile edit never rewrites an issued document. Absent on
+        # invoices numbered before these fields existed — the PDF renders each
+        # one only when present.
+        "cin": seller.cin,
+        "phone": seller.phone,
+        "website": seller.website,
+        "support_email": seller.support_email,
     }
 
 
@@ -130,6 +148,70 @@ def _buyer_snapshot(buyer: Client | None) -> dict:
     }
 
 
+class _FxUnavailable(Exception):
+    """A non-INR charge cannot be turned into a reportable document (yet)."""
+
+
+@dataclass(frozen=True)
+class _Fx:
+    inr_amount_minor: int
+    rate_micros: int
+    source: str
+
+
+# Provenance of the rate stored on the document. Only one source exists today;
+# the column is explicit so a future manual override is distinguishable from a
+# gateway-evidenced rate at a glance, years later, in an assessment.
+FX_SOURCE_RAZORPAY = "razorpay_base_amount"
+
+
+def _resolve_fx(invoice: Invoice, kind: str) -> _Fx | None:
+    """The INR mirror for a non-INR charge, or ``None`` for a rupee charge.
+
+    Raises ``_FxUnavailable`` when the charge is foreign but cannot be reported
+    in rupees. Every branch here is a refusal to issue rather than a best
+    guess: an invoice number is allocated from a gapless statutory series and
+    the row is frozen the moment it lands, so a wrong document cannot be
+    corrected — only credit-noted. A missing one can simply be issued later,
+    and the self-heal sweep does exactly that.
+    """
+    currency = (invoice.currency or "inr").lower()
+    if currency == "inr":
+        return None
+
+    # A foreign currency on a domestic supply is a contradiction, not an edge
+    # case: it means the buyer's country now says India while the live mandate
+    # still bills dollars (a customer who relocated). Issuing would produce a
+    # domestic tax invoice denominated in a foreign currency whose CGST/SGST
+    # columns are in rupees. Ops must re-point the mandate first.
+    if kind != "export":
+        raise _FxUnavailable(
+            f"currency {currency!r} on a {kind!r} supply — a foreign charge must be an export; "
+            "re-point the mandate to the domestic rail before this can be documented"
+        )
+
+    inr_amount_minor = invoice.inr_amount_minor
+    if inr_amount_minor is None:
+        raise _FxUnavailable(
+            f"currency {currency!r} with no captured INR conversion (Razorpay base_amount); "
+            "GSTR-1 Table 6A reports exports in rupees, so there is nothing to file"
+        )
+
+    try:
+        rate_micros = implied_rate_micros(invoice.amount_cents or 0, inr_amount_minor)
+    except FxError as exc:
+        raise _FxUnavailable(str(exc)) from exc
+
+    if not is_plausible_rate(rate_micros):
+        raise _FxUnavailable(
+            f"implied rate {rate_micros / MICROS:.4f} INR per {currency.upper()} is outside the plausible band "
+            f"({MIN_PLAUSIBLE_RATE_MICROS // MICROS}–{MAX_PLAUSIBLE_RATE_MICROS // MICROS}) — "
+            "likely a minor-unit mismatch in base_amount"
+        )
+
+    return _Fx(inr_amount_minor=inr_amount_minor, rate_micros=rate_micros, source=FX_SOURCE_RAZORPAY)
+
+
 def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     """Enrich a just-created invoice into a numbered tax document.
 
@@ -142,18 +224,6 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         return False
     if invoice.invoice_number:  # already finalized — immutable, never re-touch
         return False
-    # The tax engine assumes INR paise. Razorpay charges are INR; this guards
-    # any non-INR charge from being taxed as rupees and
-    # minting a false tax invoice — such rows stay legacy until a
-    # currency-aware path exists.
-    if (invoice.currency or "").lower() != "inr":
-        logger.warning(
-            "invoice %s currency %r is not INR — skipping finalize (stays legacy)",
-            invoice.id,
-            invoice.currency,
-        )
-        return False
-
     seller = get_seller_profile(session)
     # ACTIVATION GATE: the flags default ON, so the seller profile is what
     # actually turns invoicing on. Until the super-admin saves the company's
@@ -166,6 +236,19 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     buyer_state = buyer.billing_state_code if buyer else None
     buyer_country = buyer.billing_country if buyer else None
     kind = supply_kind(seller.state_code, buyer_state, buyer_country)
+
+    # A non-INR charge is issued in its own currency and carries an INR mirror
+    # for the return. ``fx`` is None on the (overwhelmingly common) rupee path.
+    try:
+        fx = _resolve_fx(invoice, kind)
+    except _FxUnavailable as exc:
+        # Not an error — a deliberate refusal. A charge we cannot report is
+        # left legacy so ``backfill_unnumbered_invoices`` retries it and
+        # ``reconciliation_anomalies`` surfaces it, rather than being numbered
+        # off a rate we cannot defend. Numbering is irreversible; waiting is not.
+        logger.warning("invoice %s not finalized: %s", invoice.id, exc)
+        return False
+
     # Finding G: date the document (and its FY serial bucket) from the actual
     # payment instant, not the wall-clock at finalize. A charge captured at
     # 23:59 IST on 31 Mar but finalized after midnight must still be numbered
@@ -198,9 +281,31 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         # Phase 7: GSTR-1 Table 6A (exports) needs a POS code ("96"/port state);
         # the NULL here is resolved in the GSTR export, not stored on the doc.
         invoice.place_of_supply = None if kind == "export" else (buyer_state or seller.state_code)
+        if fx is not None:
+            # The rupee breakup is computed FROM THE RUPEE TOTAL, not by
+            # converting each component of the foreign one. Converting
+            # component-wise lets rounding push taxable + tax off the total by a
+            # paisa, which is exactly the reconciliation gap a GST audit looks
+            # for. Running the same engine over the INR base makes the mirror
+            # self-consistent by construction, and its total is Razorpay's
+            # settled figure to the paisa.
+            inr_breakup = compute_tax(
+                fx.inr_amount_minor,
+                seller.tax_rate_bps,
+                inclusive=seller.price_inclusive,
+                kind=kind,
+                lut_active=seller.lut_active,
+            )
+            invoice.inr_taxable_value_minor = inr_breakup.taxable_minor
+            invoice.inr_total_tax_minor = inr_breakup.total_tax_minor
     else:
         # No seller GSTIN → issue a plain numbered receipt, no tax breakup.
         invoice.invoice_type = "receipt"
+
+    if fx is not None:
+        invoice.inr_amount_minor = fx.inr_amount_minor
+        invoice.fx_rate_micros = fx.rate_micros
+        invoice.fx_rate_source = fx.source
 
     # Receipts run on their own series so the tax-invoice serial range stays
     # consecutive (Rule 46(b) / GSTR-1 Table 13) even if GST mode is enabled
@@ -405,24 +510,50 @@ def create_credit_note(
         ],
     )
 
+    # Reverse the INR mirror too, at the ORIGINAL's frozen rate. A credit note
+    # is reported in the same rupee terms as the document it reverses, so
+    # re-converting at today's rate would leave a residue in export turnover
+    # that no refund could ever clear.
+    inr_refund_minor: int | None = None
+    if original.fx_rate_micros and original.inr_amount_minor is not None:
+        note.fx_rate_micros = original.fx_rate_micros
+        note.fx_rate_source = original.fx_rate_source
+        # A FULL reversal reuses the original's exact figure rather than
+        # re-deriving it, so the two documents net to precisely zero — a
+        # re-conversion can land a paisa off and leave phantom turnover.
+        inr_refund_minor = (
+            original.inr_amount_minor
+            if refund_minor == original.amount_cents
+            else convert_minor(refund_minor, original.fx_rate_micros)
+        )
+        note.inr_amount_minor = inr_refund_minor
+
     if original.invoice_type == "tax_invoice" and original.tax_rate_bps is not None:
         seller_snap = original.seller_snapshot or {}
-        breakup = compute_tax(
-            refund_minor,
-            original.tax_rate_bps,
-            # The refund amount is the gross the customer gets back. Inclusive
-            # is safe to hardcode: seller_profile_service rejects
-            # price_inclusive=False, so every finalized original was inclusive.
-            inclusive=True,
-            kind=original.supply_kind or "intra",
-            lut_active=bool(seller_snap.get("lut_active")),
-        )
+
+        def _reverse(gross_minor: int):
+            return compute_tax(
+                gross_minor,
+                original.tax_rate_bps,
+                # The refund amount is the gross the customer gets back.
+                # Inclusive is safe to hardcode: seller_profile_service rejects
+                # price_inclusive=False, so every finalized original was inclusive.
+                inclusive=True,
+                kind=original.supply_kind or "intra",
+                lut_active=bool(seller_snap.get("lut_active")),
+            )
+
+        breakup = _reverse(refund_minor)
         note.tax_rate_bps = breakup.rate_bps
         note.taxable_value_minor = breakup.taxable_minor
         note.cgst_minor = breakup.cgst_minor
         note.sgst_minor = breakup.sgst_minor
         note.igst_minor = breakup.igst_minor
         note.total_tax_minor = breakup.total_tax_minor
+        if inr_refund_minor is not None:
+            inr_breakup = _reverse(inr_refund_minor)
+            note.inr_taxable_value_minor = inr_breakup.taxable_minor
+            note.inr_total_tax_minor = inr_breakup.total_tax_minor
 
     session.add(note)
     session.flush()

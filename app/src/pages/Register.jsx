@@ -331,7 +331,7 @@ export default function Register() {
           <p className="mb-4 text-xs leading-relaxed text-surface-500">
             By signing up, you agree to our{' '}
             <a
-              href="https://oyechats.com/legal/terms"
+              href="https://www.oyechats.com/legal/terms"
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary-600 hover:text-primary-700 font-medium"
@@ -340,7 +340,7 @@ export default function Register() {
             </a>{' '}
             and{' '}
             <a
-              href="https://oyechats.com/legal/privacy"
+              href="https://www.oyechats.com/legal/privacy"
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary-600 hover:text-primary-700 font-medium"

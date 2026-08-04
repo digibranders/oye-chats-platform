@@ -184,8 +184,8 @@ EMAIL_ENABLED = bool(BREVO_API_KEY)
 # ─────────────────────────────────────────────────────────────────────────────
 # Brand & public URLs (used by email templates and any other branded surface)
 # ─────────────────────────────────────────────────────────────────────────────
-# Public marketing site root, e.g. "https://oyechats.com". No trailing slash.
-MARKETING_URL = os.getenv("MARKETING_URL", "https://oyechats.com").rstrip("/")
+# Public marketing site root, e.g. "https://www.oyechats.com". No trailing slash.
+MARKETING_URL = os.getenv("MARKETING_URL", "https://www.oyechats.com").rstrip("/")
 # Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
 # Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
 APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
@@ -287,6 +287,14 @@ RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 #   price env together — Razorpay plans are immutable, so the price and the id
 #   always move as a pair.
 RAZORPAY_SEAT_PLAN_ID: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID") or None
+
+# RAZORPAY_SEAT_PLAN_ID_USD — the same add-on for the USD (international) rail.
+#   A Razorpay plan's currency is fixed at creation, so the INR seat plan above
+#   cannot bill an international customer; this is a separate plan charging
+#   ``EXTRA_SEAT_PRICE_USD_CENTS``. Same invariants as the INR id: env-driven,
+#   no baked-in default, and the id moves together with its price. Empty/unset
+#   means seat add-ons are unavailable on the USD rail.
+RAZORPAY_SEAT_PLAN_ID_USD: str | None = os.getenv("RAZORPAY_SEAT_PLAN_ID_USD") or None
 
 # Canonical extra-operator-seat price — the SINGLE source of truth for both what
 # the customer is charged and what every surface displays, so the two can never

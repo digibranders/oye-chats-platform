@@ -34,6 +34,9 @@ const TYPE_META: Record<string, TypeMeta> = {
   handoff_request: { icon: Headphones, wrapClassName: 'bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]' },
   feedback_resolved: { icon: MessageSquare, wrapClassName: 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]' },
   crawl_completed: { icon: Globe, wrapClassName: 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]' },
+  // Danger tone, not the generic bell: a failed payment ends in the customer's
+  // agents going offline, so it must read as more urgent than an FYI.
+  payment_failed: { icon: CreditCard, wrapClassName: 'bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]' },
 };
 
 const DEFAULT_META: TypeMeta = {

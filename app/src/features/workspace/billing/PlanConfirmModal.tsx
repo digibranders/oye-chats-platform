@@ -97,6 +97,12 @@ export interface PlanConfirmModalProps {
   /** Monthly price of the current plan (minor units) - decides upgrade vs downgrade. */
   currentMonthlyPriceMinor: number;
   onSuccess: (message: string) => void;
+  /**
+   * Fired when checkout is refused because the buyer's statutory billing
+   * identity is incomplete. The host closes this modal and opens the
+   * billing-details form.
+   */
+  onBillingDetailsRequired?: (missing: string[]) => void;
 }
 
 /**
@@ -118,6 +124,7 @@ export function PlanConfirmModal({
   trialUsed,
   currentMonthlyPriceMinor,
   onSuccess,
+  onBillingDetailsRequired,
 }: PlanConfirmModalProps): ReactElement | null {
   const checkout = usePlanCheckout({
     currentPlanSlug,
@@ -126,6 +133,7 @@ export function PlanConfirmModal({
     trialUsed,
     onSuccess,
     onDone: onClose,
+    onBillingDetailsRequired,
   });
   const { reset } = checkout;
 

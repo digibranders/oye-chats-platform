@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Loader2, Check, Download, MonitorSmartphone } from 'lucide-react';
-import { useToast } from '../context/ToastContext';
+import { FeedbackBanner, useFeedback } from '../design-system';
 import useInstallPrompt from '../hooks/useInstallPrompt';
 import InstallInstructionsModal from './InstallInstructionsModal';
 
@@ -26,7 +26,7 @@ import InstallInstructionsModal from './InstallInstructionsModal';
  */
 export default function InstallAsAppCard() {
     const { canInstall, isInstalled, isIOS, install } = useInstallPrompt();
-    const { showToast } = useToast();
+    const { feedback, notify, dismiss } = useFeedback();
     const [installing, setInstalling] = useState(false);
     const [modalMode, setModalMode] = useState(null);
 
@@ -36,9 +36,9 @@ export default function InstallAsAppCard() {
             try {
                 const { outcome } = await install();
                 if (outcome === 'accepted') {
-                    showToast('success', 'OyeChats installed. Look for the app icon on your device.');
+                    notify({ tone: 'success', message: 'OyeChats installed. Look for the app icon on your device.' });
                 } else if (outcome === 'dismissed') {
-                    showToast('info', 'Install dismissed - you can try again anytime.');
+                    notify({ tone: 'info', message: 'Install dismissed - you can try again anytime.' });
                 } else {
                     // Rare: browser was ready when we rendered but the event
                     // had already been consumed by the time the click fired.
@@ -82,6 +82,8 @@ export default function InstallAsAppCard() {
                     {installing ? 'Installing…' : 'Install OyeChats'}
                 </button>
             )}
+
+            <FeedbackBanner feedback={feedback} onDismiss={dismiss} className="mt-4" />
 
             <InstallInstructionsModal
                 open={modalMode !== null}

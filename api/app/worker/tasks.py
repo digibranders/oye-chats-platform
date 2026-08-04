@@ -11,6 +11,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on one dunning pass. Each due subscription costs a serial
+# Razorpay fetch plus a Brevo hand-off, so an unbounded first-run batch (when
+# every existing past_due row has an empty marker map) could outlive the ARQ
+# job timeout. Oldest-first ordering means a truncated batch still serves the
+# customers closest to suspension; the rest are picked up on the next tick.
+DUNNING_BATCH_LIMIT = 200
+
 
 # ── Document Ingestion ──────────────────────────────────────────────────────
 
@@ -710,16 +717,32 @@ async def task_send_template_email(
 # blocking SQLAlchemy session shape the rest of the codebase ships.
 
 
-def _mark_email_sent(sub, key: str, when) -> None:
-    """Idempotency marker — set ``trial_emails_sent[key] = ts``.
+def _mark_marker(sub, field: str, key: str, when) -> None:
+    """Idempotency marker — set ``<field>[key] = ts`` on a JSONB column.
+
+    The target column is explicit because ``Subscription`` now carries TWO
+    independent marker maps (``trial_emails_sent`` and ``dunning_emails_sent``).
+    A helper hardcoded to one of them silently writes dunning markers into the
+    trial map: no exception, no type error, and the dunning cadence would
+    simply never fire.
 
     JSONB columns on SQLAlchemy don't auto-detect in-place mutation; we
     rebuild the dict so the change actually flushes. Cheap, correct,
     survives every cron-vs-cron race we can throw at it.
     """
-    existing = dict(sub.trial_emails_sent or {})
+    existing = dict(getattr(sub, field) or {})
     existing[key] = when.isoformat()
-    sub.trial_emails_sent = existing
+    setattr(sub, field, existing)
+
+
+def _mark_email_sent(sub, key: str, when) -> None:
+    """Trial-lifecycle marker. See :func:`_mark_marker`."""
+    _mark_marker(sub, "trial_emails_sent", key, when)
+
+
+def _mark_dunning_sent(sub, key: str, when) -> None:
+    """Dunning-cadence marker. See :func:`_mark_marker`."""
+    _mark_marker(sub, "dunning_emails_sent", key, when)
 
 
 async def task_expire_trials(ctx: dict) -> int:
@@ -1039,54 +1062,113 @@ async def task_expire_past_due_subscriptions(ctx: dict) -> int:
     Returns the number of subscriptions that expired this run.
     """
     import asyncio
-    from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import select
-
-    from app.config import PAYMENT_FAILED_GRACE_DAYS
-    from app.db.models import Subscription
     from app.db.session import get_session
 
     def _run() -> int:
-        now = datetime.now(UTC)
-        grace = timedelta(days=PAYMENT_FAILED_GRACE_DAYS)
-        cutoff = now - grace
-        flipped = 0
         with get_session() as session:
-            subs = (
-                session.execute(
-                    select(Subscription).where(
-                        Subscription.status == "past_due",
-                        # Rows without a stamped anchor — webhook-only legacy
-                        # data — are NOT touched here. They'll get the
-                        # anchor on the next payment-failed event and the
-                        # cron picks them up from there.
-                        Subscription.past_due_since.is_not(None),
-                        Subscription.past_due_since < cutoff,
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for sub in subs:
-                sub.status = "expired"
-                # Surface the dunning end-of-life in canceled_at so the
-                # billing UI's "Canceled on" badge has a date to render.
-                # cancel_reason distinguishes this from a customer-initiated
-                # cancel for support / analytics.
-                if sub.canceled_at is None:
-                    sub.canceled_at = now
-                if not sub.cancel_reason:
-                    sub.cancel_reason = "dunning_grace_elapsed"
-                flipped += 1
-            session.commit()
-        return flipped
+            return _expire_past_due_cycle(session)
 
     loop = asyncio.get_running_loop()
     count = await loop.run_in_executor(None, _run)
     if count:
         logger.info("task_expire_past_due_subscriptions: expired %d subscription(s)", count)
     return count
+
+
+def _expire_past_due_cycle(session) -> int:
+    """One expiry pass. Extracted from the cron so it is directly testable —
+    the state change is load-bearing and the suspension email is not, and that
+    ordering needs a test rather than a promise."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+    from app.db.models import Client, Subscription
+    from app.services.dunning_service import SUSPENDED_MARKER
+
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(days=PAYMENT_FAILED_GRACE_DAYS)
+    flipped = 0
+    subs = (
+        session.execute(
+            select(Subscription).where(
+                Subscription.status == "past_due",
+                # Rows without a stamped anchor — webhook-only legacy
+                # data — are NOT touched here. They'll get the
+                # anchor on the next payment-failed event and the
+                # cron picks them up from there.
+                Subscription.past_due_since.is_not(None),
+                Subscription.past_due_since < cutoff,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Pass 1 — the load-bearing state change, committed BEFORE any network I/O.
+    # Razorpay and Brevo calls take seconds each; if the job were killed (ARQ
+    # job_timeout) or the final commit failed midway, a single trailing commit
+    # would roll the whole expiry back while the suspension emails had already
+    # gone out — customers told their agents are offline while still fully
+    # entitled, and re-told tomorrow.
+    for sub in subs:
+        sub.status = "expired"
+        # Surface the dunning end-of-life in canceled_at so the
+        # billing UI's "Canceled on" badge has a date to render.
+        # cancel_reason distinguishes this from a customer-initiated
+        # cancel for support / analytics.
+        if sub.canceled_at is None:
+            sub.canceled_at = now
+        if not sub.cancel_reason:
+            sub.cancel_reason = "dunning_grace_elapsed"
+        flipped += 1
+    session.commit()
+
+    # Pass 2 — best-effort notification. Each success is committed on its own
+    # so one bad row cannot cost another its marker.
+    for sub in subs:
+        if (sub.dunning_emails_sent or {}).get(SUSPENDED_MARKER):
+            continue
+        try:
+            owner = session.get(Client, sub.client_id)
+            if not owner or not owner.email:
+                continue
+            url = _suspension_recovery_url(sub)
+            from app.services.email_service import send_subscription_suspended_email
+
+            if send_subscription_suspended_email(
+                owner.email,
+                name=owner.name,
+                plan_name=sub.plan.name if sub.plan else "your plan",
+                recovery_url=url,
+            ):
+                _mark_dunning_sent(sub, SUSPENDED_MARKER, now)
+                session.commit()
+        except Exception:  # noqa: BLE001 — the expiry is what must survive
+            # rollback() before continuing: a failed flush would otherwise
+            # poison the session and take out every remaining row.
+            session.rollback()
+            logger.warning("suspension email failed for sub %s", sub.id, exc_info=True)
+
+    return flipped
+
+
+def _suspension_recovery_url(sub) -> str | None:
+    """Best-effort recovery link for the suspension email.
+
+    Returns ``None`` rather than raising: an unreachable gateway must not stop
+    the customer being told their service stopped. The email falls back to
+    prose instead of rendering a dead button.
+    """
+    from app.services.dunning_service import get_recovery_link
+
+    try:
+        link = get_recovery_link(sub.razorpay_subscription_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("suspension: could not resolve recovery link for sub %s", sub.id, exc_info=True)
+        return None
+    return link.url if link.recoverable else None
 
 
 # ── Web Push (operator notifications) ───────────────────────────────────────
@@ -1987,3 +2069,183 @@ async def task_reconcile_orphaned_seat_addons(ctx: dict) -> int:
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)
+
+
+def _dunning_send(marker: str, *, owner, sub, plan_name: str, days_left: int) -> bool:
+    """Send the email for ``marker``. Returns True when it was handed off.
+
+    Split out so the cron's control flow is testable without Brevo or Razorpay,
+    and returns a bool so the caller writes the idempotency marker ONLY on
+    success — ``due_email`` catches up to the newest unsent bucket, so a marker
+    written after a failed send would skip straight past that email.
+
+    Returns False rather than raising: one bad address or one gateway blip must
+    not abort the loop and starve every other customer.
+    """
+    from app.core.pricing import format_amount
+    from app.services.dunning_service import get_recovery_link
+    from app.services.email_service import (
+        send_payment_action_required_email,
+        send_payment_failed_email,
+        send_payment_final_warning_email,
+    )
+
+    try:
+        # Inside the try on purpose: ``sub.plan`` is a lazy relationship, so a
+        # DB blip here would otherwise escape the whole cycle and roll back
+        # every marker already earned in this batch — with those emails already
+        # handed to Brevo.
+        amount = ""
+        if sub.plan:
+            # Charge the cycle the customer is actually on. Quoting the monthly
+            # figure to an annual subscriber ("the ₹949 charge failed" when
+            # ₹7,971 was attempted) is wrong in the one email that has to look
+            # credible. Mirrors the selector used at razorpay_service.py:556
+            # and subscription_routes.py:822.
+            minor = (
+                sub.plan.annual_price_cents
+                if (sub.billing_cycle or "monthly") == "annual"
+                else sub.plan.monthly_price_cents
+            )
+            amount = format_amount(minor, sub.plan.currency)
+
+        if marker == "failed_0":
+            # Day 0 asks for nothing, so it needs no recovery link — which also
+            # spares one gateway call per past-due customer per pass, for the
+            # majority of cases that resolve on Razorpay's own retry.
+            return send_payment_failed_email(owner.email, name=owner.name, plan_name=plan_name, amount=amount)
+
+        link = get_recovery_link(sub.razorpay_subscription_id)
+        if not link.recoverable or not link.url:
+            # Both remaining templates require a working link; sending one with
+            # a dead button is worse than staying silent. Marker stays unset so
+            # the next tick retries.
+            logger.info(
+                "dunning: sub %s not recoverable (gateway=%s) — skipping %s",
+                sub.id,
+                link.gateway_status,
+                marker,
+            )
+            return False
+
+        if marker == "halted_3":
+            return send_payment_action_required_email(
+                owner.email,
+                name=owner.name,
+                plan_name=plan_name,
+                amount=amount,
+                recovery_url=link.url,
+                days_left=days_left,
+            )
+        return send_payment_final_warning_email(
+            owner.email,
+            name=owner.name,
+            plan_name=plan_name,
+            recovery_url=link.url,
+            days_left=days_left,
+        )
+    except Exception:  # noqa: BLE001 — one customer must not break the batch
+        logger.warning("dunning: %s send failed for sub %s", marker, sub.id, exc_info=True)
+        return False
+
+
+def _run_dunning_cycle(session) -> int:
+    """One pass over past_due subscriptions. Returns emails sent."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import joinedload
+
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+    from app.db.models import Client, Subscription
+    from app.services.dunning_service import due_email
+
+    now = datetime.now(UTC)
+    sent = 0
+    subs = (
+        session.execute(
+            select(Subscription)
+            .options(joinedload(Subscription.plan))
+            .where(
+                Subscription.status == "past_due",
+                Subscription.past_due_since.is_not(None),
+            )
+            # Oldest first so the customers closest to suspension are served
+            # even if the batch is truncated. The limit bounds the FIRST run
+            # after deploy, when every existing past_due row has an empty
+            # marker map and therefore a due bucket — each of those costs a
+            # serial Razorpay fetch plus a Brevo hand-off.
+            .order_by(Subscription.past_due_since)
+            .limit(DUNNING_BATCH_LIMIT)
+        )
+        .scalars()
+        .all()
+    )
+    for sub in subs:
+        since = sub.past_due_since
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
+        # Fractional days on purpose: due_email compares with <=, so a tick at
+        # 3.4 days still resolves the day-3 bucket instead of matching nothing.
+        days = (now - since).total_seconds() / 86400
+        marker = due_email(days, sub.dunning_emails_sent)
+        if marker is None:
+            continue
+
+        owner = session.get(Client, sub.client_id)
+        if owner is None or not owner.email:
+            continue
+
+        plan_name = sub.plan.name if sub.plan else "your plan"
+        days_left = max(0, PAYMENT_FAILED_GRACE_DAYS - int(days))
+
+        if _dunning_send(marker, owner=owner, sub=sub, plan_name=plan_name, days_left=days_left):
+            _mark_dunning_sent(sub, marker, now)
+            # Commit the marker BEFORE any further I/O. The email is already
+            # irreversible; if anything downstream fails and rolls the session
+            # back, the customer gets the same email again tomorrow.
+            session.commit()
+            sent += 1
+            try:
+                from app.services.notification_service import notify_payment_failed
+
+                notify_payment_failed(
+                    session,
+                    client_id=sub.client_id,
+                    plan_name=plan_name,
+                    days_left=days_left,
+                    recoverable=marker != "failed_0",
+                )
+            except Exception:  # noqa: BLE001 — a notification must never cost us the email
+                # rollback() is REQUIRED, not tidiness: create_notification
+                # flushes internally, and a failed flush leaves the session in
+                # a rollback-required state. Swallowing that would make the
+                # NEXT iteration's session.get raise PendingRollbackError,
+                # starving every remaining subscription in the batch.
+                session.rollback()
+                logger.warning("dunning: in-app notification failed for sub %s", sub.id, exc_info=True)
+    session.commit()
+    return sent
+
+
+async def task_dunning_emails(ctx: dict) -> int:
+    """Cron: dunning cadence for past_due subscriptions.
+
+    Runs daily. Razorpay retries the charge on its own for ~3 days and sends
+    its own card-update email; this adds the product context Razorpay cannot
+    know — that the customer's AI agents stop responding when OUR grace window
+    elapses.
+    """
+    import asyncio
+
+    from app.db.session import get_session
+
+    def _run() -> int:
+        with get_session() as session:
+            return _run_dunning_cycle(session)
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_dunning_emails: sent %d dunning email(s)", count)
+    return count

@@ -128,7 +128,7 @@ export function SeatChangeDialog({
 
       <p className="mt-4 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
         {isAdd
-          ? 'Billed via Razorpay and prorated for the rest of your current cycle. If this is your first extra seat, a secure checkout opens to authorise the payment mandate.'
+          ? `This is a recurring charge - ${seatPriceLabel} is added to your subscription every billing cycle until you remove the seat. Billed via Razorpay and prorated for the rest of the current cycle. If this is your first extra seat, a secure checkout opens to authorise the payment mandate.`
           : 'The seat is released at the end of your current billing cycle; you keep it until then.'}
       </p>
 

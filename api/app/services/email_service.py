@@ -1054,11 +1054,18 @@ def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, 
 
 def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | None = None) -> None:
     """Send the customer their finalized invoice/receipt with the PDF attached."""
-    from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
+    from app.services.invoice_pdf import _fmt_money as _fmt_invoice_money
 
     doc_label = {"tax_invoice": "Tax invoice", "credit_note": "Credit note"}.get(invoice.invoice_type, "Receipt")
     is_credit_note = invoice.invoice_type == "credit_note"
-    amount = _fmt_invoice_inr(invoice.amount_cents)
+
+    # Format in the document's OWN currency. This used to hardcode rupees, so a
+    # $9 export was announced to the customer as "₹9.00" — a figure that matches
+    # neither the attached PDF nor their card statement.
+    def money(minor: int | None) -> str:
+        return _fmt_invoice_money(minor, invoice.currency)
+
+    amount = money(invoice.amount_cents)
     seller_raw = (invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME
     seller_name = esc(seller_raw)  # for HTML body
 
@@ -1067,7 +1074,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
         rows.append(
             (
                 "GST reversed" if is_credit_note else "GST included",
-                _fmt_invoice_inr(invoice.total_tax_minor),
+                money(invoice.total_tax_minor),
             )
         )
 
@@ -1114,3 +1121,191 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
 def _redact(to_email: str) -> str:
     local, _, domain = to_email.partition("@")
     return f"{local[:1]}***@{domain}" if local and domain else "***"
+
+
+# ── Dunning (failed recurring payment) ───────────────────────────────────────
+#
+# Razorpay sends its own subscription notifications and hosts the card-update
+# page. These emails deliberately do NOT duplicate the payment mechanics —
+# they add what Razorpay structurally cannot know: that the customer's AI
+# agents stop responding when OyeChats' grace window elapses.
+
+
+def _stop_phrase(days: int) -> str:
+    """Human deadline: ``today`` / ``in 1 day`` / ``in N days``.
+
+    Floors at zero on purpose. ``days_left`` is computed as
+    ``max(0, GRACE_DAYS - elapsed)`` (subscription_routes) and ``elapsed`` is
+    ``.days``-truncated, so a late cron tick reaches 0 easily. "Your AI agents
+    stop in 0 days" reads as a rendering bug in the one email that most needs
+    to look credible.
+    """
+    if days <= 0:
+        return "today"
+    return "in 1 day" if days == 1 else f"in {days} days"
+
+
+def _keep_working_phrase(days: int) -> str:
+    """Reassurance side of the same deadline, with the same zero floor."""
+    if days <= 0:
+        return "Your AI agents stop responding to visitors today"
+    unit = "day" if days == 1 else "days"
+    return f"Your AI agents keep working for another {days} {unit}"
+
+
+def _send_dunning(to_email: str, subject: str, preheader: str, inner: str, *, event: str, **tags) -> bool:
+    """Shared send + failure handling for the dunning family.
+
+    Returns ``True`` when the send was handed off (ARQ enqueue, or thread
+    dispatch when ``WORKER_ENABLED=false``), ``False`` when the hand-off itself
+    failed. Never raises: a Brevo outage must not break the cron loop and
+    starve every other customer's email.
+
+    The CALLER must write the cadence marker only on ``True``. ``due_email``
+    fires on the exact day bucket only, so a marker written after a failed
+    hand-off drops that email permanently — and day 3 is the one that carries
+    the recovery link.
+
+    "Handed off" is the honest boundary: past the enqueue, delivery failures
+    are retried by ``task_send_email`` (3 tries with backoff) and are not
+    observable from here.
+    """
+    try:
+        send_email_async(
+            to_email,
+            subject,
+            shell(subject=subject, preheader=preheader, inner=inner),
+        )
+    except Exception as exc:
+        logger.warning("%s_email_failed for %s: %s", event, _redact(to_email), exc)
+        _capture_email_failure(exc, event=event, email=to_email, **tags)
+        return False
+    return True
+
+
+def send_payment_failed_email(to_email: str, *, name: str | None, plan_name: str, amount: str) -> bool:
+    """Day 0: the charge failed and Razorpay will retry automatically.
+
+    Deliberately calm and asks for NOTHING. At this point the subscription is
+    ``pending`` and Razorpay retries roughly daily for ~3 days; most of these
+    succeed on their own. An alarming email here creates support load for a
+    problem that usually self-resolves — and needs no recovery link, which also
+    spares a gateway call per past-due customer per cron pass.
+    """
+    safe_plan = esc(plan_name)
+    safe_amount = esc(amount)
+    inner = (
+        h1("We couldn&rsquo;t process your payment")
+        + p(
+            f"Hi {_first_name(name)} &mdash; the {strong(safe_amount)} charge for your "
+            f"{strong(safe_plan)} plan didn&rsquo;t go through. This is usually a temporary "
+            f"bank decline."
+        )
+        + ed.alert(
+            "We&rsquo;ll retry automatically over the next few days. You don&rsquo;t need to do anything yet.",
+            "info",
+        )
+        + p("If it keeps failing we&rsquo;ll email you a secure link to update your payment method.", top=8)
+        + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    return _send_dunning(
+        to_email,
+        "We couldn't process your payment — we'll retry",
+        "No action needed yet — we'll retry the charge automatically.",
+        inner,
+        event="payment_failed",
+    )
+
+
+def send_payment_action_required_email(
+    to_email: str, *, name: str | None, plan_name: str, amount: str, recovery_url: str, days_left: int
+) -> bool:
+    """Day 3: retries are exhausted. Nothing happens without the customer."""
+    safe_plan = esc(plan_name)
+    safe_amount = esc(amount)
+    inner = (
+        h1("Action needed: update your payment method")
+        + p(
+            f"Hi {_first_name(name)} &mdash; we&rsquo;ve tried the {strong(safe_amount)} charge for your "
+            f"{strong(safe_plan)} plan several times and it hasn&rsquo;t gone through."
+        )
+        + ed.alert(
+            f"{_keep_working_phrase(days_left)}. After that they&rsquo;ll stop responding to visitors "
+            f"until payment is restored.",
+            "warning",
+        )
+        + p("Use the secure link below to retry your card, use a different one, or switch to UPI.")
+        + button("Update payment method", recovery_url)
+        + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    return _send_dunning(
+        to_email,
+        "Action needed: update your payment method",
+        f"Your agents stop {_stop_phrase(days_left)} unless payment is restored.",
+        inner,
+        event="payment_action_required",
+        days_left=days_left,
+    )
+
+
+def send_payment_final_warning_email(
+    to_email: str, *, name: str | None, plan_name: str, recovery_url: str, days_left: int
+) -> bool:
+    """Day 5: the deadline is the message."""
+    safe_plan = esc(plan_name)
+    phrase = _stop_phrase(days_left)
+    subject = f"Your AI agents stop {phrase}"
+    inner = (
+        h1(f"Your AI agents stop {phrase}")
+        + p(
+            f"Hi {_first_name(name)} &mdash; your {strong(safe_plan)} payment is still outstanding. "
+            f"{strong(phrase.capitalize())} your agents will stop responding to visitors "
+            f"and your chat widget will go into offline mode."
+        )
+        + ed.alert("This takes under a minute to fix and everything resumes immediately.", "warning")
+        + button("Restore my subscription", recovery_url)
+        + p(f"Need help? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    return _send_dunning(
+        to_email,
+        subject,
+        "One click restores your subscription and brings your agents back.",
+        inner,
+        event="payment_final_warning",
+        days_left=days_left,
+    )
+
+
+def send_subscription_suspended_email(
+    to_email: str, *, name: str | None, plan_name: str, recovery_url: str | None
+) -> bool:
+    """Grace elapsed. Still recoverable — say so, and keep the door open.
+
+    ``recovery_url`` is optional: the gateway may be unreachable, or the
+    mandate may have reached a terminal state. Falling back to prose beats
+    rendering a button that goes nowhere.
+    """
+    safe_plan = esc(plan_name)
+    action = (
+        button("Restore my subscription", recovery_url)
+        if recovery_url
+        else p("Visit Billing in your workspace to restart your plan.", top=8)
+    )
+    inner = (
+        h1("Your subscription has been suspended")
+        + p(
+            f"Hi {_first_name(name)} &mdash; we weren&rsquo;t able to collect payment for your "
+            f"{strong(safe_plan)} plan, so your agents have stopped responding to visitors."
+        )
+        + ed.alert("Your data, knowledge base and conversation history are all safe and untouched.", "info")
+        + p("Restore payment and everything comes straight back.")
+        + action
+        + p(f"Need help? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    return _send_dunning(
+        to_email,
+        "Your OyeChats subscription has been suspended",
+        "Your data is safe — restore payment to bring your agents back.",
+        inner,
+        event="subscription_suspended",
+    )

@@ -230,7 +230,9 @@ export function changePlan(planId: number, billingCycle?: string | null): Promis
 export function startTrial(planSlug: string): Promise<Record<string, unknown>>;
 export function cancelScheduledChange(): Promise<Record<string, unknown>>;
 export function cancelSubscription(reason?: string | null, botId?: number | null): Promise<Record<string, unknown>>;
-export function resumeSubscription(): Promise<Record<string, unknown>>;
+export function resumeSubscription(botId?: number | null): Promise<Record<string, unknown>>;
+export function getPaymentMethods(opts?: { refresh?: boolean }): Promise<Record<string, unknown>[]>;
+export function deletePaymentMethod(tokenId: string): Promise<Record<string, unknown>>;
 /** Server-verify the Razorpay subscription Checkout callback signature. */
 export function verifyRazorpaySubscription(payload: {
   razorpay_payment_id: string;

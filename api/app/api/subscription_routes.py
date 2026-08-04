@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import config as app_config
 from app.api.auth import get_current_client_or_operator, require_verified_email
@@ -20,16 +21,18 @@ from app.api.auth import get_current_client_strict as get_current_client
 from app.config import (
     BILLING_PROVIDER,
     DISPLAY_USD_TO_INR,
+    INTL_PAYMENTS_ENABLED,
     RAZORPAY_ENABLED,
 )
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount, seat_price
-from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
+from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
-from app.services import credit_service, invoice_service
+from app.services import credit_service, invoice_service, razorpay_customer_service
 from app.services.plan_service import (
+    get_account_subscription,
     get_active_plans,
     get_client_plan,
     get_client_subscription,
@@ -53,13 +56,46 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     """Resolve the subscription a mutation should act on (remediation N3).
 
     When ``bot_id`` is given, target that bot's own subscription so a client with
-    several per-bot subscriptions can cancel/resume/reseat a specific one. When
-    omitted, fall back to the account's highest-tier subscription (legacy
-    behaviour for single-subscription clients).
+    several per-bot subscriptions can cancel/resume/reseat a specific one. An
+    agent with NO subscription of its own draws on the account plan, so we fall
+    back to it — matching ``get_current_subscription`` and
+    ``_resolve_invoice_scope``.
+
+    That fallback is the whole point: without it the READ path fell back while
+    the WRITE path did not, so Billing displayed the account plan (correctly)
+    next to Cancel / Reactivate / Add-seat buttons that all 404'd with
+    "No active subscription found" whenever an agent was selected in the
+    switcher. The mutation must act on the subscription the customer is
+    actually looking at.
+
+    The fallback goes through ``get_account_subscription`` (``bot_id IS NULL``)
+    and NOT ``get_client_subscription``. The latter spans per-bot rows and
+    returns the highest-PRICED one — correct for entitlements (H2), disastrous
+    as a mutation target: with an unpaid agent selected it would resolve to a
+    DIFFERENT agent's subscription, and ``/cancel`` would cancel that agent's
+    Razorpay mandate. Razorpay has no un-cancel, so that is not customer
+    recoverable. Same reasoning as the account-scoped guard in ``/checkout``.
     """
     if bot_id is not None:
-        return get_subscription_for_bot(session, client_id, bot_id)
-    return get_client_subscription(session, client_id)
+        # Ownership first. Without this a bot_id the caller does NOT own falls
+        # straight through to their own account subscription — so a mistyped or
+        # copied id silently retargets a destructive action (cancel, seat
+        # change) onto something the caller never named. There is no
+        # cross-tenant leak either way (both resolvers filter by client_id);
+        # the harm is acting on the wrong subscription without saying so.
+        if not _client_owns_bot(session, client_id, bot_id):
+            raise HTTPException(status_code=404, detail="Agent not found.")
+        scoped = get_subscription_for_bot(session, client_id, bot_id)
+        if scoped is not None:
+            return scoped
+    return get_account_subscription(session, client_id)
+
+
+def _client_owns_bot(session, client_id: int, bot_id: int) -> bool:
+    """Does this bot belong to this workspace?"""
+    return (
+        session.execute(select(Bot.id).where(Bot.id == bot_id, Bot.client_id == client_id).limit(1)).first() is not None
+    )
 
 
 def effective_resets_at(sub: Subscription | None) -> datetime | None:
@@ -523,21 +559,43 @@ def get_subscription_usage(client: Client = Depends(get_current_client)):
         }
 
 
+def _resolve_invoice_scope(session: Session, client_id: int, bot_id: int | None) -> int | None:
+    """Resolve which invoices a Billing view should show.
+
+    Mirrors ``get_current_subscription``'s fallback exactly: an agent with no
+    subscription of its own draws on the ACCOUNT plan, so it must show the
+    account's invoices. Without this the Billing page renders an account
+    subscription beside an agent-scoped (empty) invoice list — the two panels
+    can never agree, which is what made a paying customer see "No invoices yet"
+    while their plan showed Active.
+
+    ``get_subscription_for_bot`` filters by ``client_id``, so a foreign bot id
+    resolves to None (account-wide for the caller); the query's own
+    ``client_id`` filter still prevents any cross-workspace read.
+    """
+    if bot_id is None:
+        return None
+    return bot_id if get_subscription_for_bot(session, client_id, bot_id) is not None else None
+
+
 @router.get("/invoices")
 def list_invoices(client: Client = Depends(get_current_client), bot_id: int | None = None):
     """Return the client's payment history (most recent first).
 
-    When ``bot_id`` is given, the history is scoped to that agent's invoices
-    (``Invoice.bot_id``); the ``client_id`` filter still applies so a foreign
-    id yields an empty list rather than another workspace's invoices. Omit
-    ``bot_id`` for the account-wide history.
+    When ``bot_id`` is given AND that agent has its own subscription, the
+    history is scoped to that agent's invoices (``Invoice.bot_id``). An agent
+    without its own subscription falls back to the account-wide history,
+    matching how ``/current`` resolves the subscription it is shown beside —
+    see ``_resolve_invoice_scope``. Omit ``bot_id`` for the account-wide
+    history.
     """
     with get_session() as session:
+        scope_bot_id = _resolve_invoice_scope(session, client.id, bot_id)
         stmt = (
             select(Invoice)
             .where(
                 Invoice.client_id == client.id,
-                *([Invoice.bot_id == bot_id] if bot_id is not None else []),
+                *([Invoice.bot_id == scope_bot_id] if scope_bot_id is not None else []),
             )
             .order_by(Invoice.created_at.desc())
             .limit(50)
@@ -622,6 +680,119 @@ def _billing_details_dict(client: Client) -> dict:
     }
 
 
+def _missing_billing_fields(client: Client) -> list[str]:
+    """Which statutory buyer fields are absent, in display order.
+
+    GST Rule 46 requires the recipient's name and address on a tax invoice, and
+    the place of supply (the buyer's state) drives the CGST/SGST vs IGST split.
+    We collect these BEFORE the charge because the invoice is issued from a
+    webhook — there is no second chance to ask who was billed.
+
+    A GSTIN is deliberately NOT required: B2C customers are legitimate. It
+    matters only for input tax credit, and the buyer can add it later.
+
+    State code is India-only; an export has no Indian place of supply. A NULL
+    country defaults to IN throughout the billing stack, so the stricter rule
+    applies rather than silently passing.
+    """
+    missing: list[str] = []
+    if not (client.legal_name or "").strip():
+        missing.append("legal_name")
+    address = client.billing_address
+    if not (isinstance(address, dict) and str(address.get("line1") or "").strip()):
+        missing.append("billing_address")
+    if (client.billing_country or "IN").upper() == "IN" and not (client.billing_state_code or "").strip():
+        missing.append("billing_state_code")
+    return missing
+
+
+def _require_billing_identity(client: Client) -> None:
+    """409 unless the buyer identity needed for a Rule 46 invoice is on record.
+
+    409, not 400: the request is well-formed, the ACCOUNT is not ready. The
+    machine-readable ``code`` lets the UI open the billing-details modal with
+    the first missing field focused instead of showing a dead-end toast.
+    """
+    missing = _missing_billing_fields(client)
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "billing_details_required",
+                "missing": missing,
+                "message": "Add your billing details so we can issue a valid tax invoice.",
+            },
+        )
+
+
+@router.get("/payment-recovery")
+def payment_recovery(client: Client = Depends(get_current_client), bot_id: int | None = None):
+    """Recovery state + hosted link for a failing subscription.
+
+    Drives the app-wide past-due banner and its CTA. Read-only and safe to
+    poll: it resolves Razorpay's EXISTING hosted page and never mutates
+    anything — in particular it never mints a second mandate, which would
+    double-charge a customer whose original subscription is still recoverable
+    (see ``dunning_service``).
+
+    Scope resolution mirrors ``/current`` and ``_resolve_invoice_scope``: an
+    agent with no subscription of its own draws on the ACCOUNT plan, so we fall
+    back to it. Without that fallback the banner would stay silent for a
+    past-due account whenever an agent happened to be selected in the switcher.
+    """
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+    from app.services.dunning_service import DunningError, get_recovery_link
+
+    with get_session() as session:
+        sub = None
+        if bot_id is not None:
+            sub = get_subscription_for_bot(session, client.id, bot_id)
+        if sub is None:
+            sub = get_client_subscription(session, client.id)
+
+        if sub is None or sub.status != "past_due":
+            return {
+                "past_due": False,
+                "recoverable": False,
+                "recovery_url": None,
+                "days_left": None,
+                "plan_name": None,
+            }
+
+        days_left = None
+        if sub.past_due_since is not None:
+            since = sub.past_due_since
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=UTC)
+            elapsed = (datetime.now(UTC) - since).days
+            days_left = max(0, PAYMENT_FAILED_GRACE_DAYS - elapsed)
+
+        plan_name = sub.plan.name if sub.plan else None
+
+        try:
+            link = get_recovery_link(sub.razorpay_subscription_id)
+        except DunningError:
+            # Gateway hiccup. Still tell the customer they are past due — that
+            # part is locally known and true — but ``recoverable: None`` says
+            # "we couldn't check", which must not be rendered as a dead button
+            # or as "your subscription is gone".
+            return {
+                "past_due": True,
+                "recoverable": None,
+                "recovery_url": None,
+                "days_left": days_left,
+                "plan_name": plan_name,
+            }
+
+        return {
+            "past_due": True,
+            "recoverable": link.recoverable,
+            "recovery_url": link.url,
+            "days_left": days_left,
+            "plan_name": plan_name,
+        }
+
+
 @router.get("/billing-details")
 def get_billing_details(client: Client = Depends(get_current_client)):
     """The buyer identity used on tax invoices (invoicing v2 Phase 1)."""
@@ -676,6 +847,27 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
                     detail="billing_country must be IN when a GSTIN is set (clear the GSTIN first)",
                 )
 
+            # A registered buyer must name themselves. The recipient name on a
+            # tax invoice has to match the GST registration or the buyer's
+            # GSTR-2B reconciliation fails and they cannot claim the input tax
+            # credit — so a GSTIN without a legal name is an incomplete
+            # registration, not merely a cosmetic gap. (No GSTIN is fine: that
+            # is an unregistered B2C buyer.)
+            #
+            # Checked LAST in this block: a contradictory GSTIN/state or
+            # GSTIN/country pair is a harder error than an incomplete one, and
+            # reporting "you're missing a name" to someone whose GSTIN
+            # contradicts their state would send them fixing the wrong field.
+            eff_legal_name = fields.get("legal_name") if "legal_name" in fields else row.legal_name
+            if not str(eff_legal_name or "").strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "legal_name is required when a GSTIN is provided — it must match the "
+                        "registered business name on your GST certificate."
+                    ),
+                )
+
         if "legal_name" in fields:
             row.legal_name = (fields["legal_name"] or "").strip() or None
         if gstin_provided:
@@ -692,6 +884,12 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
             row.billing_email = (fields["billing_email"] or "").strip() or None
         session.commit()
         session.refresh(row)
+        # Keep the gateway's customer record aligned with the invoice buyer
+        # snapshot, so the Razorpay dashboard and the tax document never
+        # disagree about who was billed. Best-effort by design: the local row is
+        # authoritative for invoicing, and a Razorpay outage must not fail the
+        # customer's own edit.
+        razorpay_customer_service.sync_customer(session, row)
         # Keep the dependency-injected object in sync for the response.
         for attr in (
             "legal_name",
@@ -726,6 +924,9 @@ class CheckoutRequest(BaseModel):
 # rails we haven't tested against (netbanking quirks, wallet KYC limits, etc).
 # Cards: Visa / Mastercard / Amex / Rupay. UPI: GPay / PhonePe / Paytm / BHIM.
 _RAZORPAY_METHODS_INR = ("card", "upi")
+# International rail: foreign cards only. UPI is domestic-only and cannot
+# settle a USD charge, so offering it would open a modal that always fails.
+_RAZORPAY_METHODS_USD = ("card",)
 
 
 def _amount_for_cycle(plan, billing_cycle: str) -> int:
@@ -816,9 +1017,31 @@ def checkout_quote(
                 "reason": "free_plan",
             }
 
-        # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
-        # in Phase 2. Flag intl_usd_pending so the UI renders a Contact-sales CTA
-        # instead of opening a Razorpay modal that can't charge them yet.
+        # Foreign buyer, paid plan: charge on the USD rail only when the account
+        # is enabled for international payments AND this tier actually has a USD
+        # Razorpay plan wired for the cycle. Checking the id here (not just the
+        # flag) keeps the quote honest — promising a checkout the charge path
+        # would reject with "no USD Razorpay plan id" is worse than the CTA.
+        usd_plan_id = (
+            plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
+        )
+        if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id:
+            return {
+                "country": country,
+                "currency": currency,
+                "amount_minor": amount_minor,
+                "amount_display": amount_display,
+                "billing_cycle": billing_cycle,
+                "provider": "razorpay",
+                # Cards only — UPI is a domestic rail and cannot settle a USD charge.
+                "methods": list(_RAZORPAY_METHODS_USD),
+                "checkout_supported": True,
+                "contact_sales": None,
+            }
+
+        # Foreign buyer we cannot charge yet (international payments off, or no
+        # USD plan for this tier). Flag intl_usd_pending so the UI renders a
+        # Contact-sales CTA instead of opening a Razorpay modal that would fail.
         if not is_domestic:
             return {
                 "country": country,
@@ -904,15 +1127,21 @@ def _resolve_confirmed_billing_country_or_409(
     request_country: str | None,
     client: Client,
     http_request: Request,
+    allow_usd: bool = False,
 ) -> str:
     """Resolve + gate the confirmed billing country shared by EVERY money-moving
     Razorpay path (checkout, top-up, ...).
 
-    Phase 1 charges INR (IN) only: a confirmed non-IN buyer 409s with the same
-    ``intl_usd_pending`` contract the frontend already renders as a Contact-sales
-    CTA, so a top-up can never land on the domestic INR rail for a buyer whose
-    supply ``invoice_service`` will later classify as an export (GST
-    mis-classification/short-payment).
+    ``allow_usd`` is the caller's declaration that IT can actually charge a
+    non-IN buyer, and defaults to False so a new money path is gated until it
+    proves otherwise. Subscription checkout passes ``INTL_PAYMENTS_ENABLED``
+    (the USD rail bills against the plan's USD Razorpay ids); top-up passes
+    False because ``razorpay_service.create_topup_order`` is still INR-only —
+    letting it through would charge a foreign buyer rupees on a supply
+    ``invoice_service`` classifies as an export (GST mis-classification /
+    short-payment). When USD is not allowed, a confirmed non-IN buyer 409s with
+    the ``intl_usd_pending`` contract the frontend already renders as a
+    Contact-sales CTA.
 
     Resolution order mirrors ``checkout_quote``: explicit per-request confirmation
     wins, then the account's stored country, then the domestic default (IN) for
@@ -934,7 +1163,7 @@ def _resolve_confirmed_billing_country_or_409(
             detected_country,
         )
 
-    if confirmed_country != "IN":
+    if confirmed_country != "IN" and not allow_usd:
         raise HTTPException(
             status_code=409,
             detail={
@@ -962,19 +1191,25 @@ def create_checkout(
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
 
-    # Confirmed billing country routes currency/plan/invoice. Phase 1 charges
-    # INR (IN) only; a confirmed non-IN buyer is directed to sales until the
-    # Phase-2 USD rail is live. Unknown (no confirm + no stored country) defaults
+    # Confirmed billing country routes currency/plan/invoice. A non-IN buyer is
+    # charged on the USD rail once INTL_PAYMENTS_ENABLED is on, and directed to
+    # sales while it is off. Unknown (no confirm + no stored country) defaults
     # to domestic; a country already on the client is honoured as the fallback.
-    # Shared with /credits/topup so both money-moving paths gate identically —
-    # see _resolve_confirmed_billing_country_or_409.
+    # Shared with /credits/topup, which passes allow_usd=False because its order
+    # path is still INR-only — see _resolve_confirmed_billing_country_or_409.
     confirmed_country = _resolve_confirmed_billing_country_or_409(
         request_country=request.billing_country,
         client=client,
         http_request=http_request,
+        allow_usd=INTL_PAYMENTS_ENABLED,
     )
 
     _assert_no_stacking(client, request.coupon_code)
+
+    # Collect the Rule 46 buyer identity BEFORE the charge: the invoice is
+    # issued from the payment webhook, so this is the last point at which we
+    # can ask who is being billed.
+    _require_billing_identity(client)
 
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
@@ -1045,6 +1280,21 @@ def create_checkout(
             discount_bps, _ = discount_service.resolve_customer_discount_bps(session, client)
         else:
             discount_bps = 0
+        # Create the gateway Customer before minting the subscription. It is the
+        # anchor every saved payment instrument hangs off
+        # (/v1/customers/{id}/tokens), so without it saved cards are
+        # structurally impossible. Non-fatal: a subscription does not need a
+        # pre-made customer, and losing it only costs the saved-instrument
+        # feature, which the next checkout retries. Never block a purchase.
+        #
+        # Re-read in-session: `client` from the dependency is DETACHED, so
+        # writing to it would be silently discarded (see ensure_customer).
+        customer_id = None
+        try:
+            customer_id = razorpay_customer_service.ensure_customer(session, session.get(Client, client.id))
+        except razorpay_customer_service.RazorpayCustomerError:
+            logger.warning("checkout: could not ensure Razorpay customer for client %s", client.id)
+
         try:
             result = razorpay_service.create_subscription(
                 session, client, plan, request.billing_cycle, discount_bps=discount_bps
@@ -1072,6 +1322,9 @@ def create_checkout(
                 )
             )
         session.commit()
+        if isinstance(result, dict) and customer_id:
+            # Checkout needs this to tokenise a card (customer_id + save=1).
+            result["customer_id"] = customer_id
         return result
 
 
@@ -2122,7 +2375,19 @@ def initiate_topup(
         request_country=request.billing_country,
         client=client,
         http_request=http_request,
+        # Explicitly closed even when INTL_PAYMENTS_ENABLED opens subscription
+        # checkout: create_topup_order still charges the INR pack price, so a
+        # foreign buyer must keep 409ing here until top-up packs carry a USD
+        # amount of their own.
+        allow_usd=False,
     )
+
+    # A top-up is invoiced exactly like a subscription charge, so both money
+    # paths collect the Rule 46 buyer identity. Ordered AFTER the country gate
+    # on purpose: an unservable country is the more fundamental refusal, and
+    # asking a foreign buyer to complete Indian billing details we will then
+    # reject anyway would be a dead end.
+    _require_billing_identity(client)
 
     with get_session() as session:
         provider = _resolve_provider()
@@ -2169,6 +2434,16 @@ def initiate_topup(
         if provider == "razorpay":
             from app.services import razorpay_service
 
+            # Gateway Customer first: it is what a saved card token attaches
+            # to, and a top-up is the natural place to offer saving one.
+            # Non-fatal -- losing it only costs the saved-instrument feature.
+            # Re-read in-session; the dependency's `client` is DETACHED.
+            customer_id = None
+            try:
+                customer_id = razorpay_customer_service.ensure_customer(session, session.get(Client, client.id))
+            except razorpay_customer_service.RazorpayCustomerError:
+                logger.warning("topup: could not ensure Razorpay customer for client %s", client.id)
+
             try:
                 result = razorpay_service.create_topup_order(session, client, pack, bot_id=target_bot_id)
             except ValueError as exc:
@@ -2176,6 +2451,9 @@ def initiate_topup(
             except razorpay_service.RazorpayBillingError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             session.commit()
+            if isinstance(result, dict) and customer_id:
+                # Checkout needs this to tokenise a card (customer_id + save=1).
+                result["customer_id"] = customer_id
             return result
 
 

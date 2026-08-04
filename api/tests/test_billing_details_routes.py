@@ -20,7 +20,16 @@ def _ctx(session):
 
 
 def _mk(db, monkeypatch):
-    client = Client(name="Acme", email="billing-details@test.example", api_key="key-billing-details")
+    # A GSTIN now requires a registered legal name (it must match the GST
+    # certificate or the buyer's GSTR-2B reconciliation fails), so the
+    # fixture carries one -- these tests exercise the GSTIN/state/country
+    # interactions, not the name rule.
+    client = Client(
+        name="Acme",
+        email="billing-details@test.example",
+        api_key="key-billing-details",
+        legal_name="Acme Pvt Ltd",
+    )
     db.add(client)
     db.flush()
     monkeypatch.setattr(subscription_routes, "get_session", lambda: _ctx(db))

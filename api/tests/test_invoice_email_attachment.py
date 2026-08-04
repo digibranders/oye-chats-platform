@@ -17,6 +17,7 @@ def _invoice(**over):
         id=42,
         invoice_number="DB/26-27/000001",  # slashes must not leak into the filename
         invoice_type="tax_invoice",
+        currency="inr",
         amount_cents=2299900,
         total_tax_minor=350831,
         seller_snapshot={"legal_name": "Digibranders Private Limited"},
@@ -54,6 +55,42 @@ def test_send_invoice_email_without_pdf_sends_no_attachment():
         email_service.send_invoice_email("cust@example.com", _invoice(), "https://cdn/x.pdf")
 
     assert captured["attachments"] is None  # link-only fallback, no attachment
+
+
+# ── currency of the announced amount ──────────────────────────────────────────
+
+
+def _capture_html(invoice) -> tuple[str, str]:
+    """Return (subject, html) for an invoice email, without sending."""
+    captured = {}
+
+    def _capture(to, subject, html, *, attachments=None, **kw):
+        captured["subject"] = subject
+        captured["html"] = html
+
+    with patch.object(email_service, "send_email_async", _capture):
+        email_service.send_invoice_email("cust@example.com", invoice, "https://cdn/x.pdf")
+    return captured["subject"], captured["html"]
+
+
+def test_inr_invoice_email_announces_rupees():
+    _, html = _capture_html(_invoice())
+    assert "₹22,999.00" in html
+
+
+def test_usd_invoice_email_announces_dollars_not_rupees():
+    # This hardcoded _fmt_inr, so a $9.00 export was announced as "₹9.00" —
+    # matching neither the attached PDF nor the customer's card statement.
+    _, html = _capture_html(_invoice(currency="usd", amount_cents=900, total_tax_minor=0))
+    assert "$9.00" in html
+    assert "₹9.00" not in html
+
+
+def test_usd_invoice_email_shows_gst_in_the_same_currency():
+    # An IGST-paid export: the tax line must not switch currency mid-email.
+    _, html = _capture_html(_invoice(currency="usd", amount_cents=900, total_tax_minor=137))
+    assert "$1.37" in html
+    assert "₹1.37" not in html
 
 
 def test_brevo_payload_uses_attachment_key():

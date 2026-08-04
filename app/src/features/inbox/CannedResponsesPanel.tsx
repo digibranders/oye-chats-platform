@@ -18,13 +18,14 @@ import {
   Button,
   Card,
   EmptyState,
+  FeedbackBanner,
   Input,
   Modal,
   SectionHeader,
   Select,
   Skeleton,
   Textarea,
-  cn,
+  useFeedback,
 } from '../../design-system';
 import {
   createCannedResponse,
@@ -66,7 +67,7 @@ export function CannedResponsesPanel(): ReactElement {
 
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [rowBusyId, setRowBusyId] = useState<number | null>(null);
-  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const { feedback, notify, dismiss } = useFeedback();
 
   // Load (re-runs when the category filter changes - the backend scopes by it).
   useEffect(() => {
@@ -146,7 +147,7 @@ export function CannedResponsesPanel(): ReactElement {
         await createCannedResponse({ title, content, category, ...(shortcut ? { shortcut } : {}) });
       }
       setModalOpen(false);
-      setFeedback({ tone: 'success', message: editing ? 'Quick reply updated.' : 'Quick reply created.' });
+      notify({ tone: 'success', message: editing ? 'Quick reply updated.' : 'Quick reply created.' });
       reload();
     } catch (error) {
       setFormError(toMessage(error, 'Failed to save the quick reply.'));
@@ -156,15 +157,15 @@ export function CannedResponsesPanel(): ReactElement {
   };
 
   const handleDelete = async (response: CannedResponse): Promise<void> => {
-    setFeedback(null);
+    dismiss();
     setRowBusyId(response.id);
     try {
       await deleteCannedResponse(response.id);
       setRemovingId(null);
-      setFeedback({ tone: 'success', message: `“${response.title}” deleted.` });
+      notify({ tone: 'success', message: `“${response.title}” deleted.` });
       reload();
     } catch (error) {
-      setFeedback({ tone: 'error', message: toMessage(error, 'Failed to delete the quick reply.') });
+      notify({ tone: 'error', message: toMessage(error, 'Failed to delete the quick reply.') });
     } finally {
       setRowBusyId(null);
     }
@@ -183,19 +184,7 @@ export function CannedResponsesPanel(): ReactElement {
         }
       />
 
-      {feedback && (
-        <div
-          role="status"
-          className={cn(
-            'rounded-lg border px-4 py-2.5 text-[13px]',
-            feedback.tone === 'success'
-              ? 'border-[var(--ds-success)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-              : 'border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
-          )}
-        >
-          {feedback.message}
-        </div>
-      )}
+      <FeedbackBanner feedback={feedback} onDismiss={dismiss} />
 
       {/* Filters */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -314,7 +303,7 @@ export function CannedResponsesPanel(): ReactElement {
                     <button
                       type="button"
                       onClick={() => {
-                        setFeedback(null);
+                        dismiss();
                         setRemovingId(response.id);
                       }}
                       aria-label={`Delete ${response.title}`}

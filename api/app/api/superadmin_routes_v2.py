@@ -35,6 +35,7 @@ from app.db.models import (
     LeadInfo,
     LLMCallLog,
     Operator,
+    Plan,
     PricingConfig,
     Subscription,
 )
@@ -1526,6 +1527,13 @@ def _profile_dict(profile: SellerProfile) -> dict[str, Any]:
         "lut_number": profile.lut_number,
         "invoice_prefix": profile.invoice_prefix,
         "logo_url": profile.logo_url,
+        # Companies Act s.12(3)(c) identity. Omitting these from the serializer
+        # made the console render them blank no matter what was stored, so an
+        # operator saving a CIN saw it vanish on the next load.
+        "cin": profile.cin,
+        "phone": profile.phone,
+        "website": profile.website,
+        "support_email": profile.support_email,
     }
 
 
@@ -1760,7 +1768,12 @@ def gstr_export_csv(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def _r(minor: int | None) -> str:
-        return f"{(minor or 0) / 100:.2f}"
+        # Blank, not "0.00", for a genuinely absent figure — a rupee column
+        # that could not be derived (a tampered export with no FX mirror) must
+        # look absent to the CA, not like a zero-value supply.
+        if minor is None:
+            return ""
+        return f"{minor / 100:.2f}"
 
     def _safe(value: str | None) -> str:
         # Neutralise CSV formula injection — buyer_name is customer-controlled
@@ -1789,6 +1802,14 @@ def gstr_export_csv(
             "sgst",
             "igst",
             "total_tax",
+            # Denomination of the document the customer actually holds. On an
+            # export these differ from the rupee columns above, which are what
+            # goes on the return (Rule 34(2) conversion at the time of supply).
+            "doc_currency",
+            "doc_gross_value",
+            "doc_taxable_value",
+            "doc_total_tax",
+            "fx_rate",
             "against_invoice",
             "against_invoice_date",
         ]
@@ -1810,6 +1831,11 @@ def gstr_export_csv(
                 _r(row["sgst_minor"]),
                 _r(row["igst_minor"]),
                 _r(row["total_tax_minor"]),
+                row["currency"],
+                _r(row["doc_gross_minor"]),
+                _r(row["doc_taxable_minor"]),
+                _r(row["doc_total_tax_minor"]),
+                f"{row['fx_rate_micros'] / 1_000_000:.4f}" if row["fx_rate_micros"] else "",
                 _safe(row["against_invoice"]),
                 row["against_invoice_date"] or "",
             ]
@@ -1844,6 +1870,59 @@ def gstr_export_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="gstr-{month}.csv"'},
     )
+
+
+@router.get("/billing/dunning")
+def dunning_overview(_admin: Client = Depends(get_superadmin)):
+    """Who is currently failing payment, how far into grace, and what it is worth.
+
+    The operator's save-call queue. ``emails_sent`` shows how far the automated
+    cadence has got, so support can see whether a customer has already been
+    warned before phoning them.
+
+    Also surfaces the recovered-cycle gap: Razorpay does NOT re-attempt the
+    missed charge when a halted subscription returns to active, so every
+    recovery leaves one cycle uncollected unless it is charged manually.
+    """
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+
+    with get_session() as session:
+        rows = session.execute(
+            select(Subscription, Client.email, Plan.name)
+            .join(Client, Subscription.client_id == Client.id)
+            .outerjoin(Plan, Subscription.plan_id == Plan.id)
+            .where(Subscription.status == "past_due")
+            .order_by(Subscription.past_due_since)
+        ).all()
+
+        now = datetime.now(UTC)
+        items: list[dict[str, Any]] = []
+        for sub, email, plan_name in rows:
+            since = sub.past_due_since
+            if since is not None and since.tzinfo is None:
+                since = since.replace(tzinfo=UTC)
+            elapsed = (now - since).days if since else None
+            items.append(
+                {
+                    "subscription_id": sub.id,
+                    "client_id": sub.client_id,
+                    "client_email": email,
+                    "plan_name": plan_name,
+                    "billing_cycle": sub.billing_cycle,
+                    "past_due_since": since.isoformat() if since else None,
+                    "days_elapsed": elapsed,
+                    "days_left": max(0, PAYMENT_FAILED_GRACE_DAYS - elapsed) if elapsed is not None else None,
+                    "emails_sent": sorted((sub.dunning_emails_sent or {}).keys()),
+                    "at_risk_minor": sub.plan.monthly_price_cents if sub.plan else 0,
+                    "currency": (sub.plan.currency if sub.plan else None) or "INR",
+                }
+            )
+        return {
+            "count": len(items),
+            "at_risk_minor_total": sum(i["at_risk_minor"] for i in items),
+            "grace_days": PAYMENT_FAILED_GRACE_DAYS,
+            "items": items,
+        }
 
 
 @router.get("/billing/reconciliation")

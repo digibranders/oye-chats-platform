@@ -189,7 +189,7 @@ def test_credit_note_pdf_renders_with_reference(db, enabled):
     assert "CREDIT NOTE" in html
     assert "TAX INVOICE" not in html
     assert orig.invoice_number in html  # against-invoice reference (Section 34)
-    assert "CGST @ 9.0%" in html  # tax reversal breakup shown
+    assert "CGST @ 9%" in html  # tax reversal breakup shown
     assert "₹1,799.00" in html
 
 

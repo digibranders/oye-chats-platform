@@ -12,6 +12,15 @@ export type { Theme, ResolvedTheme, ThemeContextValue } from './theme/theme-cont
 // Utilities
 export { cn } from './lib/cn';
 
+// Hooks
+export { useFeedback } from './hooks/useFeedback';
+export type {
+  Feedback,
+  FeedbackTone,
+  UseFeedbackOptions,
+  UseFeedbackResult,
+} from './hooks/useFeedback';
+
 // Primitives
 export { Button } from './primitives/Button';
 export type { ButtonProps } from './primitives/Button';
@@ -35,6 +44,8 @@ export { SectionHeader } from './components/SectionHeader';
 export type { SectionHeaderProps } from './components/SectionHeader';
 export { EmptyState } from './components/EmptyState';
 export type { EmptyStateProps } from './components/EmptyState';
+export { FeedbackBanner } from './components/FeedbackBanner';
+export type { FeedbackBannerProps } from './components/FeedbackBanner';
 export { PageContainer } from './components/PageContainer';
 export type { PageContainerProps } from './components/PageContainer';
 export { Breadcrumbs } from './components/Breadcrumbs';
