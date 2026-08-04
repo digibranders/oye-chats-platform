@@ -132,6 +132,18 @@ def _fmt_money(minor: int | None, currency: str | None) -> str:
     return f"{symbol}{major:,}.{cents:02d}"
 
 
+def _fmt_fx_rate(micros: int | None) -> str:
+    """Rate micros → ``89.4522``.
+
+    Four decimals: enough to reproduce the stored paise figure from the foreign
+    amount at the charge sizes billed here, and the precision a bank advice /
+    FIRC quotes, so the two documents visibly agree.
+    """
+    if not micros:
+        return ""
+    return f"{micros / 1_000_000:.4f}"
+
+
 def _fmt_inr(minor: int | None) -> str:
     """Paise → ``₹1,52,458.00``-style Indian-grouped display."""
     if minor is None:
@@ -279,7 +291,22 @@ _TEMPLATE = """\
     <tr class="grand"><td>Total</td><td class="num">{{ total }}</td></tr>
   </table>
 
+  {% if in_words -%}
   <div class="words"><strong>Amount in words:</strong> {{ in_words }}</div>
+  {%- endif %}
+
+  {% if fx_rows -%}
+  {# The document is denominated in the currency of supply; the return is filed
+     in rupees. Printing the conversion ON the invoice is what lets an assessing
+     officer reproduce the reported figure years later, and lets the bank's
+     FIRC/eFIRA be tied to this document. #}
+  <table class="totals">
+    {% for row in fx_rows -%}
+    <tr{% if row.grand %} class="grand"{% endif %}><td class="label">{{ row.label }}</td><td class="num">{{ row.amount }}</td></tr>
+    {%- endfor %}
+  </table>
+  <div class="words muted">{{ fx_basis }}</div>
+  {%- endif %}
 
   {% if export_legend -%}
   <div class="legend">{{ export_legend }}</div>
@@ -412,6 +439,38 @@ def render_invoice_html(invoice: Invoice) -> str:
     if invoice.razorpay_payment_id:
         meta_items.append(f"Payment ref: {invoice.razorpay_payment_id}")
 
+    # ── INR mirror (non-INR documents only) ──────────────────────────────────
+    # The supply is invoiced in its own currency; GST is reported — and IGST on
+    # a non-LUT export remitted — in rupees. Rule 34(2) fixes the rate for a
+    # service at the GAAP rate on the date of the time of supply, so the rate
+    # and the resulting figures belong ON the document rather than in a
+    # spreadsheet somewhere.
+    fx_rows: list[dict[str, object]] = []
+    fx_basis = ""
+    code = (invoice.currency or "inr").upper()
+    if invoice.inr_amount_minor is not None and code != "INR":
+        if invoice.fx_rate_micros:
+            fx_rows.append({"label": "Exchange rate", "amount": f"1 {code} = ₹{_fmt_fx_rate(invoice.fx_rate_micros)}"})
+        if invoice.inr_taxable_value_minor is not None:
+            fx_rows.append({"label": "Taxable value (INR)", "amount": _fmt_inr(invoice.inr_taxable_value_minor)})
+        if invoice.inr_total_tax_minor:
+            fx_rows.append(
+                {
+                    "label": f"IGST @ {_fmt_rate(invoice.tax_rate_bps)}% (INR)",
+                    "amount": _fmt_inr(invoice.inr_total_tax_minor),
+                }
+            )
+        fx_rows.append({"label": "Total (INR)", "amount": _fmt_inr(invoice.inr_amount_minor), "grand": True})
+        fx_basis = (
+            f"INR equivalent at the rate of exchange on the date of supply (Rule 34(2), CGST Rules): "
+            f"{amount_in_words_inr(invoice.inr_amount_minor)}"
+        )
+
+    # "Amount in words" is rupee wording. On a foreign-currency document it
+    # would state the dollar total as rupees — so the rupee wording moves into
+    # the INR block above, where it is actually true.
+    in_words = amount_in_words_inr(invoice.amount_cents) if code == "INR" else ""
+
     return _template.render(
         inv=invoice,
         title=titles.get(invoice.invoice_type, "RECEIPT"),
@@ -430,7 +489,9 @@ def render_invoice_html(invoice: Invoice) -> str:
         tax_rows=tax_rows,
         total_tax=money(invoice.total_tax_minor),
         total=money(invoice.amount_cents),
-        in_words=amount_in_words_inr(invoice.amount_cents),
+        in_words=in_words,
+        fx_rows=fx_rows,
+        fx_basis=fx_basis,
         export_legend=export_legend,
         support_email=support_email,
     )
