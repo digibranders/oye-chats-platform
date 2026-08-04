@@ -1251,6 +1251,7 @@ def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str,
         razorpay_payment_id=payment_id,
         description="Operator seat add-on",
         paid_at=_capture_paid_at(pay_entity),
+        inr_amount_minor=_base_amount_minor(pay_entity),
     )
     session.add(invoice)
     session.flush()
@@ -1404,6 +1405,37 @@ def _capture_paid_at(pay: dict[str, Any] | None) -> datetime:
     except (TypeError, ValueError, OSError, OverflowError):
         logger.warning("unparseable payment created_at=%r; falling back to now()", captured)
     return datetime.now(UTC)
+
+
+def _base_amount_minor(pay: dict[str, Any] | None) -> int | None:
+    """Razorpay's realised INR conversion of a non-INR payment, in paise.
+
+    On a non-INR payment Razorpay returns ``base_amount`` (paise) and
+    ``base_currency`` (INR) alongside ``amount``/``currency`` — the amount it
+    converted at the processing bank's rate on the payment date, and the figure
+    it settles on. That rate is what Rule 34(2) asks for on a service supplied
+    in foreign currency, so we capture it AT CAPTURE TIME: it is unavailable
+    from anywhere else later, and without it the export cannot become a
+    reportable GST document at all.
+
+    ``None`` for an INR payment (where the field is absent by design and the
+    charge amount is already the reportable one), and for any payload whose
+    ``base_currency`` is not INR — a base currency we do not report in is not
+    something to silently treat as rupees.
+    """
+    if not pay:
+        return None
+    if str(pay.get("base_currency") or "").upper() not in ("INR", ""):
+        return None
+    raw = pay.get("base_amount")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("unparseable payment base_amount=%r; export invoice will stay legacy", raw)
+        return None
+    return value if value >= 0 else None
 
 
 def _extract_order_entity(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -2059,6 +2091,7 @@ def _ensure_subscription_charge_invoice(
     period_end: datetime | None,
     razorpay_invoice_id: str | None = None,
     paid_at: datetime | None = None,
+    inr_amount_minor: int | None = None,
 ) -> Invoice | None:
     """Create + finalize the payment-history invoice for a subscription charge.
 
@@ -2091,6 +2124,9 @@ def _ensure_subscription_charge_invoice(
         # Finding G: date from the real capture instant so the FY serial + doc
         # date land in the correct GST period at a month/FY boundary.
         paid_at=paid_at or datetime.now(UTC),
+        # Razorpay's realised INR conversion — only present on a non-INR
+        # charge, and the only thing that lets an export be finalized.
+        inr_amount_minor=inr_amount_minor,
     )
     session.add(invoice)
     session.flush()
@@ -2134,6 +2170,7 @@ def record_verified_subscription_charge(
             period_end=local.current_period_end,
             razorpay_invoice_id=pay.get("invoice_id"),
             paid_at=_capture_paid_at(pay),
+            inr_amount_minor=_base_amount_minor(pay),
         )
     except Exception:  # noqa: BLE001
         logger.exception("verify: failed to record first-charge invoice for payment %s", razorpay_payment_id)
@@ -2188,6 +2225,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             period_end=new_period_end,
             razorpay_invoice_id=pay_entity.get("invoice_id"),
             paid_at=_capture_paid_at(pay_entity),
+            inr_amount_minor=_base_amount_minor(pay_entity),
         )
         period_invoice_id = period_invoice.id if period_invoice else None
 
@@ -2559,6 +2597,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         razorpay_payment_id=rzp_payment_id,
         description=topup_description,
         paid_at=_capture_paid_at(pay_entity),  # finding G: real capture instant
+        inr_amount_minor=_base_amount_minor(pay_entity),
     )
     session.add(invoice)
     session.flush()
