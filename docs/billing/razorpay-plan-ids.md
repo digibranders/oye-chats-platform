@@ -157,6 +157,9 @@ A tier with no USD plan id fails loudly (`ValueError`, surfaced as a 400) rather
 than falling back to the INR plan — the quote checks the id for the same reason,
 so it never promises a checkout the charge path would reject.
 
+To drive all of this end-to-end on a dev box, follow
+[`2026-08-04-usd-rail-local-test-plan.md`](./2026-08-04-usd-rail-local-test-plan.md).
+
 ### ⚠️ Do not flip the flag yet — the account cannot take the payment
 
 The plans exist and the code is ready, but the Razorpay account cannot yet take a
