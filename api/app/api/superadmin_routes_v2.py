@@ -1768,7 +1768,12 @@ def gstr_export_csv(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def _r(minor: int | None) -> str:
-        return f"{(minor or 0) / 100:.2f}"
+        # Blank, not "0.00", for a genuinely absent figure — a rupee column
+        # that could not be derived (a tampered export with no FX mirror) must
+        # look absent to the CA, not like a zero-value supply.
+        if minor is None:
+            return ""
+        return f"{minor / 100:.2f}"
 
     def _safe(value: str | None) -> str:
         # Neutralise CSV formula injection — buyer_name is customer-controlled
@@ -1797,6 +1802,14 @@ def gstr_export_csv(
             "sgst",
             "igst",
             "total_tax",
+            # Denomination of the document the customer actually holds. On an
+            # export these differ from the rupee columns above, which are what
+            # goes on the return (Rule 34(2) conversion at the time of supply).
+            "doc_currency",
+            "doc_gross_value",
+            "doc_taxable_value",
+            "doc_total_tax",
+            "fx_rate",
             "against_invoice",
             "against_invoice_date",
         ]
@@ -1818,6 +1831,11 @@ def gstr_export_csv(
                 _r(row["sgst_minor"]),
                 _r(row["igst_minor"]),
                 _r(row["total_tax_minor"]),
+                row["currency"],
+                _r(row["doc_gross_minor"]),
+                _r(row["doc_taxable_minor"]),
+                _r(row["doc_total_tax_minor"]),
+                f"{row['fx_rate_micros'] / 1_000_000:.4f}" if row["fx_rate_micros"] else "",
                 _safe(row["against_invoice"]),
                 row["against_invoice_date"] or "",
             ]

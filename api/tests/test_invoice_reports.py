@@ -61,6 +61,23 @@ def _finalized(db, email, *, gstin=None, state="27", country="IN", amount=179900
     return inv
 
 
+def _finalized_usd(db, email, *, amount=900, inr=80_507, pay_ref=None):
+    """A finalized export: $9.00 that Razorpay converted to ₹805.07."""
+    c = _client_row(db, email, billing_state_code=None, billing_country="US")
+    inv = Invoice(
+        client_id=c.id,
+        amount_cents=amount,
+        currency="usd",
+        status="paid",
+        inr_amount_minor=inr,
+        razorpay_payment_id=pay_ref or f"pay-{email}",
+    )
+    db.add(inv)
+    db.flush()
+    assert invoice_service.finalize_invoice(db, inv) is True
+    return inv
+
+
 def test_month_window_is_ist():
     start, end = invoice_reports.month_window_utc(JULY)
     # 1 Jul 2026 00:00 IST == 30 Jun 2026 18:30 UTC.
@@ -127,6 +144,115 @@ def test_summary_totals_reconcile(db, enabled):
     assert grand["count"] == 2
     assert grand["taxable_minor"] == 152458 * 2
     assert grand["total_tax_minor"] == 27442 * 2
+
+
+# ── foreign-currency documents on a rupee return ──────────────────────────────
+
+
+def test_export_row_reports_rupees_not_the_face_currency(db, enabled):
+    # GSTR-1 is rupee-denominated. The money columns of a $9 export must be the
+    # ₹805.07 mirror, with the dollar figures carried separately for tie-out.
+    _seller(db, lut_active=True, lut_number="LUT-1")
+    _finalized_usd(db, "rep-usd@test.example")
+
+    row = next(r for r in invoice_reports.gstr_document_rows(db, THIS_MONTH) if r["section"] == "EXP")
+    assert row["gross_minor"] == 80_507
+    assert row["taxable_minor"] == 80_507
+    assert row["total_tax_minor"] == 0
+    assert row["place_of_supply"] == "96"
+    # The document the customer holds, for tying the return back to the invoice
+    # and the bank's FIRC.
+    assert row["currency"] == "USD"
+    assert row["doc_gross_minor"] == 900
+    assert row["fx_rate_micros"] == 89_452_222
+
+
+def test_summary_never_adds_cents_to_paise(db, enabled):
+    # The bug this prevents: summing a $9 document's FACE value (900 cents)
+    # with a ₹1,799 document's paise (179900) produces 180800 — a number that
+    # is not money in any currency, and looks entirely normal on a CA's sheet.
+    _seller(db, lut_active=True, lut_number="LUT-1")
+    _finalized(db, "rep-mix-inr@test.example")
+    _finalized_usd(db, "rep-mix-usd@test.example")
+
+    grand = invoice_reports.gstr_summary(db, THIS_MONTH)["grand_total"]
+    assert grand["count"] == 2
+    assert grand["gross_minor"] == 179_900 + 80_507
+    assert grand["gross_minor"] != 179_900 + 900
+
+
+def test_igst_paid_export_reports_remittable_tax_in_rupees(db, enabled):
+    # No LUT → IGST is owed in rupees, and the rupee figure is what is filed.
+    _seller(db)  # lut_active defaults False
+    _finalized_usd(db, "rep-usd-nolut@test.example")
+
+    row = next(r for r in invoice_reports.gstr_document_rows(db, THIS_MONTH) if r["section"] == "EXP")
+    assert (row["taxable_minor"], row["igst_minor"]) == (68_226, 12_281)
+    assert row["taxable_minor"] + row["total_tax_minor"] == row["gross_minor"]
+    assert (row["doc_taxable_minor"], row["doc_total_tax_minor"]) == (763, 137)
+
+
+def test_full_refund_of_an_export_nets_rupee_turnover_to_zero(db, enabled):
+    # A credit note is reported in the same rupee terms as the document it
+    # reverses. Re-converting at a later rate would leave a residue in export
+    # turnover that no refund could ever clear.
+    _seller(db, lut_active=True, lut_number="LUT-1")
+    inv = _finalized_usd(db, "rep-usd-refund@test.example")
+    note = invoice_service.create_credit_note(db, inv, 900, provider_ref="rfnd_usd_full")
+    assert note.inr_amount_minor == inv.inr_amount_minor
+    assert note.fx_rate_micros == inv.fx_rate_micros
+
+    grand = invoice_reports.gstr_summary(db, THIS_MONTH)["grand_total"]
+    assert grand["gross_minor"] == 0
+    assert grand["taxable_minor"] == 0
+
+
+def test_partial_refund_of_an_export_converts_at_the_original_rate(db, enabled):
+    _seller(db, lut_active=True, lut_number="LUT-1")
+    inv = _finalized_usd(db, "rep-usd-part@test.example")
+    note = invoice_service.create_credit_note(db, inv, 300, provider_ref="rfnd_usd_part")
+    # $3.00 at the document's frozen 89.452222 → ₹268.36.
+    assert note.inr_amount_minor == 26_836
+    assert note.currency == "usd"
+
+    grand = invoice_reports.gstr_summary(db, THIS_MONTH)["grand_total"]
+    assert grand["gross_minor"] == 80_507 - 26_836
+
+
+def test_anomaly_flags_a_numbered_export_with_no_inr_mirror(db, enabled):
+    # Unreachable through finalize; models an out-of-band write. Such a row
+    # cannot be placed on a rupee return at all.
+    _seller(db, lut_active=True, lut_number="LUT-1")
+    inv = _finalized_usd(db, "rep-usd-tamper@test.example")
+    _raw_tamper(db, inv, inr_amount_minor=None)
+
+    anomalies = invoice_reports.reconciliation_anomalies(db)
+    assert [a["id"] for a in anomalies["exports_without_fx"]] == [inv.id]
+    # ...and its rupee columns read as absent, never as a zero-value supply.
+    row = next(r for r in invoice_reports.gstr_document_rows(db, THIS_MONTH) if r["section"] == "EXP")
+    assert row["gross_minor"] is None
+    assert row["taxable_minor"] is None
+
+
+def test_anomaly_flags_an_unnumbered_foreign_charge(db, enabled):
+    # These used to be excluded because finalize refused every non-INR charge,
+    # so flagging them would have been permanent noise. Now an un-numbered
+    # export means a paying customer holding no invoice.
+    _seller(db, lut_active=True, lut_number="LUT-1")
+    c = _client_row(db, "rep-usd-unnum@test.example", billing_country="US")
+    stale = datetime.now(UTC) - invoice_reports.PDF_STUCK_AFTER * 2
+    inv = Invoice(
+        client_id=c.id,
+        amount_cents=900,
+        currency="usd",
+        status="paid",
+        paid_at=stale,  # no inr_amount_minor → finalize refused it
+    )
+    db.add(inv)
+    db.flush()
+
+    anomalies = invoice_reports.reconciliation_anomalies(db)
+    assert inv.id in [a["id"] for a in anomalies["unnumbered_charges"]]
 
 
 def test_anomaly_refund_without_credit_note(db, enabled):

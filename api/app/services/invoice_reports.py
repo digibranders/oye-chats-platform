@@ -75,6 +75,49 @@ def _section_for(inv: Invoice) -> str | None:
     return "B2CS"
 
 
+def _reportable_inr(inv: Invoice) -> dict[str, int | None]:
+    """The document's figures IN RUPEES — what actually goes on the return.
+
+    GSTR-1 is rupee-denominated. A rupee document reports its own columns; a
+    foreign-currency export reports its INR mirror, captured at finalize from
+    the rate the payment was actually converted at (Rule 34(2)).
+
+    Summing a document's FACE value across currencies is the failure this
+    exists to prevent: adding 900 (US cents) to 44,900 (paise) yields a
+    turnover figure that is not money in any currency, and it would have gone
+    to the CA looking exactly like a normal number.
+
+    Returns ``None`` figures for a foreign document with no mirror. That is
+    impossible through ``finalize_invoice`` (it refuses to number one), so it
+    means the row was tampered with — blank cells are recoverable, a silently
+    wrong rupee figure on a filed return is not. ``reconciliation_anomalies``
+    reports these as ``exports_without_fx``.
+    """
+    if (inv.currency or "inr").lower() == "inr":
+        return {
+            "gross_minor": inv.amount_cents,
+            "taxable_minor": inv.taxable_value_minor,
+            "cgst_minor": inv.cgst_minor,
+            "sgst_minor": inv.sgst_minor,
+            "igst_minor": inv.igst_minor,
+            "total_tax_minor": inv.total_tax_minor,
+        }
+    if inv.inr_amount_minor is None:
+        return dict.fromkeys(
+            ("gross_minor", "taxable_minor", "cgst_minor", "sgst_minor", "igst_minor", "total_tax_minor")
+        )
+    # A foreign supply is always an export, so the whole tax (if any) is IGST —
+    # CGST/SGST cannot arise on it and are structurally zero, not unknown.
+    return {
+        "gross_minor": inv.inr_amount_minor,
+        "taxable_minor": inv.inr_taxable_value_minor,
+        "cgst_minor": 0,
+        "sgst_minor": 0,
+        "igst_minor": inv.inr_total_tax_minor,
+        "total_tax_minor": inv.inr_total_tax_minor,
+    }
+
+
 def _ist_date(dt: datetime | None) -> str | None:
     if dt is None:
         return None
@@ -128,12 +171,16 @@ def gstr_document_rows(session: Session, month: str) -> list[dict[str, Any]]:
                 "supply_kind": inv.supply_kind,
                 "rate_bps": inv.tax_rate_bps,
                 "hsn_sac": inv.hsn_sac,
-                "gross_minor": inv.amount_cents,
-                "taxable_minor": inv.taxable_value_minor,
-                "cgst_minor": inv.cgst_minor,
-                "sgst_minor": inv.sgst_minor,
-                "igst_minor": inv.igst_minor,
-                "total_tax_minor": inv.total_tax_minor,
+                # Money columns are RUPEES, always — see _reportable_inr.
+                **_reportable_inr(inv),
+                # The document's own denomination, carried alongside so the CA
+                # can tie a rupee row back to the dollar invoice the customer
+                # holds (and to the bank's FIRC for that receipt).
+                "currency": (inv.currency or "inr").upper(),
+                "doc_gross_minor": inv.amount_cents,
+                "doc_taxable_minor": inv.taxable_value_minor,
+                "doc_total_tax_minor": inv.total_tax_minor,
+                "fx_rate_micros": inv.fx_rate_micros,
                 "against_invoice": against,
                 "against_invoice_date": against_date,
             }
@@ -181,7 +228,10 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
       never emails, so unmailed documents are expected there, not anomalous.
     * ``broken_totals`` — tax components that no longer reconcile (impossible
       by construction; presence means manual DB tampering).
-    * ``unnumbered_charges`` — captured (``status='paid'``) INR charges still
+    * ``exports_without_fx`` — a numbered foreign-currency document with no INR
+      mirror. Unreachable via ``finalize_invoice``; presence means the row was
+      written outside the application, and it cannot go on a rupee return.
+    * ``unnumbered_charges`` — captured (``status='paid'``) charges still
       without an ``invoice_number`` well past the sweep interval: finalize kept
       returning False (usually the seller profile was never saved) so the
       customer paid but has no tax document. The self-heal sweep re-numbers
@@ -262,8 +312,13 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
     # sweep interval means the customer was charged with no document — surface it
     # so ops can act (usually: the seller profile still needs saving). Only
     # meaningful when invoicing is on (shadow mode leaves everything legacy by
-    # design); non-INR rows are intentionally legacy until a currency-aware path
-    # exists, so they're excluded rather than flagged as anomalies.
+    # design).
+    #
+    # Foreign-currency rows are INCLUDED. They used to be excluded because
+    # finalize refused every non-INR charge by design, so flagging them would
+    # have been permanent noise; now that exports are documentable, an
+    # un-numbered one is a real customer holding no invoice — exactly the
+    # condition this check exists to catch.
     unnumbered_charges: list[Invoice] = []
     if config.INVOICING_V2_ENABLED:
         unnumbered_charges = (
@@ -271,13 +326,30 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
                 select(Invoice).where(
                     Invoice.invoice_number.is_(None),
                     Invoice.status == "paid",
-                    func.lower(func.coalesce(Invoice.currency, "")) == "inr",
                     Invoice.paid_at < cutoff,
                 )
             )
             .scalars()
             .all()
         )
+
+    # A NUMBERED foreign-currency document with no INR mirror cannot be placed
+    # on a rupee-denominated return at all. ``finalize_invoice`` refuses to
+    # number one, so this is unreachable through the application — it means the
+    # row was written outside it. Same spirit as ``broken_totals``: assert the
+    # invariant rather than trust it, because the cost of being wrong is a
+    # filed return.
+    exports_without_fx = (
+        session.execute(
+            select(Invoice).where(
+                Invoice.invoice_number.isnot(None),
+                func.lower(func.coalesce(Invoice.currency, "inr")) != "inr",
+                Invoice.inr_amount_minor.is_(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     # Reconciliation identities pushed into SQL so this returns only the (near
     # always zero) offending rows instead of hydrating every document ever
@@ -318,4 +390,5 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
         "emails_pending": [_brief(i) for i in emails_pending],
         "broken_totals": [_brief(i) for i in broken],
         "unnumbered_charges": [_brief(i) for i in unnumbered_charges],
+        "exports_without_fx": [_brief(i) for i in exports_without_fx],
     }
