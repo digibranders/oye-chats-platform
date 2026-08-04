@@ -1,6 +1,7 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -1432,6 +1433,25 @@ class Invoice(Base):
     total_tax_minor = Column(Integer, nullable=True)
     hsn_sac = Column(String(8), nullable=True)
     is_export = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    # ── INR mirror for a non-INR (export) document ───────────────────────────
+    # The document is issued in the currency of supply; GST is REPORTED in
+    # rupees (GSTR-1 Table 6A), and IGST on an export made without a LUT is
+    # remitted in rupees. These carry that mirror so the return never has to
+    # re-derive a rate years later. All NULL on an INR invoice, where
+    # ``amount_cents``/``taxable_value_minor`` are already the reportable
+    # figures.
+    #
+    # ``inr_amount_minor`` is Razorpay's ``base_amount`` verbatim — the paise
+    # it actually converted and settles on — so the document ties to the
+    # settlement and the FIRC exactly. The rate is stored alongside it (INR per
+    # one foreign unit, x1e6, integer — never a float on a statutory record)
+    # purely so the arithmetic is reproducible on the face of the invoice.
+    inr_amount_minor = Column(Integer, nullable=True)
+    inr_taxable_value_minor = Column(Integer, nullable=True)
+    inr_total_tax_minor = Column(Integer, nullable=True)
+    fx_rate_micros = Column(BigInteger, nullable=True)
+    fx_rate_source = Column(String(32), nullable=True)  # razorpay_base_amount
     line_items = Column(JSONB, nullable=True)
     credit_note_of_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
     # Razorpay's own invoice entity for this charge (payment.invoice_id from
