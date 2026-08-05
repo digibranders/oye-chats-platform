@@ -14,7 +14,11 @@
   overflow: visible !important;
   z-index: 2147483647 !important;
   pointer-events: none !important;
-  font-family: 'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif;
+  /* System stack only — see the note on --font-sans below. Never lead this
+     with a bundled-with-Office face (Calibri / Gill Sans MT): the widget runs
+     on customers' sites, so one visitor with a broken install renders every
+     glyph as tofu. */
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
   color-scheme: light;
 }
 
@@ -67,7 +71,20 @@
 }
 
 @theme {
-  --font-sans: 'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif;
+  /* System fonts only, and deliberately so.
+     This stack used to lead with 'Calibri Light', Calibri, 'Gill Sans MT'.
+     Calibri and Gill Sans MT ship with Microsoft Office, not with any OS, so
+     on a given visitor's machine each is absent (harmless — the browser falls
+     through) or present-but-damaged (fatal). A damaged face still advertises
+     the characters in its cmap, so the browser selects it and renders every
+     one as a missing-glyph box; per-character fallback never triggers and the
+     entire widget becomes tofu. Observed in production on macOS, where
+     Calibri was registered with no usable glyph data: "Hello World" measured
+     194px against 82px in sans-serif — 11 characters at one full em each.
+     The widget is embedded on customers' sites, so this is their visitors'
+     experience, not ours to gamble with. Every family below ships with an OS
+     or is a generic, so there is no font here that can be half-installed. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
 }
 
 @layer utilities {
