@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
-from app.db.models import Base, Client, CreditLedger, Plan, Subscription
+from app.db.models import Base, Client, CreditLedger, Invoice, Plan, Subscription
 from app.services import credit_service
 from app.services import razorpay_service as rzp
 
@@ -174,6 +174,26 @@ def _make_bot(db, client):
     return bot
 
 
+def _paid_invoice(db, sub, *, paid_at, payment_id):
+    """A captured charge for the renewal the cron is about to grant. Gateway
+    (razorpay) rows only renew against payment evidence; manual/free rows
+    don't need one."""
+    inv = Invoice(
+        client_id=sub.client_id,
+        subscription_id=sub.id,
+        bot_id=sub.bot_id,
+        amount_cents=399900,
+        currency="inr",
+        status="paid",
+        kind="plan_charge",
+        razorpay_payment_id=payment_id,
+        paid_at=paid_at,
+    )
+    db.add(inv)
+    db.flush()
+    return inv
+
+
 def _run_renewal_cron(db, monkeypatch):
     """Drive ``task_renew_due_subscriptions`` against the test session.
 
@@ -203,8 +223,10 @@ def test_cron_renews_account_and_bot_scopes_independently(db, monkeypatch):
     bot_plan = _make_plan(db, "bot-plan", 500)
     bot = _make_bot(db, client)
 
-    _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct", period_end=E1)
-    _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot", period_end=E1)
+    acct = _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct", period_end=E1)
+    botsub = _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot", period_end=E1)
+    _paid_invoice(db, acct, paid_at=E1, payment_id="pay_cron_acct")
+    _paid_invoice(db, botsub, paid_at=E1, payment_id="pay_cron_bot")
     db.commit()
 
     renewed = _run_renewal_cron(db, monkeypatch)
@@ -228,8 +250,10 @@ def test_cron_is_noop_on_second_run(db, monkeypatch):
     bot = _make_bot(db, client)
 
     just_due = datetime.now(UTC) - timedelta(days=1)
-    _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct_i", period_end=just_due)
-    _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot_i", period_end=just_due)
+    acct = _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct_i", period_end=just_due)
+    botsub = _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot_i", period_end=just_due)
+    _paid_invoice(db, acct, paid_at=just_due, payment_id="pay_cron_acct_i")
+    _paid_invoice(db, botsub, paid_at=just_due, payment_id="pay_cron_bot_i")
     db.commit()
 
     first = _run_renewal_cron(db, monkeypatch)
@@ -255,7 +279,8 @@ def test_cron_per_bot_renewal_does_not_reset_account_pool(db, monkeypatch):
     # Account sub is NOT due (period ends in the future); only the bot sub is due.
     future_end = datetime(2999, 1, 1, 12, 0, tzinfo=UTC)
     account_sub = _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct_x", period_end=future_end)
-    _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot_x", period_end=E1)
+    bot_sub = _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot_x", period_end=E1)
+    _paid_invoice(db, bot_sub, paid_at=E1, payment_id="pay_cron_bot_x")
     # Seed a pre-existing account-pool grant so we can prove it survives.
     credit_service.grant_for_subscription(db, account_sub)
     db.commit()
@@ -354,3 +379,109 @@ def test_flush_before_refresh_preserves_same_txn_marker(pg_engine):
         session.rollback()
         _truncate_all(session)
         session.close()
+
+
+# ── P1-3: cron/webhook grant-key parity + eligibility ────────────────────────
+#
+# The cron granted keyed on the OLD ``current_period_end`` while the charged
+# webhook keys on Razorpay's NEW ``current_end``. The monotonic marker guard
+# (``period_end <= last_granted_period_end`` → no-op) therefore let a DELAYED
+# webhook redelivery re-run reset+grant for a period the cron had already
+# granted — wiping the period's consumption. Both callers must key the SAME
+# value: the period end of the cycle being granted (the new one).
+
+
+def test_cron_then_delayed_webhook_grants_once(db, monkeypatch):
+    """Cron renews first (webhook outage), the charged webhook for the SAME
+    cycle arrives later → the webhook must no-op, preserving consumption."""
+    client = _make_client(db, "cron-key@e.com", "cron-key")
+    plan = _make_plan(db, "plan-key", 1000)
+    sub = _make_scoped_sub(db, client, plan, bot_id=None, rzp_id="sub_key", period_end=E1)
+    _paid_invoice(db, sub, paid_at=E1, payment_id="pay_key_1")
+    db.commit()
+
+    assert _run_renewal_cron(db, monkeypatch) == 1
+    db.refresh(sub)
+    new_end = sub.current_period_end  # rolled by the cron
+
+    # Customer burns part of the fresh allowance before the webhook shows up.
+    credit_service.check_and_deduct(db, client.id, 400, reason="ai_chat")
+    db.commit()
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 600
+
+    # Delayed ``subscription.charged`` for the SAME renewed cycle. Razorpay's
+    # current_end equals the period the cron already granted.
+    rzp._handle_subscription_charged(db, _charged("sub_key", new_end, payment_id="pay_key_2"))
+    db.commit()
+
+    # No second reset+grant: consumption survives.
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 600
+    grants = db.execute(
+        select(CreditLedger).where(
+            CreditLedger.client_id == client.id,
+            CreditLedger.reason == "plan_grant",
+            CreditLedger.delta > 0,
+        )
+    ).scalars()
+    assert len(list(grants)) == 1
+
+
+def test_cron_skips_trialing_rows(db, monkeypatch):
+    """Trials never 'renew' — the expiry cron owns them. A trialing row whose
+    period lapsed must get neither a free full-plan grant nor a period roll."""
+    client = _make_client(db, "cron-trial@e.com", "cron-trial")
+    plan = _make_plan(db, "plan-trial", 1000)
+    sub = _make_scoped_sub(db, client, plan, bot_id=None, rzp_id="sub_trial", period_end=E1)
+    sub.status = "trialing"
+    db.commit()
+
+    assert _run_renewal_cron(db, monkeypatch) == 0
+    db.refresh(sub)
+    assert sub.current_period_end == E1  # not rolled
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 0
+
+
+def test_cron_withholds_gateway_renewal_without_paid_invoice(db, monkeypatch):
+    """A Razorpay-billed row with NO captured payment for the renewal must not
+    be granted (unbounded free service when webhooks are down — F2). The
+    period is left un-rolled so the row re-matches once evidence arrives."""
+    client = _make_client(db, "cron-unpaid@e.com", "cron-unpaid")
+    plan = _make_plan(db, "plan-unpaid", 1000)
+    sub = _make_scoped_sub(db, client, plan, bot_id=None, rzp_id="sub_unpaid", period_end=E1)
+    db.commit()
+
+    assert _run_renewal_cron(db, monkeypatch) == 0
+    db.refresh(sub)
+    assert sub.current_period_end == E1  # left due, re-checked next run
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 0
+
+    # Payment evidence lands (delayed invoice) → next run grants normally.
+    _paid_invoice(db, sub, paid_at=E1, payment_id="pay_unpaid_late")
+    db.commit()
+    assert _run_renewal_cron(db, monkeypatch) == 1
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 1000
+
+
+def test_cron_still_renews_manual_rows_without_invoice(db, monkeypatch):
+    """Free/manual subscriptions have no gateway and no invoices — the cron is
+    their ONLY renewal trigger and must keep granting them."""
+    client = _make_client(db, "cron-manual@e.com", "cron-manual")
+    plan = _make_plan(db, "plan-manual", 300)
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=None,
+        status="active",
+        payment_provider="manual",
+        billing_cycle="monthly",
+        razorpay_subscription_id=None,
+        current_period_start=S1,
+        current_period_end=E1,
+        last_granted_period_end=None,
+    )
+    sub.plan = plan
+    db.add(sub)
+    db.commit()
+
+    assert _run_renewal_cron(db, monkeypatch) == 1
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 300
