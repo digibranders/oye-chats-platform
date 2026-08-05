@@ -110,3 +110,37 @@ def test_reconciliation_surfaces_unnumbered_paid_charge(db, enabled):
     invoice_service.backfill_unnumbered_invoices(db)
     anomalies_after = invoice_reports.reconciliation_anomalies(db)
     assert [row["id"] for row in anomalies_after["unnumbered_charges"]] == []
+
+
+def test_backfill_heals_refunded_before_finalize_charge(db, enabled):
+    """P1-6c — a charge that missed finalize and was then (partially) refunded
+    must still be healed into a numbered document: the customer kept part of
+    the supply, and create_credit_note refuses unnumbered originals, so
+    without this the whole money movement drops out of every report."""
+    client = _client(db, "refund-heal@acme.test")
+    _seller(db)
+    inv = _paid_invoice(db, client.id)
+    inv.status = "partially_refunded"
+    inv.refunded_minor = 50000
+    db.commit()
+
+    healed = invoice_service.backfill_unnumbered_invoices(db)
+    db.commit()
+
+    assert healed == 1
+    db.refresh(inv)
+    assert inv.invoice_number is not None
+
+
+def test_anomalies_surface_unnumbered_refunded_charge(db, enabled):
+    """The reconciliation anomaly report must mirror the widened filter."""
+    client = _client(db, "refund-anom@acme.test")
+    # No seller profile → heal impossible; the row must still be VISIBLE.
+    inv = _paid_invoice(db, client.id, paid_at=datetime.now(UTC) - timedelta(days=3))
+    inv.status = "refunded"
+    inv.refunded_minor = inv.amount_cents
+    db.commit()
+
+    anomalies = invoice_reports.reconciliation_anomalies(db)
+    unnumbered_ids = [row["id"] for row in anomalies["unnumbered_charges"]]
+    assert inv.id in unnumbered_ids

@@ -981,3 +981,84 @@ def test_reconcile_topup_before_capture_does_not_burn_idempotency_key(db, monkey
     assert rzp.reconcile_topup_from_razorpay(db, "order_early", "pay_early", expected_client_id=client.id) is True
     db.commit()
     assert _balances(db, client.id, None) == 2000
+
+
+def test_refund_failed_reverses_refunded_minor_and_recomputes_status(db):
+    """P1-6b — refund.failed must subtract the failed amount from
+    ``refunded_minor`` and recompute status from what still stands, or a later
+    genuine partial refund flips the invoice to \"refunded\" though less money
+    was returned."""
+    client = _client(db)
+    credit_service.grant_topup(db, client.id, 1000)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        kind="topup",
+        razorpay_payment_id="pay_rf_1",
+    )
+    db.add(inv)
+    db.commit()
+
+    # Two partial refunds initiated (1000 each), the SECOND then fails.
+    rzp._handle_refund_created(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_a"))
+    rzp._handle_refund_created(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_b"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.refunded_minor == 2000
+    assert inv.status == "partially_refunded"
+
+    rzp._handle_refund_failed(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_b"))
+    db.commit()
+    db.refresh(inv)
+    # Only refund A still stands.
+    assert inv.refunded_minor == 1000
+    assert inv.status == "partially_refunded"
+
+    # A full-reversal failure clears back to paid.
+    rzp._handle_refund_failed(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_a"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.refunded_minor == 0
+    assert inv.status == "paid"
+
+
+def test_captured_replay_after_refund_is_acked_not_errored(db, monkeypatch):
+    """P1-6d — an order.paid alias redelivered AFTER a refund (invoice status
+    no longer \"paid\") must early-return, not attempt a duplicate insert that
+    5xx-loops on the unique payment-id index until Razorpay gives up."""
+    client = _client(db)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        amount_cents=399900,
+        currency="inr",
+        status="refunded",
+        refunded_minor=399900,
+        kind="topup",
+        razorpay_payment_id="pay_replay_1",
+    )
+    db.add(inv)
+    db.commit()
+
+    payload = {
+        "payment": {
+            "entity": {
+                "id": "pay_replay_1",
+                "order_id": "order_replay_1",
+                "amount": 399900,
+                "currency": "INR",
+                "status": "captured",
+                "notes": {"purpose": "topup", "client_id": str(client.id), "credits": "2000", "amount_inr": "3999"},
+            }
+        }
+    }
+    result = rzp._handle_payment_captured(db, payload)
+    db.commit()
+
+    assert "already recorded" in result
+    assert _balances(db, client.id, None) == 0  # refunded charge grants nothing

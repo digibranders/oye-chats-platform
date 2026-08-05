@@ -17,6 +17,38 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["billing-webhooks"])
 
+# ── Signature-failure escalation (P1-6a) ─────────────────────────────────────
+# A single bad signature is noise (scanner, replay). A BURST of them is a
+# rotated/mistyped RAZORPAY_WEBHOOK_SECRET: every billing event 400s before
+# the dead-letter path, so nothing reaches Sentry and revenue events silently
+# drop for Razorpay's whole retry window. Track consecutive failures in a
+# rolling window and escalate to ERROR (→ Sentry) at the threshold. Process-
+# local by design — this is an alert, not an exact counter, and any verified
+# event resets it.
+_SIG_FAILURE_WINDOW_SECS = 900.0
+_SIG_FAILURE_ALERT_THRESHOLD = 3
+_sig_failures: dict[str, float] = {"count": 0.0, "window_start": 0.0}
+
+
+def _note_signature_failure(now: float) -> None:
+    if now - _sig_failures["window_start"] > _SIG_FAILURE_WINDOW_SECS:
+        _sig_failures["window_start"] = now
+        _sig_failures["count"] = 0.0
+    _sig_failures["count"] += 1
+    if _sig_failures["count"] >= _SIG_FAILURE_ALERT_THRESHOLD:
+        logger.error(
+            "Razorpay webhook signature verification failed %d times in the last %.0f min — "
+            "check RAZORPAY_WEBHOOK_SECRET against the Razorpay dashboard (a rotated or "
+            "mistyped secret rejects EVERY billing event before dead-lettering)",
+            int(_sig_failures["count"]),
+            _SIG_FAILURE_WINDOW_SECS / 60,
+        )
+
+
+def _note_signature_success() -> None:
+    _sig_failures["count"] = 0.0
+    _sig_failures["window_start"] = 0.0
+
 
 def _dead_letter(
     *,
@@ -94,8 +126,12 @@ async def razorpay_webhook(request: Request):
     try:
         razorpay_service.verify_webhook_signature(payload=raw_payload, signature=signature)
     except razorpay_service.SignatureMismatch as exc:
+        import time as _time
+
         logger.warning("Razorpay webhook signature verification failed: %s", exc)
+        _note_signature_failure(_time.monotonic())
         raise HTTPException(status_code=400, detail="Invalid webhook signature.") from exc
+    _note_signature_success()
 
     import json
 

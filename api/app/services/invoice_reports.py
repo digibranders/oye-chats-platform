@@ -325,7 +325,9 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
             session.execute(
                 select(Invoice).where(
                     Invoice.invoice_number.is_(None),
-                    Invoice.status == "paid",
+                    # Mirror the self-heal filter (P1-6c): a refunded-before-
+                    # finalize charge is still a missing statutory document.
+                    Invoice.status.in_(("paid", "partially_refunded", "refunded")),
                     Invoice.paid_at < cutoff,
                 )
             )

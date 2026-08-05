@@ -88,3 +88,36 @@ def test_missing_secret_raises_runtime(monkeypatch):
     reload(svc)
     with pytest.raises(RuntimeError):
         svc.verify_webhook_signature(payload=b"{}", signature="x")
+
+
+def test_signature_failure_burst_escalates_to_error(caplog):
+    """P1-6a — one bad signature is scanner noise (WARNING); a burst means a
+    rotated/mistyped RAZORPAY_WEBHOOK_SECRET is rejecting EVERY billing event
+    before dead-lettering, and must reach ERROR (→ Sentry)."""
+    import logging as _logging
+
+    from app.api import webhook_billing_routes as wbr
+
+    wbr._note_signature_success()  # clean slate
+
+    def _errors():
+        return [r for r in caplog.records if r.levelno >= _logging.ERROR]
+
+    with caplog.at_level(_logging.ERROR, logger="app.api.webhook_billing_routes"):
+        wbr._note_signature_failure(1000.0)
+        wbr._note_signature_failure(1010.0)
+        assert not _errors(), "below threshold must stay quiet"
+        wbr._note_signature_failure(1020.0)
+        assert any("RAZORPAY_WEBHOOK_SECRET" in r.getMessage() for r in _errors())
+
+    # A verified event resets the streak.
+    wbr._note_signature_success()
+    caplog.clear()
+    with caplog.at_level(_logging.ERROR, logger="app.api.webhook_billing_routes"):
+        wbr._note_signature_failure(2000.0)
+        assert not _errors()
+        # Window expiry also resets: a failure far outside the window starts
+        # a fresh count instead of accumulating stale ones.
+        wbr._note_signature_failure(2000.0 + wbr._SIG_FAILURE_WINDOW_SECS + 1)
+        assert not _errors()
+    wbr._note_signature_success()

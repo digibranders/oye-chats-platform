@@ -2906,8 +2906,13 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         existing_inv = (
             session.execute(select(Invoice).where(Invoice.razorpay_payment_id == rzp_payment_id)).scalars().first()
         )
-        if existing_inv and existing_inv.status == "paid":
-            return f"Top-up {rzp_payment_id} already recorded"
+        if existing_inv:
+            # ANY existing invoice means this payment was already processed —
+            # including one since refunded. Falling through on a non-"paid"
+            # status (e.g. an order.paid alias redelivered after a refund) hit
+            # the unique razorpay_payment_id index at flush, dead-lettered, and
+            # 5xx-looped until Razorpay exhausted retries (P1-6d).
+            return f"Top-up {rzp_payment_id} already recorded (status={existing_inv.status})"
 
     amount_paise = int((pay_entity or {}).get("amount") or (order_entity or {}).get("amount") or 0)
 
@@ -3194,8 +3199,24 @@ def _handle_refund_failed(session: Session, payload: dict[str, Any]) -> str:
         bot_id=inv.bot_id,
         clawback_note=f"Refund clawback for Razorpay refund {refund_id}",
     )
+    # Reverse the money-side bookkeeping too (P1-6b): ``refunded_minor`` was
+    # accumulated on refund.created; leaving the failed amount in it made a
+    # later genuine partial refund flip the status to "refunded" though less
+    # money was returned, and reconciliation then permanently flagged the
+    # invoice against its full-reversal expectation.
+    failed_minor = int(refund_entity.get("amount") or 0)
+    if failed_minor > 0:
+        inv.refunded_minor = max(0, int(inv.refunded_minor or 0) - failed_minor)
+    # Recompute status from what actually stands — a different, still-valid
+    # partial refund must keep its "partially_refunded" label.
+    charge_minor = int(inv.amount_cents or 0)
     if inv.status in ("refunded", "partially_refunded"):
-        inv.status = "paid"
+        if int(inv.refunded_minor or 0) <= 0:
+            inv.status = "paid"
+        elif charge_minor and int(inv.refunded_minor) >= charge_minor:
+            inv.status = "refunded"
+        else:
+            inv.status = "partially_refunded"
     session.flush()
     logger.info("Razorpay refund %s failed → restored %s credits to invoice %s", refund_id, restored, inv.id)
     return f"Refund {refund_id} failed: restored {restored} credit(s) to invoice {inv.id}"
