@@ -485,3 +485,34 @@ def test_cron_still_renews_manual_rows_without_invoice(db, monkeypatch):
 
     assert _run_renewal_cron(db, monkeypatch) == 1
     assert credit_service.get_balance(db, client.id, bot_id=None) == 300
+
+
+def test_cron_seat_invoice_is_not_renewal_evidence(db, monkeypatch):
+    """Review fix — a paid SEAT invoice stamps the main sub's id but must not
+    evidence a plan renewal: a ₹449 seat debit funding a full plan grant is
+    the same masking class the F5 revoke probe closes."""
+    client = _make_client(db, "cron-seatmask@e.com", "cron-seatmask")
+    plan = _make_plan(db, "plan-seatmask", 1000)
+    sub = _make_scoped_sub(db, client, plan, bot_id=None, rzp_id="sub_seatmask", period_end=E1)
+    inv = _paid_invoice(db, sub, paid_at=E1, payment_id="pay_seatmask")
+    inv.kind = "seat"
+    db.commit()
+
+    assert _run_renewal_cron(db, monkeypatch) == 0
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 0
+    db.refresh(sub)
+    assert sub.current_period_end == E1  # left due for real evidence
+
+
+def test_marker_tolerance_absorbs_month_end_anchor_divergence(db):
+    """Review fix (residual P1-3) — the cron keys on add_months (day-clamped:
+    Mar 28) while the webhook keys on Razorpay's current_end (anchor: Mar 31).
+    A ≤4-day advance is the same paid cycle and must no-op; a real next cycle
+    (~1 month) must still grant."""
+    _client, sub = _make_sub(db, last_granted=datetime(2026, 3, 28, 12, 0, tzinfo=UTC))
+
+    # Same cycle, anchor re-expanded (+3 days) → no-op.
+    assert credit_service.grant_subscription_period_once(db, sub, datetime(2026, 3, 31, 12, 0, tzinfo=UTC)) is False
+
+    # Genuine next cycle (+~1 month) → grants.
+    assert credit_service.grant_subscription_period_once(db, sub, datetime(2026, 4, 30, 12, 0, tzinfo=UTC)) is True

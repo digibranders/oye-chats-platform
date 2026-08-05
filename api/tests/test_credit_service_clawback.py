@@ -1062,3 +1062,72 @@ def test_captured_replay_after_refund_is_acked_not_errored(db, monkeypatch):
 
     assert "already recorded" in result
     assert _balances(db, client.id, None) == 0  # refunded charge grants nothing
+
+
+def test_charged_without_payment_entity_on_canceled_row_does_not_error(db):
+    """Review fix — a charged payload WITHOUT payment.entity is legal; the
+    withheld-charge stamp branches must not NameError on the unbound invoice
+    (in the backstop branch that raise landed AFTER the irreversible gateway
+    cancel, wedging the row in a dead-letter loop)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-noent")
+    sub = _sub_with_plan(db, client, bot, slug="pro-noent")
+    sub.razorpay_subscription_id = "sub_noent"
+    sub.status = "canceled"
+    db.commit()
+
+    result = rzp._handle_subscription_charged(
+        db, {"subscription": {"entity": {"id": "sub_noent", "current_end": 1780000000}}}
+    )
+    db.commit()
+    assert "not reactivated" in result
+
+
+def test_withheld_stamp_never_overwrites_a_funded_invoice(db):
+    """Review fix — a delayed charged webhook must not re-label an invoice
+    whose charge DID fund a linked grant: that would disable its clawback."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-funded")
+    sub = _sub_with_plan(db, client, bot, slug="pro-funded")
+    sub.razorpay_subscription_id = "sub_funded"
+    sub.status = "canceled"
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        kind="plan_charge",
+        razorpay_payment_id="pay_funded_1",
+    )
+    db.add(inv)
+    db.flush()
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id, reference_id=inv.id)
+    db.commit()
+
+    rzp._handle_subscription_charged(
+        db,
+        {
+            "subscription": {"entity": {"id": "sub_funded", "current_end": 1780000000}},
+            "payment": {"entity": {"id": "pay_funded_1", "amount": 44900, "currency": "INR"}},
+        },
+    )
+    db.commit()
+    db.refresh(inv)
+    assert inv.kind == "plan_charge"  # NOT re-labelled withheld_charge
+
+    # And an unfunded fresh charge on the same canceled row DOES get stamped.
+    rzp._handle_subscription_charged(
+        db,
+        {
+            "subscription": {"entity": {"id": "sub_funded", "current_end": 1780000001}},
+            "payment": {"entity": {"id": "pay_funded_2", "amount": 44900, "currency": "INR"}},
+        },
+    )
+    db.commit()
+    fresh = db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_funded_2")).scalars().first()
+    assert fresh is not None
+    assert fresh.kind == "withheld_charge"

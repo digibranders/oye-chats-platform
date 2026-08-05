@@ -2085,6 +2085,11 @@ def change_seat_count(
             from app.services import razorpay_service
 
             checkout = razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
+        except razorpay_service.IntlPaymentsDisabled:
+            # Policy refusal, not a gateway fault — propagate to the app-level
+            # handler so /seats renders the 409 intl_usd_pending contact-sales
+            # contract instead of a "try again" 502.
+            raise
         except razorpay_service.RazorpayBillingError as exc:
             logger.exception("Seat add-on update failed for client %s: %s", client.id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc

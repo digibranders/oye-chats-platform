@@ -483,6 +483,15 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                                 Invoice.status == "paid",
                                 Invoice.paid_at.is_not(None),
                                 Invoice.paid_at >= sub.current_period_end - timedelta(days=2),
+                                # PLAN charges only — seat add-on invoices stamp
+                                # the main sub's id but pay for seats, and a
+                                # withheld charge explicitly funded nothing. A
+                                # ₹449 seat debit must not evidence a full plan
+                                # renewal (same masking class as the F5 revoke
+                                # probe). is_distinct_from keeps legacy NULL-kind
+                                # rows counting as plan charges.
+                                Invoice.kind.is_distinct_from("seat"),
+                                Invoice.kind.is_distinct_from("withheld_charge"),
                             )
                             .limit(1)
                         ).first()
@@ -674,9 +683,20 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
             for sub in subs:
                 try:
                     result = transition_service.promote_scheduled_change(session, sub)
+                    # Per-row commit: one row's success must not depend on the
+                    # rest of the batch (and must not be lost to a later row's
+                    # failure).
+                    session.commit()
                 except Exception:
-                    # Don't kill the loop on one bad row — log and skip so
-                    # the rest of the queue still gets processed.
+                    # Roll back THIS row's partial promotion before moving on.
+                    # promote_scheduled_change flushes the terminal flip +
+                    # cleared schedule + seat retirement BEFORE its gateway
+                    # create; without the rollback the end-of-loop commit
+                    # persisted that half-promotion (downgrade silently
+                    # destroyed, no replacement checkout, no re-auth email) —
+                    # deterministic for USD-rail rows while
+                    # INTL_PAYMENTS_ENABLED is off (IntlPaymentsDisabled).
+                    session.rollback()
                     logger.exception(
                         "task_promote_scheduled_downgrades: failed for sub_id=%s",
                         sub.id,
@@ -684,7 +704,6 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
                     continue
                 if result is not None:
                     promoted += 1
-            session.commit()
         return promoted
 
     loop = asyncio.get_running_loop()

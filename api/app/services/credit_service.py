@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -822,6 +822,16 @@ def _backfill_plan_grant_reference(session: Session, subscription: Subscription,
         session.flush()
 
 
+# Two period-end values can describe the SAME paid cycle and still differ by a
+# few days: the renewal cron keys on ``add_months(old_end)``, which day-clamps
+# month-end anchors (Jan 31 → Feb 28 → Mar 28), while Razorpay's ``current_end``
+# re-expands to the anchor day (Mar 31). A strictly monotonic marker would treat
+# the webhook's larger value as a fresh period and re-run reset+grant. Any real
+# billing cycle is ≥ 28 days, so a ≤ 4-day advance can never be a legitimate new
+# period — treat it as already granted.
+_PERIOD_KEY_TOLERANCE = timedelta(days=4)
+
+
 def grant_subscription_period_once(
     session: Session,
     subscription: Subscription,
@@ -888,7 +898,7 @@ def grant_subscription_period_once(
     if (
         period_end is not None
         and subscription.last_granted_period_end is not None
-        and period_end <= subscription.last_granted_period_end
+        and period_end <= subscription.last_granted_period_end + _PERIOD_KEY_TOLERANCE
     ):
         # Monotonic, not exact-equality: any period at or before the marker is
         # already granted. A strict ``==`` check is exploitable — the

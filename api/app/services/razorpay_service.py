@@ -2544,6 +2544,12 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
 
     # Record the invoice if a payment entity was included. Flushed so its id can
     # link the period grant for precise refund clawback (C2 / NV5).
+    # ``period_invoice`` must be bound even when no payment entity arrived —
+    # the withheld-charge stamp branches below reference it unconditionally,
+    # and an unbound name there would NameError AFTER the irreversible gateway
+    # cancel in the backstop branch, rolling back the local bookkeeping into a
+    # permanent dead-letter loop.
+    period_invoice: Invoice | None = None
     period_invoice_id: int | None = None
     if pay_entity and pay_entity.get("id"):
         period_invoice = _ensure_subscription_charge_invoice(
@@ -2579,8 +2585,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         )
         # This charge funded NO credits — mark it so a later refund of it (the
         # prescribed ops action) claws nothing instead of guessing at a grant.
-        if period_invoice is not None:
-            period_invoice.kind = "withheld_charge"
+        _mark_withheld_charge(session, period_invoice)
         session.flush()
         return f"Subscription {razorpay_sub_id} charged after cancellation — invoice recorded, not reactivated"
 
@@ -2650,8 +2655,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.status = "canceled"
         local.canceled_at = local.canceled_at or datetime.now(UTC)
         # Credits withheld → the refund this log prescribes must claw nothing.
-        if period_invoice is not None:
-            period_invoice.kind = "withheld_charge"
+        _mark_withheld_charge(session, period_invoice)
         session.flush()
         logger.error(
             "subscription.charged for %s (client %s) renewed a subscription that was cancelled "
@@ -3314,6 +3318,28 @@ def _extract_dispute_entity(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _invoice_for_payment(session: Session, payment_id: str) -> Invoice | None:
     return session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+
+
+def _mark_withheld_charge(session: Session, invoice: Invoice | None) -> None:
+    """Stamp ``kind='withheld_charge'`` — but only on an invoice that funded
+    no credit grant.
+
+    ``_ensure_subscription_charge_invoice`` can return a PRE-EXISTING row
+    (e.g. the verify path's first-charge invoice, already ``plan_charge`` with
+    a linked grant) when a charged webhook is delayed past a cancellation.
+    Re-labelling that row would permanently disable its refund clawback while
+    a real, possibly unconsumed grant hangs off it — so the stamp applies only
+    when no positive ledger row references the invoice.
+    """
+    if invoice is None:
+        return
+    from app.db.models import CreditLedger
+
+    funded = session.execute(
+        select(CreditLedger.id).where(CreditLedger.reference_id == invoice.id, CreditLedger.delta > 0).limit(1)
+    ).first()
+    if funded is None:
+        invoice.kind = "withheld_charge"
 
 
 def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
