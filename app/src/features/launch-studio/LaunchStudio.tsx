@@ -1,11 +1,13 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { completeOnboarding } from '../../services/api';
+import { useBotContext } from '../../context/BotContext';
+import { useWorkspace } from '../../context/WorkspaceContext';
 import { LaunchStudioLayout } from './LaunchStudioLayout';
 import { PreviewProvider } from './preview/PreviewProvider';
+import { clearLaunchProgress, readLaunchProgress, writeLaunchProgress } from './resume';
 import {
   LAUNCH_STEPS,
-  LAUNCH_PROGRESS_KEY,
   stepIndexByPath,
   type StepProps,
 } from './steps.config';
@@ -35,9 +37,7 @@ const LAST_INDEX = LAUNCH_STEPS.length - 1;
 const STEPPER_ITEMS = LAUNCH_STEPS.map((s) => ({ key: s.key, label: s.label, description: s.hint }));
 
 function readProgress(): number {
-  if (typeof localStorage === 'undefined') return 0;
-  const stored = Math.floor(Number(localStorage.getItem(LAUNCH_PROGRESS_KEY) ?? 0));
-  return Number.isFinite(stored) ? Math.max(0, Math.min(stored, LAST_INDEX)) : 0;
+  return readLaunchProgress()?.step ?? 0;
 }
 
 /**
@@ -58,12 +58,24 @@ export function LaunchStudio() {
   const navigate = useNavigate();
   const currentIndex = stepIndexByPath(step);
   const [maxReached, setMaxReached] = useState(readProgress);
+  const { currentWorkspaceId } = useWorkspace();
+  const { bots, selectedBot, selectBot } = useBotContext();
+
+  // Bind the studio to the agent this onboarding is FOR. Every step writes
+  // through `selectedBot` (the shell switcher's scope, deliberately not synced
+  // to the URL), so without this a resume would rename and re-crawl whichever
+  // agent the switcher last held - a healthy production agent, from a button
+  // rendered on a different agent's page.
+  useEffect(() => {
+    const savedBotId = readLaunchProgress()?.botId ?? null;
+    if (savedBotId === null || selectedBot?.id === savedBotId) return;
+    const savedBot = bots.find((bot) => bot.id === savedBotId);
+    if (savedBot) selectBot(savedBot);
+  }, [bots, selectedBot, selectBot]);
 
   useEffect(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(LAUNCH_PROGRESS_KEY, String(maxReached));
-    }
-  }, [maxReached]);
+    writeLaunchProgress(currentWorkspaceId, selectedBot?.id ?? null, maxReached);
+  }, [maxReached, currentWorkspaceId, selectedBot?.id]);
 
   // Unknown step → start at the beginning.
   if (currentIndex === -1) {
@@ -82,11 +94,7 @@ export function LaunchStudio() {
       void completeOnboarding().catch(() => {
         /* non-blocking - the dashboard still loads if this fails */
       });
-      try {
-        localStorage.removeItem(LAUNCH_PROGRESS_KEY);
-      } catch {
-        /* localStorage unavailable - ignore */
-      }
+      clearLaunchProgress();
       navigate('/');
       return;
     }

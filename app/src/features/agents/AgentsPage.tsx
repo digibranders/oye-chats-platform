@@ -20,6 +20,7 @@ import {
 } from '../../design-system';
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { useBotContext } from '../../context/BotContext';
+import { useWorkspace } from '../../context/WorkspaceContext';
 import { type Bot } from '../../types/domain';
 import { hasLaunchProgress, resumeLaunchPath } from '../launch-studio/resume';
 import { summarizeAgents } from './agent-status';
@@ -99,6 +100,7 @@ function AgentsLoading(): ReactElement {
  */
 export function AgentsPage(): ReactElement {
   const { bots, loading, error, refreshBots } = useBotContext();
+  const { currentWorkspaceId } = useWorkspace();
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -137,10 +139,12 @@ export function AgentsPage(): ReactElement {
   }, [refreshBots]);
 
   const hasAgents = bots.length > 0;
-  // Only offered when the user actually abandoned Launch Studio mid-flow. A
-  // workspace with no agents already gets the guided path from the empty state
-  // below, and a finished workspace shouldn't be pulled back into onboarding.
-  const showResumeSetup = hasAgents && hasLaunchProgress();
+  // Only offered when the user actually abandoned Launch Studio mid-flow, in
+  // THIS workspace. A workspace with no agents already gets the guided path
+  // from the empty state below, and a finished workspace shouldn't be pulled
+  // back into onboarding. The workspace scope also stops a second account on
+  // a shared browser inheriting the first account's progress.
+  const showResumeSetup = hasAgents && hasLaunchProgress(currentWorkspaceId);
 
   return (
     <PageContainer
