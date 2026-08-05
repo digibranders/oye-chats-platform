@@ -28,7 +28,7 @@
  *   3. Broadcasts a ``oyechats:workspace-switched`` window event so ad-hoc
  *      consumers (WebSocket clients, feature-flag caches) can react without
  *      subscribing to this context.
- *   4. Optionally navigates to a landing route (``/support`` for operator
+ *   4. Optionally navigates to a landing route (``/inbox`` for operator
  *      roles, ``/`` for owner) - controlled by the caller.
  */
 

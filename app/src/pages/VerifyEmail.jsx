@@ -118,8 +118,11 @@ export default function VerifyEmail() {
       // Honor deep-link ``next`` - invite-flow signups land back on
       // ``/invite/<token>`` here so the airlock's own logged-in branch
       // auto-detects the freshly-verified session and shows the Accept
-      // button. Fallback to dashboard root for organic signups.
-      navigate(safeNext || '/build', { replace: true });
+      // button. Organic signups fall through to Launch Studio: only an
+      // *unverified* account reaches this screen (the effect above bounces
+      // verified ones out), so by construction this is a brand-new account
+      // with no agent yet - exactly who onboarding is for.
+      navigate(safeNext || '/launch', { replace: true });
     } catch (err) {
       setError(err.message || 'Invalid code. Please try again.');
       setOtp(Array(OTP_LENGTH).fill(''));

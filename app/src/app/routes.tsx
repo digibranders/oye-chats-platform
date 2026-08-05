@@ -32,6 +32,7 @@ import { AffiliatePage } from '../features/affiliate/AffiliatePage';
 import { AffiliateInvite } from '../features/affiliate/AffiliateInvite';
 import { InviteAirlock } from '../features/workspace/InviteAirlock';
 import { SettingsPage } from '../features/settings';
+import { LegacyRedirect, LegacyKnowledgeRedirect } from './legacyRedirects';
 
 // Error surfaces - attached as `errorElement`s so route/render crashes render an
 // on-brand recovery UI instead of React Router's default developer screen.
@@ -156,6 +157,22 @@ export const router = createBrowserRouter([
               },
             ],
           },
+
+          // ── Legacy aliases ─────────────────────────────────────────────
+          // Pre-Admin-2.0 URLs still live in delivered emails, push-notification
+          // payloads and bookmarks, and used to render the in-shell 404. Alias
+          // them onto their new homes (query string + hash preserved) so those
+          // links keep working. Aliases only - never link here from inside the
+          // app. See `legacyRedirects.tsx` for who emits each path.
+          // Old Build Studio → Launch Studio onboarding.
+          { path: '/build', element: <LegacyRedirect to="/launch" /> },
+          // Old operator console → Inbox (labelled "Support" in the sidebar).
+          { path: '/support', element: <LegacyRedirect to="/inbox" /> },
+          // Billing and affiliate moved under Workspace.
+          { path: '/billing', element: <LegacyRedirect to="/workspace/billing" /> },
+          { path: '/affiliate', element: <LegacyRedirect to="/workspace/affiliate" /> },
+          // Knowledge became an agent tab - needs bot resolution.
+          { path: '/knowledge', element: <LegacyKnowledgeRedirect /> },
 
           // Launch Studio - full-screen 8-step onboarding, OUTSIDE the app shell.
           {

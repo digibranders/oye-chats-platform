@@ -186,7 +186,7 @@ export default function Register() {
     if (affiliateToken && !isOperator) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} replace />;
     }
-    return <Navigate to={isOperator ? '/support' : '/'} replace />;
+    return <Navigate to={isOperator ? '/inbox' : '/'} replace />;
   }
 
   const strengthColor = strengthScore === 3 ? 'bg-emerald-500' : strengthScore === 2 ? 'bg-amber-500' : strengthScore === 1 ? 'bg-rose-500' : 'bg-surface-200';
