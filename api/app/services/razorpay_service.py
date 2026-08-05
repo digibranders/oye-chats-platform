@@ -1676,11 +1676,17 @@ def reconcile_topup_from_razorpay(
 
     Returns ``True`` when this call performed (or attempted) the grant, ``False``
     when another path already handled it or the payment isn't a captured top-up.
-    """
-    synthetic_event_id = f"reconcile:topup:{razorpay_order_id}"
-    if not _record_or_skip_event(session, synthetic_event_id):
-        return False  # webhook or another verify call already reconciled
 
+    ORDERING (important, P1-5): the synthetic idempotency key is recorded only
+    AFTER confirming a billable state — the same contract
+    :func:`reconcile_subscription_from_razorpay` documents. Checkout's success
+    handler can fire while the payment is still ``authorized``
+    (``payment_capture=1`` captures asynchronously); burning the key on that
+    early call made every later verify short-circuit as "already handled" while
+    no credits were ever granted, leaving the (possibly dropped) webhook as the
+    only remaining path — exactly the scenario this reconcile exists to cover.
+    The ``return False`` paths below therefore burn nothing.
+    """
     rzp = _get_razorpay()
     try:
         order = rzp.order.fetch(razorpay_order_id)
@@ -1710,9 +1716,16 @@ def reconcile_topup_from_razorpay(
             raise RazorpayBillingError("Top-up does not belong to the requesting client.")
 
     # Only a genuinely captured payment grants credits — an authorized-but-not-
-    # captured payment must wait for the webhook (or it never captures at all).
+    # captured payment must wait for capture and retry (key NOT burned above).
     if (payment or {}).get("status") != "captured":
         return False
+
+    # Billable state confirmed — NOW record the synthetic event. Concurrent
+    # verify calls (and the real webhook's own event id + invoice idempotency)
+    # collapse here: the atomic insert admits exactly one processor.
+    synthetic_event_id = f"reconcile:topup:{razorpay_order_id}"
+    if not _record_or_skip_event(session, synthetic_event_id):
+        return False  # webhook or another verify call already reconciled
 
     # Reuse the canonical handler so the invoice insert, NV2 amount
     # reconciliation, bot-scope resolution, and grant all stay in one place.

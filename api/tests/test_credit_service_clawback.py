@@ -943,3 +943,41 @@ def test_backfill_reference_skips_negative_reset_rows(db):
     db.refresh(reset)
     assert grant.reference_id == inv.id  # positive row linked
     assert reset.reference_id is None  # reset row untouched
+
+
+def test_reconcile_topup_before_capture_does_not_burn_idempotency_key(db, monkeypatch):
+    """P1-5 — Checkout's success handler can fire while the payment is still
+    ``authorized`` (payment_capture=1 captures asynchronously). That early
+    verify must NOT burn ``reconcile:topup:<order_id>``: burning it made every
+    later verify short-circuit as \"already handled\" while no credits were ever
+    granted — paid-but-no-credits with the webhook as the only (possibly
+    dropped) remaining path."""
+    client = _client(db)
+    db.commit()
+
+    order = {
+        "id": "order_early",
+        "amount": 399900,
+        "currency": "INR",
+        "notes": {"purpose": "topup", "client_id": str(client.id), "credits": "2000", "amount_inr": "3999"},
+    }
+    authorized = {
+        "id": "pay_early",
+        "order_id": "order_early",
+        "amount": 399900,
+        "currency": "INR",
+        "status": "authorized",
+    }
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp_for_topup(order, authorized))
+
+    # Verify races auto-capture: nothing granted, and crucially nothing burned.
+    assert rzp.reconcile_topup_from_razorpay(db, "order_early", "pay_early", expected_client_id=client.id) is False
+    db.commit()
+    assert _balances(db, client.id, None) == 0
+
+    # Capture completes; the retried verify must now grant.
+    captured = {**authorized, "status": "captured"}
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp_for_topup(order, captured))
+    assert rzp.reconcile_topup_from_razorpay(db, "order_early", "pay_early", expected_client_id=client.id) is True
+    db.commit()
+    assert _balances(db, client.id, None) == 2000
