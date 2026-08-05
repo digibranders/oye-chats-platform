@@ -215,6 +215,30 @@ _TRUTHY = ("1", "true", "yes", "on")
 _FALSY = ("0", "false", "no", "off")
 
 
+def _get_uncached(key: str, default: Any = None) -> Any:
+    """Read one key straight from the DB, bypassing the TTL cache.
+
+    Exists for security levers where the cache's propagation window is the
+    bug: ``invalidate_runtime_config_cache`` resets a module global, so a
+    super-admin ``PUT`` only invalidates the cache of the one Gunicorn worker
+    that served it — every other worker keeps its stale value for up to
+    ``_TTL_SECONDS``. A kill switch read through the cache is therefore not a
+    kill switch under ``WEB_CONCURRENCY > 1``. This is a single indexed-row
+    SELECT; callers must be off the hot chat path.
+
+    Falls back to the cached value (then ``default``) if the DB read fails,
+    so a transient outage degrades to the cache's behaviour instead of
+    erroring the caller.
+    """
+    try:
+        with get_session() as session:
+            row = session.execute(select(PricingConfig).where(PricingConfig.key == key)).scalars().first()
+    except Exception:  # noqa: BLE001
+        logger.exception("runtime_config: uncached read of %r failed; falling back to cache", key)
+        return get(key, default)
+    return row.value if row is not None else default
+
+
 def is_impersonation_enabled() -> bool:
     """Whether super-admin impersonation may be used at all (design §14).
 
@@ -224,13 +248,17 @@ def is_impersonation_enabled() -> bool:
       full stop — the DB is not consulted. It survives a DB outage and a rogue
       ``pricing_config`` edit.
     * ``impersonation.enabled`` (pricing_config row) is the **fast lever**:
-      flip it from the super-admin UI and it takes effect on the next request,
-      no deploy or restart, because the super-admin write path calls
-      ``invalidate_runtime_config_cache``.
+      flip it from the super-admin UI and it is effective fleet-wide on the
+      next request — it is read uncached (see ``_get_uncached``) precisely so
+      the TTL cache's per-worker propagation window cannot keep admitting
+      impersonation after an operator pulls the switch. The cost (one indexed
+      single-row SELECT) lands only on impersonation paths, which already do
+      a token lookup.
 
     Because validity is re-checked on every request, turning this off also
-    ends every session already in flight — which is the point of a kill
-    switch. Revocation of individual tokens keeps working while it is off.
+    ends every session already in flight — a request that has already passed
+    the auth check still completes, but the next one 401s. Revocation of
+    individual tokens keeps working while it is off.
 
     An unparseable DB value resolves to enabled (matching the env default)
     rather than silently disabling the feature; the env var is the mechanism
@@ -239,7 +267,7 @@ def is_impersonation_enabled() -> bool:
     if not IMPERSONATION_ENABLED:
         return False
 
-    raw = get("impersonation.enabled", True)
+    raw = _get_uncached("impersonation.enabled", True)
     if isinstance(raw, bool):
         return raw
     if isinstance(raw, (int, float)):

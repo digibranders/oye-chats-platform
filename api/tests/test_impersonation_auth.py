@@ -719,3 +719,30 @@ class TestImpersonationPrivilegeRechecks:
                 impersonation_token=raw,
             )
         assert exc.value.status_code == 401
+
+    def test_preview_path_also_rejects_a_demoted_actor(self, db, monkeypatch):
+        """Mirror of the demoted-actor rule on the preview entry point: an
+        offboarded admin's outstanding token must not keep exercising the
+        target's AI Agent (its knowledge base is the customer's proprietary
+        content) for the token's remaining life."""
+        _patch_session(monkeypatch, db)
+        admin = _mk_admin(db, "esc-prev-demote-admin@test.example")
+        target = _mk_target(db, "esc-prev-demote-target@test.example")
+        bot = Bot(client_id=target.id, bot_key="bot-esc-prev-demote", name="Esc Agent")
+        db.add(bot)
+        db.flush()
+        raw, _ = _mk_token(db, admin, target)
+
+        db.get(Client, admin.id).is_superadmin = False
+        db.flush()
+
+        with pytest.raises(HTTPException) as exc:
+            auth.get_bot_for_chat(
+                _http_request("POST", "/chat"),
+                preview=True,
+                bot_id=bot.id,
+                bot_key=None,
+                api_key=None,
+                impersonation_token=raw,
+            )
+        assert exc.value.status_code == 401

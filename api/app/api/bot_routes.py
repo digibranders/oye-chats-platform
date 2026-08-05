@@ -1817,8 +1817,11 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
     Writable under a super-admin impersonation session (design §6.1, "AI Agent
     config edits") — this is the single endpoint behind name, greeting, tone and
     appearance/branding, which is the most common "it looks wrong" support
-    report. Every field on ``UpdateBotRequest`` is bot configuration: nothing
-    here touches billing, credits, or credentials.
+    report. Nothing here touches billing, credits, or credentials — but
+    ``UpdateBotRequest`` is broader than the §6.1 wording: it also carries the
+    widget's origin allowlist (a security control) and the Account's
+    notification/reply-to addresses, so those specific fields are rejected for
+    an impersonated caller below rather than granted wholesale.
     """
     try:
         _require_bot_management_access(auth)
@@ -1827,6 +1830,42 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
 
             update_data = request.dict(exclude_unset=True)
             logger.info(f"Updating bot {bot_id} | fields: {list(update_data.keys())}")
+
+            # Impersonation field guard. The route-level marker admits the whole
+            # request body, but a support session editing "it looks wrong"
+            # config must not be able to widen the widget origin allowlist
+            # (``allowed_domains`` / ``domain_check_enabled`` /
+            # ``session_share_domain`` — persistent changes that outlive the
+            # 30-minute token and re-scope where the public bot_key is
+            # embeddable) or redirect the customer's lead emails.
+            if getattr(auth["entity"], "_impersonator_id", None) is not None:
+                blocked = sorted(
+                    {
+                        "allowed_domains",
+                        "domain_check_enabled",
+                        "session_share_domain",
+                        "notification_email",
+                        "reply_to_email",
+                    }
+                    & update_data.keys()
+                )
+                if blocked:
+                    logger.warning(
+                        "Impersonated write to bot %s rejected: security-sensitive fields %s (impersonator client %s).",
+                        bot_id,
+                        blocked,
+                        auth["entity"]._impersonator_id,
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error": "impersonation_read_only",
+                            "message": (
+                                "These settings can't be changed during a super-admin "
+                                f"impersonation session: {', '.join(blocked)}."
+                            ),
+                        },
+                    )
 
             # Sync logos
             if "bot_logo" in update_data:

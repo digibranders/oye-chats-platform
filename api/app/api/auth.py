@@ -275,6 +275,19 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
             # gets forgotten on the next endpoint someone marks writable. This
             # sits on the one code path every permitted mutation must traverse,
             # so coverage is structural instead of conventional.
+            #
+            # Timing caveat, stamped into the row as ``phase``: this commits
+            # during dependency resolution, BEFORE the endpoint's own authz
+            # (ownership, plan gating, 404s) or business logic runs. It is
+            # therefore a record that the write was AUTHORIZED to proceed, not
+            # proof it succeeded — an endpoint that subsequently 403s/404s or
+            # rolls back still leaves this row. Recording post-hoc instead
+            # would under-report (a handler crash after mutating state loses
+            # the trail entirely), which is the worse failure for the control
+            # this exists to be. Readers answering "what did this admin
+            # actually change" must join against the endpoint's own audit
+            # rows / state, not treat ``phase=authorized`` as a completed
+            # mutation.
             record_audit(
                 session,
                 actor=actor,
@@ -286,6 +299,7 @@ def _resolve_impersonated_client(request: Request, impersonation_token: str) -> 
                     "path": request.scope.get("path"),
                     "impersonated_client_id": target_id,
                     "impersonation_token_id": token_id,
+                    "phase": "authorized",
                 },
                 request=request,
             )
@@ -1147,13 +1161,25 @@ def _resolve_preview_client(
             )
         _ = client.id, client.is_superadmin, client.suspended_at
 
-        # Same per-request privilege re-check as ``_resolve_impersonated_client``
+        # Same per-request privilege re-checks as ``_resolve_impersonated_client``
         # — this is a second entry point into impersonation and a mint-time
-        # check cannot cover a target promoted mid-session or a legacy token row.
+        # check cannot cover a target promoted mid-session, a legacy token row,
+        # or an actor demoted after minting.
         if client.is_superadmin:
             logger.error(
                 "Blocked impersonated preview: target Account %s is a super-admin.",
                 record.target_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        actor = session.execute(select(Client).where(Client.id == record.actor_id)).scalars().first()
+        if actor is None or not actor.is_superadmin:
+            logger.error(
+                "Blocked impersonated preview: actor %s is no longer a super-admin.",
+                record.actor_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

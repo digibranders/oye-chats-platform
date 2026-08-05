@@ -167,6 +167,60 @@ class TestAllowlistedSurfacesAreWritable:
         db.expire_all()
         assert db.get(Bot, bot_id).name == "Renamed by support"
 
+    def test_ai_agent_config_edit_rejects_security_sensitive_fields(self, db, session_maker):
+        """The marked ``PATCH /bots/{bot_id}`` grants config edits, NOT the
+        widget origin allowlist or the customer's lead-email routing: those are
+        persistent security-relevant changes that outlive the 30-minute token,
+        so the endpoint field-guards them for impersonated callers."""
+        session_maker(bot_routes)
+        admin = _mk_admin(db, "allow-bot-guard-admin@test.example")
+        target = _mk_target(db, "allow-bot-guard-target@test.example")
+        bot = _mk_bot(db, target.id, "bot-allow-guard")
+        bot_id = bot.id
+        original_name = bot.name
+        raw = _mk_token(db, admin, target)
+
+        for payload in (
+            {"allowed_domains": ["evil.example"]},
+            {"domain_check_enabled": False},
+            {"session_share_domain": "evil.example"},
+            {"notification_email": "attacker@evil.example"},
+            {"reply_to_email": "attacker@evil.example"},
+            # Mixed: one benign + one sensitive field must be rejected whole.
+            {"name": "Renamed by support", "domain_check_enabled": False},
+        ):
+            res = _client_for(bot_routes.router).patch(
+                f"/bots/{bot_id}",
+                json=payload,
+                headers=_impersonating(raw),
+            )
+            assert res.status_code == 403, f"{payload} → {res.status_code}: {res.text}"
+            assert res.json()["detail"]["error"] == "impersonation_read_only"
+
+        # Nothing was applied, including the benign half of the mixed payload.
+        db.expire_all()
+        stored = db.get(Bot, bot_id)
+        assert stored.name == original_name
+        assert stored.domain_check_enabled is not False or stored.allowed_domains != ["evil.example"]
+
+    def test_owner_still_edits_the_guarded_fields(self, db, session_maker):
+        """The field guard is impersonation-scoped: the real owner's own
+        ``X-API-Key`` keeps full access to the same fields."""
+        session_maker(bot_routes)
+        target = _mk_target(db, "allow-bot-owner@test.example")
+        bot = _mk_bot(db, target.id, "bot-owner-guarded")
+        bot_id = bot.id
+
+        res = _client_for(bot_routes.router).patch(
+            f"/bots/{bot_id}",
+            json={"allowed_domains": ["customer.example"]},
+            headers={"X-API-Key": target.api_key},
+        )
+
+        assert res.status_code == 200, res.text
+        db.expire_all()
+        assert db.get(Bot, bot_id).allowed_domains == ["customer.example"]
+
     def test_canned_response_create_is_permitted(self, db, session_maker):
         """Surface 2 — canned-response CRUD."""
         session_maker(canned_response_routes)

@@ -70,9 +70,14 @@ def _http_request(method: str = "GET", path: str = "/probe") -> Request:
 
 
 def _disable_via_runtime(monkeypatch) -> None:
-    """Simulate the pricing_config row being flipped off."""
+    """Simulate the pricing_config row being flipped off.
+
+    Patches ``_get_uncached``: the lever deliberately bypasses the TTL cache
+    (a cached kill switch leaves other Gunicorn workers admitting
+    impersonation for up to the TTL), so ``get`` is not on its read path.
+    """
     monkeypatch.setattr(
-        runtime_config, "get", lambda key, default=None: False if key == "impersonation.enabled" else default
+        runtime_config, "_get_uncached", lambda key, default=None: False if key == "impersonation.enabled" else default
     )
 
 
@@ -99,22 +104,44 @@ class TestSwitchLayers:
             raise AssertionError("DB must not be consulted when the env floor is off")
 
         monkeypatch.setattr(runtime_config, "get", _explode)
+        monkeypatch.setattr(runtime_config, "_get_uncached", _explode)
         assert runtime_config.is_impersonation_enabled() is False
 
     @pytest.mark.parametrize("raw", ["false", "FALSE", "0", "no", "off", " Off "])
     def test_falsy_strings_disable(self, monkeypatch, raw):
-        monkeypatch.setattr(runtime_config, "get", lambda key, default=None: raw)
+        monkeypatch.setattr(runtime_config, "_get_uncached", lambda key, default=None: raw)
         assert runtime_config.is_impersonation_enabled() is False
 
     @pytest.mark.parametrize("raw", ["true", "1", "yes", "on"])
     def test_truthy_strings_enable(self, monkeypatch, raw):
-        monkeypatch.setattr(runtime_config, "get", lambda key, default=None: raw)
+        monkeypatch.setattr(runtime_config, "_get_uncached", lambda key, default=None: raw)
         assert runtime_config.is_impersonation_enabled() is True
 
     def test_unparseable_db_value_stays_enabled(self, monkeypatch):
         """The env var is the mechanism for an unambiguous off, not a typo."""
-        monkeypatch.setattr(runtime_config, "get", lambda key, default=None: "banana")
+        monkeypatch.setattr(runtime_config, "_get_uncached", lambda key, default=None: "banana")
         assert runtime_config.is_impersonation_enabled() is True
+
+    def test_lever_reads_bypass_the_ttl_cache(self, monkeypatch):
+        """The propagation property itself: the lever must be read UNCACHED.
+
+        ``invalidate_runtime_config_cache`` only resets the serving worker's
+        module global, so with ``WEB_CONCURRENCY > 1`` a cached read keeps
+        admitting impersonation on every other worker for up to the TTL. Pin
+        that the switch consults ``_get_uncached`` and ignores a stale cache
+        that still says enabled.
+        """
+        monkeypatch.setattr(
+            runtime_config,
+            "get",
+            lambda key, default=None: True,  # the stale per-worker cache
+        )
+        monkeypatch.setattr(
+            runtime_config,
+            "_get_uncached",
+            lambda key, default=None: False if key == "impersonation.enabled" else default,
+        )
+        assert runtime_config.is_impersonation_enabled() is False
 
 
 # ── Enforcement at every entry point ─────────────────────────────────────────
@@ -237,9 +264,12 @@ class TestEnforcement:
         row = db.get(PricingConfig, "impersonation.enabled")
         assert row is not None and row.value is False
 
-        # And the getter honours it once the cache is refreshed.
+        # And the getter honours it — the lever is read uncached, straight
+        # from the row the PUT just wrote.
         monkeypatch.setattr(
-            runtime_config, "get", lambda key, default=None: row.value if key == "impersonation.enabled" else default
+            runtime_config,
+            "_get_uncached",
+            lambda key, default=None: row.value if key == "impersonation.enabled" else default,
         )
         assert runtime_config.is_impersonation_enabled() is False
 

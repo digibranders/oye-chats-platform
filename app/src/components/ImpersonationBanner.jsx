@@ -123,7 +123,7 @@ export default function ImpersonationBanner() {
     // Narrow viewports truncate the line, so keep the full sentence reachable.
     const fullText = [
         `Viewing ${accountName}${actorEmail ? ` as super-admin ${actorEmail}` : ''}`,
-        'safe actions only',
+        'limited actions',
         expiry && `expires ${expiry}`,
     ].filter(Boolean).join(' · ');
 
@@ -141,7 +141,10 @@ export default function ImpersonationBanner() {
                         {' '}as super-admin <span className="font-semibold">{actorEmail}</span>
                     </>
                 )}
-                <span className="text-white/80"> · safe actions only</span>
+                {/* "limited", not "safe": the allowlist admits real config writes
+                    (agent settings, canned responses, conversation triage), so
+                    the honest claim is scope-limited, not harmless. */}
+                <span className="text-white/80"> · limited actions</span>
                 {expiry && <span className="text-white/80 tabular-nums"> · expires {expiry}</span>}
             </p>
             <button
