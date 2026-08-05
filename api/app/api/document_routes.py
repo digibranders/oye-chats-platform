@@ -241,6 +241,17 @@ def delete_document_endpoint(
                 # is still trained on it.
                 sync_bot_knowledge_state(session, bot_id)
                 session.commit()
+            else:
+                # Client-scoped delete (no bot_id): rows were removed across an
+                # unknown set of this client's bots, so every one of them needs
+                # the same cache flush + counter re-derivation — otherwise
+                # ``indexed_chunk_count`` keeps claiming knowledge this request
+                # just deleted, the exact staleness the sync exists to prevent.
+                client_bot_ids = [row[0] for row in session.query(Bot.id).filter(Bot.client_id == client_id).all()]
+                for client_bot_id in client_bot_ids:
+                    cache_delete_prefix(qa_prefix_for_bot(client_bot_id))
+                    sync_bot_knowledge_state(session, client_bot_id)
+                session.commit()
 
             logger.info(f"Deleted {deleted_count} chunks for document '{document_name}' (client {client_id})")
             return {"message": f"Successfully deleted '{document_name}'", "chunks_removed": deleted_count}

@@ -82,10 +82,14 @@ export function deriveAgentHealth(bot: Bot): AgentHealth {
   const trained = isTrained(bot);
   const installed = Boolean(bot.widget_installed_at);
 
-  if (bot.last_crawl_status === 'failed') {
-    return { label: 'Needs attention', tone: 'danger', needsAttention: true };
-  }
+  // Trained-state first (same rule as agent-health.ts): a failed
+  // `last_crawl_status` only describes the last ATTEMPT, so it must not
+  // override what the agent currently knows — checking it first made a single
+  // failed recrawl report a fully-trained live agent as "Needs attention".
   if (!trained) {
+    if (bot.last_crawl_status === 'failed') {
+      return { label: 'Needs attention', tone: 'danger', needsAttention: true };
+    }
     return { label: 'Not trained yet', tone: 'warning', needsAttention: true };
   }
   if (!installed) {

@@ -9,7 +9,7 @@ import { type AgentCardMetric, type AgentCardStatus } from '../../design-system/
  *   live       - trained AND the widget is installed on the customer's site.
  *   ready      - trained, but not yet deployed anywhere.
  *   training   - a crawl is in progress right now.
- *   attention  - the last crawl failed or found no usable content.
+ *   attention  - untrained AND the last crawl failed or found no usable content.
  *   draft      - created but never trained.
  */
 export type AgentHealth = 'live' | 'ready' | 'training' | 'attention' | 'draft';
@@ -34,10 +34,15 @@ export function getAgentHealth(bot: Bot): AgentHealth {
   const installed = Boolean(bot.widget_installed_at);
   const crawl = bot.last_crawl_status ?? null;
 
+  // Order matters (same rule as agent-health.ts): `indexed_chunk_count` is
+  // what the agent CURRENTLY knows; `last_crawl_status` only describes the
+  // last training ATTEMPT. Checking the attempt first made a single failed
+  // recrawl flip an agent holding thousands of passages to "Needs attention"
+  // here while the Overview hero simultaneously said "Trained".
   if (crawl === 'running') return 'training';
-  if (crawl === 'failed' || crawl === 'no_content') return 'attention';
   if (chunks > 0 && installed) return 'live';
   if (chunks > 0) return 'ready';
+  if (crawl === 'failed' || crawl === 'no_content') return 'attention';
   return 'draft';
 }
 
