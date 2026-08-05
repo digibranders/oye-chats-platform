@@ -140,19 +140,19 @@ export default function OAuthCallback() {
                 }
 
                 // Routing precedence mirrors Login.jsx:
-                //   affiliate-only → /affiliate
+                //   affiliate-only → /workspace/affiliate
                 //   explicit ?next= override
                 //   else → "/"
                 // Super-admins use the dedicated console at
                 // admin.oyechats.com and do not route here.
                 let destination = next;
                 if (me?.is_affiliate_only) {
-                    destination = '/affiliate';
+                    destination = '/workspace/affiliate';
                 } else if (!destination || destination === '/') {
                     // New (botless, not-yet-onboarded) accounts start in the guided
-                    // Build Studio; everyone else lands on the dashboard root.
+                    // Launch Studio; everyone else lands on the dashboard root.
                     destination =
-                        !me?.onboarding_complete && (me?.bot_count ?? 0) === 0 ? '/build' : '/';
+                        !me?.onboarding_complete && (me?.bot_count ?? 0) === 0 ? '/launch' : '/';
                 }
 
                 navigate(destination, { replace: true });

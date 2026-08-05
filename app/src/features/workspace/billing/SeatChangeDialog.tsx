@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { AlertCircle, Minus, Plus } from 'lucide-react';
 import { Button, Modal } from '../../../design-system';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
-import { changeOperatorSeats } from '../../../services/api';
+import { changeOperatorSeats, verifyRazorpaySubscription } from '../../../services/api';
 
 export interface SeatChangeDialogProps {
   open: boolean;
@@ -52,8 +52,9 @@ export function SeatChangeDialog({
 
       if (result?.requires_authorization && result?.checkout) {
         const c = result.checkout as Record<string, unknown>;
+        let cb: Awaited<ReturnType<typeof openRazorpayCheckout>>;
         try {
-          await openRazorpayCheckout({
+          cb = await openRazorpayCheckout({
             key: String(c.key_id),
             subscription_id: String(c.subscription_id),
             name: (c.name as string) || 'OyeChats operator seats',
@@ -68,7 +69,28 @@ export function SeatChangeDialog({
           }
           throw err;
         }
-        onSuccess('Seat add-on authorised - your seats will activate in a moment.');
+        // Verify server-side like every other checkout on this page. Skipping it
+        // left the seat mandate entirely dependent on the webhook: if that was
+        // delayed or lost, the customer had authorised (and would be billed for)
+        // seats this platform had no record of. Verify reconciles synchronously;
+        // the webhook stays the canonical path and is idempotent against it.
+        // A verification failure is NOT a purchase failure - the mandate is
+        // already authorised - so it only softens the message.
+        let reconciled = true;
+        try {
+          await verifyRazorpaySubscription({
+            razorpay_payment_id: cb.razorpay_payment_id,
+            razorpay_subscription_id: cb.razorpay_subscription_id || String(c.subscription_id),
+            razorpay_signature: cb.razorpay_signature,
+          });
+        } catch {
+          reconciled = false;
+        }
+        onSuccess(
+          reconciled
+            ? 'Seat add-on authorised - your seats will activate in a moment.'
+            : 'Payment authorised - we’re finalising your seat change.',
+        );
         onClose();
         return;
       }

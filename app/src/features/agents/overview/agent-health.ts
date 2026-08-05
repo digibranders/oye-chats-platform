@@ -49,16 +49,39 @@ function isDeployed(agent: Bot): boolean {
   return Boolean(agent.widget_installed_at);
 }
 
-/** Builds the Knowledge check row from the agent's crawl/index state. */
+/**
+ * Builds the Knowledge check row from the agent's crawl/index state.
+ *
+ * Order matters. `indexed_chunk_count` is what the agent CURRENTLY knows;
+ * `last_crawl_status` only describes the last training ATTEMPT. Checking the
+ * attempt first made a single failed recrawl report "Nothing learned yet" on an
+ * agent holding thousands of passages, so a trained agent is reported as
+ * trained and a failed attempt is demoted to a warning about that attempt.
+ */
 function knowledgeCheck(agent: Bot): HealthCheck {
   const chunks = agent.indexed_chunk_count ?? 0;
+  const trained = chunks > 0;
 
   if (agent.last_crawl_status === 'running') {
     return {
       id: 'knowledge',
       label: 'Knowledge',
       status: 'pending',
-      detail: 'Learning from your website right now.',
+      detail: trained
+        ? `Trained on ${formatPassages(chunks)} - learning more right now.`
+        : 'Learning from your website right now.',
+    };
+  }
+
+  if (trained) {
+    return {
+      id: 'knowledge',
+      label: 'Knowledge',
+      status: agent.last_crawl_status === 'failed' ? 'warn' : 'pass',
+      detail:
+        agent.last_crawl_status === 'failed'
+          ? `Trained on ${formatPassages(chunks)}, but the last training run failed.`
+          : `Trained on ${formatPassages(chunks)}.`,
     };
   }
 
@@ -71,21 +94,17 @@ function knowledgeCheck(agent: Bot): HealthCheck {
     };
   }
 
-  if (chunks > 0) {
-    return {
-      id: 'knowledge',
-      label: 'Knowledge',
-      status: 'pass',
-      detail: `Trained on ${chunks.toLocaleString()} ${chunks === 1 ? 'passage' : 'passages'}.`,
-    };
-  }
-
   return {
     id: 'knowledge',
     label: 'Knowledge',
     status: 'fail',
     detail: 'Nothing learned yet - add a website or documents.',
   };
+}
+
+/** "1 passage" / "1,204 passages" - shared so every knowledge string agrees. */
+function formatPassages(chunks: number): string {
+  return `${chunks.toLocaleString()} ${chunks === 1 ? 'passage' : 'passages'}`;
 }
 
 /** Builds the Deployment check row from the widget-install signal. */

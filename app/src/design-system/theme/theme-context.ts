@@ -3,14 +3,19 @@ import { createContext, useContext } from 'react';
 export type Theme = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
 
+export type EventOrOrigin =
+  | { x: number; y: number }
+  | React.MouseEvent<Element>
+  | MouseEvent;
+
 export interface ThemeContextValue {
   /** The user's chosen preference (may be 'system'). */
   theme: Theme;
   /** The concrete theme currently applied to the document. */
   resolvedTheme: ResolvedTheme;
-  setTheme: (theme: Theme) => void;
+  setTheme: (theme: Theme, eventOrOrigin?: EventOrOrigin) => void;
   /** Flip between light and dark (resolves 'system' to its concrete value first). */
-  toggle: () => void;
+  toggle: (eventOrOrigin?: EventOrOrigin) => void;
 }
 
 export const ThemeContext = createContext<ThemeContextValue | null>(null);

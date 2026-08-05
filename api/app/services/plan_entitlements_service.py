@@ -323,14 +323,41 @@ def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> b
 
 
 def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
-    """True iff this client's active plan exposes the Leads dashboard.
+    """True iff this client can open the Leads dashboard at all.
 
-    Leads is a paid-tier surface — the Free plan hides the sidebar link,
-    and the ``/leads`` API mirrors that with a 403. Every paid tier
-    (Starter / Standard / Professional, plus any custom slug that isn't
-    ``"free"``) gets access; individual quota (Starter capped at 35 leads
-    per period, Standard unlimited) is enforced separately via the
-    ``limits.leads`` counter, not this feature gate.
+    Every plan — Free included — reaches the dashboard: Free gets the
+    conversation view (contact + transcript), while the lead-intelligence
+    layer (score, tier, BANT breakdown, location/device, CSV export) is a
+    paid capability gated separately by ``is_lead_intelligence_enabled``.
+    Per-plan lead quotas are enforced via the ``limits.leads`` counter,
+    not this gate.
+
+    Deny-by-default on entitlements lookup failure — same policy as every
+    other gate in this module.
+    """
+    try:
+        get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "leads_dashboard_gate: entitlements lookup failed for client=%s — denying",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return True
+
+
+def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
+    """True iff this client's active plan includes lead intelligence.
+
+    Lead intelligence is everything beyond the raw conversation: composite
+    score, qualification tier, per-dimension BANT/framework breakdown and
+    signal evidence, visitor location/device, and the CSV export. Free sees
+    the leads list and transcripts only; every paid tier (Starter /
+    Standard / Professional, plus any custom slug that isn't ``"free"``)
+    gets the full layer. The ``/leads`` routes strip these fields from the
+    response for Free, so a curl against the API cannot bypass the
+    frontend's locked cells.
 
     Deny-by-default on entitlements lookup failure — same policy as every
     other gate in this module.
@@ -339,7 +366,7 @@ def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
         entitlements = get_entitlements(client_id, db_session, include_usage=False)
     except Exception:
         logger.warning(
-            "leads_dashboard_gate: entitlements lookup failed for client=%s — denying",
+            "lead_intelligence_gate: entitlements lookup failed for client=%s — denying",
             client_id,
             exc_info=True,
         )

@@ -85,7 +85,7 @@ export function AppearanceSection(): ReactElement {
                 role="radio"
                 aria-checked={active}
                 tabIndex={active ? 0 : -1}
-                onClick={() => setTheme(option.id)}
+                onClick={(e) => setTheme(option.id, e)}
                 onKeyDown={(event) => handleKeyDown(event, index)}
                 className={cn(
                   'group relative flex flex-col gap-3 rounded-xl border p-4 text-left transition-colors',

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Float, case, cast, desc, func, insert, select, text
 from sqlalchemy.exc import IntegrityError
@@ -432,6 +432,43 @@ def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) 
     """
     stmt = select(func.count()).select_from(Document).where(_owner_filter(Document, bot_id, client_id))
     return session.execute(stmt).scalar_one()
+
+
+def sync_bot_knowledge_state(session, bot_id: int | None) -> int:
+    """Recompute a bot's durable "trained" state from what it actually stores.
+
+    ``Bot.indexed_chunk_count`` drives every "is my AI trained?" surface in the
+    dashboard, so it must answer that question truthfully rather than describe
+    whichever job happened to run last. Deriving it from a single job's output
+    silently under-reports in three real cases:
+
+      * a document upload ingests chunks without running a crawl at all;
+      * a delta recrawl of an unchanged site ingests zero new chunks (SHA-256
+        dedup skips every page) while the bot keeps all of its prior content;
+      * a deletion removes content that a stale counter keeps claiming.
+
+    Recomputing from the documents table covers all three. ``crawl_completed_at``
+    is stamped whenever the bot holds content, and cleared when it holds none, so
+    "trained at" can never outlive the knowledge it refers to.
+
+    Returns the freshly counted chunk total. The caller owns the transaction.
+    """
+    if not bot_id:
+        return 0
+    bot = session.get(Bot, bot_id)
+    if bot is None:
+        return 0
+    previous_count = bot.indexed_chunk_count or 0
+    chunk_count = count_documents_for_bot(session, bot_id=bot_id)
+    bot.indexed_chunk_count = chunk_count
+    if chunk_count > 0:
+        # Only advance the timestamp when the content actually changed, so an
+        # unchanged delta recrawl doesn't keep resetting "last updated".
+        if not bot.crawl_completed_at or chunk_count != previous_count:
+            bot.crawl_completed_at = datetime.now(UTC)
+    else:
+        bot.crawl_completed_at = None
+    return chunk_count
 
 
 def get_all_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> list:

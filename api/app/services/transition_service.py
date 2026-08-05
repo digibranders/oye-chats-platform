@@ -36,12 +36,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import config
 from app.db.models import Client, Operator, Plan, Subscription
 from app.services import credit_service, email_service
 
@@ -51,15 +52,22 @@ logger = logging.getLogger("oyechats.transitions")
 # ── Rollover ──────────────────────────────────────────────────────────────────
 
 
-def remaining_plan_credits(session: Session, client_id: int) -> int:
-    """Unused ``plan_grant`` credits the client still owns on the current cycle.
+def remaining_plan_credits(session: Session, client_id: int, bot_id: int | None = None) -> int:
+    """Unused ``plan_grant`` credits remaining in one ledger scope this cycle.
 
     Reads the live FIFO breakdown so the number reflects every chat that
     has already burned credits this month. Top-up credits are excluded —
     they're never cleared at renewal and carry over to the new
     subscription on their own.
+
+    ``bot_id`` selects the ledger scope and must match the subscription
+    being transitioned: ``None`` reads the account pool (``bot_id IS
+    NULL``), a bot id reads that bot's own pool. A per-bot resume that
+    snapshotted the ACCOUNT pool would wipe the bot's unused credits
+    without rollover while re-granting a copy of credits the account
+    subscription still owns.
     """
-    breakdown = credit_service.get_balance_breakdown(session, client_id)
+    breakdown = credit_service.get_balance_breakdown(session, client_id, bot_id=bot_id)
     return int(breakdown.get("plan", 0) or 0)
 
 
@@ -166,7 +174,9 @@ def execute_paid_upgrade(
     # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
     # the activation webhook will call ``reset_monthly_plan_credits`` before
     # granting the new allowance, so reading the breakdown later would return 0.
-    rollover_credits = remaining_plan_credits(session, client.id)
+    # Scoped to the subscription being replaced: an account sub reads the
+    # account pool, a per-bot sub reads that bot's own pool.
+    rollover_credits = remaining_plan_credits(session, client.id, bot_id=sub.bot_id)
 
     # DO NOT cancel the old mandate here (BL-2). Razorpay's UPI mandates can't be
     # swapped in place, so a plan change is cancel+recreate+re-authorize. Under
@@ -236,6 +246,10 @@ def schedule_paid_downgrade(
         raise ValueError("Subscription has no current_period_end — cannot schedule cutover")
 
     razorpay_service.cancel_subscription(sub, at_period_end=True)
+    # The mandate is now dead at Razorpay. Record that so ``/subscriptions/resume``
+    # knows a fresh mandate is required rather than clearing the flag against a
+    # subscription the gateway will never charge again.
+    sub.gateway_cancel_executed_at = datetime.now(UTC)
 
     sub.cancel_at_period_end = True
     sub.scheduled_plan_id = new_plan.id
@@ -252,6 +266,107 @@ def schedule_paid_downgrade(
         sub.scheduled_change_at.isoformat(),
     )
     return sub.scheduled_change_at
+
+
+# ── Gateway cancellation (deferred to the end of the paid period) ─────────────
+
+
+def gateway_cancel_is_due(sub: Subscription, *, now: datetime | None = None) -> bool:
+    """Is ``sub`` close enough to its period end to cancel at the gateway?
+
+    True once ``current_period_end`` falls inside ``GATEWAY_CANCEL_LEAD_DAYS``
+    (and for any row already past its period end, which is how a subscription
+    that fell behind — worker outage, missed webhook — still gets swept).
+    A row with no period anchor can't be scheduled against, so it is due
+    immediately: better an early cancel the customer explicitly asked for than
+    a mandate nothing will ever stop.
+    """
+    if sub.current_period_end is None:
+        return True
+    now = now or datetime.now(UTC)
+    return sub.current_period_end <= now + timedelta(days=config.GATEWAY_CANCEL_LEAD_DAYS)
+
+
+def execute_gateway_cancellation(session: Session, sub: Subscription) -> bool:
+    """Issue the real, irreversible Razorpay cancel for a cancel-pending row.
+
+    Split out of ``/subscriptions/cancel`` so the gateway call happens at the
+    END of the paid period rather than the moment the customer clicks Cancel.
+    Razorpay has no un-cancel, so doing it early was what forced "Reactivate"
+    to mint a whole new mandate and charge a second time for days the customer
+    had already bought.
+
+    Idempotent on ``gateway_cancel_executed_at`` — safe for the cron to re-run
+    and for ``/cancel`` to call inline on a row the sweep already handled.
+    ``razorpay_service.cancel_subscription`` additionally swallows Razorpay's
+    "not cancellable" terminal-state error, so a mandate cancelled out of band
+    is not an error either.
+
+    The operator-seat add-on is a SEPARATE Razorpay subscription and rides
+    along here for the same reason: cancelling it the moment the customer
+    clicked Cancel took away seats they had paid for through period end. A
+    failure to cancel it must not block the plan cancel that already
+    succeeded — log loudly for reconciliation instead.
+
+    Returns True when this call performed the cancel, False when it was
+    already done.
+
+    Raises:
+        RazorpayBillingError: the plan-level gateway cancel failed. The marker
+            is NOT stamped, so the next sweep retries.
+    """
+    from app.services import razorpay_service
+
+    if sub.gateway_cancel_executed_at is not None:
+        return False
+
+    if sub.razorpay_subscription_id:
+        razorpay_service.cancel_subscription(sub, at_period_end=True)
+
+    seat_cancel_failed = False
+    if sub.seat_addon_subscription_id:
+        # ``cancel_seat_addon`` zeroes the local mirror, which used to mean a
+        # later reactivation silently dropped seats the customer had bought.
+        # Park the count as PENDING (wanted, not billed) so the replacement
+        # subscription's activation can re-mint the add-on with a fresh mandate
+        # — entitlement still follows an authorized charge, it just isn't lost.
+        wanted_seats = int(sub.seat_addon_quantity or 0)
+        try:
+            razorpay_service.cancel_seat_addon(session, sub)
+        except Exception:
+            seat_cancel_failed = True
+            logger.error(
+                "Seat add-on cancel FAILED for subscription %s (client %s) during the "
+                "deferred plan cancellation — the seat add-on mandate is STILL LIVE at "
+                "Razorpay and will keep debiting the customer. Leaving the row unstamped "
+                "so the next sweep retries.",
+                sub.id,
+                sub.client_id,
+                exc_info=True,
+            )
+        else:
+            if wanted_seats > 0:
+                sub.seat_addon_pending_quantity = wanted_seats
+
+    if seat_cancel_failed:
+        # Do NOT stamp the marker: it is what makes the sweep skip this row, and
+        # skipping it would abandon a live seat mandate that keeps debiting with
+        # no retry anywhere. Re-issuing the plan cancel on the next sweep is
+        # harmless — ``cancel_subscription`` treats an already-terminal
+        # subscription as a no-op.
+        session.flush()
+        return False
+
+    sub.gateway_cancel_executed_at = datetime.now(UTC)
+    session.flush()
+
+    logger.info(
+        "Gateway cancellation executed for sub=%s (client=%s, period_end=%s)",
+        sub.id,
+        sub.client_id,
+        sub.current_period_end.isoformat() if sub.current_period_end else "?",
+    )
+    return True
 
 
 # ── Reversibility ─────────────────────────────────────────────────────────────

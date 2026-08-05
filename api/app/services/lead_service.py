@@ -228,6 +228,7 @@ def build_lead_response(
     bot: Bot | None = None,
     *,
     include_attribution: bool = False,
+    include_intelligence: bool = True,
 ) -> dict:
     """Build a standardized lead payload using decayed display scores.
 
@@ -239,6 +240,12 @@ def build_lead_response(
     route boundary via ``is_lead_source_attribution_enabled``. On lower
     tiers the fields are stripped from the response entirely so a curl
     against the API cannot bypass the frontend paywall.
+
+    ``include_intelligence`` gates the lead-intelligence layer the same
+    way (route boundary: ``is_lead_intelligence_enabled``). When False —
+    the Free plan — the composite score, tier, per-dimension breakdown,
+    and location/device are stripped entirely, leaving the conversation
+    surface: identity, contact, chat count, and timestamps.
 
     BR-01: ``config`` reflects the bot's ACTUAL selected framework (via
     the fixed ``get_bant_config``), and the ``bant`` breakdown below
@@ -305,6 +312,23 @@ def build_lead_response(
         "unread": lead_viewed_at is None,
         "lead_viewed_at": _isoformat_or_none(lead_viewed_at),
     }
+
+    if not include_intelligence:
+        # Free plan: the conversation surface only. Deleting (not nulling)
+        # keeps the wire contract honest — absent means "not on your plan",
+        # and a curl can't recover what was never serialized.
+        for key in (
+            "score",
+            "bant_score",
+            "behavioral_score",
+            "tier",
+            "status",
+            "dimensions_assessed",
+            "bant",
+            "location",
+            "device",
+        ):
+            payload.pop(key, None)
 
     if include_attribution:
         # Prefer the durable snapshot on lead_info (survives session pruning);

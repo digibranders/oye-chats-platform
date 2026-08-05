@@ -1463,6 +1463,13 @@ def change_plan(
                             status_code=502,
                             detail="Could not cancel your subscription with the payment provider. Please try again in a moment.",
                         ) from exc
+                    # The mandate is dead at Razorpay. Unlike ``/cancel`` — which
+                    # now defers the gateway call so the customer can change
+                    # their mind for free — a downgrade to Free must stop the
+                    # debit right away. Record it so ``/resume`` knows a fresh
+                    # mandate is required rather than clearing the flag against a
+                    # subscription Razorpay will never charge again.
+                    sub.gateway_cancel_executed_at = datetime.now(UTC)
                 sub.cancel_at_period_end = True
                 # Abandon any queued paid→paid downgrade: the customer is now
                 # heading to Free, so a leftover ``scheduled_plan_id`` would let
@@ -1651,11 +1658,29 @@ class CancelSubscriptionRequest(BaseModel):
 def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Depends(get_current_client)):
     """Cancel the client's subscription at the end of the current billing period.
 
-    Calls the upstream provider's cancel-at-cycle-end API; the local row is
-    only marked ``cancel_at_period_end=True`` until the provider's webhook
-    fires the actual cancellation. Pass ``bot_id`` to cancel a specific bot's
-    subscription under the per-bot model (N3); omit it to act on the account.
+    Records the customer's INTENT to churn (``cancel_at_period_end=True``) and
+    — deliberately — touches nothing at Razorpay yet. The irreversible gateway
+    cancel is executed by ``task_execute_pending_cancellations`` a couple of
+    days before ``current_period_end`` (or inline below when the customer
+    cancels inside that window).
+
+    That split is the whole point. Razorpay has NO un-cancel API, so issuing
+    the gateway cancel the moment the customer clicked Cancel destroyed the
+    mandate ~30 days early: "Reactivate" then had to mint a brand-new
+    subscription, which Razorpay starts and charges immediately, so the
+    customer paid a second time for days they had already bought. With the
+    gateway call deferred, changing your mind before the sweep is a free,
+    instant flag flip (see ``/subscriptions/resume``).
+
+    The operator-seat add-on rides along with the deferred cancel for the same
+    reason — cancelling it here took away seats the customer had paid for
+    through period end while the plan itself kept running.
+
+    Pass ``bot_id`` to cancel a specific bot's subscription under the per-bot
+    model (N3); omit it to act on the account.
     """
+    from app.services import transition_service
+
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
@@ -1667,54 +1692,62 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         if sub.status in ("canceled", "cancelled"):
             raise HTTPException(status_code=400, detail="Subscription is already canceled.")
 
-        provider = (sub.payment_provider or "razorpay").lower()
-        try:
-            if provider == "razorpay" and sub.razorpay_subscription_id:
-                from app.services import razorpay_service
-
-                razorpay_service.cancel_subscription(sub, at_period_end=True)
-        except Exception as exc:
-            logger.exception("Provider cancel failed for sub %s: %s", sub.id, exc)
-            raise HTTPException(status_code=502, detail="Could not cancel with payment provider.") from exc
-
-        # The operator-seat add-on is a SEPARATE Razorpay subscription (P0-3) —
-        # cancelling the main plan does not touch it at the gateway. Left alone,
-        # it keeps billing ₹499/seat/month indefinitely after the customer has
-        # already churned off the plan it was attached to. Its lifecycle has no
-        # webhook feedback (seat add-on events are acknowledged and dropped —
-        # see handle_webhook_event), so cancellation here is always immediate,
-        # matching the existing N-seats→0 behaviour in edit_seat_addon_quantity.
-        # A failure here must not block the plan cancellation that already
-        # succeeded above — log loudly for reconciliation instead.
-        if provider == "razorpay" and sub.seat_addon_subscription_id:
-            from app.services import razorpay_service
-
-            try:
-                razorpay_service.cancel_seat_addon(session, sub)
-            except Exception:
-                logger.error(
-                    "Seat add-on cancel FAILED for subscription %s (client %s) during plan "
-                    "cancellation — the seat add-on mandate is STILL LIVE at Razorpay and will "
-                    "keep debiting the customer after their plan cancels. Needs manual reconciliation.",
-                    sub.id,
-                    client.id,
-                    exc_info=True,
-                )
-
-        from datetime import UTC, datetime
-
         sub.cancel_at_period_end = True
         sub.canceled_at = datetime.now(UTC)
         sub.cancel_reason = request.reason
         # Clear any queued paid→paid downgrade — an outright cancel supersedes
         # it. Left set, the cancelled webhook / cron backstop would promote the
         # abandoned downgrade into a fresh checkout + re-auth email (Fix C).
-        from app.services import transition_service
-
         transition_service.cancel_scheduled_change(session, sub)
+
+        # Kill any in-flight replacement checkout (from a reactivation or an
+        # abandoned upgrade). Razorpay leaves a `created` subscription
+        # authorizable indefinitely, so a customer who opened one, walked away,
+        # and then cancelled could authorise that stale link weeks later — its
+        # activation webhook would mint a fresh active subscription and RESTART
+        # billing after an explicit cancellation. Best-effort: the cancellation
+        # the customer asked for must not fail because a dead checkout wouldn't
+        # tidy up.
+        if sub.upgrade_pending_subscription_id:
+            from app.services import razorpay_service as _rzp
+
+            stale_checkout_id = sub.upgrade_pending_subscription_id
+            try:
+                _rzp.cancel_subscription_by_id(stale_checkout_id)
+            except Exception:
+                logger.warning(
+                    "Could not cancel the in-flight replacement checkout %s while cancelling "
+                    "subscription %s (client %s). It is unauthorised, so it cannot charge on its "
+                    "own, but it should be voided at Razorpay if it is ever authorised.",
+                    stale_checkout_id,
+                    sub.id,
+                    client.id,
+                    exc_info=True,
+                )
+            sub.upgrade_pending_subscription_id = None
+            sub.upgrade_pending_plan_id = None
+
+        # Cancelling on (or after) the last days of the cycle leaves no room for
+        # the daily sweep — Razorpay would debit the next cycle before it ran.
+        # Execute inline instead. A gateway failure here IS fatal: the customer
+        # asked to stop being billed and we could not make that true.
+        provider = (sub.payment_provider or "razorpay").lower()
+        if provider == "razorpay" and transition_service.gateway_cancel_is_due(sub):
+            try:
+                transition_service.execute_gateway_cancellation(session, sub)
+            except Exception as exc:
+                logger.exception("Provider cancel failed for sub %s: %s", sub.id, exc)
+                raise HTTPException(status_code=502, detail="Could not cancel with payment provider.") from exc
+
         session.commit()
 
-        logger.info("Client %s canceled subscription %s (reason: %s)", client.id, sub.id, request.reason)
+        logger.info(
+            "Client %s canceled subscription %s (reason: %s, gateway_executed=%s)",
+            client.id,
+            sub.id,
+            request.reason,
+            sub.gateway_cancel_executed_at is not None,
+        )
 
         return {"message": "Subscription will be canceled at the end of the current billing period."}
 
@@ -1730,28 +1763,37 @@ def resume_subscription(
 ):
     """Resume a subscription that was scheduled for cancellation.
 
-    ``/cancel`` issues the Razorpay cancel IMMEDIATELY with
-    ``cancel_at_cycle_end=1`` (``razorpay_service.cancel_subscription(sub,
-    at_period_end=True)``) before flipping the local ``cancel_at_period_end``
-    flag. Razorpay has NO un-cancel / resume API for an at-cycle-end-cancelled
-    subscription, so merely clearing the local flags would LIE: the gateway
-    still cancels at period end → involuntary churn while the UI says
-    "resumed" (BL-3).
+    Two modes, decided by whether the IRREVERSIBLE gateway cancel has been
+    issued yet (``gateway_cancel_executed_at``).
 
-    So we mirror the honest sibling ``cancel_scheduled_change_endpoint``:
-    because the mandate is dead at the gateway, we re-authorise by minting a
-    FRESH Razorpay subscription for the same plan/cycle (tagging the
-    predecessor via ``prev_razorpay_subscription_id`` so it is retired at the
-    new sub's activation webhook) and return ``mandate_action:
-    "reauthorise_required"`` with the checkout payload. We do NOT clear the
-    local cancel flags or claim success here — the row must not pretend the
-    cancellation was undone until the customer actually re-authorises and the
-    activation webhook lands.
+    **Mode 1 — the mandate is still live.** ``/cancel`` now records only the
+    customer's intent and leaves Razorpay alone until
+    ``task_execute_pending_cancellations`` runs near period end, so for almost
+    every customer who changes their mind there is nothing to re-authorise:
+    clear the flags and the subscription simply keeps renewing. No checkout, no
+    payment. We confirm liveness with the gateway first rather than trusting the
+    local marker — if the customer cancelled from Razorpay's own emails, or a
+    sweep half-completed, clearing the flag would promise a renewal that never
+    comes, which is the BL-3 lie this endpoint exists to avoid.
+
+    **Mode 2 — the mandate is already dead.** Razorpay has NO un-cancel API for
+    an at-cycle-end cancellation, so we re-authorise by minting a FRESH
+    subscription for the same plan/cycle (tagging the predecessor via
+    ``prev_razorpay_subscription_id`` so it is retired at the new sub's
+    activation webhook) and return ``mandate_action: "reauthorise_required"``
+    with the checkout payload. The local cancel flags are NOT cleared here — the
+    row must not pretend the cancellation was undone until the customer actually
+    re-authorises and the activation webhook lands.
+
+    Mode 2 mints with ``start_at`` set to the current period end so the new
+    mandate first charges when the paid period actually runs out. Without it
+    Razorpay starts the subscription immediately and captures a full second
+    cycle for days the customer had already bought.
 
     Pass ``bot_id`` to resume a specific bot's subscription (N3); omit to act on
     the account's highest-tier subscription.
     """
-    from app.services import razorpay_service
+    from app.services import razorpay_service, transition_service
 
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
@@ -1772,6 +1814,69 @@ def resume_subscription(
             "The previous mandate was cancelled at the payment provider and "
             "cannot be un-cancelled. Re-authorise payment to keep your plan."
         )
+
+        # ── Mode 1: nothing was cancelled at the gateway yet ──────────────────
+        if sub.gateway_cancel_executed_at is None and sub.razorpay_subscription_id:
+            try:
+                mandate_live = razorpay_service.is_subscription_live(sub.razorpay_subscription_id)
+            except razorpay_service.RazorpayBillingError as exc:
+                # Never guess. A network blip is not evidence the mandate is
+                # live, and claiming "reactivated" on one is how a customer ends
+                # up silently churned while the UI says the opposite.
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+            if mandate_live:
+                sub.cancel_at_period_end = False
+                sub.canceled_at = None
+                sub.cancel_reason = None
+                session.commit()
+                logger.info(
+                    "Client %s reactivated subscription %s in place (mandate %s still live)",
+                    client.id,
+                    sub.id,
+                    sub.razorpay_subscription_id,
+                )
+                renews_on = sub.current_period_end.date().isoformat() if sub.current_period_end else None
+                return {
+                    "status": "resumed",
+                    "mandate_action": "none",
+                    "message": (
+                        f"Subscription reactivated — it will keep renewing on {renews_on}."
+                        if renews_on
+                        else "Subscription reactivated — it will keep renewing."
+                    ),
+                    "renews_on": renews_on,
+                }
+
+            # The gateway disagrees with our marker. Self-heal so the sweep
+            # doesn't try to cancel a dead mandate, then fall through to
+            # re-authorisation — which is genuinely what this customer needs.
+            logger.warning(
+                "Subscription %s (client %s) has no gateway_cancel_executed_at but Razorpay "
+                "reports mandate %s is not live — self-healing the marker and re-authorising",
+                sub.id,
+                client.id,
+                sub.razorpay_subscription_id,
+            )
+            sub.gateway_cancel_executed_at = datetime.now(UTC)
+            session.flush()
+
+        # ── Mode 2: the mandate is dead — re-authorise ────────────────────────
+
+        # Bill the replacement from the moment the paid period actually runs
+        # out. Omitted, Razorpay starts the subscription at authorization and
+        # captures a full cycle immediately — charging the customer a second
+        # time for days they already own, with no proration or refund anywhere
+        # in the flow to give it back.
+        start_at = int(sub.current_period_end.timestamp()) if sub.current_period_end else None
+        deferred_start = sub.current_period_end is not None and sub.current_period_end > datetime.now(UTC)
+        first_charge_at = sub.current_period_end.date().isoformat() if deferred_start else None
+        if deferred_start:
+            _reauth_message = (
+                "The previous mandate was cancelled at the payment provider and cannot be "
+                "un-cancelled, so a new one has to be authorised. You keep everything you've "
+                f"already paid for — the first charge on the new mandate is {first_charge_at}."
+            )
 
         # Finding H1: in-flight idempotency. /resume mints a FRESH Razorpay
         # subscription (Razorpay has no un-cancel), so a sequential double
@@ -1799,6 +1904,7 @@ def resume_subscription(
                     "status": "reauthorise_required",
                     "mandate_action": "reauthorise_required",
                     "message": _reauth_message,
+                    "first_charge_at": first_charge_at,
                     "checkout": reused,
                 }
             # The pending checkout was abandoned / is no longer authorizable —
@@ -1813,16 +1919,38 @@ def resume_subscription(
             sub.upgrade_pending_plan_id = None
             session.flush()
 
-        extra_notes = (
-            {"prev_razorpay_subscription_id": sub.razorpay_subscription_id} if sub.razorpay_subscription_id else None
-        )
+        extra_notes: dict[str, str] = {}
+        if sub.razorpay_subscription_id:
+            extra_notes["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id
+        if sub.bot_id is not None:
+            # Name the bot this mandate funds. The activation handler scopes its
+            # "retire the superseded row" sweep by it; without it the sweep looks
+            # for the ACCOUNT row, never retires this bot's row, and the customer
+            # ends up with two live mandates and a "won't renew" banner that can
+            # never clear.
+            extra_notes["purpose"] = "per_bot_subscription"
+            extra_notes["oyechats_bot_id"] = str(sub.bot_id)
+
+        if not deferred_start:
+            # No paid time left to protect (period already ended, or we have no
+            # anchor), so the replacement bills now and its activation resets the
+            # plan allowance. Snapshot the unused credits the way the upgrade
+            # path does so ``apply_pending_proration`` re-grants them as a top-up
+            # instead of letting the reset silently destroy them. Scoped to the
+            # subscription being resumed — a per-bot resume must snapshot that
+            # bot's own pool, not the account pool.
+            sub.upgrade_credit_pending_cents = transition_service.remaining_plan_credits(
+                session, client.id, bot_id=sub.bot_id
+            )
+
         try:
             checkout = razorpay_service.create_subscription(
                 session,
                 client,
                 plan,
                 billing_cycle,
-                extra_notes=extra_notes,
+                extra_notes=extra_notes or None,
+                start_at=start_at,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1838,15 +1966,17 @@ def resume_subscription(
         session.commit()
         checkout.setdefault("provider", "razorpay")
         logger.info(
-            "Client %s requested resume for sub=%s → re-authorise required (fresh sub %s)",
+            "Client %s requested resume for sub=%s → re-authorise required (fresh sub %s, first charge %s)",
             client.id,
             sub.id,
             checkout.get("subscription_id"),
+            first_charge_at or "immediately",
         )
         return {
             "status": "reauthorise_required",
             "mandate_action": "reauthorise_required",
             "message": _reauth_message,
+            "first_charge_at": first_charge_at,
             "checkout": checkout,
         }
 

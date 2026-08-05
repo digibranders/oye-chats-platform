@@ -1,4 +1,4 @@
-import { type ReactElement, type ReactNode } from 'react';
+import { useCallback, type ReactElement, type ReactNode } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -139,16 +139,29 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
   const health = deriveAgentHealth(agent);
   const { status, isRefetching, stats, activity, questions, details, error, refetch } =
     useOverviewData(agent.id);
+  const { refresh: refreshAgent } = useAgent();
   const agentBasePath = `/agents/${agent.id}`;
   const isInitialLoading = status === 'loading';
   const isBusy = isInitialLoading || isRefetching;
+
+  /**
+   * Refresh everything this page shows. The health hero and the knowledge
+   * snapshot read the agent record itself (`indexed_chunk_count`,
+   * `last_crawl_status`), not the metrics payload - so refetching metrics alone
+   * left a stale "Nothing learned yet" on screen that no amount of clicking
+   * could clear.
+   */
+  const refreshAll = useCallback(() => {
+    void refreshAgent();
+    refetch();
+  }, [refreshAgent, refetch]);
 
   return (
     <PageContainer
       title="Overview"
       description="Mission Control dashboard for your AI chatbot health, knowledge, channels, and performance."
       actions={
-        <Button variant="outline" size="sm" onClick={refetch} disabled={isBusy}>
+        <Button variant="outline" size="sm" onClick={refreshAll} disabled={isBusy}>
           <RefreshCw
             size={15}
             aria-hidden="true"

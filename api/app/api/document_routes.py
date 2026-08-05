@@ -14,7 +14,7 @@ from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Document
-from app.db.repository import get_ingested_documents, get_pages_for_source
+from app.db.repository import get_ingested_documents, get_pages_for_source, sync_bot_knowledge_state
 from app.db.session import get_session
 from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
@@ -236,6 +236,22 @@ def delete_document_endpoint(
             # Invalidate cached QA responses — knowledge base has changed
             if bot_id:
                 cache_delete_prefix(qa_prefix_for_bot(bot_id))
+                # Re-derive the bot's "trained" counters from what's left, so
+                # deleting the last source stops the dashboard claiming the AI
+                # is still trained on it.
+                sync_bot_knowledge_state(session, bot_id)
+                session.commit()
+            else:
+                # Client-scoped delete (no bot_id): rows were removed across an
+                # unknown set of this client's bots, so every one of them needs
+                # the same cache flush + counter re-derivation — otherwise
+                # ``indexed_chunk_count`` keeps claiming knowledge this request
+                # just deleted, the exact staleness the sync exists to prevent.
+                client_bot_ids = [row[0] for row in session.query(Bot.id).filter(Bot.client_id == client_id).all()]
+                for client_bot_id in client_bot_ids:
+                    cache_delete_prefix(qa_prefix_for_bot(client_bot_id))
+                    sync_bot_knowledge_state(session, client_bot_id)
+                session.commit()
 
             logger.info(f"Deleted {deleted_count} chunks for document '{document_name}' (client {client_id})")
             return {"message": f"Successfully deleted '{document_name}'", "chunks_removed": deleted_count}

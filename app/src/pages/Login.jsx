@@ -133,8 +133,9 @@ export default function Login() {
           );
           sessionStorage.setItem('login_toast', '1');
           // Operators are never affiliates by design - route to the deep-link
-          // target (push-notification round-trip) or /support.
-          navigate(safeNext || '/support');
+          // target (push-notification round-trip) or the inbox, which is the
+          // operator console under Admin 2.0 (labelled "Support" in the nav).
+          navigate(safeNext || '/inbox');
         } catch {
           throw adminErr;
         }
@@ -166,7 +167,7 @@ export default function Login() {
     if (affiliateToken && !isOperator) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
     }
-    return <Navigate to={isOperator ? '/support' : '/'} />;
+    return <Navigate to={isOperator ? '/inbox' : '/'} />;
   }
 
   return (

@@ -13,13 +13,11 @@ import type { UpgradeIntentKey } from '../context/upgradeIntents';
 /** Primary-nav routes that are Free-plan-gated: the destination is a paid
  *  feature, so a Free workspace renders the item as a `LockedNavItem` that opens
  *  the upgrade modal (with the mapped intent's copy) instead of routing. Backend
- *  enforces the same gate (`plan_entitlements_service.py`; the `/leads` API and
- *  live-chat endpoints 403 for Free), so this is UX, not the security boundary.
- *  - `/inbox`  Support / live chat is paid (`live_chat` feature).
- *  - `/leads`  Leads dashboard + qualification are paid. */
+ *  enforces the same gate (`plan_entitlements_service.py`; the live-chat
+ *  endpoints 403 for Free), so this is UX, not the security boundary.
+ *  - `/inbox`  Support / live chat is paid (`live_chat` feature). */
 const FREE_LOCKED_NAV: Record<string, UpgradeIntentKey> = {
   '/inbox': 'view_support',
-  '/leads': 'view_leads',
 };
 
 export interface SidebarProps {
@@ -174,6 +172,10 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
   return (
     <aside
       aria-label="Primary navigation"
+      // Layout hook for the impersonation bar: the rail is `fixed`, so it has
+      // to be pushed down explicitly when the bar owns the top of the viewport
+      // (see `.oc-impersonating` in index.css).
+      data-app-sidebar=""
       inert={drawerClosed || undefined}
       className={cn(
         'fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-[var(--ds-border)] bg-[var(--ds-sidebar-bg)] transition-[width,transform] duration-300',

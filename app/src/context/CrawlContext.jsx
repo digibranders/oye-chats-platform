@@ -14,6 +14,7 @@ import {
     crawlWebsite,
     getCrawlProgress,
 } from '../services/api';
+import { useBotContext } from './BotContext';
 
 /**
  * Global crawl context.
@@ -110,6 +111,10 @@ function normalizeProgress(raw, prev) {
 
 export const CrawlProvider = ({ children }) => {
     const [crawl, setCrawl] = useState(initialState);
+    // CrawlProvider is mounted inside BotProvider (see ProtectedLayout), so the
+    // bot list is available here. Used to re-read the durable "trained" fields
+    // once a crawl reaches a terminal state.
+    const { refreshBots } = useBotContext();
     // Refs let the polling effect read the latest values without being part
     // of the effect's dep array (which would restart the poll every tick).
     const crawlRef = useRef(crawl);
@@ -247,6 +252,14 @@ export const CrawlProvider = ({ children }) => {
         const firstTimeHere = handledTerminalRef.current !== crawl.status;
         if (firstTimeHere) {
             handledTerminalRef.current = crawl.status;
+            // Re-read the bots so the durable "trained" fields the backend just
+            // stamped (indexed_chunk_count, crawl_completed_at,
+            // last_crawl_status) reach the UI. Without this the agent Overview
+            // keeps rendering the pre-crawl snapshot - a freshly trained agent
+            // reading "Nothing learned yet" - until a full page reload, and its
+            // own Refresh button can't fix it (that only refetches metrics,
+            // never the bot).
+            void refreshBots();
         }
         const timers = [];
         if (firstTimeHere && !crawl.result && !crawl.error) {
@@ -257,7 +270,7 @@ export const CrawlProvider = ({ children }) => {
         return () => {
             timers.forEach(clearTimeout);
         };
-    }, [crawl.status, crawl.result, crawl.error, poll, resetToIdle]);
+    }, [crawl.status, crawl.result, crawl.error, poll, resetToIdle, refreshBots]);
 
     // ── Actions ──────────────────────────────────────────────────────────────
 

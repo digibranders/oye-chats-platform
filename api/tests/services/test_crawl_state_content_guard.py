@@ -1,23 +1,28 @@
-"""``_record_bot_crawl_state`` must never latch a fake "trained" state, and
-the ``no_content`` terminal status must reflect the bot's real knowledge —
-not merely whether this particular crawl added new chunks.
+"""The durable "trained" state must describe what a bot actually knows.
 
-A crawl that fetches pages but extracts zero readable text (common on
-JS-rendered sites) used to still stamp ``crawl_completed_at`` /
-``indexed_chunk_count`` whenever the terminal status was ``"done"`` —
-regardless of chunk count — so the frontend had no durable signal to tell
-"trained" apart from "crawled nothing." These tests pin the defense-in-depth
-guard: the durable "trained" marker is only set when ``chunk_count > 0``,
-and a dedicated ``"no_content"`` status is recorded (status only, no
-trained-marker fields) for the zero-content case.
+``Bot.indexed_chunk_count`` drives every "is my AI trained?" surface in the
+dashboard, so it has to answer that question — not describe whichever crawl
+happened to run last. Two failure directions matter:
 
-Separately, ``_terminal_status`` (extracted from ``run_full_crawl``'s
-completion block) must distinguish "zero *new* chunks this crawl" (healthy —
-e.g. a delta recrawl of an unchanged site where SHA-256 dedup skipped every
-page but the bot still holds all its prior content) from "zero chunks
-*period*" (genuinely ``no_content`` — nothing for the bot to answer from).
-``count_documents_for_bot`` is the ground-truth source for the bot's existing
-content count; these tests pin its exact semantics too.
+* **Never latch a fake "trained" state.** A crawl that fetches pages but
+  extracts zero readable text (common on JS-rendered sites) must not leave the
+  bot claiming knowledge it doesn't have, and ``no_content`` must be recorded
+  as a status without any trained marker.
+* **Never deny a real one.** Deriving the marker from a single crawl's delta
+  under-reported in three real cases: a document upload runs no crawl at all; a
+  delta recrawl of an unchanged site ingests zero new chunks while the bot keeps
+  all its prior content; and a failed recrawl doesn't destroy what was already
+  ingested. Each left a fully-trained bot reading "Nothing learned yet" forever.
+
+``_record_bot_crawl_state`` therefore recomputes from the documents table via
+``repository.sync_bot_knowledge_state`` rather than trusting a job's output, and
+``last_crawl_status`` is kept strictly as a record of the last ATTEMPT.
+
+Separately, ``_terminal_status`` (extracted from ``run_full_crawl``'s completion
+block) must distinguish "zero *new* chunks this crawl" (healthy) from "zero
+chunks *period*" (genuinely ``no_content``). ``count_documents_for_bot`` is the
+ground-truth source for the bot's existing content; these tests pin its exact
+semantics too.
 """
 
 from __future__ import annotations
@@ -68,26 +73,28 @@ def _make_doc(db, bot_id: int, client_id: int, name: str) -> Document:
     return doc
 
 
-def test_zero_chunks_does_not_set_trained_marker(db, monkeypatch) -> None:
+def test_bot_with_no_content_does_not_get_trained_marker(db, monkeypatch) -> None:
     monkeypatch.setattr(crawl_orchestrator, "get_session", lambda: _ctx(db))
     client = _make_client(db, "guard-zero@e.com")
     bot = _make_bot(db, client.id, "bot-guard-zero")
     db.commit()
 
-    crawl_orchestrator._record_bot_crawl_state(bot.id, "done", 0)
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "done")
 
     assert bot.last_crawl_status == "done"
     assert bot.crawl_completed_at is None
     assert bot.indexed_chunk_count == 0
 
 
-def test_positive_chunks_sets_trained_marker(db, monkeypatch) -> None:
+def test_ingested_content_sets_trained_marker(db, monkeypatch) -> None:
     monkeypatch.setattr(crawl_orchestrator, "get_session", lambda: _ctx(db))
     client = _make_client(db, "guard-positive@e.com")
     bot = _make_bot(db, client.id, "bot-guard-positive")
+    for i in range(5):
+        _make_doc(db, bot.id, client.id, f"https://a.test/p{i}")
     db.commit()
 
-    crawl_orchestrator._record_bot_crawl_state(bot.id, "done", 5)
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "done")
 
     assert bot.last_crawl_status == "done"
     assert bot.crawl_completed_at is not None
@@ -100,9 +107,62 @@ def test_no_content_status_records_status_only(db, monkeypatch) -> None:
     bot = _make_bot(db, client.id, "bot-guard-nocontent")
     db.commit()
 
-    crawl_orchestrator._record_bot_crawl_state(bot.id, "no_content", 0)
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "no_content")
 
     assert bot.last_crawl_status == "no_content"
+    assert bot.crawl_completed_at is None
+    assert bot.indexed_chunk_count == 0
+
+
+def test_delta_recrawl_adding_nothing_keeps_bot_trained(db, monkeypatch) -> None:
+    """The reported bug: a recrawl that ingests zero NEW chunks must not un-train.
+
+    SHA-256 dedup skips every page of an unchanged site, so the crawl's own
+    output is zero — but the bot still holds all its prior content. Gating the
+    marker on that output left a trained agent reading "Nothing learned yet".
+    """
+    monkeypatch.setattr(crawl_orchestrator, "get_session", lambda: _ctx(db))
+    client = _make_client(db, "guard-delta@e.com")
+    bot = _make_bot(db, client.id, "bot-guard-delta")
+    _make_doc(db, bot.id, client.id, "https://a.test/only-page")
+    db.commit()
+
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "done")
+
+    assert bot.indexed_chunk_count == 1
+    assert bot.crawl_completed_at is not None
+
+
+def test_failed_recrawl_preserves_existing_trained_state(db, monkeypatch) -> None:
+    """A failed ATTEMPT doesn't destroy already-ingested content."""
+    monkeypatch.setattr(crawl_orchestrator, "get_session", lambda: _ctx(db))
+    client = _make_client(db, "guard-failed@e.com")
+    bot = _make_bot(db, client.id, "bot-guard-failed")
+    _make_doc(db, bot.id, client.id, "https://a.test/kept")
+    db.commit()
+
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "failed")
+
+    assert bot.last_crawl_status == "failed"  # the attempt is still reported
+    assert bot.indexed_chunk_count == 1  # ...but the knowledge survives it
+    assert bot.crawl_completed_at is not None
+
+
+def test_removing_all_content_clears_trained_marker(db, monkeypatch) -> None:
+    """The mirror case: a stale counter must not outlive the content."""
+    monkeypatch.setattr(crawl_orchestrator, "get_session", lambda: _ctx(db))
+    client = _make_client(db, "guard-emptied@e.com")
+    bot = _make_bot(db, client.id, "bot-guard-emptied")
+    doc = _make_doc(db, bot.id, client.id, "https://a.test/doomed")
+    db.commit()
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "done")
+    assert bot.indexed_chunk_count == 1
+
+    db.delete(doc)
+    db.commit()
+    crawl_orchestrator._record_bot_crawl_state(bot.id, "done")
+
+    assert bot.indexed_chunk_count == 0
     assert bot.crawl_completed_at is None
 
 

@@ -22,8 +22,14 @@ export interface TopBarProps {
 export function TopBar({ isMobile, onToggleSidebar, onOpenSearch }: TopBarProps) {
   const crumbs = useBreadcrumbs();
 
+  // `data-app-topbar` below is the layout hook for the impersonation bar: this
+  // header is `sticky top-0`, so it has to stick below the bar rather than
+  // under it (see `.oc-impersonating` in index.css).
   return (
-    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-[var(--ds-border)] bg-[var(--ds-bg-canvas)]/80 px-4 backdrop-blur-md md:px-6">
+    <header
+      data-app-topbar=""
+      className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-[var(--ds-border)] bg-[var(--ds-bg-canvas)]/80 px-4 backdrop-blur-md md:px-6"
+    >
       <button
         type="button"
         onClick={onToggleSidebar}

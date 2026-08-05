@@ -1,15 +1,22 @@
+import hashlib
 import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import TypeVar
 
 from fastapi import Depends, HTTPException, Query, Request, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.core.origin_check import extract_hostname, is_origin_allowed
-from app.db.models import Affiliate, Bot, Client, Operator, Subscription
+from app.db.models import Affiliate, Bot, Client, ImpersonationToken, Operator, Subscription
 from app.db.session import get_session
 from app.services import plan_service
+from app.services.audit_service import record_audit
+from app.services.runtime_config import is_impersonation_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,284 @@ bot_key_header = APIKeyHeader(name=BOT_KEY_NAME, auto_error=False)
 # caller is acting as the owner of their own workspace (legacy behavior).
 WORKSPACE_ID_NAME = "X-Workspace-Id"
 workspace_id_header = APIKeyHeader(name=WORKSPACE_ID_NAME, auto_error=False)
+
+# ── Impersonation (super-admin support sessions) ──
+# A super-admin mints a short-lived token via /superadmin/clients/{id}/impersonate
+# and the customer app then carries it on every request as X-Impersonation-Token.
+# Validity (not revoked, not expired) is re-checked per request, so the "Exit"
+# control in the super-admin console kills an in-flight session immediately.
+IMPERSONATION_TOKEN_NAME = "X-Impersonation-Token"
+impersonation_token_header = APIKeyHeader(name=IMPERSONATION_TOKEN_NAME, auto_error=False)
+
+# One message for expired / revoked / unknown / malformed tokens — the caller
+# already holds the token, so distinguishing the failure modes would only help
+# someone probing with tokens they never had.
+IMPERSONATION_REJECTED_DETAIL = "Impersonation session expired or revoked."
+
+# Methods an impersonated session may always use — they cannot mutate the
+# customer's Account.
+_IMPERSONATION_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# Structured 403 detail, matching the ``require_active_subscription`` /
+# ``require_verified_email`` contract so the admin app can branch on ``error``
+# without parsing English.
+_IMPERSONATION_WRITE_DENIED_DETAIL = {
+    "error": "impersonation_read_only",
+    "message": "This action is not available during a super-admin impersonation session.",
+}
+
+_EndpointT = TypeVar("_EndpointT", bound=Callable[..., object])
+
+
+def impersonation_writable(fn: _EndpointT) -> _EndpointT:
+    """Permit this endpoint to be called by an impersonated super-admin session.
+
+    Impersonation is **default-deny** for anything that is not a safe HTTP
+    method: without this marker a mutating route is inert under impersonation.
+    A denylist would fail *open* (a route added later is permitted until someone
+    remembers to list it); this inverts the failure mode.
+
+    MUST be applied BELOW the route decorator, so the router registers the
+    already-marked function and the guard can read the attribute back off
+    ``request.scope["route"].endpoint``::
+
+        @router.post("/bots/{bot_id}/canned-responses")
+        @impersonation_writable
+        def create_canned_response(...): ...
+
+    (FastAPI's route decorators happen to return the undecorated function, so
+    today the marker survives the other order too — but that is an
+    implementation detail of the framework, not a guarantee. Any wrapping
+    decorator placed between the two would register a function the marker was
+    never set on, and the endpoint would silently stay denied. Keep it below.)
+    """
+    fn.impersonation_writable = True
+    return fn
+
+
+def find_active_impersonation_token(session: Session, raw_token: str | None) -> ImpersonationToken | None:
+    """Return the live ``ImpersonationToken`` for a raw token, else ``None``.
+
+    "Live" means present, not revoked, and not expired — the single predicate
+    every impersonation entry point (per-request auth and the redeem endpoint)
+    must agree on. Lookup is by sha256 equality on the indexed unique
+    ``token_hash`` column, so the raw token is never compared in Python.
+    Blank / missing input short-circuits to ``None`` instead of hashing.
+    """
+    if raw_token is None:
+        return None
+    raw_token = raw_token.strip()
+    if not raw_token:
+        return None
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    return (
+        session.execute(
+            select(ImpersonationToken).where(
+                ImpersonationToken.token_hash == token_hash,
+                ImpersonationToken.revoked_at.is_(None),
+                ImpersonationToken.expires_at > datetime.now(UTC),
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _enforce_impersonation_write_guard(request: Request, *, actor_id: int, target_id: int) -> bool:
+    """Reject a mutating request from an impersonated session (403), fail-closed.
+
+    Returns ``True`` when the request is a **permitted mutation** (so the caller
+    must write an audit row), ``False`` for a safe method. Denials raise.
+
+    Safe methods pass unconditionally. Everything else is denied unless the
+    matched endpoint carries the :func:`impersonation_writable` marker.
+
+    The matched route is read from ``request.scope["route"]``, which Starlette
+    populates before dependencies resolve. (``scope["endpoint"]`` is *not* part
+    of the contract we rely on — ``scope["route"].endpoint`` is the function the
+    router registered, which is the object the marker was set on.)
+    """
+    if request.method.upper() in _IMPERSONATION_SAFE_METHODS:
+        return False
+
+    endpoint = getattr(request.scope.get("route"), "endpoint", None)
+    if getattr(endpoint, "impersonation_writable", False) is True:
+        return True
+
+    logger.warning(
+        "impersonation_write_denied actor_id=%s target_id=%s method=%s path=%s",
+        actor_id,
+        target_id,
+        request.method,
+        request.scope.get("path"),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=dict(_IMPERSONATION_WRITE_DENIED_DETAIL),
+    )
+
+
+def _resolve_impersonated_client(request: Request, impersonation_token: str) -> Client:
+    """Resolve the Account behind an ``X-Impersonation-Token`` header.
+
+    Returns the target ``Client``, detached from its session and tagged with
+    ``_impersonator_id`` / ``_impersonation_token_id`` so downstream code (and
+    ``record_audit``) can tell "the customer did this" from "an admin did this
+    as the customer". Raises 401 when the token is expired, revoked, unknown or
+    malformed, and 403 when the request would mutate an unmarked endpoint.
+
+    Two deliberate departures from the ordinary X-API-Key path:
+
+    * ``_ensure_client_authenticatable`` is **not** called. Impersonating a
+      suspended or deactivated Account is allowed on purpose (design decision
+      D-2) — debugging *why* an Account is suspended is a real support need, and
+      the write guard caps the damage.
+    * ``api_key`` is scrubbed from the returned instance. It is a permanent,
+      unrevocable credential (design constraint 3.1); handing it to a support
+      session would outlive the 30-minute window and ignore ``revoked_at``,
+      making expiry and revocation decorative. Nothing in the request path may
+      echo it back.
+    """
+    # Kill switch (design §14). Checked before the token lookup so flipping it
+    # ends every session already in flight, not just new redemptions — the
+    # whole point of an emergency switch. The 401 (rather than 403) is
+    # deliberate: the customer app already treats 401 as "session ended" and
+    # renders its terminal notice, so an operator flipping this cleanly
+    # ejects every impersonated tab instead of leaving dead sessions browsable.
+    if not is_impersonation_enabled():
+        logger.warning("Rejected an impersonation request: impersonation is disabled.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=IMPERSONATION_REJECTED_DETAIL,
+        )
+
+    with get_session() as session:
+        record = find_active_impersonation_token(session, impersonation_token)
+        if record is None:
+            logger.warning("Rejected an expired, revoked, or unknown impersonation token.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        actor_id = record.actor_id
+        target_id = record.target_id
+        token_id = record.id
+
+        # Load target AND actor in one round trip — both are needed for the
+        # privilege re-checks below, and this keeps the per-request cost at two
+        # queries rather than three.
+        rows = session.execute(select(Client).where(Client.id.in_({target_id, actor_id}))).scalars().all()
+        by_id = {row.id: row for row in rows}
+        client = by_id.get(target_id)
+        actor = by_id.get(actor_id)
+
+        if client is None:
+            logger.warning("Impersonation token %s targets a missing Account %s.", token_id, target_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        # ── Privilege re-checks, evaluated per request (defence in depth) ──
+        #
+        # The mint endpoint already refuses to issue a token for a super-admin
+        # target, but a point-in-time check at mint is NOT sufficient:
+        #
+        #   * a target promoted to super-admin AFTER minting would, for the rest
+        #     of the 30-minute window, resolve to a super-admin Client — and
+        #     ``get_superadmin`` only inspects the RESOLVED client, so the
+        #     session would reach ``/superadmin/*``. Every read there is a safe
+        #     method, which the write guard waves through by design, so the
+        #     escalation hands over the whole platform's data, not one Account.
+        #   * token rows predating the mint-time check (or created by any other
+        #     path) are not covered by it at all.
+        #
+        # Re-checking here closes both. Likewise the actor: a super-admin who is
+        # demoted or offboarded must not keep acting through tokens they minted
+        # while still privileged.
+        if client.is_superadmin:
+            logger.error(
+                "Blocked impersonation token %s: target Account %s is a super-admin (privilege escalation).",
+                token_id,
+                target_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        if actor is None or not actor.is_superadmin:
+            logger.error(
+                "Blocked impersonation token %s: actor %s is no longer a super-admin.",
+                token_id,
+                actor_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        # Guard runs after the privilege re-checks so a token that should not
+        # exist can never produce an "authorised write" audit row.
+        is_permitted_write = _enforce_impersonation_write_guard(request, actor_id=actor_id, target_id=target_id)
+
+        if is_permitted_write:
+            # Audit centrally, here, rather than per-endpoint. The design's
+            # compensating control for allowing writes at all is that every one
+            # of them is attributable to the super-admin who made it — and a
+            # per-route ``record_audit`` call is exactly the kind of thing that
+            # gets forgotten on the next endpoint someone marks writable. This
+            # sits on the one code path every permitted mutation must traverse,
+            # so coverage is structural instead of conventional.
+            #
+            # Timing caveat, stamped into the row as ``phase``: this commits
+            # during dependency resolution, BEFORE the endpoint's own authz
+            # (ownership, plan gating, 404s) or business logic runs. It is
+            # therefore a record that the write was AUTHORIZED to proceed, not
+            # proof it succeeded — an endpoint that subsequently 403s/404s or
+            # rolls back still leaves this row. Recording post-hoc instead
+            # would under-report (a handler crash after mutating state loses
+            # the trail entirely), which is the worse failure for the control
+            # this exists to be. Readers answering "what did this admin
+            # actually change" must join against the endpoint's own audit
+            # rows / state, not treat ``phase=authorized`` as a completed
+            # mutation.
+            record_audit(
+                session,
+                actor=actor,
+                action="impersonation.write",
+                target_type="client",
+                target_id=target_id,
+                after={
+                    "method": request.method.upper(),
+                    "path": request.scope.get("path"),
+                    "impersonated_client_id": target_id,
+                    "impersonation_token_id": token_id,
+                    "phase": "authorized",
+                },
+                request=request,
+            )
+            session.commit()
+
+        # Eagerly access attributes before the session closes.
+        _ = (
+            client.id,
+            client.name,
+            client.email,
+            client.is_superadmin,
+            client.suspended_at,
+            client.deactivated_at,
+        )
+        session.expunge(client)
+
+    # Mutate only after detaching, so the scrubbed api_key can never be flushed
+    # back onto the customer's row.
+    client.api_key = None
+    client._impersonator_id = actor_id
+    client._impersonation_token_id = token_id
+    return client
 
 
 def _resolve_operator_key(
@@ -150,14 +435,20 @@ def _ensure_client_authenticatable(client: Client) -> None:
 
 
 def get_current_client(
+    request: Request,
     api_key: str = Security(api_key_header),
     operator_key: str = Security(operator_key_header),
     legacy_agent_key: str = Security(legacy_agent_key_header),
+    impersonation_token: str = Security(impersonation_token_header),
 ):
     """
     Dependency: Authenticate a Client via X-API-Key header.
     Also accepts:
     - X-Operator-Key / X-Agent-Key: resolves the operator's workspace Client.
+    - X-Impersonation-Token: resolves a super-admin support session to the
+      impersonated Account. It takes precedence over every other credential —
+      the frontend sends only one, and the backend is explicit so the ambiguity
+      has a defined answer.
 
     The public ``X-Bot-Key`` header is intentionally NOT accepted here. Bot keys
     are embedded in widget script tags and visible to every site visitor, so they
@@ -165,6 +456,9 @@ def get_current_client(
     ``get_current_bot`` instead; admin-only endpoints requiring strict client
     auth should use ``get_current_client_strict``.
     """
+    if impersonation_token:
+        return _resolve_impersonated_client(request, impersonation_token)
+
     effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
 
     with get_session() as session:
@@ -275,15 +569,21 @@ def get_current_operator(
 
 
 def get_current_client_or_operator(
+    request: Request,
     api_key: str = Security(api_key_header),
     operator_key: str = Security(operator_key_header),
     legacy_agent_key: str = Security(legacy_agent_key_header),
     workspace_id_raw: str = Security(workspace_id_header),
+    impersonation_token: str = Security(impersonation_token_header),
 ):
     """
     Dependency: Authenticate via X-API-Key (Client) or X-Operator-Key (Operator).
     Returns a dict with 'type' ('client'|'operator'), the entity, and 'client_id'.
     Used by endpoints that both admins and operators can access.
+
+    An ``X-Impersonation-Token`` takes precedence over both and always presents
+    as ``type="client"`` — impersonating an Operator is out of scope, so a
+    support session always acts as the Account owner.
 
     Workspace-aware routing
     -----------------------
@@ -298,6 +598,15 @@ def get_current_client_or_operator(
     implicitly scoped to their one workspace). ``X-API-Key`` sessions without
     an ``X-Workspace-Id`` header default to the caller's own workspace.
     """
+    if impersonation_token:
+        client = _resolve_impersonated_client(request, impersonation_token)
+        return {
+            "type": "client",
+            "entity": client,
+            "client_id": client.id,
+            "operator_id": None,
+        }
+
     effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
     requested_workspace_id = _parse_workspace_id(workspace_id_raw)
 
@@ -446,14 +755,25 @@ def get_current_client_or_operator(
 
 
 def get_current_client_strict(
+    request: Request,
     api_key: str = Security(api_key_header),
+    impersonation_token: str = Security(impersonation_token_header),
 ):
     """
     Dependency: Authenticate a Client via X-API-Key ONLY.
     Does NOT fall back to X-Bot-Key or X-Operator-Key.
     Use this for admin-only endpoints (billing, subscription, sensitive account settings)
     where operator access must be explicitly blocked.
+
+    An ``X-Impersonation-Token`` is accepted here too, and takes precedence over
+    ``X-API-Key``: strict auth exists to exclude *operator* and *bot* keys, not
+    to exclude super-admin support sessions. The write guard still applies, so
+    the sensitive mutations these routes carry stay denied unless explicitly
+    marked with :func:`impersonation_writable`.
     """
+    if impersonation_token:
+        return _resolve_impersonated_client(request, impersonation_token)
+
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -796,12 +1116,95 @@ def get_current_bot(
         )
 
 
+def _resolve_preview_client(
+    session: Session,
+    api_key: str | None,
+    impersonation_token: str | None,
+) -> Client:
+    """Resolve the owning Client for an owner-preview chat request.
+
+    Accepts either the owner's own ``X-API-Key`` or a live impersonation
+    token. The impersonated path exists so a super-admin debugging an Account
+    can actually exercise its AI Agent — the most common support question on a
+    chatbot platform is "why did it answer that?", which is unanswerable
+    without sending a message.
+
+    This is the ONLY chat path an impersonated caller may take. It is safe
+    precisely because the returned bot carries ``_is_preview``, so the reply
+    skips credit deduction entirely: it cannot spend the Account's money. The
+    paid widget path on the same endpoint stays unreachable — the impersonation
+    token is deliberately never forwarded to :func:`get_current_bot`.
+
+    Suspension is enforced for a real owner but deliberately NOT for an
+    impersonated super-admin (design decision D-2): debugging *why* an Account
+    is suspended is a core support need, and a preview reply costs nothing.
+    """
+    if impersonation_token:
+        # Kill switch (design §14) — the preview path is a second entry point
+        # into impersonation and must honour it too.
+        if not is_impersonation_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+        record = find_active_impersonation_token(session, impersonation_token)
+        if not record:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+        client = session.execute(select(Client).where(Client.id == record.target_id)).scalars().first()
+        if not client:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Bot not found or does not belong to your account.",
+            )
+        _ = client.id, client.is_superadmin, client.suspended_at
+
+        # Same per-request privilege re-checks as ``_resolve_impersonated_client``
+        # — this is a second entry point into impersonation and a mint-time
+        # check cannot cover a target promoted mid-session, a legacy token row,
+        # or an actor demoted after minting.
+        if client.is_superadmin:
+            logger.error(
+                "Blocked impersonated preview: target Account %s is a super-admin.",
+                record.target_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        actor = session.execute(select(Client).where(Client.id == record.actor_id)).scalars().first()
+        if actor is None or not actor.is_superadmin:
+            logger.error(
+                "Blocked impersonated preview: actor %s is no longer a super-admin.",
+                record.actor_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+        return client
+
+    client = session.execute(select(Client).where(Client.api_key == api_key)).scalars().first()
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bot not found or does not belong to your account.",
+        )
+    _ = client.id, client.is_superadmin, client.suspended_at
+    _ensure_not_suspended(client)
+    return client
+
+
 def get_bot_for_chat(
     request: Request,
     preview: bool = Query(False, description="Owner-preview mode (Build Studio)"),
     bot_id: int | None = Query(None, description="Bot ID (owner-preview only)"),
     bot_key: str = Security(bot_key_header),
     api_key: str = Security(api_key_header),
+    impersonation_token: str = Security(impersonation_token_header),
 ):
     """Resolve the Bot for a chat request, with an optional owner-preview branch.
 
@@ -810,25 +1213,19 @@ def get_bot_for_chat(
     endpoints depend on this instead of ``get_current_bot`` so a logged-in
     client can test *any of their own bots* from the dashboard's Build Studio:
 
-    When ``preview`` is true AND an ``X-API-Key`` is present AND ``bot_id`` is
-    given, the bot is resolved by id and its owner asserted to be the client
-    owning that API key (404 otherwise). The origin/``allowed_domains`` check
+    When ``preview`` is true AND ``bot_id`` is given AND the caller presents an
+    owner credential — either ``X-API-Key`` or a live ``X-Impersonation-Token``
+    (see :func:`_resolve_preview_client`) — the bot is resolved by id and its
+    owner asserted to be that client (404 otherwise). The origin/``allowed_domains`` check
     is intentionally skipped — the caller is the authenticated owner, not an
     anonymous widget visitor — and the returned bot carries ``_is_preview =
     True`` so the chat endpoints can serve the reply for free (no credit
     deduction). Every other request falls through to ``get_current_bot``
     unchanged, so existing (non-preview) widget traffic is unaffected.
     """
-    if preview and api_key and bot_id is not None:
+    if preview and bot_id is not None and (api_key or impersonation_token):
         with get_session() as session:
-            client = session.execute(select(Client).where(Client.api_key == api_key)).scalars().first()
-            if not client:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Bot not found or does not belong to your account.",
-                )
-            _ = client.id, client.is_superadmin, client.suspended_at
-            _ensure_not_suspended(client)
+            client = _resolve_preview_client(session, api_key, impersonation_token)
 
             bot = session.execute(select(Bot).where(Bot.id == bot_id, Bot.client_id == client.id)).scalars().first()
             if not bot:

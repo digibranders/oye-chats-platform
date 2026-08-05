@@ -231,6 +231,8 @@ export function startTrial(planSlug: string): Promise<Record<string, unknown>>;
 export function cancelScheduledChange(): Promise<Record<string, unknown>>;
 export function cancelSubscription(reason?: string | null, botId?: number | null): Promise<Record<string, unknown>>;
 export function resumeSubscription(botId?: number | null): Promise<Record<string, unknown>>;
+/** Dunning state for a past-due subscription → `{ status, short_url, grace_ends_at, … }`. */
+export function getPaymentRecovery(botId?: number | null): Promise<Record<string, unknown>>;
 export function getPaymentMethods(opts?: { refresh?: boolean }): Promise<Record<string, unknown>[]>;
 export function deletePaymentMethod(tokenId: string): Promise<Record<string, unknown>>;
 /** Server-verify the Razorpay subscription Checkout callback signature. */

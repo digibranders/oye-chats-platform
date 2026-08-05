@@ -26,6 +26,10 @@ export interface RazorpayCheckoutOptions {
   theme?: Record<string, unknown>;
   method?: Record<string, boolean>;
   modal?: Record<string, unknown>;
+  /** Razorpay customer to tokenise the instrument against (top-up `save: 1`). */
+  customer_id?: string;
+  /** `1` asks Razorpay to save the instrument for one-click reuse. */
+  save?: 0 | 1;
 }
 
 /**

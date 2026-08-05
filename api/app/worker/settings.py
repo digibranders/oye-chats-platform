@@ -38,6 +38,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_dispatch_offline_message_push,
     task_dispatch_transfer_push,
     task_dunning_emails,
+    task_execute_pending_cancellations,
     task_expire_old_topups,
     task_expire_past_due_subscriptions,
     task_expire_trials,
@@ -138,6 +139,7 @@ class WorkerSettings:
         task_send_email,
         task_send_template_email,
         task_renew_due_subscriptions,
+        task_execute_pending_cancellations,
         task_promote_scheduled_downgrades,
         task_expire_old_topups,
         task_expire_trials,
@@ -161,6 +163,7 @@ class WorkerSettings:
 
     # Cron jobs:
     # • webhook retry poll + worker heartbeat — every 30s
+    # • pending-cancellation sweep — once a day at 00:03 UTC, BEFORE renewals
     # • subscription renewal safety net — once a day at 00:05 UTC
     # • top-up expiry sweep — once a day at 00:10 UTC (offset to avoid lock contention)
     # • trial expiry — hourly at :15 so a customer whose trial ends at, say,
@@ -172,6 +175,11 @@ class WorkerSettings:
     cron_jobs = [
         cron(task_process_webhook_retries, second={0, 30}),
         cron(task_worker_heartbeat, second={0, 30}),
+        # Issue the irreversible Razorpay cancel for subscriptions the customer
+        # cancelled and whose paid period is nearly over. Runs BEFORE the
+        # renewal cron: a subscription ending today must be stopped at the
+        # gateway before anything considers renewing it.
+        cron(task_execute_pending_cancellations, hour=0, minute=3),
         cron(task_renew_due_subscriptions, hour=0, minute=5),
         # Scheduled-downgrade safety net — runs after the renewal cron so a
         # row whose period just rolled forward via renewal isn't picked up

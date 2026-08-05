@@ -28,13 +28,14 @@
  *   3. Broadcasts a ``oyechats:workspace-switched`` window event so ad-hoc
  *      consumers (WebSocket clients, feature-flag caches) can react without
  *      subscribing to this context.
- *   4. Optionally navigates to a landing route (``/support`` for operator
+ *   4. Optionally navigates to a landing route (``/inbox`` for operator
  *      roles, ``/`` for owner) - controlled by the caller.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getMyWorkspaces, rotateWorkspaceAbort } from '../services/api';
 import { getAuthItem, setAuthBundle } from '../utils/authStorage';
+import { isImpersonating } from '../utils/impersonation';
 
 const WorkspaceContext = createContext(null);
 
@@ -45,6 +46,11 @@ export const WORKSPACE_SWITCHED_EVENT = 'oyechats:workspace-switched';
 export const WORKSPACE_ACCESS_DENIED_EVENT = 'oyechats:workspace-access-denied';
 
 function _restoreFromStorage() {
+    // An impersonated tab must NOT inherit the persisted workspace from the
+    // shared localStorage bundle - that entry belongs to the super-admin's own
+    // identity, not to the Account being supported. Start empty and let
+    // /me/workspaces (resolved from the impersonation token) seed the truth.
+    if (isImpersonating()) return { id: null, name: null, role: null };
     const id = Number(getAuthItem('current_workspace_id') || 0) || null;
     const name = getAuthItem('current_workspace_name') || null;
     const role = getAuthItem('current_workspace_role') || null;
@@ -84,14 +90,22 @@ export function WorkspaceProvider({ children }) {
 
     const persistWorkspace = useCallback((workspace, { persistent = true } = {}) => {
         if (!workspace) return;
-        setAuthBundle(
-            {
-                current_workspace_id: String(workspace.id),
-                current_workspace_name: workspace.name || '',
-                current_workspace_role: workspace.role || '',
-            },
-            persistent,
-        );
+        // A super-admin impersonation session is tab-scoped by design, and
+        // ``setAuthBundle`` writes to the localStorage bundle SHARED by every
+        // tab - persisting here would silently retarget the super-admin's own
+        // workspace selection everywhere else. React state only for that path;
+        // the impersonation credential is server-resolved anyway (the request
+        // interceptor suppresses ``X-Workspace-Id`` entirely).
+        if (!isImpersonating()) {
+            setAuthBundle(
+                {
+                    current_workspace_id: String(workspace.id),
+                    current_workspace_name: workspace.name || '',
+                    current_workspace_role: workspace.role || '',
+                },
+                persistent,
+            );
+        }
         setCurrentWorkspaceId(workspace.id);
         setCurrentWorkspaceName(workspace.name);
         setCurrentRole(workspace.role);
@@ -192,16 +206,22 @@ export function WorkspaceProvider({ children }) {
     // Initial load - fire once after mount. Skips for legacy operator sessions
     // (they use X-Operator-Key which doesn't play with workspace switching).
     useEffect(() => {
-        const authType = getAuthItem('auth_type');
-        const token = getAuthItem('admin_token');
-        if (!token) {
-            setIsLoading(false);
-            return;
-        }
-        if (authType === 'operator') {
-            // Legacy operator - no workspace switcher, single implicit workspace.
-            setIsLoading(false);
-            return;
+        // An impersonation token authenticates on its own and always resolves
+        // to a Client (Account), never an Operator - so it skips BOTH gates
+        // below, including a stale ``auth_type`` left in this browser's shared
+        // localStorage by the super-admin's own session.
+        if (!isImpersonating()) {
+            const authType = getAuthItem('auth_type');
+            const token = getAuthItem('admin_token');
+            if (!token) {
+                setIsLoading(false);
+                return;
+            }
+            if (authType === 'operator') {
+                // Legacy operator - no workspace switcher, single implicit workspace.
+                setIsLoading(false);
+                return;
+            }
         }
         refresh();
         // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -398,6 +398,15 @@ TRIAL_DATA_RETENTION_DAYS = int(_env("TRIAL_DATA_RETENTION_DAYS", "15"))
 # given the gateway time to recover the card, now stop bleeding LLM credits".
 PAYMENT_FAILED_GRACE_DAYS = int(_env("PAYMENT_FAILED_GRACE_DAYS", "7"))
 
+# How many days before ``current_period_end`` the pending-cancellation sweep
+# issues the real (irreversible) Razorpay cancel. Until it fires, a cancelled
+# subscription is only a local intent flag and the customer can reactivate for
+# free; Razorpay has no un-cancel, so every day of lead time is a day the
+# customer loses that option. Two days is the smallest window that still
+# tolerates a full day of worker downtime before Razorpay's renewal debit —
+# and ``_handle_subscription_charged`` backstops even that.
+GATEWAY_CANCEL_LEAD_DAYS = int(_env("GATEWAY_CANCEL_LEAD_DAYS", "2"))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Owner-preview chat quota (Build Studio ``?preview=true``)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -421,6 +430,20 @@ def _env_flag(name: str, *, default: bool) -> bool:
     if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ── Impersonation kill switch ────────────────────────────────────────────────
+#
+# Hard off-switch for super-admin impersonation (design §14). Default ON so
+# nothing changes for existing deployments.
+#
+# This is the *floor*: when set false, impersonation is off no matter what the
+# runtime ``impersonation.enabled`` row in pricing_config says. The runtime row
+# is the fast lever (flip from the super-admin UI, no deploy, no restart); this
+# env var is the one that survives a DB outage or a rogue DB edit, which is
+# exactly the situation an operator would be reaching for a kill switch in.
+# Read via ``runtime_config.is_impersonation_enabled()`` — never directly.
+IMPERSONATION_ENABLED = _env_flag("IMPERSONATION_ENABLED", default=True)
 
 
 # ── Payment remediation feature flags (docs/billing/2026-06-29-remediation-plan.md) ──

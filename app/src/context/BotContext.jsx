@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getBots } from '../services/api';
 import { getAuthItem } from '../utils/authStorage';
+import { isImpersonating } from '../utils/impersonation';
 
 const BotContext = createContext(null);
 
@@ -12,6 +13,23 @@ const BotContext = createContext(null);
  */
 const ALL_BOTS_SENTINEL = 'all';
 const STORAGE_KEY = 'selected_bot_id';
+
+/**
+ * ``selected_bot_id`` lives in the localStorage bundle every tab shares. A
+ * super-admin impersonation session is tab-scoped on purpose, so its agent
+ * choice stays in React state only - persisting it would silently retarget the
+ * super-admin's own dashboard in every other tab. Reads are skipped for the
+ * same reason: the persisted id belongs to a different Account.
+ */
+function readPersistedBotId() {
+    return isImpersonating() ? null : localStorage.getItem(STORAGE_KEY);
+}
+
+function persistBotId(value) {
+    if (isImpersonating()) return;
+    if (value === null) localStorage.removeItem(STORAGE_KEY);
+    else localStorage.setItem(STORAGE_KEY, value);
+}
 
 export function BotProvider({ children }) {
     const [bots, setBots] = useState([]);
@@ -29,7 +47,7 @@ export function BotProvider({ children }) {
             if (data.length === 0) {
                 // No bots exist - clear selection.
                 setSelectedBot(null);
-                localStorage.removeItem(STORAGE_KEY);
+                persistBotId(null);
             } else {
                 setSelectedBot((currentSelectedBot) => {
                     // The dashboard is always scoped to exactly one agent - the
@@ -44,7 +62,7 @@ export function BotProvider({ children }) {
                     }
 
                     // Restore a persisted per-bot choice when it's still valid.
-                    const savedRaw = localStorage.getItem(STORAGE_KEY);
+                    const savedRaw = readPersistedBotId();
                     if (savedRaw && savedRaw !== ALL_BOTS_SENTINEL) {
                         const saved = data.find((bot) => bot.id === Number(savedRaw));
                         if (saved) return saved;
@@ -74,8 +92,10 @@ export function BotProvider({ children }) {
     }, []);
 
     useEffect(() => {
-        const token = getAuthItem('admin_token');
-        if (token) {
+        // A super-admin impersonation session carries its own credential and no
+        // ``admin_token`` - without it the support tab would render an empty
+        // agent list for an Account that has agents.
+        if (getAuthItem('admin_token') || isImpersonating()) {
             refreshBots();
         } else {
             setLoading(false);
@@ -112,11 +132,7 @@ export function BotProvider({ children }) {
      */
     const selectBot = useCallback((bot) => {
         setSelectedBot(bot);
-        if (bot?.id) {
-            localStorage.setItem(STORAGE_KEY, bot.id.toString());
-        } else {
-            localStorage.setItem(STORAGE_KEY, ALL_BOTS_SENTINEL);
-        }
+        persistBotId(bot?.id ? bot.id.toString() : ALL_BOTS_SENTINEL);
     }, []);
 
     return (

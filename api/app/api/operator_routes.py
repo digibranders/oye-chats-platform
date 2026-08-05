@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select, update
 
-from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.core.security import get_password_hash
 from app.db.models import BANTSignal, Bot, ChatAuditLog, ChatMessage, ChatSession, Department, Operator
 from app.db.repository import get_lead_info_by_session
@@ -213,10 +213,17 @@ def create_department(request: CreateDepartmentRequest, auth=Depends(get_current
 
 
 @router.patch("/departments/{department_id}")
+@impersonation_writable
 def update_department(
     department_id: int, request: UpdateDepartmentRequest, auth=Depends(get_current_client_or_operator)
 ):
-    """Update a department."""
+    """Update a department.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Department edits (not invites)") — name, description and business hours are
+    configuration only. Creating and deleting departments stay denied: §6.1 says
+    *edits*, and a delete also re-parents every operator in the department.
+    """
     _require_team_management_access(auth)
     with get_session() as session:
         dept = session.execute(
@@ -1011,12 +1018,20 @@ def get_queue(auth=Depends(get_current_client_or_operator)):
 
 
 @router.post("/accept/{session_id}")
+@impersonation_writable
 async def accept_chat(
     session_id: str,
     request: AcceptChatRequest | None = None,
     auth=Depends(get_current_client_or_operator),
 ):
-    """Operator accepts a waiting chat."""
+    """Operator accepts a waiting chat.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Conversation status / assignment changes") — claiming a queued conversation
+    is the entry point for reproducing Support triage bugs. The visitor here has
+    already asked for a human, so this answers a request rather than initiating
+    contact (which is why ``/takeover`` and ``/connect-request`` stay denied).
+    """
     with get_session() as session:
         # Resolve the operator
         if auth["type"] == "operator":
@@ -1118,8 +1133,13 @@ async def accept_chat(
 
 
 @router.post("/close/{session_id}")
+@impersonation_writable
 async def close_chat(session_id: str, auth=Depends(get_current_client_or_operator)):
-    """Operator closes a live chat."""
+    """Operator closes a live chat.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Conversation status / assignment changes").
+    """
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
@@ -1164,8 +1184,13 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
 
 
 @router.post("/resolve/{session_id}")
+@impersonation_writable
 async def resolve_chat(session_id: str, auth=Depends(get_current_client_or_operator)):
     """Operator resolves and hard-closes a live chat.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Conversation status / assignment changes").
+
 
     Unlike ``/close`` (which returns the visitor to bot mode, ``status='bot'``),
     this marks the conversation ``status='closed'`` so it reads as *done* in
@@ -1219,8 +1244,15 @@ class TransferRequest(BaseModel):
 
 
 @router.post("/transfer/{session_id}")
+@impersonation_writable
 async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_operator)):
-    """Transfer a live chat to another operator or department."""
+    """Transfer a live chat to another operator or department.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Conversation status / assignment changes") — reassignment is the other half
+    of Support triage, and every notification it fires goes to the Account's own
+    operators, never to the Lead.
+    """
     if not request.target_operator_id and not request.target_department_id:
         raise HTTPException(status_code=400, detail="Must specify target_operator_id or target_department_id.")
 

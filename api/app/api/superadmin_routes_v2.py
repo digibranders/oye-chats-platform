@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 
 from app.api.auth import get_superadmin
+from app.config import APP_URL, IMPERSONATION_ENABLED
 from app.db.models import (
     AuditLog,
     Bot,
@@ -43,6 +44,7 @@ from app.db.session import get_session
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
+from app.services.runtime_config import is_impersonation_enabled
 from app.services.seller_profile_service import (
     SellerProfile,
     SellerProfileError,
@@ -53,8 +55,24 @@ from app.services.seller_profile_service import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/superadmin", tags=["superadmin-v2"])
 
-
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def _app_base_url() -> str:
+    """Origin of the customer app the impersonation hand-off points at.
+
+    Deliberately reuses the shared ``APP_URL`` setting rather than introducing
+    a second env var for the same concept: ``APP_URL`` already defaults to the
+    production host and is already pointed at localhost by the dev ``.env``, so
+    impersonation resolves correctly in every environment with no extra
+    configuration. A separate knob would leave impersonation pointing at
+    production from a developer machine until someone set it twice.
+
+    Read at call time (module global, not a captured local) so tests can
+    monkeypatch it, and re-stripped defensively so a patched or misconfigured
+    value can never produce a double slash.
+    """
+    return APP_URL.rstrip("/")
 
 
 def _require_write(actor: Client) -> None:
@@ -284,11 +302,38 @@ def impersonate(
     request: Request,
     admin: Client = Depends(get_superadmin),
 ):
+    """Mint a short-lived impersonation token for an Account.
+
+    The raw token is returned once (and embedded in ``redirect_url``); only its
+    sha256 is stored, so it can never be read back out of the database.
+
+    A Client whose ``is_superadmin`` is set is **not** impersonable: the token
+    would let its holder act with the target's privileges, which is a lateral
+    privilege escalation between super-admins (and, for a self-target, a way to
+    launder one's own actions). The super-admin UI already hides these rows,
+    but a UI filter is not a control — reject here, before any row is written.
+
+    Honours the impersonation kill switch (design §14). Minting is blocked
+    while it is off so an admin gets a clear error instead of a working-looking
+    link that dies at redemption. Revocation deliberately stays available —
+    it only ever reduces privilege, and an operator may need to revoke
+    outstanding tokens *because* they flipped the switch.
+    """
+    if not is_impersonation_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Impersonation is temporarily disabled.",
+        )
     _require_write(admin)
     with get_session() as session:
         target = session.get(Client, client_id)
         if not target:
             raise HTTPException(status_code=404, detail="Account not found")
+        if target.is_superadmin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super-admin accounts cannot be impersonated.",
+            )
 
         raw = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -316,7 +361,9 @@ def impersonate(
             "token": raw,
             "token_id": record.id,
             "expires_at": expires_at.isoformat(),
-            "redirect_url": f"https://app.oyechats.com/?impersonation={raw}",
+            # ``raw`` comes from ``secrets.token_urlsafe`` — already restricted
+            # to URL-safe characters, so it needs no percent-encoding.
+            "redirect_url": f"{_app_base_url()}/?impersonation={raw}",
         }
 
 
@@ -1038,6 +1085,14 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
             "jina_fetch_concurrency": runtime_config.get_jina_fetch_concurrency(),
             "spider_fetch_concurrency": runtime_config.get_spider_fetch_concurrency(),
         },
+        "impersonation": {
+            # Effective state (env floor AND runtime row), so the UI shows what
+            # is actually in force rather than just the DB row.
+            "enabled": runtime_config.is_impersonation_enabled(),
+            # When the env floor is off, the runtime toggle cannot turn it back
+            # on — the UI should render the control disabled and say why.
+            "locked_by_env": not IMPERSONATION_ENABLED,
+        },
         "known_models": _KNOWN_MODELS,
         "known_crawl_providers": _KNOWN_CRAWL_PROVIDERS,
     }
@@ -1055,6 +1110,13 @@ class ModelConfigPatch(BaseModel):
     crawl_provider_primary: Literal["spider", "jina"] | None = None
     jina_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
     spider_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
+    # Impersonation kill switch (design §14). Lives here because this is the
+    # runtime-config write path — the one that persists to pricing_config AND
+    # invalidates the cache. Without an entry here the switch would have no way
+    # to be flipped short of a deploy, which defeats the point.
+    # NOTE: this is the fast lever only. The ``IMPERSONATION_ENABLED`` env var
+    # is the floor and cannot be overridden from here.
+    impersonation_enabled: bool | None = None
 
 
 @router.put("/model-config")
@@ -1110,6 +1172,7 @@ def patch_model_config(
         "crawl_provider_primary": "crawl.provider_primary",
         "jina_fetch_concurrency": "crawl.jina_fetch_concurrency",
         "spider_fetch_concurrency": "crawl.spider_fetch_concurrency",
+        "impersonation_enabled": "impersonation.enabled",
     }
 
     changed: dict[str, Any] = {}

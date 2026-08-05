@@ -14,6 +14,7 @@ from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, LeadInfo
 from app.db.session import get_session
 from app.services.lead_service import build_lead_response
 from app.services.plan_entitlements_service import (
+    is_lead_intelligence_enabled,
     is_lead_source_attribution_enabled,
     is_leads_dashboard_enabled,
 )
@@ -22,14 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 def _require_leads_dashboard(auth: dict = Depends(get_current_client_or_operator)) -> None:
-    """Router-level gate — Leads is a paid-tier surface (Starter+).
+    """Router-level gate — every plan reaches the Leads dashboard.
 
-    Free customers see the sidebar item locked; this dependency mirrors
-    the lock on the API so a URL-hack or a stale bookmark can't leak the
-    dashboard. Runs BEFORE every route in this router via
-    ``dependencies=[]`` on the ``APIRouter``. Deny-by-default on
-    entitlements failure keeps the paid surface behind the plan check
-    even when the resolver is unhappy.
+    Free included: the dashboard itself is open, and the paid boundary is
+    the lead-intelligence layer (score / tier / BANT / location / export),
+    enforced per-route via ``is_lead_intelligence_enabled`` — responses
+    are stripped server-side for Free, and ``/export`` 403s. This
+    dependency now only denies when the entitlements resolver fails
+    (deny-by-default), keeping the surface closed when plan state is
+    unknowable. Runs BEFORE every route in this router via
+    ``dependencies=[]`` on the ``APIRouter``.
     """
     with get_session() as session:
         if not is_leads_dashboard_enabled(auth["client_id"], session):
@@ -122,6 +125,7 @@ def list_leads(
             lead_info_map = {li.session_id: li for li in lead_infos}
 
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
+        intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
 
         # Build leads with scores — filters are Python-computed (score/tier not in DB)
         leads = []
@@ -132,14 +136,19 @@ def list_leads(
                 msg_count,
                 bot=bot_map.get(chat_session.bot_id),
                 include_attribution=attribution_enabled,
+                include_intelligence=intelligence_enabled,
             )
 
-            # Apply filters (tier or legacy status param)
-            effective_tier = tier or status
-            if effective_tier and lead["tier"] != effective_tier:
-                continue
-            if min_score is not None and lead["score"] < min_score:
-                continue
+            # Apply filters (tier or legacy status param). Tier/score are part
+            # of the paid intelligence layer — for Free the fields aren't in
+            # the payload, so the filters are ignored rather than leaking the
+            # qualification via a filterable side channel.
+            if intelligence_enabled:
+                effective_tier = tier or status
+                if effective_tier and lead["tier"] != effective_tier:
+                    continue
+                if min_score is not None and lead["score"] < min_score:
+                    continue
 
             leads.append(lead)
 
@@ -167,6 +176,28 @@ def lead_stats(
             bot_ids = [bot_id]
         else:
             bot_ids = client_bot_ids
+
+        if not is_lead_intelligence_enabled(auth["client_id"], session):
+            # Free plan: total + unread keep the list header and sidebar badge
+            # working; the qualification aggregates (tier counts, avg score)
+            # are the paid intelligence layer and are not computed at all.
+            total = 0
+            unread = 0
+            if bot_ids:
+                total = (
+                    session.execute(select(func.count(ChatSession.id)).where(ChatSession.bot_id.in_(bot_ids))).scalar()
+                    or 0
+                )
+                unread = (
+                    session.execute(
+                        select(func.count(ChatSession.id)).where(
+                            ChatSession.bot_id.in_(bot_ids),
+                            ChatSession.lead_viewed_at.is_(None),
+                        )
+                    ).scalar()
+                    or 0
+                )
+            return {"total": total, "unread": unread}
 
         sessions = session.execute(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))).scalars().all()
         bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else []
@@ -270,8 +301,26 @@ def export_leads_csv(
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Export leads as a CSV file download."""
+    """Export leads as a CSV file download. Paid plans only.
+
+    The CSV is the lead-intelligence layer in bulk (Score / Status / BANT /
+    Location / Device columns), so it is gated the same way the fields are
+    stripped from the JSON responses — a Free API key gets a 403, not a
+    file with the locked columns filled in.
+    """
     with get_session() as session:
+        if not is_lead_intelligence_enabled(auth["client_id"], session):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "feature_not_available",
+                    "feature": "lead_intelligence",
+                    "message": (
+                        "Lead export is included on Starter and above. "
+                        "Please upgrade your plan to export captured leads."
+                    ),
+                },
+            )
         client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
             owns_bot = session.execute(
@@ -431,12 +480,14 @@ def get_lead_detail(
 
         msg_count = len(messages)
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
+        intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
         lead = build_lead_response(
             chat_session,
             lead_info,
             msg_count,
             bot=bot,
             include_attribution=attribution_enabled,
+            include_intelligence=intelligence_enabled,
         )
         lead["messages"] = [
             {
@@ -448,25 +499,27 @@ def get_lead_detail(
             for m in messages
         ]
 
-        # Add BANT signal evidence trail
-        signals = (
-            session.execute(
-                select(BANTSignal).where(BANTSignal.session_id == session_id).order_by(BANTSignal.created_at)
+        # Add BANT signal evidence trail — intelligence-layer data, so Free
+        # gets the transcript above but never the extraction evidence.
+        if intelligence_enabled:
+            signals = (
+                session.execute(
+                    select(BANTSignal).where(BANTSignal.session_id == session_id).order_by(BANTSignal.created_at)
+                )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        lead["signals"] = [
-            {
-                "dimension": s.dimension,
-                "signal_text": s.signal_text,
-                "extracted_value": s.extracted_value,
-                "confidence": s.confidence,
-                "score_before": s.score_before,
-                "score_after": s.score_after,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-            }
-            for s in signals
-        ]
+            lead["signals"] = [
+                {
+                    "dimension": s.dimension,
+                    "signal_text": s.signal_text,
+                    "extracted_value": s.extracted_value,
+                    "confidence": s.confidence,
+                    "score_before": s.score_before,
+                    "score_after": s.score_after,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                }
+                for s in signals
+            ]
 
         return lead

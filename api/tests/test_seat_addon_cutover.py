@@ -3,23 +3,26 @@ main plan. Three places that end or replace the main subscription previously
 never touched it, leaving it as a permanently-billing orphan and silently
 dropping the customer's paid seats on plan changes:
 
-1. ``POST /subscription/cancel`` — cancelling the plan left the seat add-on
-   running forever.
+1. Cancelling the plan left the seat add-on running forever. (It then briefly
+   over-corrected: ``POST /subscriptions/cancel`` cancelled the add-on
+   *immediately* on click, taking away seats the customer had paid for through
+   period end. The add-on now rides along with the DEFERRED plan cancel, which
+   ``task_execute_pending_cancellations`` issues near period end.)
 2. ``_handle_subscription_activated``'s sibling-cancel sweep (immediate
    upgrade / resume cutover) — the old seat add-on was never cancelled, and
    the new subscription never got one, even if the customer had paid seats.
 3. ``promote_scheduled_change`` (scheduled downgrade cutover) — same gap.
 
-These tests are regression guards for the fix: seat add-ons must be
-cancelled with the subscription they're attached to, and carried forward
-(re-created) on any subscription that supersedes it.
+These tests are regression guards for the fix: seat add-ons must be cancelled
+with the subscription they're attached to — at the same time, not sooner — and
+carried forward (re-created) on any subscription that supersedes it.
 """
 
 from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -122,8 +125,8 @@ def _activation_payload(*, razorpay_sub_id: str, client_id: int, plan_id: int, p
 # ── 1. /subscription/cancel also cancels the seat add-on ──────────────────────
 
 
-def test_cancel_route_cancels_seat_addon(mock_db_session, mock_get_session):
-    sub = SimpleNamespace(
+def _cancelling_sub(**overrides) -> SimpleNamespace:
+    base = dict(
         id=10,
         client_id=1,
         status="active",
@@ -131,15 +134,29 @@ def test_cancel_route_cancels_seat_addon(mock_db_session, mock_get_session):
         razorpay_subscription_id="sub_main_1",
         seat_addon_subscription_id="sub_addon_1",
         seat_addon_quantity=2,
+        seat_addon_pending_quantity=None,
         cancel_at_period_end=False,
         canceled_at=None,
         cancel_reason=None,
+        gateway_cancel_executed_at=None,
+        current_period_end=datetime.now(UTC) + timedelta(days=26),
+        upgrade_pending_subscription_id=None,
+        upgrade_pending_plan_id=None,
     )
-    client = SimpleNamespace(id=1)
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
-    def _fake_cancel_addon(session, sub_arg):
-        sub_arg.seat_addon_subscription_id = None
-        sub_arg.seat_addon_quantity = 0
+
+def test_cancel_route_defers_the_seat_addon_cancel_with_the_plan(mock_db_session, mock_get_session):
+    """Cancelling mid-period must leave BOTH mandates alone.
+
+    The seat add-on used to be cancelled immediately (``cancel_at_cycle_end=0``)
+    the moment the customer clicked Cancel, so they lost seats they had paid for
+    through period end while the plan itself kept running. It now rides along
+    with the deferred plan cancel.
+    """
+    sub = _cancelling_sub()
+    client = SimpleNamespace(id=1)
 
     with (
         patch("app.api.subscription_routes.get_session", mock_get_session),
@@ -149,43 +166,90 @@ def test_cancel_route_cancels_seat_addon(mock_db_session, mock_get_session):
         patch("app.services.razorpay_service.cancel_seat_addon") as mock_cancel_addon,
         patch("app.services.transition_service.cancel_scheduled_change", MagicMock()),
     ):
-        mock_cancel_addon.side_effect = _fake_cancel_addon
         cancel_subscription_route(CancelSubscriptionRequest(), client)
 
+    mock_cancel_main.assert_not_called()
+    mock_cancel_addon.assert_not_called()
+    assert sub.cancel_at_period_end is True
+    assert sub.seat_addon_subscription_id == "sub_addon_1"
+    assert sub.seat_addon_quantity == 2
+
+
+def test_sweep_cancels_the_seat_addon_and_parks_the_count_for_reactivation(mock_db_session):
+    """When the sweep finally runs it cancels both mandates — but stashes the
+    seat count as PENDING so a later reactivation can re-mint the add-on instead
+    of silently dropping seats the customer bought."""
+    from app.services import transition_service
+
+    sub = _cancelling_sub(cancel_at_period_end=True, current_period_end=datetime.now(UTC) + timedelta(hours=6))
+
+    def _fake_cancel_addon(session, sub_arg):
+        sub_arg.seat_addon_subscription_id = None
+        sub_arg.seat_addon_quantity = 0
+
+    with (
+        patch("app.services.razorpay_service.cancel_subscription", MagicMock()) as mock_cancel_main,
+        patch("app.services.razorpay_service.cancel_seat_addon", side_effect=_fake_cancel_addon) as mock_cancel_addon,
+    ):
+        assert transition_service.execute_gateway_cancellation(mock_db_session, sub) is True
+
     mock_cancel_main.assert_called_once()
+    assert mock_cancel_main.call_args.kwargs["at_period_end"] is True
     mock_cancel_addon.assert_called_once_with(mock_db_session, sub)
     assert sub.seat_addon_subscription_id is None
     assert sub.seat_addon_quantity == 0
+    assert sub.seat_addon_pending_quantity == 2
+    assert sub.gateway_cancel_executed_at is not None
 
 
-def test_cancel_route_seat_addon_failure_does_not_block_plan_cancel(mock_db_session, mock_get_session):
-    """A failing seat-addon cancel must not raise — the plan cancel already succeeded."""
-    sub = SimpleNamespace(
-        id=11,
-        client_id=1,
-        status="active",
-        payment_provider="razorpay",
-        razorpay_subscription_id="sub_main_2",
-        seat_addon_subscription_id="sub_addon_2",
-        seat_addon_quantity=1,
-        cancel_at_period_end=False,
-        canceled_at=None,
-        cancel_reason=None,
-    )
-    client = SimpleNamespace(id=1)
+def test_sweep_seat_addon_failure_does_not_block_the_plan_cancel(mock_db_session):
+    """A failing seat-addon cancel must not raise — the plan cancel already
+    succeeded — but it must NOT stamp the marker either.
+
+    The marker is what makes the sweep skip a row. Stamping it after a failed
+    seat cancel abandons a live ₹499/seat/month mandate with nothing anywhere
+    left to retry it. Leaving it NULL costs a redundant plan-cancel call on the
+    next sweep (a no-op at Razorpay) and buys an automatic retry.
+    """
+    from app.services import transition_service
+
+    sub = _cancelling_sub(cancel_at_period_end=True, current_period_end=datetime.now(UTC) + timedelta(hours=6))
 
     with (
-        patch("app.api.subscription_routes.get_session", mock_get_session),
-        patch("app.api.subscription_routes.lock_client_for_billing", MagicMock()),
-        patch("app.api.subscription_routes._resolve_target_subscription", return_value=sub),
+        patch("app.services.razorpay_service.cancel_subscription", MagicMock()) as mock_cancel_main,
+        patch("app.services.razorpay_service.cancel_seat_addon", side_effect=RuntimeError("gateway 500")),
+    ):
+        assert transition_service.execute_gateway_cancellation(mock_db_session, sub) is False
+
+    mock_cancel_main.assert_called_once()
+    assert sub.gateway_cancel_executed_at is None, "must stay unstamped so the next sweep retries"
+
+
+def test_sweep_retries_a_row_whose_seat_cancel_previously_failed(mock_db_session):
+    """The retry the unstamped marker buys: a later run with a healthy gateway
+    completes the cancellation and stamps."""
+    from app.services import transition_service
+
+    sub = _cancelling_sub(cancel_at_period_end=True, current_period_end=datetime.now(UTC) + timedelta(hours=6))
+
+    def _fake_cancel_addon(session, sub_arg):
+        sub_arg.seat_addon_subscription_id = None
+        sub_arg.seat_addon_quantity = 0
+
+    with (
         patch("app.services.razorpay_service.cancel_subscription", MagicMock()),
         patch("app.services.razorpay_service.cancel_seat_addon", side_effect=RuntimeError("gateway 500")),
-        patch("app.services.transition_service.cancel_scheduled_change", MagicMock()),
     ):
-        result = cancel_subscription_route(CancelSubscriptionRequest(), client)
+        transition_service.execute_gateway_cancellation(mock_db_session, sub)
 
-    assert "message" in result
-    assert sub.cancel_at_period_end is True
+    with (
+        patch("app.services.razorpay_service.cancel_subscription", MagicMock()),
+        patch("app.services.razorpay_service.cancel_seat_addon", side_effect=_fake_cancel_addon),
+    ):
+        assert transition_service.execute_gateway_cancellation(mock_db_session, sub) is True
+
+    assert sub.gateway_cancel_executed_at is not None
+    assert sub.seat_addon_pending_quantity == 2
 
 
 # ── 2. Immediate upgrade / resume cutover carries the seat add-on forward ──────

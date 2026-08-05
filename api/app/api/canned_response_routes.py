@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_client_or_operator
+from app.api.auth import get_current_client_or_operator, impersonation_writable
 from app.db.models import CannedResponse
 from app.db.session import get_session
 
@@ -74,11 +74,16 @@ def _require_canned_response_write_access(auth: dict) -> None:
 
 
 @router.post("")
+@impersonation_writable
 def create_canned_response(
     request: CreateCannedResponseRequest,
     auth=Depends(get_current_client_or_operator),
 ):
-    """Create a new canned response."""
+    """Create a new canned response.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Canned-response CRUD") — pure workspace content, and reversible.
+    """
     _require_canned_response_write_access(auth)
     with get_session() as session:
         response = CannedResponse(
@@ -103,12 +108,17 @@ def create_canned_response(
 
 
 @router.patch("/{response_id}")
+@impersonation_writable
 def update_canned_response(
     response_id: int,
     request: UpdateCannedResponseRequest,
     auth=Depends(get_current_client_or_operator),
 ):
-    """Update a canned response."""
+    """Update a canned response.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Canned-response CRUD").
+    """
     _require_canned_response_write_access(auth)
     with get_session() as session:
         response = session.execute(
@@ -134,11 +144,17 @@ def update_canned_response(
 
 
 @router.delete("/{response_id}")
+@impersonation_writable
 def delete_canned_response(
     response_id: int,
     auth=Depends(get_current_client_or_operator),
 ):
-    """Delete a canned response."""
+    """Delete a canned response.
+
+    Writable under a super-admin impersonation session (design §6.1,
+    "Canned-response CRUD"). The deletion denied by §6.2 is Account / AI Agent
+    deletion — a quick reply is neither, and re-creating one is trivial.
+    """
     _require_canned_response_write_access(auth)
     with get_session() as session:
         response = session.execute(

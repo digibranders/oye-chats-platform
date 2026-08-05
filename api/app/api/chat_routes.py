@@ -15,7 +15,13 @@ from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.auth import bot_subscription_status, get_bot_for_chat, get_current_bot, get_current_client_or_operator
+from app.api.auth import (
+    bot_subscription_status,
+    get_bot_for_chat,
+    get_current_bot,
+    get_current_client_or_operator,
+    impersonation_writable,
+)
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
@@ -357,7 +363,13 @@ def _final_metadata_failure_flag(chunk: str) -> bool | None:
         return None
 
 
+# NOTE ON DECORATOR ORDER: ``impersonation_writable`` sits directly under the
+# route decorator and ABOVE ``limiter.limit``. ``limiter.limit`` returns a
+# wrapper, and the router registers whatever the decorator directly beneath it
+# produced — so the marker must be applied to that wrapper, not to the inner
+# function, or the guard would read it back off the wrong object.
 @router.post("/chat")
+@impersonation_writable
 @limiter.limit("30/minute", key_func=key_from_bot_key)
 def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bot_for_chat)):
     """
@@ -365,6 +377,20 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
     and generates a standalone answer.
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot). Owner-preview
     requests (Build Studio: ?preview=true&bot_id=) resolve any owned bot and are free.
+
+    Marked writable for a super-admin impersonation session (design §6.1,
+    "Preview-mode test chat"): an owner-preview reply skips credit deduction
+    entirely, so exercising the AI Agent costs the Account nothing.
+
+    IMPORTANT — the write guard does **not** run on this endpoint. It lives in
+    the Client resolvers, and this route authenticates through
+    ``get_bot_for_chat`` instead, which resolves a Bot. The marker is therefore
+    not what makes this safe. The real constraint is enforced in
+    ``auth._resolve_preview_client``: an ``X-Impersonation-Token`` is accepted
+    **only** on the owner-preview path (``preview=true`` + ``bot_id``, which
+    sets ``_is_preview`` and skips deduction) and is never forwarded to
+    ``get_current_bot``, so the paid widget path on this same endpoint stays
+    unreachable under impersonation. The kill switch is checked there too.
     """
     # ── Subscription gate (widget side) ──
     # When the bot owner's trial has expired (or the subscription is
@@ -487,7 +513,10 @@ def _offline_stream(bot: Bot, reason: str):
     yield f"\nFINAL_METADATA:{json.dumps({**metadata, 'answer': message})}\n"
 
 
+# Decorator order matters exactly as on ``POST /chat`` above — the marker goes
+# above ``limiter.limit`` so it lands on the object the router registers.
 @router.post("/chat/stream")
+@impersonation_writable
 @limiter.limit("30/minute", key_func=key_from_bot_key)
 async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bot_for_chat)):
     """
@@ -496,6 +525,12 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     Authenticated via X-Bot-Key (widget) or X-API-Key. Owner-preview requests
     (Build Studio: ``?preview=true&bot_id=``) resolve any owned bot and are free
     — no credit deduction — exactly like the non-streaming ``POST /chat``.
+
+    Marked writable for a super-admin impersonation session (design §6.1,
+    "Preview-mode test chat"), with the same mechanics documented on ``POST
+    /chat``: the write guard does not run on this endpoint, and the
+    owner-preview-only constraint is enforced in
+    ``auth._resolve_preview_client`` rather than by the marker.
     """
     # ── Subscription gate (widget side) ──
     # Mirror ``/chat`` — when the bot owner's subscription is inactive,
@@ -912,13 +947,25 @@ def get_history_endpoint(
     auth = None
     resolved_bot_id = bot_id
     has_admin_auth = bool(
-        request.headers.get("X-API-Key") or request.headers.get("X-Operator-Key") or request.headers.get("X-Agent-Key")
+        request.headers.get("X-API-Key")
+        or request.headers.get("X-Operator-Key")
+        or request.headers.get("X-Agent-Key")
+        or request.headers.get("X-Impersonation-Token")
     )
     if has_admin_auth:
+        # This is the one place the resolver is invoked directly rather than via
+        # ``Depends``, so FastAPI does not fill the defaults for us. EVERY
+        # parameter must be passed explicitly: the unfilled defaults are
+        # ``fastapi.params.Security`` sentinel objects, which are truthy — a
+        # partially-specified call would take the impersonation branch for every
+        # caller and blow up in ``_parse_workspace_id`` on a sentinel.
         auth = get_current_client_or_operator(
+            request,
             api_key=request.headers.get("X-API-Key"),
             operator_key=request.headers.get("X-Operator-Key"),
             legacy_agent_key=request.headers.get("X-Agent-Key"),
+            workspace_id_raw=request.headers.get("X-Workspace-Id"),
+            impersonation_token=request.headers.get("X-Impersonation-Token"),
         )
     else:
         raw_bot_key = request.headers.get("X-Bot-Key")

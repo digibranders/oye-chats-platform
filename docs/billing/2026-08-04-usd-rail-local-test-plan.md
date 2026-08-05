@@ -283,8 +283,15 @@ From a foreign-looking IP (or with `resolve_country` stubbed), send a checkout c
 
 - [ ] **Change plan** Starter → Standard on the US client → new mandate uses
       `plan_TLFBQzoxkBVVar` ($19), never the INR Standard id
-- [ ] **Cancel** then **Resume** → still USD, and the mutation targets the *account-level*
-      subscription (`bot_id IS NULL`)
+- [ ] **Cancel** → the Razorpay dashboard shows the subscription **still active** (the
+      gateway cancel is deferred to `task_execute_pending_cancellations`), and the mutation
+      targets the *account-level* subscription (`bot_id IS NULL`)
+- [ ] **Resume** before the sweep → `mandate_action: "none"`, **no checkout opens**, the
+      banner clears immediately, and `current_period_end` + the credit balance are unchanged
+- [ ] **Resume after the sweep** (stamp `gateway_cancel_executed_at`, or pull
+      `current_period_end` inside the lead window and run the cron) → still USD, and the
+      new subscription carries `start_at = current_period_end` so the customer is **not**
+      charged a full cycle today
 - [ ] **Dunning:** drive the USD subscription to `halted`, then
       `GET /subscriptions/payment-recovery` → returns the existing subscription's `short_url`.
       It must **never mint a new mandate** — two live mandates double-charge

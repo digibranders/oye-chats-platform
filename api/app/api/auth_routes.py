@@ -9,14 +9,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_client_or_operator, get_current_client_strict, get_current_operator
+from app.api.auth import (
+    IMPERSONATION_REJECTED_DETAIL,
+    find_active_impersonation_token,
+    get_current_client_or_operator,
+    get_current_client_strict,
+    get_current_operator,
+)
 from app.core.dates import trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
 from app.db.session import get_session
+from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
+from app.services.runtime_config import is_impersonation_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -1078,6 +1086,107 @@ def reset_password(request: Request, body: ResetPasswordRequest):
             "Failed to reset password for %s: %s", _redact_email(_sanitize_for_log(body.email)), type(e).__name__
         )
         raise HTTPException(status_code=500, detail="An error occurred.") from e
+
+
+# ── Impersonation ──
+
+
+class ImpersonationRedeemRequest(BaseModel):
+    token: str
+
+
+class ImpersonationRedeemResponse(BaseModel):
+    """Everything the customer app needs to render an impersonation session.
+
+    Deliberately does NOT carry the Account's ``api_key`` (or any other
+    credential): that key is permanent and unrevocable, so returning it would
+    hand the super-admin something that outlives the 30-minute window and
+    ignores ``revoked_at``. The raw impersonation token the caller already holds
+    stays the only credential for the session.
+    """
+
+    client_id: int
+    name: str
+    email: str
+    expires_at: str
+    # Who is watching — rendered in the customer-side banner.
+    actor_email: str
+    is_impersonation: bool = True
+
+
+@router.post("/impersonation/redeem", response_model=ImpersonationRedeemResponse)
+@limiter.limit("10/minute")
+def redeem_impersonation_token(request: Request, body: ImpersonationRedeemRequest):
+    """Exchange a raw impersonation token for the session's display profile.
+
+    Unauthenticated by design — the token *is* the authentication. Rate-limited
+    per IP because this is an unauthenticated endpoint that validates a secret.
+
+    The call does **not** burn the token: the impersonated tab may reload, and
+    the token remains a bearer credential for its remaining life (validity is
+    re-checked on every subsequent request anyway, so revoking still ends the
+    session immediately).
+
+    Returns 401 for an expired, revoked, unknown, empty or malformed token —
+    one message for all of them, so a prober learns nothing from the response.
+
+    Returns 403 when impersonation is disabled outright (design §14). This is
+    deliberately a *different* status from the 401 above: the customer app
+    renders the server's message for a 403 ("temporarily disabled") but shows
+    "expired or revoked" for a 401, and an operator debugging a flipped kill
+    switch should not be told the link expired.
+    """
+    if not is_impersonation_enabled():
+        logger.warning("impersonation_redeem_rejected: impersonation is disabled")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Impersonation is temporarily disabled.",
+        )
+
+    with get_session() as session:
+        record = find_active_impersonation_token(session, body.token)
+        if record is None:
+            logger.warning("impersonation_redeem_rejected: expired, revoked, unknown, or malformed token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        target = session.get(Client, record.target_id)
+        actor = session.get(Client, record.actor_id)
+        if target is None or actor is None:
+            logger.warning(
+                "impersonation_redeem_rejected: token %s references a missing account (actor=%s target=%s)",
+                record.id,
+                record.actor_id,
+                record.target_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=IMPERSONATION_REJECTED_DETAIL,
+            )
+
+        payload = ImpersonationRedeemResponse(
+            client_id=target.id,
+            name=target.name,
+            email=target.email,
+            expires_at=record.expires_at.isoformat(),
+            actor_email=actor.email,
+        )
+
+        record_audit(
+            session,
+            actor=actor,
+            action="client.impersonate_redeem",
+            target_type="client",
+            target_id=target.id,
+            after={"token_id": record.id, "expires_at": record.expires_at.isoformat()},
+            request=request,
+        )
+        session.commit()
+
+        logger.info("impersonation_redeemed token_id=%s actor=%s target=%s", record.id, actor.id, target.id)
+        return payload
 
 
 # ── Operator Authentication ──

@@ -81,7 +81,7 @@ function buildJourneyRows(journey: unknown[]): JourneyRow[] {
 
 function SectionTitle({ icon: Icon, children }: { icon: typeof Compass; children: string }): ReactElement {
   return (
-    <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+    <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
       <Icon size={13} aria-hidden="true" />
       {children}
     </h3>
@@ -91,8 +91,8 @@ function SectionTitle({ icon: Icon, children }: { icon: typeof Compass; children
 function AttrRow({ label, value }: { label: string; value: string }): ReactElement {
   return (
     <div className="flex items-start gap-2 text-[12px]">
-      <span className="w-20 shrink-0 text-[var(--ds-text-subtle)]">{label}</span>
-      <span className="break-all text-[var(--ds-text-muted)]">{value}</span>
+      <span className="w-20 shrink-0 text-[var(--ds-text-muted)]">{label}</span>
+      <span className="break-all text-[var(--ds-text)]">{value}</span>
     </div>
   );
 }
@@ -121,7 +121,7 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
     return (
       <section className="space-y-3">
         <SectionTitle icon={Compass}>Source</SectionTitle>
-        <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-subtle)]">
+        <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-muted)]">
           Direct / Organic - no UTM tags or referrer were captured for this visitor.
         </p>
       </section>
@@ -153,20 +153,20 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
 
       {rows.length > 0 && (
         <div className="rounded-xl border border-[var(--ds-border)] p-4">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
             Journey before chat · {rows.length} {rows.length === 1 ? 'page' : 'pages'}
           </p>
           <ol className="space-y-1.5">
             {visible.map((row, idx) => (
               <li key={`${row.path}-${row.ts ?? idx}`} className="flex items-start gap-2 text-[12px]">
-                <span className="shrink-0 tabular-nums text-[var(--ds-text-subtle)]">{idx + 1 + offset}.</span>
-                <span className="flex-1 break-all text-[var(--ds-text-muted)]">{row.path || '-'}</span>
+                <span className="shrink-0 tabular-nums text-[var(--ds-text-muted)]">{idx + 1 + offset}.</span>
+                <span className="flex-1 break-all text-[var(--ds-text)]">{row.path || '-'}</span>
                 {row.isLast ? (
                   <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
                     opened chat here
                   </span>
                 ) : row.durationLabel ? (
-                  <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-subtle)]">
+                  <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-muted)]">
                     {row.durationLabel}
                   </span>
                 ) : null}
@@ -174,7 +174,7 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
             ))}
           </ol>
           {rows.length > 8 && (
-            <p className="mt-2 text-[11px] text-[var(--ds-text-subtle)]">
+            <p className="mt-2 text-[11px] text-[var(--ds-text-muted)]">
               Showing the last 8 of {rows.length} pages.
             </p>
           )}
@@ -208,13 +208,13 @@ function BehavioralSignals({ detail }: { detail: LeadDetail }): ReactElement | n
       <div className="space-y-2.5 rounded-xl border border-[var(--ds-border)] p-4">
         {tier && (
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">Engagement</span>
+            <span className="text-[12px] font-medium text-[var(--ds-text)]">Engagement</span>
             <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>
           </div>
         )}
         {visitCount > 1 && (
           <div className="flex items-center justify-between text-[12px]">
-            <span className="font-medium text-[var(--ds-text-muted)]">Return visitor</span>
+            <span className="font-medium text-[var(--ds-text)]">Return visitor</span>
             <span className="text-[var(--ds-text)]">{visitCount} visits</span>
           </div>
         )}

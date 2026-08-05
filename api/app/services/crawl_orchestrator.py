@@ -31,7 +31,6 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
@@ -54,25 +53,35 @@ from app.services.llm_service import classify_brand_tone, extract_company_contex
 logger = logging.getLogger(__name__)
 
 
-def _record_bot_crawl_state(bot_id: int | None, status: str, chunk_count: int | None = None) -> None:
+def _record_bot_crawl_state(bot_id: int | None, status: str) -> None:
     """Persist the bot's durable ingestion ("trained") state after a terminal crawl.
 
-    Best-effort — a failure here must never fail or mask the crawl result. On a
-    successful or partial (cancelled) ingest we stamp ``crawl_completed_at`` and
-    the chunk count; on a hard failure we record only the status so the frontend
-    can tell "tried and failed" from "never trained".
+    Best-effort — a failure here must never fail or mask the crawl result.
+
+    ``last_crawl_status`` records this ATTEMPT, so it is written on every
+    terminal status including a hard failure (the frontend needs to tell "tried
+    and failed" from "never trained"). The trained counters are then recomputed
+    from what the bot actually stores rather than from this crawl's delta: a
+    delta recrawl of an unchanged site legitimately ingests zero new chunks
+    while the bot keeps all of its prior content, and gating the stamp on this
+    job's output left such a bot reading "Nothing learned yet" forever.
+
+    Recomputing on a failed crawl is deliberate too — a failure doesn't destroy
+    previously ingested content, so the bot stays correctly marked as trained.
     """
     if not bot_id:
         return
     try:
+        # Local import: app.db.repository pulls in the service layer, so a
+        # module-level import here would close an import cycle.
+        from app.db.repository import sync_bot_knowledge_state
+
         with get_session() as session:
             bot = session.get(Bot, bot_id)
             if bot is None:
                 return
             bot.last_crawl_status = status
-            if status in ("done", "cancelled") and chunk_count and chunk_count > 0:
-                bot.crawl_completed_at = datetime.now(UTC)
-                bot.indexed_chunk_count = int(chunk_count)
+            sync_bot_knowledge_state(session, bot_id)
             session.commit()
     except Exception:
         logger.warning("failed to record durable crawl state for bot %s (non-fatal)", bot_id, exc_info=True)
@@ -855,7 +864,7 @@ async def run_full_crawl(
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
         )
-        _record_bot_crawl_state(bot_id, crawl_status, total_chunks)
+        _record_bot_crawl_state(bot_id, crawl_status)
         if crawl_status == "done":
             # Warm the seed-question cache now (worker/background), so the Prove
             # step reads a cached value instead of paying LLM + embedding latency
@@ -917,7 +926,7 @@ async def run_full_crawl(
             urls=partial_urls,
             result=result_payload,
         )
-        _record_bot_crawl_state(bot_id, "cancelled", ingest_totals["chunks"])
+        _record_bot_crawl_state(bot_id, "cancelled")
         logger.info(
             "Cancelled crawl for client %s: %d pages discovered, %d chunks already ingested",
             client_id,
