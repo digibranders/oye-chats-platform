@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -161,6 +161,16 @@ export function BillingPage(): ReactElement {
   const [lifecycleBusy, setLifecycleBusy] = useState<'cancel_scheduled' | 'reactivate' | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
+  // Long-lived settle polls outlive a navigation, so they need an unmount
+  // signal to stop reading and never notify a page that is gone.
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
   /**
    * Wait for the server to actually reflect a lifecycle change before telling
    * the customer it happened.
@@ -181,7 +191,12 @@ export function BillingPage(): ReactElement {
           const envelope = (raw ?? {}) as Record<string, unknown>;
           return buildSubscription(envelope.subscription).cancelAtPeriodEnd === false;
         },
+        // Navigating away mid-poll must stop it: otherwise it keeps refetching
+        // for the full 60s and then notifies + reloads against a page that is
+        // no longer mounted.
+        cancelled: () => unmountedRef.current,
       });
+      if (outcome.status === 'cancelled') return;
       // On timeout the payment is still real and the webhook will still land -
       // say what we actually know rather than asserting a renewal we can't see.
       handleSuccess(outcome.status === 'settled' ? settledMessage : pendingMessage);

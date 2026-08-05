@@ -112,21 +112,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
           applyTheme(nextResolved);
         });
 
-        transition.ready.then(() => {
-          document.documentElement.animate(
-            {
-              clipPath: [
-                `circle(0px at ${x}px ${y}px)`,
-                `circle(${endRadius}px at ${x}px ${y}px)`,
-              ],
-            },
-            {
-              duration: 900,
-              easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
-              pseudoElement: '::view-transition-new(root)',
-            }
-          );
-        });
+        transition.ready.then(
+          () => {
+            document.documentElement.animate(
+              {
+                clipPath: [
+                  `circle(0px at ${x}px ${y}px)`,
+                  `circle(${endRadius}px at ${x}px ${y}px)`,
+                ],
+              },
+              {
+                duration: 900,
+                easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+                pseudoElement: '::view-transition-new(root)',
+              }
+            );
+          },
+          () => {
+            // `ready` REJECTS when a transition is skipped - which is what a
+            // second toggle during the 900ms sweep does. The theme itself has
+            // already been applied inside the callback above, so there is
+            // nothing to recover: swallow it rather than raise an unhandled
+            // rejection into Sentry on every rapid double-click.
+          }
+        );
       } else {
         setThemeState(next);
         applyTheme(nextResolved);
