@@ -214,6 +214,13 @@ def test_concurrent_reversals_serialize_on_row_lock(pg_engine, db, enabled):
     must block on that lock rather than proceeding with a stale read, and only
     resume once A commits, then correctly see A's reversal and clamp its own
     to whatever's left."""
+    # How long session A holds the lock, and the floor session B's blocked call
+    # must exceed. Derived from one constant so the two can never drift apart;
+    # the 0.8 margin absorbs scheduler jitter without weakening the property
+    # (an unblocked call returns in single-digit milliseconds, ~100x under it).
+    HOLD_SECONDS = 0.4
+    MIN_BLOCKED_SECONDS = HOLD_SECONDS * 0.8
+
     _seller(db)
     orig = _finalized_invoice(db, "cn-race@test.example")
     db.commit()
@@ -251,12 +258,18 @@ def test_concurrent_reversals_serialize_on_row_lock(pg_engine, db, enabled):
         # Give session B a moment to genuinely attempt (and block on) the lock
         # before we release it, so the timing assertion below is meaningful.
         def release_after_delay():
-            time.sleep(0.4)
+            time.sleep(HOLD_SECONDS)
             release_lock.set()
 
-        threading.Thread(target=release_after_delay).start()
-
+        # Every statement between starting this timer and the measured call
+        # eats into the hold window. ``session_b.get`` is a DB round trip, so
+        # on a loaded CI runner it could consume most of the delay and leave
+        # session B blocking for only the remainder - the assertion then failed
+        # (`assert 0.047 >= 0.35`) while the lock it exists to prove was
+        # working perfectly. Do B's setup FIRST, then start the clock and the
+        # timer together, so the full window belongs to the measured call.
         orig_b = session_b.get(Invoice, orig.id)
+        threading.Thread(target=release_after_delay).start()
         started = time.monotonic()
         note_b = invoice_service.create_credit_note(session_b, orig_b, 179900, provider_ref="rfnd_race_B")
         elapsed = time.monotonic() - started
@@ -264,7 +277,7 @@ def test_concurrent_reversals_serialize_on_row_lock(pg_engine, db, enabled):
     finally:
         t.join(timeout=5)
 
-    assert elapsed >= 0.35, "session B must block on session A's row lock, not race past it"
+    assert elapsed >= MIN_BLOCKED_SECONDS, "session B must block on session A's row lock, not race past it"
 
     # Session A reversed 89,950 first; session B must see that and clamp its
     # own reversal to the 89,950 still remaining — never over-reversing past
