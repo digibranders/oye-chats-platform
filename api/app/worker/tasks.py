@@ -430,6 +430,14 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     select(Subscription).where(
                         Subscription.status.in_(("active", "trialing")),
                         Subscription.current_period_end <= now_utc,
+                        # A cancel-pending row must NEVER be renewed here. Its
+                        # status stays "active" until Razorpay's cancelled
+                        # webhook lands at cycle end, so without this filter a
+                        # webhook running even a few hours late let this cron
+                        # hand out a full free month of credits and roll the
+                        # period forward on a subscription the customer had
+                        # already cancelled and will not be charged for.
+                        Subscription.cancel_at_period_end.is_(False),
                     )
                 )
                 .scalars()
@@ -475,6 +483,99 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     count = await loop.run_in_executor(None, _renew)
     if count:
         logger.info("task_renew_due_subscriptions: granted credits for %d subscription(s)", count)
+    return count
+
+
+async def task_execute_pending_cancellations(ctx: dict) -> int:
+    """Cron: issue the real Razorpay cancel for subscriptions nearing period end.
+
+    ``POST /subscriptions/cancel`` records only the customer's INTENT to churn
+    (``cancel_at_period_end``) and leaves the mandate live, because Razorpay has
+    no un-cancel: cancelling at the gateway on click destroyed the mandate ~30
+    days early and forced "Reactivate" to mint a fresh subscription that
+    Razorpay starts and charges immediately — a second payment for days the
+    customer had already bought. This cron closes the loop, issuing the
+    irreversible cancel only once the paid period is nearly over.
+
+    Runs at 00:03, deliberately BEFORE ``task_renew_due_subscriptions`` (00:05):
+    a subscription whose period ends today must be cancelled at the gateway
+    before anything considers renewing it.
+
+    ``execute_gateway_cancellation`` is idempotent on
+    ``gateway_cancel_executed_at``, so a re-run — or a row ``/cancel`` already
+    handled inline — is a no-op rather than a double cancel.
+
+    Backstop: if this cron is down long enough for Razorpay to debit the next
+    cycle anyway, ``_handle_subscription_charged`` catches the charge, cancels
+    immediately, withholds the credit grant and logs for refund — so the worst
+    case is bounded at one cycle rather than an open-ended subscription.
+
+    Returns the number of subscriptions cancelled at the gateway this run.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app import config
+    from app.db.models import Subscription
+    from app.db.session import get_session
+    from app.services import transition_service
+    from app.services.plan_service import lock_client_for_billing
+
+    def _sweep() -> int:
+        cutoff = datetime.now(UTC) + timedelta(days=config.GATEWAY_CANCEL_LEAD_DAYS)
+        cancelled = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.cancel_at_period_end.is_(True),
+                        Subscription.gateway_cancel_executed_at.is_(None),
+                        Subscription.status.in_(("active", "trialing", "past_due")),
+                        Subscription.razorpay_subscription_id.isnot(None),
+                        Subscription.current_period_end <= cutoff,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                # Isolate each subscription: commit per-row and skip on error so
+                # one unreachable mandate can't roll back the cancellations of
+                # every other subscription in the run (audit F14 pattern).
+                try:
+                    # Take the SAME advisory lock every billing mutation takes.
+                    # Without it this cron races ``/subscriptions/resume``: resume
+                    # asks Razorpay "is the mandate live?", we cancel it and stamp
+                    # the marker, and resume then clears ``cancel_at_period_end``
+                    # against a mandate that is now dead — the row promises a
+                    # renewal that will never happen, which is the exact lie the
+                    # whole two-field design exists to prevent. Re-reading the row
+                    # under the lock also drops it if resume won the race.
+                    lock_client_for_billing(session, sub.client_id)
+                    session.refresh(sub)
+                    if not sub.cancel_at_period_end or sub.gateway_cancel_executed_at is not None:
+                        session.commit()
+                        continue
+                    if transition_service.execute_gateway_cancellation(session, sub):
+                        cancelled += 1
+                    session.commit()
+                except Exception:
+                    logger.exception(
+                        "Gateway cancellation FAILED for subscription %s (client %s); will retry "
+                        "next run. If this keeps failing the customer stays billable past their "
+                        "cancellation date and needs manual reconciliation.",
+                        getattr(sub, "id", "?"),
+                        getattr(sub, "client_id", "?"),
+                    )
+                    session.rollback()
+        return cancelled
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _sweep)
+    if count:
+        logger.info("task_execute_pending_cancellations: cancelled %d subscription(s) at the gateway", count)
     return count
 
 

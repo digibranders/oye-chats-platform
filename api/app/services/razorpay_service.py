@@ -353,6 +353,7 @@ def create_subscription(
     total_count: int | None = None,
     extra_notes: dict[str, str] | None = None,
     discount_bps: int | None = None,
+    start_at: int | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
@@ -379,6 +380,15 @@ def create_subscription(
         downgrade cutover, per-bot) and recurs on all future charges.
       * an explicit ``int`` (including ``0``) → use that value verbatim,
         bypassing auto-resolution (e.g. to force full price).
+
+    ``start_at`` (Unix seconds) defers the FIRST billing cycle. Omitted — the
+    default — Razorpay starts the subscription at authorization and captures
+    cycle 1 immediately, which is correct for a first purchase. It is NOT
+    correct when the customer has already paid through a date: ``/subscriptions
+    /resume`` on an already-cancelled mandate passes the old subscription's
+    ``current_period_end`` here so the new mandate is authorised now and first
+    charges when the paid period actually runs out, instead of billing a second
+    full cycle for days the customer already owns.
     """
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
@@ -454,16 +464,21 @@ def create_subscription(
     # quantity multiplies the WHOLE plan amount (₹4,599×2 = ₹9,198, not ₹4,599+₹499).
     quantity = max(int(seat_quantity or 1), 1)
 
+    payload: dict[str, Any] = {
+        "plan_id": razorpay_plan_id,
+        "total_count": int(total_count),
+        "customer_notify": 1,
+        "quantity": quantity,
+        "notes": notes,
+    }
+    # Only send ``start_at`` when it is genuinely in the future — Razorpay
+    # rejects a past timestamp, and a caller passing "now" means "start now",
+    # which is exactly the default behaviour of omitting the field.
+    if start_at is not None and start_at > int(datetime.now(UTC).timestamp()):
+        payload["start_at"] = int(start_at)
+
     try:
-        subscription = rzp.subscription.create(
-            data={
-                "plan_id": razorpay_plan_id,
-                "total_count": int(total_count),
-                "customer_notify": 1,
-                "quantity": quantity,
-                "notes": notes,
-            }
-        )
+        subscription = rzp.subscription.create(data=payload)
     except Exception as exc:
         logger.exception(
             "Razorpay subscription.create failed for client %s plan %s: %s",
@@ -474,12 +489,13 @@ def create_subscription(
         raise RazorpayBillingError("Could not create subscription. Please try again.") from exc
 
     logger.info(
-        "Created Razorpay subscription %s for client %s on plan %s (%s, qty=%d)",
+        "Created Razorpay subscription %s for client %s on plan %s (%s, qty=%d, start_at=%s)",
         subscription["id"],
         client.id,
         plan.slug,
         billing_cycle,
         quantity,
+        payload.get("start_at", "now"),
     )
 
     return {
@@ -1034,6 +1050,77 @@ def verify_subscription_payment_signature(
         raise SignatureMismatch("Razorpay subscription signature verification failed") from exc
 
 
+def cancel_subscription_by_id(razorpay_subscription_id: str, *, at_period_end: bool = False) -> None:
+    """Cancel a Razorpay subscription that has no local ``Subscription`` row.
+
+    Sibling of :func:`cancel_subscription`, which needs a local row to read the
+    id from. This one exists for in-flight replacement checkouts: they live only
+    as ``upgrade_pending_subscription_id`` on the row they would have replaced,
+    and an unauthorised one left behind is authorizable indefinitely at
+    Razorpay — so a customer could revive billing weeks after cancelling by
+    clicking a stale checkout link.
+
+    Terminal-state rejections are swallowed for the same reason as the sibling:
+    "stop charging" is already true.
+    """
+    if not razorpay_subscription_id:
+        return
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.cancel(
+            razorpay_subscription_id,
+            data={"cancel_at_cycle_end": 1 if at_period_end else 0},
+        )
+    except Exception as exc:
+        exc_msg = str(exc).lower()
+        if "not cancellable" in exc_msg or "cancelled status" in exc_msg or "completed status" in exc_msg:
+            logger.warning(
+                "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
+                razorpay_subscription_id,
+                exc,
+            )
+            return
+        logger.exception("Razorpay subscription.cancel (by id) failed for %s", razorpay_subscription_id)
+        raise RazorpayBillingError("Could not cancel the subscription with Razorpay.") from exc
+
+
+def is_subscription_live(razorpay_subscription_id: str) -> bool:
+    """Will Razorpay still charge this subscription on its next cycle?
+
+    Used by ``/subscriptions/resume`` before it clears ``cancel_at_period_end``.
+    The local ``gateway_cancel_executed_at`` marker says whether *we* issued a
+    cancel, but the customer could also have cancelled from Razorpay's own
+    emails, or a sweep could have half-completed — and clearing the flag
+    against a dead mandate tells the customer their plan will keep renewing
+    when it will silently lapse instead. That is precisely the class of lie
+    BL-3 exists to prevent, so we ask the gateway rather than assume.
+
+    ``created``/``pending``/``authenticated`` all count as live: the mandate is
+    on its way up, not on its way out.
+
+    Raises:
+        RazorpayBillingError: the fetch failed. Callers must surface this
+            rather than guessing — a network blip is not evidence of anything.
+    """
+    rzp = _get_razorpay()
+    try:
+        entity = rzp.subscription.fetch(razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception(
+            "Razorpay subscription.fetch failed for %s during liveness check",
+            razorpay_subscription_id,
+        )
+        raise RazorpayBillingError("Could not reach the payment provider. Please try again in a moment.") from exc
+
+    status = (entity.get("status") or "").lower()
+    # ``ended_at`` / ``cancel_at_cycle_end`` are set the moment a cancel is
+    # scheduled, while ``status`` stays "active" until the cycle actually ends —
+    # so status alone would report a cancel-at-cycle-end mandate as live.
+    if entity.get("cancel_at_cycle_end"):
+        return False
+    return status in ("created", "authenticated", "pending", "active")
+
+
 def cancel_subscription(subscription: Subscription, *, at_period_end: bool = True) -> None:
     """Cancel a Razorpay subscription at period end (default) or immediately.
 
@@ -1306,6 +1393,9 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
     but only these affect billing state for OyeChats:
 
     * ``subscription.activated``  → first authentication, grant initial credits
+    * ``subscription.authenticated`` → mandate approved but billing not started
+                                    (future ``start_at``); materialises the row
+                                    WITHOUT granting credits
     * ``subscription.charged``    → recurring renewal, reset + grant credits
     * ``subscription.cancelled``  → mark canceled in our DB
     * ``subscription.completed``  → all cycles complete, mark canceled
@@ -1342,6 +1432,10 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
 
     handlers = {
         "subscription.activated": _handle_subscription_activated,
+        # A mandate authorised out of band, for a subscription that has NOT
+        # started billing yet. See the handler for why it is deliberately
+        # narrower than ``activated``.
+        "subscription.authenticated": _handle_subscription_authenticated,
         "subscription.charged": _handle_subscription_charged,
         "subscription.cancelled": _handle_subscription_cancelled,
         "subscription.completed": _handle_subscription_completed,
@@ -1736,6 +1830,37 @@ def _grant_subscription_period(
     return credit_service.grant_subscription_period_once(session, subscription, period_end, invoice_id=invoice_id)
 
 
+def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
+    """Mandate authorised, billing not started — materialise the row, grant nothing.
+
+    Needed for the deferred-start reactivation: a subscription minted with a
+    future ``start_at`` fires this and then nothing until its first charge, so
+    without handling it the local row never appears and a paid reactivation
+    looks like it failed (the "won't renew" banner never clears) while the
+    mandate is live at Razorpay.
+
+    Deliberately NARROWER than ``subscription.activated``. Authentication proves
+    a mandate exists, not that money moved, so routing every authentication into
+    the activation handler would hand out a month of credits before Razorpay
+    collected anything — entitlement ahead of payment, which is the one rule
+    this billing code does not bend. We therefore only act when the entity's
+    ``current_start`` is in the future (the deferred-start case, where the
+    activation handler is itself grant-free). An immediate-start subscription is
+    left alone: its own ``activated`` event is the canonical trigger and arrives
+    on its own.
+    """
+    sub_entity = _extract_subscription_entity(payload)
+    if not sub_entity:
+        return "subscription entity missing"
+
+    current_start = sub_entity.get("current_start")
+    starts_in_future = bool(current_start) and datetime.fromtimestamp(current_start, tz=UTC) > datetime.now(UTC)
+    if not starts_in_future:
+        return f"subscription.authenticated for {sub_entity.get('id')} ignored (immediate start — awaiting activated)"
+
+    return _handle_subscription_activated(session, payload)
+
+
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
     """First mandate-authentication or restart after a paused state.
 
@@ -1764,6 +1889,16 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
     quantity = int(sub_entity.get("quantity") or 1)
     customer_id = sub_entity.get("customer_id")
 
+    # A subscription minted with a future ``start_at`` — the reactivation path,
+    # where the customer has already paid through ``start_at`` on the mandate
+    # this one replaces. The mandate authorises NOW but does not bill until the
+    # old period runs out, so entitlement must not cut over yet: the predecessor
+    # keeps serving (and keeps its credits) until then. Two things change below:
+    # the predecessor is cancelled at-cycle-end rather than immediately, and no
+    # credits are granted here — the ``subscription.charged`` at ``start_at``
+    # does that, exactly like a normal renewal.
+    starts_in_future = current_period_start is not None and current_period_start > datetime.now(UTC)
+
     if local is None:
         if client_id is None or plan_id is None:
             logger.warning(
@@ -1778,9 +1913,41 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # one active subscription per bot concurrently.
         is_per_bot = (notes.get("purpose") or "").lower() == "per_bot_subscription"
 
-        if not is_per_bot:
-            # Account-level (legacy) flow: cancel any existing subscription
-            # this new one is replacing.
+        # ``oyechats_bot_id`` marks a subscription that funds an EXISTING bot —
+        # set by ``/subscriptions/resume`` when the row it is replacing is
+        # per-bot. Without it the sweep below would look for the account row
+        # (``bot_id IS NULL``), never retire the per-bot one, and the customer
+        # would be left holding two live mandates with the "won't renew" banner
+        # stuck on forever. It also means: do NOT mint a new Bot.
+        resume_bot_id: int | None = None
+        raw_resume_bot_id = notes.get("oyechats_bot_id")
+        if raw_resume_bot_id:
+            try:
+                resume_bot_id = int(raw_resume_bot_id)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Razorpay subscription %s carries an unparseable oyechats_bot_id %r — treating as account-level",
+                    razorpay_sub_id,
+                    raw_resume_bot_id,
+                )
+        # A brand-new bot is minted only for a per-bot subscription that does
+        # NOT name an existing one.
+        mints_new_bot = is_per_bot and resume_bot_id is None
+
+        # Period + grant marker inherited from the subscription this one
+        # supersedes. Only populated for a future-``start_at`` cutover, where
+        # the customer has already paid through the predecessor's period end:
+        # the new row must continue that period rather than open a fresh one,
+        # so their existing credits keep running and nothing is re-granted
+        # until the ``subscription.charged`` at ``start_at``.
+        carried_period_start: datetime | None = None
+        carried_period_end: datetime | None = None
+        carried_grant_marker: datetime | None = None
+
+        if not mints_new_bot:
+            # Cancel whatever subscription this new one is replacing, in the
+            # scope it replaces: the account row (``bot_id IS NULL``) or, on a
+            # per-bot resume, that bot's own row.
             #
             # ``trial_expired`` is included alongside the active-set because a
             # customer who lets their trial lapse and *then* subscribes must
@@ -1791,12 +1958,15 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             # retention window elapses. Canceling flips the row out of the
             # cron's filter; nulling ``data_retention_until`` is belt-and-
             # braces in case the filter is ever broadened.
+            scope_filter = (
+                Subscription.bot_id == resume_bot_id if resume_bot_id is not None else Subscription.bot_id.is_(None)
+            )
             existing = (
                 session.execute(
                     select(Subscription).where(
                         Subscription.client_id == client_id,
                         Subscription.status.in_(("active", "trialing", "past_due", "trial_expired")),
-                        Subscription.bot_id.is_(None),
+                        scope_filter,
                     )
                 )
                 .scalars()
@@ -1823,6 +1993,27 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                     carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_quantity or 0))
                     old.seat_addon_subscription_id = None
                     old.seat_addon_quantity = 0
+                elif old.seat_addon_pending_quantity:
+                    # No live add-on, but seats are parked as pending — the
+                    # deferred cancellation sweep cancelled the add-on mandate
+                    # and stashed the count so a reactivation could restore it.
+                    # Carry it the same way; ``edit_seat_addon_quantity`` below
+                    # re-mints with re-authorization, so nothing is granted free.
+                    carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_pending_quantity))
+                    old.seat_addon_pending_quantity = None
+                if starts_in_future:
+                    # The customer paid through ``old.current_period_end`` and the
+                    # new mandate does not bill until then. Carry the period and
+                    # the grant marker onto the replacement so entitlement is
+                    # continuous: same end date, same credits, no reset. Without
+                    # this the replacement would open a brand-new period today,
+                    # ``_grant_subscription_period`` would wipe the unused
+                    # allowance they already own, and the "resets on" date would
+                    # jump backwards — the exact loss the deferred start exists
+                    # to avoid.
+                    carried_period_start = carried_period_start or old.current_period_start
+                    carried_period_end = carried_period_end or old.current_period_end
+                    carried_grant_marker = carried_grant_marker or old.last_granted_period_end
                 # Flip out of the active set immediately (entitlement stops here).
                 # cancel_reason is left as-is on a clean cancel; the deferred
                 # gateway cancel below stamps the reconcile marker only on failure.
@@ -1846,18 +2037,27 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # enforces "one active client-level subscription per client" via
         # ``WHERE bot_id IS NULL AND status IN active/trialing/past_due``).
         new_bot = None
-        if is_per_bot:
+        if mints_new_bot:
             new_bot = _create_bot_from_subscription_notes(session, client_id, None, plan_id, notes)
 
         local = Subscription(
             client_id=client_id,
             plan_id=plan_id,
-            bot_id=new_bot.id if new_bot is not None else None,
+            bot_id=new_bot.id if new_bot is not None else resume_bot_id,
             status="active",
             billing_cycle=notes.get("billing_cycle", "monthly"),
             operator_quantity=quantity,
-            current_period_start=current_period_start,
-            current_period_end=current_period_end,
+            # On a future-``start_at`` cutover the entity's period is the FUTURE
+            # one this mandate will bill; the customer is still living in the
+            # predecessor's paid period, so that is what the row must show.
+            current_period_start=carried_period_start or current_period_start,
+            current_period_end=carried_period_end or current_period_end,
+            # Carrying the predecessor's grant marker is what makes the deferred
+            # start safe: ``grant_subscription_period_once`` is monotonic on it,
+            # so nothing re-grants (or resets) for a period already paid and
+            # granted, and the ``subscription.charged`` at ``start_at`` — which
+            # carries a strictly later period end — grants exactly once, on time.
+            last_granted_period_end=carried_grant_marker,
             payment_provider="razorpay",
             razorpay_subscription_id=razorpay_sub_id,
             razorpay_customer_id=customer_id,
@@ -1866,7 +2066,19 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         session.add(local)
         session.flush()
 
-        if is_per_bot and new_bot is not None:
+        if resume_bot_id is not None:
+            # The bot already existed; re-point it at the subscription that now
+            # funds it. Left on the superseded row, ``Bot.subscription_id`` would
+            # name a canceled subscription and every lookup that walks that FK
+            # would read the customer as unfunded.
+            from app.db.models import Bot
+
+            existing_bot = session.get(Bot, resume_bot_id)
+            if existing_bot is not None:
+                existing_bot.subscription_id = local.id
+                session.flush()
+
+        if mints_new_bot and new_bot is not None:
             # Now back-link the bot to the freshly inserted subscription so
             # the bot row knows which sub funds it. Uses ``post_update`` on
             # the Bot.subscription relationship to avoid the circular FK.
@@ -1921,15 +2133,38 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # consumption. Derive the first period end from current_start + the plan
         # interval (which equals the current_end Razorpay will send on that first
         # charge) so the marker advances now and the charged correctly no-ops.
-        grant_period_end = current_period_end
-        if grant_period_end is None and current_period_start is not None:
-            cycle = (local.billing_cycle if local else None) or notes.get("billing_cycle") or "monthly"
-            grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
-        _grant_subscription_period(session, local, grant_period_end)
+        if starts_in_future:
+            # Nothing to grant yet — this mandate has not billed anything. The
+            # customer is still inside the period they already paid for, whose
+            # credits are already in the ledger and must be left exactly where
+            # they are. Granting here would run ``reset_monthly_plan_credits``
+            # first and destroy that balance. The ``subscription.charged`` at
+            # ``start_at`` grants the new period, like any other renewal.
+            logger.info(
+                "Razorpay subscription %s activated with a future start (%s) — carrying the "
+                "previous period and deferring the credit grant to its first charge",
+                razorpay_sub_id,
+                current_period_start.isoformat() if current_period_start else "?",
+            )
+        else:
+            # Finding N: a UPI ``activated`` can land BEFORE the first charge with no
+            # ``current_end``. Granting then without advancing the period marker means
+            # the first ``subscription.charged`` (which DOES carry current_end) grants
+            # a SECOND time for the same period — refunding the customer's first-cycle
+            # consumption. Derive the first period end from current_start + the plan
+            # interval (which equals the current_end Razorpay will send on that first
+            # charge) so the marker advances now and the charged correctly no-ops.
+            grant_period_end = current_period_end
+            if grant_period_end is None and current_period_start is not None:
+                cycle = (local.billing_cycle if local else None) or notes.get("billing_cycle") or "monthly"
+                grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
+            _grant_subscription_period(session, local, grant_period_end)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent —
         # the old sub's column is zeroed the first time this runs, so webhook
-        # replays don't double-credit.
+        # replays don't double-credit. A deferred start never resets anything,
+        # so the resume path leaves the pending amount at zero and this call
+        # only clears the in-flight checkout markers.
         transition_service.apply_pending_proration(
             session, local, prev_rzp_sub_id, live_remaining=live_remaining_before_reset
         )
@@ -1999,7 +2234,13 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         for old, seat_addon_id in superseded_gateway_cancels:
             if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
                 try:
-                    cancel_subscription(old, at_period_end=False)
+                    # A future-``start_at`` replacement does not bill until the
+                    # predecessor's period ends, so kill that mandate at cycle
+                    # end rather than now. Cancelling immediately would void the
+                    # remainder the customer already paid for at the gateway too
+                    # — and there is nothing to protect against, because the
+                    # replacement cannot charge before the old one stops.
+                    cancel_subscription(old, at_period_end=starts_in_future)
                 except Exception:
                     old.cancel_reason = "gateway_cancel_failed_mandate_live"
                     logger.error(
@@ -2248,6 +2489,51 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         )
         session.flush()
         return f"Subscription {razorpay_sub_id} charged after cancellation — invoice recorded, not reactivated"
+
+    # Backstop for the deferred-cancellation model. ``/subscriptions/cancel``
+    # leaves the mandate live so the customer can reactivate for free, and
+    # ``task_execute_pending_cancellations`` issues the real cancel a couple of
+    # days before period end. If that cron was down long enough, Razorpay
+    # renewed a subscription the customer had already cancelled — which is
+    # exactly the charge the deferral trades against, so it must be caught here
+    # and bounded at ONE cycle. Cancel immediately (there is nothing left to
+    # protect: the period they paid for has just rolled over), withhold the
+    # credit grant, and log for refund. The invoice above already recorded the
+    # money for reconciliation.
+    if local.cancel_at_period_end and local.gateway_cancel_executed_at is None:
+        try:
+            cancel_subscription(local, at_period_end=False)
+        except Exception:
+            # Leave the row ACTIVE and the period un-rolled on purpose. Flipping
+            # it to "canceled" here would drop it out of the sweep's match set
+            # (``status IN active/trialing/past_due``) and out of the renewal
+            # cron, so a mandate we failed to stop would keep debiting with
+            # nothing left to retry it. Left as-is, the next sweep re-matches
+            # (``current_period_end`` is still the elapsed one) and tries again.
+            logger.error(
+                "Emergency gateway cancel FAILED for %s (client %s) after it renewed past a "
+                "pending cancellation — the mandate is STILL LIVE and will debit again next "
+                "cycle. Left active so the sweep retries; needs manual cancellation at Razorpay "
+                "if it keeps failing.",
+                razorpay_sub_id,
+                local.client_id,
+                exc_info=True,
+            )
+            session.flush()
+            return f"Subscription {razorpay_sub_id} renewed past a pending cancellation — cancel FAILED, will retry"
+
+        local.gateway_cancel_executed_at = datetime.now(UTC)
+        local.status = "canceled"
+        local.canceled_at = local.canceled_at or datetime.now(UTC)
+        session.flush()
+        logger.error(
+            "subscription.charged for %s (client %s) renewed a subscription that was cancelled "
+            "for period end — the pending-cancellation sweep did not run in time. Invoice "
+            "recorded and credits WITHHELD; this charge needs refunding.",
+            razorpay_sub_id,
+            local.client_id,
+        )
+        return f"Subscription {razorpay_sub_id} renewed past a pending cancellation — cancelled, refund required"
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation
