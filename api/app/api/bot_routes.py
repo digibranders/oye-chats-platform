@@ -15,6 +15,7 @@ from app.api.auth import (
     bot_subscription_status,
     get_current_bot,
     get_current_client_or_operator,
+    impersonation_writable,
     require_active_subscription_for_workspace,
     require_verified_email_for_workspace,
 )
@@ -1809,8 +1810,16 @@ def _reconcile_manual_overrides(bot: Bot, update_data: dict) -> None:
 
 
 @router.patch("/{bot_id}")
+@impersonation_writable
 def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_client_or_operator)):
-    """Update settings for a specific bot."""
+    """Update settings for a specific bot.
+
+    Writable under a super-admin impersonation session (design §6.1, "AI Agent
+    config edits") — this is the single endpoint behind name, greeting, tone and
+    appearance/branding, which is the most common "it looks wrong" support
+    report. Every field on ``UpdateBotRequest`` is bot configuration: nothing
+    here touches billing, credits, or credentials.
+    """
     try:
         _require_bot_management_access(auth)
         with get_session() as session:
