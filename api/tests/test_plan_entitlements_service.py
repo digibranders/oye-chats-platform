@@ -24,6 +24,7 @@ from app.services.plan_entitlements_service import (
     get_entitlements,
     invalidate,
     is_bant_enabled_for_plan,
+    is_lead_intelligence_enabled,
     is_leads_dashboard_enabled,
 )
 
@@ -521,6 +522,51 @@ class TestIsLeadsDashboardEnabled:
             side_effect=RuntimeError("cache down"),
         ):
             assert is_leads_dashboard_enabled(1, session) is False
+
+
+# ── Lead intelligence plan-gate helper ───────────────────────────────────────
+#
+# ``is_lead_intelligence_enabled`` is the paid boundary inside the (now
+# universally reachable) leads dashboard: score / tier / BANT breakdown /
+# location / device / signal trail / CSV export. Free is denied; every
+# non-free slug gets it; lookup failure denies.
+
+
+class TestIsLeadIntelligenceEnabled:
+    def _entitlements(self, slug: str) -> PlanEntitlements:
+        return PlanEntitlements(
+            client_id=1,
+            plan_slug=slug,
+            plan_name=slug.title(),
+            subscription_status="active",
+            limits={},
+            features={},
+        )
+
+    def test_free_plan_denied(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements("free"),
+        ):
+            assert is_lead_intelligence_enabled(1, session) is False
+
+    @pytest.mark.parametrize("slug", ["starter", "standard", "professional", "custom-paid"])
+    def test_paid_slugs_allowed(self, slug):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(slug),
+        ):
+            assert is_lead_intelligence_enabled(1, session) is True
+
+    def test_returns_false_on_entitlements_lookup_failure(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            side_effect=RuntimeError("cache down"),
+        ):
+            assert is_lead_intelligence_enabled(1, session) is False
 
 
 # ── Chat history retention helper ────────────────────────────────────────────
