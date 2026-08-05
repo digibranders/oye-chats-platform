@@ -736,3 +736,398 @@ def test_expire_old_topups_scopes_expiry_debit_to_the_bot_ledger(db):
     # Bot balance is drained to zero; the account pool raw sum is untouched.
     assert _balances(db, client.id, bot.id) == 0
     assert _raw_pool_sum(db, client.id) == pool_before
+
+
+# ── P0-1: clawback misattribution by invoice kind ────────────────────────────
+# A refund/dispute must claw back only what the refunded invoice actually
+# funded. Seat add-on invoices and withheld-credit charges carry a
+# subscription_id but granted NOTHING — deriving intent from subscription_id
+# presence made a ₹449 seat refund wipe the customer's entire plan allowance
+# via the most-recent-grant fallback. ``Invoice.kind`` now records what the
+# charge was for; the fallback is reserved for legacy (kind IS NULL) rows.
+
+
+def _sub_with_plan(db, client, bot, *, slug):
+    plan = Plan(name=slug.title(), slug=slug, monthly_price_cents=44900, credits_per_month=10000)
+    db.add(plan)
+    db.flush()
+    sub = Subscription(
+        client_id=client.id, plan_id=plan.id, bot_id=bot.id, status="active", payment_provider="razorpay"
+    )
+    db.add(sub)
+    db.flush()
+    return sub
+
+
+def test_seat_invoice_refund_claws_nothing(db):
+    """Refunding a seat add-on invoice must not touch the plan grant."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-seat1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-seat1")
+    # Activation-style plan grant with NO invoice link — exactly the shape the
+    # legacy fallback would have (wrongly) clawed.
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_seat_1",
+        description="Operator seat add-on",
+        kind="seat",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_seat_1", 44900, refund_id="rfnd_seat_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000  # plan grant untouched
+    db.refresh(inv)
+    assert inv.status == "refunded"  # money bookkeeping still happens
+
+
+def test_withheld_charge_refund_claws_nothing(db):
+    """A charged-after-cancellation invoice granted no credits; refunding it
+    (the operationally PRESCRIBED action) must not reverse an older grant."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-withheld1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-withheld1")
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_withheld_1",
+        kind="withheld_charge",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_withheld_1", 44900, refund_id="rfnd_wh_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000
+
+
+def test_dispute_lost_on_seat_invoice_claws_nothing(db):
+    client = _client(db)
+    bot = _bot(db, client, key="bot-seatdisp")
+    sub = _sub_with_plan(db, client, bot, slug="pro-seatdisp")
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_seat_disp",
+        kind="seat",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_dispute_lost(db, _dispute_payload("pay_seat_disp", dispute_id="disp_seat_1", amount=44900))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000
+    db.refresh(inv)
+    assert inv.status == "dispute_lost"
+
+
+def test_kind_stamped_invoice_without_link_never_falls_back(db):
+    """A kind-stamped plan charge with no linked grant claws NOTHING — the
+    most-recent-grant guess is reserved for pre-kind legacy rows. A missed
+    clawback is recoverable by ops; a wrong one is not."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-nolink")
+    sub = _sub_with_plan(db, client, bot, slug="pro-nolink")
+    # Unlinked grant from a LATER period than the refunded invoice.
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_nolink_1",
+        kind="plan_charge",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_nolink_1", 44900, refund_id="rfnd_nolink_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000
+
+
+def test_legacy_null_kind_keeps_fallback_behavior(db):
+    """Pre-kind rows (kind IS NULL) keep the historical most-recent-grant
+    fallback — for them the heuristic is usually right and C2 linking never
+    existed."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-legacy1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-legacy1")
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_legacy_1",
+        kind=None,
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_legacy_1", 44900, refund_id="rfnd_legacy_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 0  # fallback clawed the grant
+
+
+def test_backfill_reference_skips_negative_reset_rows(db):
+    """_backfill_plan_grant_reference must link the invoice to a POSITIVE grant
+    row, never a reset row — even when the reset row is newer and shares the
+    same server-side created_at (same transaction)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-backfill1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-backfill1")
+
+    # Positive grant first (lower id), negative reset row second (higher id),
+    # both flushed in ONE transaction so created_at (func.now()) is identical.
+    grant = CreditLedger(client_id=client.id, bot_id=bot.id, delta=10000, reason="plan_grant")
+    db.add(grant)
+    db.flush()
+    reset = CreditLedger(client_id=client.id, bot_id=bot.id, delta=-4000, reason="plan_grant", grant_id=grant.id)
+    db.add(reset)
+    db.flush()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_backfill_1",
+        kind="plan_charge",
+    )
+    db.add(inv)
+    db.flush()
+
+    credit_service._backfill_plan_grant_reference(db, sub, inv.id)
+    db.commit()
+
+    db.refresh(grant)
+    db.refresh(reset)
+    assert grant.reference_id == inv.id  # positive row linked
+    assert reset.reference_id is None  # reset row untouched
+
+
+def test_reconcile_topup_before_capture_does_not_burn_idempotency_key(db, monkeypatch):
+    """P1-5 — Checkout's success handler can fire while the payment is still
+    ``authorized`` (payment_capture=1 captures asynchronously). That early
+    verify must NOT burn ``reconcile:topup:<order_id>``: burning it made every
+    later verify short-circuit as \"already handled\" while no credits were ever
+    granted — paid-but-no-credits with the webhook as the only (possibly
+    dropped) remaining path."""
+    client = _client(db)
+    db.commit()
+
+    order = {
+        "id": "order_early",
+        "amount": 399900,
+        "currency": "INR",
+        "notes": {"purpose": "topup", "client_id": str(client.id), "credits": "2000", "amount_inr": "3999"},
+    }
+    authorized = {
+        "id": "pay_early",
+        "order_id": "order_early",
+        "amount": 399900,
+        "currency": "INR",
+        "status": "authorized",
+    }
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp_for_topup(order, authorized))
+
+    # Verify races auto-capture: nothing granted, and crucially nothing burned.
+    assert rzp.reconcile_topup_from_razorpay(db, "order_early", "pay_early", expected_client_id=client.id) is False
+    db.commit()
+    assert _balances(db, client.id, None) == 0
+
+    # Capture completes; the retried verify must now grant.
+    captured = {**authorized, "status": "captured"}
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp_for_topup(order, captured))
+    assert rzp.reconcile_topup_from_razorpay(db, "order_early", "pay_early", expected_client_id=client.id) is True
+    db.commit()
+    assert _balances(db, client.id, None) == 2000
+
+
+def test_refund_failed_reverses_refunded_minor_and_recomputes_status(db):
+    """P1-6b — refund.failed must subtract the failed amount from
+    ``refunded_minor`` and recompute status from what still stands, or a later
+    genuine partial refund flips the invoice to \"refunded\" though less money
+    was returned."""
+    client = _client(db)
+    credit_service.grant_topup(db, client.id, 1000)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        kind="topup",
+        razorpay_payment_id="pay_rf_1",
+    )
+    db.add(inv)
+    db.commit()
+
+    # Two partial refunds initiated (1000 each), the SECOND then fails.
+    rzp._handle_refund_created(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_a"))
+    rzp._handle_refund_created(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_b"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.refunded_minor == 2000
+    assert inv.status == "partially_refunded"
+
+    rzp._handle_refund_failed(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_b"))
+    db.commit()
+    db.refresh(inv)
+    # Only refund A still stands.
+    assert inv.refunded_minor == 1000
+    assert inv.status == "partially_refunded"
+
+    # A full-reversal failure clears back to paid.
+    rzp._handle_refund_failed(db, _refund_payload("pay_rf_1", 1000, refund_id="rfnd_a"))
+    db.commit()
+    db.refresh(inv)
+    assert inv.refunded_minor == 0
+    assert inv.status == "paid"
+
+
+def test_captured_replay_after_refund_is_acked_not_errored(db, monkeypatch):
+    """P1-6d — an order.paid alias redelivered AFTER a refund (invoice status
+    no longer \"paid\") must early-return, not attempt a duplicate insert that
+    5xx-loops on the unique payment-id index until Razorpay gives up."""
+    client = _client(db)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        amount_cents=399900,
+        currency="inr",
+        status="refunded",
+        refunded_minor=399900,
+        kind="topup",
+        razorpay_payment_id="pay_replay_1",
+    )
+    db.add(inv)
+    db.commit()
+
+    payload = {
+        "payment": {
+            "entity": {
+                "id": "pay_replay_1",
+                "order_id": "order_replay_1",
+                "amount": 399900,
+                "currency": "INR",
+                "status": "captured",
+                "notes": {"purpose": "topup", "client_id": str(client.id), "credits": "2000", "amount_inr": "3999"},
+            }
+        }
+    }
+    result = rzp._handle_payment_captured(db, payload)
+    db.commit()
+
+    assert "already recorded" in result
+    assert _balances(db, client.id, None) == 0  # refunded charge grants nothing
+
+
+def test_charged_without_payment_entity_on_canceled_row_does_not_error(db):
+    """Review fix — a charged payload WITHOUT payment.entity is legal; the
+    withheld-charge stamp branches must not NameError on the unbound invoice
+    (in the backstop branch that raise landed AFTER the irreversible gateway
+    cancel, wedging the row in a dead-letter loop)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-noent")
+    sub = _sub_with_plan(db, client, bot, slug="pro-noent")
+    sub.razorpay_subscription_id = "sub_noent"
+    sub.status = "canceled"
+    db.commit()
+
+    result = rzp._handle_subscription_charged(
+        db, {"subscription": {"entity": {"id": "sub_noent", "current_end": 1780000000}}}
+    )
+    db.commit()
+    assert "not reactivated" in result
+
+
+def test_withheld_stamp_never_overwrites_a_funded_invoice(db):
+    """Review fix — a delayed charged webhook must not re-label an invoice
+    whose charge DID fund a linked grant: that would disable its clawback."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-funded")
+    sub = _sub_with_plan(db, client, bot, slug="pro-funded")
+    sub.razorpay_subscription_id = "sub_funded"
+    sub.status = "canceled"
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        kind="plan_charge",
+        razorpay_payment_id="pay_funded_1",
+    )
+    db.add(inv)
+    db.flush()
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id, reference_id=inv.id)
+    db.commit()
+
+    rzp._handle_subscription_charged(
+        db,
+        {
+            "subscription": {"entity": {"id": "sub_funded", "current_end": 1780000000}},
+            "payment": {"entity": {"id": "pay_funded_1", "amount": 44900, "currency": "INR"}},
+        },
+    )
+    db.commit()
+    db.refresh(inv)
+    assert inv.kind == "plan_charge"  # NOT re-labelled withheld_charge
+
+    # And an unfunded fresh charge on the same canceled row DOES get stamped.
+    rzp._handle_subscription_charged(
+        db,
+        {
+            "subscription": {"entity": {"id": "sub_funded", "current_end": 1780000001}},
+            "payment": {"entity": {"id": "pay_funded_2", "amount": 44900, "currency": "INR"}},
+        },
+    )
+    db.commit()
+    fresh = db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_funded_2")).scalars().first()
+    assert fresh is not None
+    assert fresh.kind == "withheld_charge"

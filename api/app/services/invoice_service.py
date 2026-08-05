@@ -392,7 +392,15 @@ def backfill_unnumbered_invoices(session: Session, *, limit: int = 50) -> int:
     rows = (
         session.execute(
             select(Invoice)
-            .where(Invoice.invoice_number.is_(None), Invoice.status == "paid")
+            # Refund state must not hide a missing document (P1-6c): a charge
+            # that missed finalize and was then partially refunded still left
+            # the customer holding part of the supply with no tax invoice —
+            # and create_credit_note refuses unnumbered originals, so the
+            # refund side could never get its Section 34 note either.
+            .where(
+                Invoice.invoice_number.is_(None),
+                Invoice.status.in_(("paid", "partially_refunded", "refunded")),
+            )
             .order_by(Invoice.id)
             .limit(limit)
         )

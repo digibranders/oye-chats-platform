@@ -20,6 +20,9 @@ export interface Platform {
   getSteps: (botKey: string, env: PlatformEnv) => PlatformStep[];
 }
 
+/** The widget bundle URL for an environment (shared by snippets + AI prompt). */
+export function widgetScriptUrl(env: PlatformEnv): string;
+
 export const platforms: Platform[];
 export const categoryLabels: Record<string, string>;
 export const categoryOrder: string[];

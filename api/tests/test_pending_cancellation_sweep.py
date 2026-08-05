@@ -233,6 +233,22 @@ def test_renewal_cron_skips_cancel_pending_subscriptions(db, monkeypatch):
         period_end=datetime.now(UTC) - timedelta(hours=2),
         cancel_at_period_end=False,
     )
+    # Gateway rows renew only against payment evidence (F2).
+    from app.db.models import Invoice
+
+    db.add(
+        Invoice(
+            client_id=renewing.client_id,
+            subscription_id=renewing.id,
+            amount_cents=399900,
+            currency="inr",
+            status="paid",
+            kind="plan_charge",
+            razorpay_payment_id="pay_renew_normal",
+            paid_at=renewing.current_period_end,
+        )
+    )
+    db.commit()
     _route_session(monkeypatch, db)
 
     import app.services.credit_service as credit_service

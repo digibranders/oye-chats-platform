@@ -1025,7 +1025,11 @@ def checkout_quote(
         usd_plan_id = (
             plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
         )
-        if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id:
+        # amount_minor > 0 (F6): a wired USD plan id with a NULL/0 *_usd_cents
+        # column would otherwise advertise "$0" with checkout_supported=true —
+        # while the immutable Razorpay plan bills its real amount. A tier whose
+        # USD price isn't configured is intl-pending, not free.
+        if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id and amount_minor > 0:
             return {
                 "country": country,
                 "currency": currency,
@@ -1091,9 +1095,13 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     with get_session() as session:
         for plan in get_active_plans(session):
             row = {"plan_id": plan.id, "slug": plan.slug}
+            # Both rails (P1-2/F2): USD drift is just as displayed-vs-charged
+            # as INR drift, and was previously invisible to this diagnostic.
             for cycle, local_minor, rzp_id in (
                 ("monthly", plan.monthly_price_cents, plan.razorpay_plan_id_monthly),
                 ("annual", plan.annual_price_cents, plan.razorpay_plan_id_annual),
+                ("monthly_usd", plan.monthly_price_usd_cents, plan.razorpay_plan_id_monthly_usd),
+                ("annual_usd", plan.annual_price_usd_cents, plan.razorpay_plan_id_annual_usd),
             ):
                 entry = {
                     "local_minor": int(local_minor or 0),
@@ -2077,6 +2085,11 @@ def change_seat_count(
             from app.services import razorpay_service
 
             checkout = razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
+        except razorpay_service.IntlPaymentsDisabled:
+            # Policy refusal, not a gateway fault — propagate to the app-level
+            # handler so /seats renders the 409 intl_usd_pending contact-sales
+            # contract instead of a "try again" 502.
+            raise
         except razorpay_service.RazorpayBillingError as exc:
             logger.exception("Seat add-on update failed for client %s: %s", client.id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc

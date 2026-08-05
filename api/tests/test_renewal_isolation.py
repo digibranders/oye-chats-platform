@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.db.models import Client, Plan, Subscription
+from app.db.models import Client, Invoice, Plan, Subscription
 from app.worker import tasks
 
 pytestmark = pytest.mark.skipif(
@@ -48,6 +48,21 @@ def _make_due_sub(db, tag: str) -> Subscription:
         current_period_end=_E,
     )
     db.add(sub)
+    db.flush()
+    # Gateway rows renew only against payment evidence (F2): a captured
+    # invoice near the period boundary.
+    db.add(
+        Invoice(
+            client_id=client.id,
+            subscription_id=sub.id,
+            amount_cents=399900,
+            currency="inr",
+            status="paid",
+            kind="plan_charge",
+            razorpay_payment_id=f"pay_{tag}",
+            paid_at=_E,
+        )
+    )
     db.commit()
     return sub
 

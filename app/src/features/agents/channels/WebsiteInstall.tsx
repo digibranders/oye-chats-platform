@@ -9,6 +9,7 @@ import {
   EyeOff,
   Key,
   Link2,
+  Sparkles,
 } from 'lucide-react';
 import {
   platforms,
@@ -18,6 +19,7 @@ import {
 import { getApiBaseUrl, getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
 import { cn } from '../../../design-system';
 import { getEmbedEnvironment } from './embedEnvironment';
+import { buildInstallPrompt } from './installPrompt';
 
 /** A copyable code block. Clipboard write is best-effort; the code is always selectable. */
 function CopyableCode({ code, label }: { code: string; label: string }) {
@@ -73,6 +75,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const [showKey, setShowKey] = useState(false);
   const [keyCopied, setKeyCopied] = useState(false);
   const [demoCopied, setDemoCopied] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [platformId, setPlatformId] = useState<string | null>(null);
 
   const platform = platforms.find((p) => p.id === platformId) ?? null;
@@ -102,6 +105,18 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
       await trackDemoShareClick(botId);
     } catch {
       // Analytics failures are non-fatal.
+    }
+  };
+
+  const copyAgentPrompt = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(
+        buildInstallPrompt({ botKey, apiBaseUrl: getApiBaseUrl(), env, platform }),
+      );
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (e.g. insecure context) - the steps below still work by hand.
     }
   };
 
@@ -184,10 +199,39 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
 
       {/* Platform-specific install steps */}
       <div>
-        <div className="mb-2">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
             Install steps
           </span>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={copyAgentPrompt}
+              aria-label={
+                promptCopied
+                  ? 'Install prompt copied'
+                  : platform
+                    ? `Copy the ${platform.name} install prompt for a coding agent`
+                    : 'Copy the install prompt for a coding agent'
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              {promptCopied ? (
+                <Check size={14} className="text-[var(--ds-success)]" aria-hidden="true" />
+              ) : (
+                <Sparkles size={14} aria-hidden="true" />
+              )}
+              {promptCopied ? 'Copied' : 'Copy prompt for AI agent'}
+            </button>
+            <p className="max-w-[19rem] text-right text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
+              {platform
+                ? `Paste into Cursor, Claude Code, or any coding agent - the ${platform.name} steps, your key, and how to verify.`
+                : 'Paste into Cursor, Claude Code, or any coding agent. Pick your platform below for exact steps.'}
+            </p>
+            <span role="status" aria-live="polite" className="sr-only">
+              {promptCopied ? 'Install prompt copied' : ''}
+            </span>
+          </div>
         </div>
 
         {platform ? (

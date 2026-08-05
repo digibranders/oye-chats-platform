@@ -28,7 +28,9 @@ def test_create_plan_persists_all_fields(db, monkeypatch):
     body = {
         "name": "Growth",
         "slug": "growth",
-        "currency": "USD",
+        # currency is INR-primary by contract (F7): USD pricing lives in the
+        # *_usd_cents columns, and a non-INR plan currency is now rejected.
+        "currency": "INR",
         "monthly_price_usd_cents": 2900,
         "annual_price_usd_cents": 27800,
         "credits_per_month": 5000,

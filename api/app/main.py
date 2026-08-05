@@ -61,6 +61,7 @@ from app.core.middleware import (
     generic_exception_handler,
     get_cors_origin_regex,
     get_cors_origins,
+    intl_payments_disabled_handler,
     session_ownership_exception_handler,
     validation_exception_handler,
 )
@@ -68,6 +69,7 @@ from app.core.rate_limit import limiter
 from app.db.models import Base, Bot
 from app.db.models import ChatSession as CS
 from app.db.session import engine, get_session
+from app.services.razorpay_service import IntlPaymentsDisabled
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -174,6 +176,7 @@ app.include_router(affiliate_superadmin_router)
 # --- Exception Handlers ---
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(SessionOwnershipError, session_ownership_exception_handler)
+app.add_exception_handler(IntlPaymentsDisabled, intl_payments_disabled_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # --- Database Initialization ---

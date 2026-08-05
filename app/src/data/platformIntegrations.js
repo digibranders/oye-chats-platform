@@ -9,10 +9,20 @@
  * env is 'production' | 'development'.
  */
 
-const cdnUrl = (env) =>
+/**
+ * The widget bundle URL for an environment. Exported so every surface that
+ * quotes the embed (install steps, the AI-agent install prompt) resolves the
+ * same source and cannot drift.
+ *
+ * @param {'production' | 'development'} env
+ * @returns {string}
+ */
+export const widgetScriptUrl = (env) =>
     env === 'production'
         ? 'https://cdn.oyechats.com/oyechats-widget.js'
         : 'http://localhost:4173/oyechats-widget.js';
+
+const cdnUrl = widgetScriptUrl;
 
 // ---------------------------------------------------------------------------
 // HTML / Generic

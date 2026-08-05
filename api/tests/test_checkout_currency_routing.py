@@ -186,3 +186,59 @@ def test_checkout_quote_confirmed_country_overrides_ip(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert body["currency"] == "INR"
     assert body["checkout_supported"] is True
+
+
+def test_checkout_quote_never_advertises_zero_dollar_checkout(db, monkeypatch):
+    """F6 — a wired USD Razorpay plan id with a NULL/0 *_usd_cents column must
+    NOT produce amount_display '$0' with checkout_supported=true: the immutable
+    gateway plan bills its real amount. An unpriced USD tier is intl-pending."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-zero-usd@e.com")
+    plan = _make_plan(
+        db,
+        slug="starter-zero-usd",
+        monthly_price_cents=179900,
+        monthly_price_usd_cents=0,  # USD price never configured
+        razorpay_plan_id_monthly_usd="plan_usd_wired",
+    )
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly&billing_country=US")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["checkout_supported"] is False
+    assert body["reason"] == "intl_usd_pending"
+
+
+def test_checkout_quote_supports_priced_usd_tier_with_flag_on(db, monkeypatch):
+    """Control for the F6 guard: a properly priced + wired USD tier stays a
+    supported checkout."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-usd-ok@e.com")
+    plan = _make_plan(
+        db,
+        slug="starter-usd-ok",
+        monthly_price_cents=179900,
+        monthly_price_usd_cents=1900,
+        razorpay_plan_id_monthly_usd="plan_usd_ok",
+    )
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly&billing_country=US")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["currency"] == "USD"
+    assert body["amount_minor"] == 1900
+    assert body["checkout_supported"] is True

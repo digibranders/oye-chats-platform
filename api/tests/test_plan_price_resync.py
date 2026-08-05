@@ -193,3 +193,124 @@ def test_get_default_plan_ignores_deactivated_default(db, monkeypatch):
     assert active_default.is_active is False
     # No active default remains → resolver returns None (caller falls back to free slug).
     assert plan_service.get_default_plan(db) is None
+
+
+# ── USD rail self-heal (P1-2/F2) ─────────────────────────────────────────────
+# The mint map covered only the INR price fields: a USD price edit changed the
+# quote while every new USD mandate kept debiting the old Razorpay plan —
+# exactly the displayed != charged failure the INR path was built to prevent.
+
+
+def _usd_plan(db, **overrides):
+    fields = dict(
+        name="Standard",
+        slug="standard-usd-resync",
+        monthly_price_cents=459900,
+        annual_price_cents=4599000,
+        monthly_price_usd_cents=900,
+        annual_price_usd_cents=9000,
+        currency="INR",
+        razorpay_plan_id_monthly="plan_INR_OLD",
+        razorpay_plan_id_monthly_usd="plan_USD_OLD",
+        razorpay_plan_id_annual_usd="plan_USD_A_OLD",
+        is_active=True,
+    )
+    fields.update(overrides)
+    plan = Plan(**fields)
+    db.add(plan)
+    db.commit()
+    return plan
+
+
+def _admin(db, email):
+    sa = Client(name="SA", email=email, hashed_password="x", api_key=f"k-{email}", is_superadmin=True)
+    db.add(sa)
+    db.flush()
+    return sa
+
+
+def _route(db, monkeypatch):
+    from contextlib import contextmanager as _cm
+
+    from app.api import superadmin_plan_routes as spr
+
+    @_cm
+    def _fake_session():
+        yield db
+
+    monkeypatch.setattr(spr, "get_session", _fake_session)
+    return spr
+
+
+def test_update_plan_mints_usd_plan_on_usd_price_change(db, monkeypatch):
+    spr = _route(db, monkeypatch)
+    plan = _usd_plan(db)
+    admin = _admin(db, "sa-usd1@test.local")
+
+    minted = {}
+
+    def _fake_create(*, name, amount_paise, period, currency="INR"):
+        minted.update(amount=amount_paise, period=period, currency=currency)
+        return "plan_USD_NEW"
+
+    monkeypatch.setattr("app.services.razorpay_service.create_plan_for_price", _fake_create)
+
+    spr.update_plan(plan.id, spr.UpdatePlanRequest(monthly_price_usd_cents=1100), superadmin=admin)
+
+    refreshed = db.get(Plan, plan.id)
+    assert refreshed.monthly_price_usd_cents == 1100
+    assert refreshed.razorpay_plan_id_monthly_usd == "plan_USD_NEW"
+    assert minted == {"amount": 1100, "period": "monthly", "currency": "USD"}
+    # INR side untouched.
+    assert refreshed.razorpay_plan_id_monthly == "plan_INR_OLD"
+
+
+def test_update_plan_accepts_explicit_usd_plan_id_without_minting(db, monkeypatch):
+    spr = _route(db, monkeypatch)
+    plan = _usd_plan(db, slug="standard-usd-explicit")
+    admin = _admin(db, "sa-usd2@test.local")
+
+    def _explode(**kw):
+        raise AssertionError("must not mint when the caller supplied the id")
+
+    monkeypatch.setattr("app.services.razorpay_service.create_plan_for_price", _explode)
+
+    spr.update_plan(
+        plan.id,
+        spr.UpdatePlanRequest(monthly_price_usd_cents=1100, razorpay_plan_id_monthly_usd="plan_USD_SUPPLIED"),
+        superadmin=admin,
+    )
+    refreshed = db.get(Plan, plan.id)
+    assert refreshed.razorpay_plan_id_monthly_usd == "plan_USD_SUPPLIED"
+
+
+def test_update_plan_usd_price_zero_clears_usd_id(db, monkeypatch):
+    spr = _route(db, monkeypatch)
+    plan = _usd_plan(db, slug="standard-usd-zero")
+    admin = _admin(db, "sa-usd3@test.local")
+
+    spr.update_plan(plan.id, spr.UpdatePlanRequest(monthly_price_usd_cents=0), superadmin=admin)
+    refreshed = db.get(Plan, plan.id)
+    assert refreshed.razorpay_plan_id_monthly_usd is None
+
+
+def test_update_plan_rejects_non_inr_plan_currency(db, monkeypatch):
+    """F7 — the dual-rail model stores INR in *_cents and USD in *_usd_cents;
+    a plan row whose own ``currency`` is not INR would make the INR mint path
+    mislabel foreign minor units as paise. Refuse it outright."""
+    from fastapi import HTTPException
+
+    spr = _route(db, monkeypatch)
+    plan = _usd_plan(db, slug="standard-usd-cur")
+    admin = _admin(db, "sa-usd4@test.local")
+
+    with pytest.raises(HTTPException) as exc:
+        spr.update_plan(plan.id, spr.UpdatePlanRequest(currency="EUR"), superadmin=admin)
+    assert exc.value.status_code == 422
+
+    with pytest.raises(HTTPException) as exc:
+        spr.create_plan(
+            spr.CreatePlanRequest(name="Euro", slug="euro-plan", currency="EUR"),
+            superadmin=admin,
+        )
+    assert exc.value.status_code == 422

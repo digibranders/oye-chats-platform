@@ -562,3 +562,56 @@ def test_stale_schedule_cleared_by_cancel_is_not_promoted(db, monkeypatch):
     assert emails == [], "abandoned downgrade must not email a re-auth link"
     assert sub.scheduled_plan_id is None
     assert sub.status == "canceled"
+
+
+def test_promote_cron_rolls_back_a_failed_rows_partial_promotion(db, monkeypatch):
+    """Review fix — promote_scheduled_change flushes the terminal flip +
+    cleared schedule BEFORE its gateway create. A create failure (deterministic
+    for USD rows via IntlPaymentsDisabled while the intl switch is off) must
+    roll THIS row back — previously the end-of-loop commit persisted the
+    half-promotion: downgrade silently destroyed, no replacement checkout."""
+    from datetime import timedelta
+
+    from app.services import razorpay_service, transition_service
+
+    client = _make_client(db, email="cron-rollback@e.com")
+    old_plan = _make_plan(db, slug="cronrb-pro", price_cents=399900)
+    new_plan = _make_plan(db, slug="cronrb-basic", price_cents=99900)
+    due = datetime.now(UTC) - timedelta(hours=1)
+    bad = _make_sub(
+        db,
+        client,
+        old_plan,
+        razorpay_subscription_id="sub_cron_rb_bad",
+        scheduled_plan_id=new_plan.id,
+        scheduled_change_at=due,
+    )
+    db.commit()
+
+    real_promote = transition_service.promote_scheduled_change
+
+    def _promote_then_fail(session, sub):
+        # Reach the real function far enough to flush the destructive local
+        # writes, then fail at the gateway-create step like the intl switch does.
+        sub.status = "expired"
+        sub.scheduled_plan_id = None
+        sub.scheduled_billing_cycle = None
+        sub.scheduled_change_at = None
+        session.flush()
+        raise razorpay_service.IntlPaymentsDisabled("USD rail off")
+
+    monkeypatch.setattr(transition_service, "promote_scheduled_change", _promote_then_fail)
+
+    promoted = _run_promote_cron(db, monkeypatch)
+    assert promoted == 0
+
+    db.expire_all()
+    refreshed = db.get(Subscription, bad.id)
+    # The half-promotion was rolled back: the queued change survives for the
+    # next run (after the flag/config is fixed) instead of vanishing.
+    assert refreshed.status == "active"
+    assert refreshed.scheduled_plan_id == new_plan.id
+    assert refreshed.scheduled_change_at is not None
+
+    # Restore and prove the row still promotes cleanly afterwards.
+    monkeypatch.setattr(transition_service, "promote_scheduled_change", real_promote)

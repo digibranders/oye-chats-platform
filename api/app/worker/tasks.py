@@ -412,12 +412,12 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     Returns the number of subscriptions renewed.
     """
     import asyncio
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import select
 
     from app.core.dates import add_months
-    from app.db.models import Subscription
+    from app.db.models import Invoice, Subscription
     from app.db.session import get_session
     from app.services import credit_service
 
@@ -428,7 +428,12 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
             subs = (
                 session.execute(
                     select(Subscription).where(
-                        Subscription.status.in_(("active", "trialing")),
+                        # ``trialing`` is deliberately excluded: trials never
+                        # "renew" — the hourly expiry cron owns them. Including
+                        # them handed a lapsed trial a free full-plan grant in
+                        # the 00:05→00:15 window before expiry flipped it (and
+                        # a free month every day if the expiry cron broke).
+                        Subscription.status == "active",
                         Subscription.current_period_end <= now_utc,
                         # A cancel-pending row must NEVER be renewed here. Its
                         # status stays "active" until Razorpay's cancelled
@@ -457,16 +462,63 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     # ``"annual"`` at sub creation; anything else falls through
                     # to monthly so legacy / manual rows don't get stuck.
                     period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
+                    new_period_end = add_months(sub.current_period_end, period_months)
+
+                    # Gateway-billed rows renew only against payment evidence: a
+                    # captured invoice near the boundary (Razorpay may debit up
+                    # to ~2 days early for e-mandate execution windows). With no
+                    # invoice we grant NOTHING and leave the period un-rolled so
+                    # the row re-matches tomorrow — granting on elapsed time
+                    # alone handed out unbounded free service whenever webhooks
+                    # were down AND the charge had actually failed (F2). If the
+                    # charge truly failed, the pending/halted webhook flips the
+                    # row to past_due and it drops out of this query; recovery
+                    # for fully-lost webhooks is Razorpay's redelivery + the
+                    # dead-letter replay tooling, not a blind grant.
+                    if sub.razorpay_subscription_id:
+                        paid = session.execute(
+                            select(Invoice.id)
+                            .where(
+                                Invoice.subscription_id == sub.id,
+                                Invoice.status == "paid",
+                                Invoice.paid_at.is_not(None),
+                                Invoice.paid_at >= sub.current_period_end - timedelta(days=2),
+                                # PLAN charges only — seat add-on invoices stamp
+                                # the main sub's id but pay for seats, and a
+                                # withheld charge explicitly funded nothing. A
+                                # ₹449 seat debit must not evidence a full plan
+                                # renewal (same masking class as the F5 revoke
+                                # probe). is_distinct_from keeps legacy NULL-kind
+                                # rows counting as plan charges.
+                                Invoice.kind.is_distinct_from("seat"),
+                                Invoice.kind.is_distinct_from("withheld_charge"),
+                            )
+                            .limit(1)
+                        ).first()
+                        if paid is None:
+                            logger.warning(
+                                "task_renew_due_subscriptions: no captured payment for gateway "
+                                "subscription %s (client %s) period ending %s — grant withheld, "
+                                "will re-check next run",
+                                sub.id,
+                                sub.client_id,
+                                sub.current_period_end,
+                            )
+                            continue
+
                     # Grant this period's credits at most once, keyed on the
                     # per-scope + per-period marker the webhook path uses
-                    # (``last_granted_period_end``). ``grant_subscription_
-                    # period_once`` resets + grants scoped to ``sub.bot_id`` so
-                    # the account pool and each bot ledger renew independently.
-                    granted = credit_service.grant_subscription_period_once(session, sub, sub.current_period_end)
-                    # Roll the period forward regardless of whether a grant fired
-                    # — without this the cron re-matches the same row every day.
+                    # (``last_granted_period_end``). CRITICAL: key on the NEW
+                    # period end — the same value ``subscription.charged`` uses
+                    # (Razorpay's ``current_end``). Keying on the OLD end left
+                    # the marker behind the webhook's value, so a delayed
+                    # redelivery re-ran reset+grant for a period this cron had
+                    # already granted, wiping the customer's consumption (P1-3).
+                    granted = credit_service.grant_subscription_period_once(session, sub, new_period_end)
+                    # Roll the period forward — without this the cron re-matches
+                    # the same row every day.
                     sub.current_period_start = sub.current_period_end
-                    sub.current_period_end = add_months(sub.current_period_end, period_months)
+                    sub.current_period_end = new_period_end
                     session.commit()
                     if granted:
                         renewed += 1
@@ -631,9 +683,20 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
             for sub in subs:
                 try:
                     result = transition_service.promote_scheduled_change(session, sub)
+                    # Per-row commit: one row's success must not depend on the
+                    # rest of the batch (and must not be lost to a later row's
+                    # failure).
+                    session.commit()
                 except Exception:
-                    # Don't kill the loop on one bad row — log and skip so
-                    # the rest of the queue still gets processed.
+                    # Roll back THIS row's partial promotion before moving on.
+                    # promote_scheduled_change flushes the terminal flip +
+                    # cleared schedule + seat retirement BEFORE its gateway
+                    # create; without the rollback the end-of-loop commit
+                    # persisted that half-promotion (downgrade silently
+                    # destroyed, no replacement checkout, no re-auth email) —
+                    # deterministic for USD-rail rows while
+                    # INTL_PAYMENTS_ENABLED is off (IntlPaymentsDisabled).
+                    session.rollback()
                     logger.exception(
                         "task_promote_scheduled_downgrades: failed for sub_id=%s",
                         sub.id,
@@ -641,7 +704,6 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
                     continue
                 if result is not None:
                     promoted += 1
-            session.commit()
         return promoted
 
     loop = asyncio.get_running_loop()
