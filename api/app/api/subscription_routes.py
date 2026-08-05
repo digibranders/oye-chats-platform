@@ -1936,8 +1936,12 @@ def resume_subscription(
             # anchor), so the replacement bills now and its activation resets the
             # plan allowance. Snapshot the unused credits the way the upgrade
             # path does so ``apply_pending_proration`` re-grants them as a top-up
-            # instead of letting the reset silently destroy them.
-            sub.upgrade_credit_pending_cents = transition_service.remaining_plan_credits(session, client.id)
+            # instead of letting the reset silently destroy them. Scoped to the
+            # subscription being resumed — a per-bot resume must snapshot that
+            # bot's own pool, not the account pool.
+            sub.upgrade_credit_pending_cents = transition_service.remaining_plan_credits(
+                session, client.id, bot_id=sub.bot_id
+            )
 
         try:
             checkout = razorpay_service.create_subscription(

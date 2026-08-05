@@ -52,15 +52,22 @@ logger = logging.getLogger("oyechats.transitions")
 # ── Rollover ──────────────────────────────────────────────────────────────────
 
 
-def remaining_plan_credits(session: Session, client_id: int) -> int:
-    """Unused ``plan_grant`` credits the client still owns on the current cycle.
+def remaining_plan_credits(session: Session, client_id: int, bot_id: int | None = None) -> int:
+    """Unused ``plan_grant`` credits remaining in one ledger scope this cycle.
 
     Reads the live FIFO breakdown so the number reflects every chat that
     has already burned credits this month. Top-up credits are excluded —
     they're never cleared at renewal and carry over to the new
     subscription on their own.
+
+    ``bot_id`` selects the ledger scope and must match the subscription
+    being transitioned: ``None`` reads the account pool (``bot_id IS
+    NULL``), a bot id reads that bot's own pool. A per-bot resume that
+    snapshotted the ACCOUNT pool would wipe the bot's unused credits
+    without rollover while re-granting a copy of credits the account
+    subscription still owns.
     """
-    breakdown = credit_service.get_balance_breakdown(session, client_id)
+    breakdown = credit_service.get_balance_breakdown(session, client_id, bot_id=bot_id)
     return int(breakdown.get("plan", 0) or 0)
 
 
@@ -167,7 +174,9 @@ def execute_paid_upgrade(
     # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
     # the activation webhook will call ``reset_monthly_plan_credits`` before
     # granting the new allowance, so reading the breakdown later would return 0.
-    rollover_credits = remaining_plan_credits(session, client.id)
+    # Scoped to the subscription being replaced: an account sub reads the
+    # account pool, a per-bot sub reads that bot's own pool.
+    rollover_credits = remaining_plan_credits(session, client.id, bot_id=sub.bot_id)
 
     # DO NOT cancel the old mandate here (BL-2). Razorpay's UPI mandates can't be
     # swapped in place, so a plan change is cancel+recreate+re-authorize. Under
