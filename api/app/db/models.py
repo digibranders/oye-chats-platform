@@ -249,13 +249,24 @@ class Bot(Base):
     # once during the Build Studio Prove step; null = not computed yet, [] =
     # computed but nothing passed verification (show only the open input).
     seed_questions = Column(JSONB, nullable=True)
-    # Durable per-bot ingestion ("trained") state, written by the crawl
-    # orchestrator when a crawl reaches a terminal state. Lets the frontend read
-    # a persistent fact instead of racing the ephemeral, client-scoped
+    # Durable per-bot ingestion ("trained") state. Lets the frontend read a
+    # persistent fact instead of racing the ephemeral, client-scoped
     # /crawl/progress toast (which CrawlContext clears a few seconds after
-    # completion). ``last_crawl_status`` ∈ {'done','failed','cancelled'};
-    # ``crawl_completed_at`` is set on a successful/partial ingest;
-    # ``indexed_chunk_count`` is the chunk total from the last completed crawl.
+    # completion).
+    #
+    # ``last_crawl_status`` ∈ {'done','failed','cancelled'} — crawl-specific, so
+    # only the crawl orchestrator writes it. It describes the last crawl ATTEMPT
+    # and must never be read as "does this bot have knowledge": a bot can hold
+    # plenty of content from uploads while its last crawl failed.
+    #
+    # ``indexed_chunk_count`` is the bot's CURRENT total stored chunk count and
+    # ``crawl_completed_at`` the moment its knowledge last changed. Both are
+    # recomputed from the documents table by ``sync_bot_knowledge_state`` after
+    # every knowledge mutation (crawl, upload, delete) — never incremented from
+    # a single job's delta. That matters: a delta recrawl of an unchanged site
+    # ingests zero new chunks, and a document upload runs no crawl at all, so
+    # anything derived from one job's output would leave a well-trained bot
+    # reading "never trained".
     last_crawl_status = Column(String, nullable=True)
     crawl_completed_at = Column(DateTime(timezone=True), nullable=True)
     indexed_chunk_count = Column(Integer, default=0, server_default="0", nullable=False)
@@ -1232,7 +1243,19 @@ class Subscription(Base):
     # Cancellation
     canceled_at = Column(DateTime(timezone=True), nullable=True)
     cancel_reason = Column(Text, nullable=True)
+    # Reversible customer INTENT to churn at period end — not a gateway fact.
+    # ``/subscriptions/cancel`` sets it and touches nothing at Razorpay, so the
+    # customer can change their mind for free right up until the sweep below
+    # runs. Cleared by ``/subscriptions/resume`` while the mandate is still live.
     cancel_at_period_end = Column(Boolean, default=False, server_default="false", nullable=False)
+    # When the IRREVERSIBLE Razorpay cancel was actually issued for this row.
+    # Razorpay has no un-cancel, so this is the line between "reactivating is a
+    # free flag flip" (NULL) and "reactivating needs a fresh mandate + checkout"
+    # (set). ``task_execute_pending_cancellations`` stamps it a couple of days
+    # before ``current_period_end``; ``/cancel`` stamps it inline when the
+    # customer cancels inside that window. Also stamped defensively by
+    # ``/resume`` when the gateway reports a mandate we believed was live.
+    gateway_cancel_executed_at = Column(DateTime(timezone=True), nullable=True)
 
     # The Razorpay plan actually billed against — a discounted plan when a
     # referral code applied, else identical to the base plan's razorpay id.
