@@ -59,23 +59,37 @@ def _charged_payload(sub_id, *, period_start, period_end, payment_id):
     }
 
 
-def _activation_payload(*, razorpay_sub_id, client_id, plan_id, period_start, period_end, notes=None):
-    return {
-        "subscription": {
-            "entity": {
-                "id": razorpay_sub_id,
-                "notes": {
-                    "oyechats_client_id": str(client_id),
-                    "oyechats_plan_id": str(plan_id),
-                    **(notes or {}),
-                },
-                "current_start": int(period_start.timestamp()),
-                "current_end": int(period_end.timestamp()),
-                "quantity": 1,
-                "customer_id": "cust_deferred",
-            }
-        }
+def _activation_payload(*, razorpay_sub_id, client_id, plan_id, period_start, period_end, notes=None, charged=True):
+    """A Razorpay subscription entity in its two real wire shapes.
+
+    ``charged=True`` is the post-first-charge shape (``current_start`` /
+    ``current_end`` populated). ``charged=False`` is what a ``created`` /
+    ``authenticated`` subscription actually carries: ``current_start`` and
+    ``current_end`` are null until the first charge, and the schedule lives in
+    ``start_at`` / ``charge_at``. The deferred-start handlers must work
+    against the latter — keying on ``current_start`` alone silently ignores
+    every real deferred authentication.
+    """
+    entity = {
+        "id": razorpay_sub_id,
+        "notes": {
+            "oyechats_client_id": str(client_id),
+            "oyechats_plan_id": str(plan_id),
+            **(notes or {}),
+        },
+        "quantity": 1,
+        "customer_id": "cust_deferred",
     }
+    if charged:
+        entity["current_start"] = int(period_start.timestamp())
+        entity["current_end"] = int(period_end.timestamp())
+    else:
+        entity["status"] = "authenticated"
+        entity["current_start"] = None
+        entity["current_end"] = None
+        entity["start_at"] = int(period_start.timestamp())
+        entity["charge_at"] = int(period_start.timestamp())
+    return {"subscription": {"entity": entity}}
 
 
 # ── The charged backstop ──────────────────────────────────────────────────────
@@ -132,6 +146,114 @@ def test_charge_past_a_pending_cancellation_is_cancelled_and_not_granted(db, mon
     assert db.query(CreditLedger).filter_by(client_id=client.id, reason="plan_grant").all() == []
     # The money is still recorded so it can be reconciled and refunded.
     assert db.query(Invoice).filter_by(razorpay_payment_id="pay_backstop").one().client_id == client.id
+
+
+def test_backstop_also_retires_the_seat_addon_mandate(db, monkeypatch):
+    """The backstop is the last code that ever sees this row (the status flip
+    removes it from the sweep's match set), so it must cancel the SEPARATE
+    per-seat mandate too and park the count — otherwise the add-on keeps
+    debiting monthly with no retry path anywhere."""
+    client = _client(db, "backstop-seats@e.com")
+    plan = _plan(db, "std-backstop-seats")
+    period_end = datetime.now(UTC) - timedelta(minutes=5)
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=None,
+        status="active",
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_backstop_seats",
+        billing_cycle="monthly",
+        cancel_at_period_end=True,
+        gateway_cancel_executed_at=None,
+        current_period_start=period_end - timedelta(days=31),
+        current_period_end=period_end,
+        last_granted_period_end=period_end,
+        seat_addon_subscription_id="sub_seat_addon_live",
+        seat_addon_quantity=3,
+    )
+    sub.plan = plan
+    db.add(sub)
+    db.commit()
+
+    monkeypatch.setattr(rzp, "cancel_subscription", lambda s, **kw: None)
+    seat_cancels: list[int] = []
+
+    def _fake_cancel_seat_addon(session, local):
+        seat_cancels.append(local.id)
+        local.seat_addon_subscription_id = None
+        local.seat_addon_quantity = 0
+
+    monkeypatch.setattr(rzp, "cancel_seat_addon", _fake_cancel_seat_addon)
+
+    rzp._handle_subscription_charged(
+        db,
+        _charged_payload(
+            "sub_backstop_seats",
+            period_start=period_end,
+            period_end=period_end + timedelta(days=30),
+            payment_id="pay_backstop_seats",
+        ),
+    )
+    db.commit()
+
+    db.refresh(sub)
+    assert seat_cancels == [sub.id]
+    assert sub.status == "canceled"
+    assert sub.gateway_cancel_executed_at is not None
+    # The seats the customer had bought are parked, not lost — a reactivation
+    # re-mints the add-on from this count.
+    assert sub.seat_addon_pending_quantity == 3
+
+
+def test_backstop_seat_addon_failure_leaves_the_row_for_the_sweep(db, monkeypatch):
+    """If the seat-addon cancel fails, the row must stay active and unstamped so
+    the sweep re-matches and retries BOTH cancels (the plan cancel is idempotent
+    at the gateway)."""
+    client = _client(db, "backstop-seatfail@e.com")
+    plan = _plan(db, "std-backstop-seatfail")
+    period_end = datetime.now(UTC) - timedelta(minutes=5)
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=None,
+        status="active",
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_backstop_seatfail",
+        billing_cycle="monthly",
+        cancel_at_period_end=True,
+        gateway_cancel_executed_at=None,
+        current_period_start=period_end - timedelta(days=31),
+        current_period_end=period_end,
+        last_granted_period_end=period_end,
+        seat_addon_subscription_id="sub_seat_addon_stuck",
+        seat_addon_quantity=2,
+    )
+    sub.plan = plan
+    db.add(sub)
+    db.commit()
+
+    monkeypatch.setattr(rzp, "cancel_subscription", lambda s, **kw: None)
+    monkeypatch.setattr(
+        rzp, "cancel_seat_addon", lambda session, local: (_ for _ in ()).throw(RuntimeError("gateway 500"))
+    )
+
+    result = rzp._handle_subscription_charged(
+        db,
+        _charged_payload(
+            "sub_backstop_seatfail",
+            period_start=period_end,
+            period_end=period_end + timedelta(days=30),
+            payment_id="pay_backstop_seatfail",
+        ),
+    )
+    db.commit()
+
+    assert "seat add-on cancel FAILED" in result
+    db.refresh(sub)
+    assert sub.status == "active", "must stay in the sweep's match set"
+    assert sub.gateway_cancel_executed_at is None
+    assert sub.seat_addon_subscription_id == "sub_seat_addon_stuck"
 
 
 def test_failed_emergency_cancel_stays_active_so_the_sweep_retries(db, monkeypatch):
@@ -205,6 +327,7 @@ def test_authenticated_with_an_immediate_start_grants_nothing(db, monkeypatch):
             plan_id=plan.id,
             period_start=start,
             period_end=start + timedelta(days=30),
+            charged=False,  # real authenticated shape: current_* null, start_at just passed
         ),
     )
     db.commit()
@@ -217,7 +340,11 @@ def test_authenticated_with_an_immediate_start_grants_nothing(db, monkeypatch):
 def test_authenticated_with_a_future_start_materialises_the_row(db, monkeypatch):
     """The case it exists for: a deferred-start reactivation fires this and then
     nothing until the first charge, so without it the local row never appears
-    and the "won't renew" banner never clears on a paid reactivation."""
+    and the "won't renew" banner never clears on a paid reactivation.
+
+    Uses the REAL authenticated wire shape — ``current_start`` null, the
+    future start only in ``start_at`` — so a regression back to keying on
+    ``current_start`` fails here instead of in production."""
     client = _client(db, "auth-future@e.com")
     plan = _plan(db, "std-auth-future")
     monkeypatch.setattr(rzp, "cancel_subscription", lambda s, **kw: None)
@@ -231,6 +358,7 @@ def test_authenticated_with_a_future_start_materialises_the_row(db, monkeypatch)
             plan_id=plan.id,
             period_start=start,
             period_end=start + timedelta(days=30),
+            charged=False,
         ),
     )
     db.commit()
@@ -327,6 +455,7 @@ def test_future_start_activation_carries_the_paid_period_and_grants_nothing(db, 
             period_start=paid_through,  # future — this is the deferred start
             period_end=paid_through + timedelta(days=30),
             notes={"prev_razorpay_subscription_id": "sub_old_deferred"},
+            charged=False,  # pre-charge shape: the future start is in start_at only
         ),
     )
     db.commit()

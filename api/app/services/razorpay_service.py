@@ -1830,6 +1830,26 @@ def _grant_subscription_period(
     return credit_service.grant_subscription_period_once(session, subscription, period_end, invoice_id=invoice_id)
 
 
+def _entity_future_start(sub_entity: dict[str, Any]) -> datetime | None:
+    """The subscription's billing start, iff it lies in the future.
+
+    ``start_at`` is authoritative — it is the very field the deferred-start
+    reactivation path sends when minting a replacement mandate, and it is
+    populated on ``created``/``authenticated`` entities. ``current_start`` is
+    only a fallback: Razorpay leaves it null until the first charge, so keying
+    futurity on it alone silently classifies every real deferred-start
+    authentication as "immediate" and the replacement row never materialises.
+    ``charge_at`` is deliberately NOT consulted: on a live subscription it is
+    the *next renewal* — always in the future — and would misclassify every
+    ordinary activation as deferred.
+    """
+    raw_start = sub_entity.get("start_at") or sub_entity.get("current_start")
+    if not raw_start:
+        return None
+    start = datetime.fromtimestamp(raw_start, tz=UTC)
+    return start if start > datetime.now(UTC) else None
+
+
 def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
     """Mandate authorised, billing not started — materialise the row, grant nothing.
 
@@ -1844,18 +1864,17 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
     the activation handler would hand out a month of credits before Razorpay
     collected anything — entitlement ahead of payment, which is the one rule
     this billing code does not bend. We therefore only act when the entity's
-    ``current_start`` is in the future (the deferred-start case, where the
-    activation handler is itself grant-free). An immediate-start subscription is
-    left alone: its own ``activated`` event is the canonical trigger and arrives
-    on its own.
+    billing start (``start_at``, with ``current_start`` as fallback — see
+    ``_entity_future_start``) is in the future: the deferred-start case, where
+    the activation handler is itself grant-free. An immediate-start
+    subscription is left alone: its own ``activated`` event is the canonical
+    trigger and arrives on its own.
     """
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
         return "subscription entity missing"
 
-    current_start = sub_entity.get("current_start")
-    starts_in_future = bool(current_start) and datetime.fromtimestamp(current_start, tz=UTC) > datetime.now(UTC)
-    if not starts_in_future:
+    if _entity_future_start(sub_entity) is None:
         return f"subscription.authenticated for {sub_entity.get('id')} ignored (immediate start — awaiting activated)"
 
     return _handle_subscription_activated(session, payload)
@@ -1896,8 +1915,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
     # keeps serving (and keeps its credits) until then. Two things change below:
     # the predecessor is cancelled at-cycle-end rather than immediately, and no
     # credits are granted here — the ``subscription.charged`` at ``start_at``
-    # does that, exactly like a normal renewal.
-    starts_in_future = current_period_start is not None and current_period_start > datetime.now(UTC)
+    # does that, exactly like a normal renewal. Futurity comes from ``start_at``
+    # (``current_start`` is null on a not-yet-charged entity — see
+    # ``_entity_future_start``); for an ordinary post-charge ``activated``,
+    # ``start_at`` is already in the past, so this stays False.
+    starts_in_future = _entity_future_start(sub_entity) is not None
 
     if local is None:
         if client_id is None or plan_id is None:
@@ -2123,8 +2145,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # Finding F: capture the customer's ACTUAL unused plan credits BEFORE the
         # reset below zeroes them, so the pending rollover (snapshotted at click
         # time) is clamped to what's really left — not re-granted in full after
-        # they've spent some between click and authorization.
-        live_remaining_before_reset = transition_service.remaining_plan_credits(session, local.client_id)
+        # they've spent some between click and authorization. Scoped to the new
+        # sub's ledger scope, matching where the reset and re-grant land.
+        live_remaining_before_reset = transition_service.remaining_plan_credits(
+            session, local.client_id, bot_id=local.bot_id
+        )
 
         # Finding N: a UPI ``activated`` can land BEFORE the first charge with no
         # ``current_end``. Granting then without advancing the period marker means
@@ -2521,6 +2546,36 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             )
             session.flush()
             return f"Subscription {razorpay_sub_id} renewed past a pending cancellation — cancel FAILED, will retry"
+
+        # The operator-seat add-on is a SEPARATE Razorpay mandate and must be
+        # retired here too, exactly as ``execute_gateway_cancellation`` does —
+        # this backstop is the last code that ever sees this row (the status
+        # flip below removes it from the sweep's match set), so skipping the
+        # add-on would leave a live per-seat mandate debiting the customer
+        # monthly with no retry path. Park the count as pending so a later
+        # reactivation can re-mint the seats, and on failure leave the row
+        # active + unstamped so the sweep re-matches and retries both cancels
+        # (the plan cancel above is idempotent at the gateway).
+        if local.seat_addon_subscription_id:
+            wanted_seats = int(local.seat_addon_quantity or 0)
+            try:
+                cancel_seat_addon(session, local)
+            except Exception:
+                logger.error(
+                    "Seat add-on cancel FAILED for %s (client %s) during the charged backstop — "
+                    "the seat mandate is STILL LIVE at Razorpay and will keep debiting. Leaving "
+                    "the row active and unstamped so the sweep retries.",
+                    razorpay_sub_id,
+                    local.client_id,
+                    exc_info=True,
+                )
+                session.flush()
+                return (
+                    f"Subscription {razorpay_sub_id} renewed past a pending cancellation — "
+                    "seat add-on cancel FAILED, will retry"
+                )
+            if wanted_seats > 0:
+                local.seat_addon_pending_quantity = wanted_seats
 
         local.gateway_cancel_executed_at = datetime.now(UTC)
         local.status = "canceled"
