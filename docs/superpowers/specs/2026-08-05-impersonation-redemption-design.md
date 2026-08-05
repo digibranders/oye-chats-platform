@@ -286,7 +286,10 @@ a denied action surfaces a clear message → Exit revokes → the tab's next req
 | `app/src/services/api.js` | header swap; impersonation-aware 401 handling |
 | `app/src/utils/authStorage.js` | tab-scoped impersonation keys, excluded from the shared bundle |
 | `app/src/components/ImpersonationBanner.jsx` | new — customer-side banner |
-| `oyechats-admin/src/app/(dashboard)/impersonate/page.tsx` | use returned `redirect_url` as-is |
+
+`oyechats-admin` needs **no change**: both call sites already open the server-returned
+`redirect_url` verbatim (`impersonate/page.tsx:31`, `clients/[id]/page.tsx:101`), so
+pointing `APP_BASE_URL` at localhost or staging works without touching the frontend.
 
 ## 14. Rollout
 
