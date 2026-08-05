@@ -27,7 +27,17 @@ expiry and the revoke endpoint are all real — they just guard a session that n
 
 **Goal:** make the token redeemable, so a super-admin genuinely sees the product as the
 Account sees it, with expiry and revocation enforced on *every request*, and with a
-blast radius small enough that a support session cannot cost the customer money.
+blast radius small enough that the impersonation credential cannot cost the customer money.
+
+> **Scope of that last claim, corrected during implementation.** The write guard bounds
+> what the *impersonation credential* can do. It cannot bound what a super-admin can do
+> by other means: `bot_key` is public by design (it ships in the widget `<script>` tag on
+> the customer's own website), and a request authenticated with `X-Bot-Key` is a *widget*
+> request — the guard never runs and the Account's credits are deducted. An admin can read
+> a `bot_key` from an allowed GET, or simply from the customer's page source.
+> Impersonation therefore does not *grant* this capability, and closing it is out of scope
+> here — but the honest claim is "the impersonation session cannot spend their money",
+> not "a support session cannot". See §6.3.
 
 ## 2. Non-Goals (YAGNI)
 
@@ -52,12 +62,32 @@ permanent UUID column. There is no expiry, no rotation-on-use, no session table.
 **3.2 The matched route is visible from inside a dependency.** Verified empirically on
 this stack (`fastapi 0.135.3`, `starlette 0.52.1`): `request.scope["route"].endpoint` is
 populated before dependencies resolve, and reads attributes set by a decorator.
-`scope["endpoint"]` does **not** exist in this version — use `scope["route"].endpoint`.
 
-**3.3 The customer app shares auth across tabs by design.** `authStorage.js` deliberately
+> **Correction.** An earlier draft claimed `request.scope["endpoint"]` does not exist in
+> this version. It does — both keys are present and resolve to the same function. The
+> implementation uses `scope["route"].endpoint`, which is equivalent here; nothing in the
+> code depends on the false claim, but don't repeat it.
+
+**3.3 The customer app shares state across tabs by design.** `authStorage.js` deliberately
 moved auth to `localStorage` because `sessionStorage` broke second tabs. An impersonation
 session must therefore **not** be written into that shared bundle, or it would stomp the
 admin's own genuine session in unrelated tabs.
+
+> **Widened during implementation.** The auth bundle is not the only shared writer.
+> `WorkspaceContext.persistWorkspace` writes `current_workspace_{id,name,role}` and
+> `BotContext` writes `selected_bot_id`, both into the same shared `localStorage`. An
+> impersonated tab would therefore silently retarget the super-admin's **own** workspace
+> and AI Agent selection in every other tab they had open. Both are React-state-only
+> while impersonating, and `_restoreFromStorage` no longer seeds the admin's own
+> workspace into an impersonated tab.
+
+**3.4 The app's auth gate keys on `admin_token`.** `ProtectedLayout` — and the early
+returns in `WorkspaceContext` and `BotContext` (`if (!token) return`) — gate on the
+localStorage `admin_token`, which an impersonated tab deliberately does not have.
+**Without teaching these three about the impersonation credential, a successfully
+redeemed session bounces straight to `/login` and the feature cannot work at all.**
+This was missing from the first draft of §8 and is the single thing most likely to be
+overlooked by anyone re-implementing this.
 
 ## 4. Architecture — the token *is* the session
 
@@ -164,11 +194,46 @@ failure mode.
 | Preview-mode test chat | Owner-preview replies skip deduction entirely (`chat_routes.py:386`, `:519`) — costs the Account nothing |
 | Department edits (not invites) | Config only |
 
+> **The preview-chat marker needed backend work the first draft missed.** The marker is
+> applied at the endpoint, but `POST /chat` resolves its bot through `get_bot_for_chat`,
+> **not** through `get_current_client` — so the write guard never runs there at all, and
+> the resolver's owner-preview branch required `X-API-Key`, which an impersonated session
+> deliberately does not send and whose Client attribute is scrubbed to `None`. The branch
+> was structurally unreachable and the caller 401'd at bot auth. `get_bot_for_chat` now
+> accepts `X-Impersonation-Token` **only** on the free `_is_preview` path
+> (`_resolve_preview_client`); the token is never forwarded to `get_current_bot`, so the
+> paid widget path on the same endpoint stays unreachable. Because the guard cannot run
+> here, that preview-only constraint is enforced **in the resolver**, not by the marker.
+
 ### 6.2 Denied by construction (unmarked)
 
 Billing, subscription, credits and payment routes · API-key rotation · Account or AI Agent
 deletion · Operator invites (would send email over the customer's name) · outbound
 messages to real Leads · everything not yet marked.
+
+Judged ambiguous during implementation and left **unmarked** (under-marking is
+recoverable; over-marking grants a capability the spec denies): operator
+`takeover` / `connect-request` (they push an unprompted popup to a live visitor, unlike
+`accept`, which answers a visitor who already asked for a human) · department
+create/delete (delete re-parents every operator; §6.1 says "edits", so only `PATCH` is
+marked) · `brand-tone/detect`, `brand-tone/preview`, `seed-questions` (tone config, but
+each burns an LLM call) · qualification-score overrides · `PATCH /client/{settings,profile}`
+(Account config, not AI Agent config).
+
+**§6.1 row 1 is broader in practice than its wording.** There is exactly one bot-config
+endpoint, `PATCH /bots/{bot_id}`. Marking it grants everything in `UpdateBotRequest` —
+which was verified to carry no billing or credential fields, but does include
+`allowed_domains` / `domain_check_enabled` (the widget's origin allowlist, a security
+control), `session_share_domain`, notification and reply-to emails, live-chat timeouts,
+business hours and the full qualification config. Accept that scope or split the endpoint.
+
+### 6.3 What the guard structurally cannot cover
+
+Routes authenticated by `X-Bot-Key` (the widget path) never run the guard, because they
+never resolve a Client. Bot keys are public by design. See the corrected claim in §1: an
+admin who wants to spend an Account's credits can do so via the widget path regardless of
+impersonation, so the guard's real value is preventing *accidental* mutation while
+browsing as the customer, plus a clean audit trail — not containing a hostile super-admin.
 
 ## 7. Redeem Endpoint
 
@@ -214,8 +279,24 @@ and writes a `client.impersonate_redeem` audit row.
 `X-Impersonation-Token` and **suppress** `X-API-Key`, `X-Workspace-Id` and `X-Acting-Role`.
 
 **Response interceptor:** a 401 while impersonating clears only the sessionStorage keys
-and shows "Impersonation session ended". It must **not** enter `clearAuthStorage()`, which
-would wipe the admin's real credentials in every other tab.
+and ends the session. It must **not** enter `clearAuthStorage()`, which would wipe the
+admin's real credentials in every other tab.
+
+> **Hardened during implementation.** Recognising "am I impersonating?" purely from live
+> storage state is racy: the first 401 clears sessionStorage, so a second concurrent 401
+> would fall through to the auto-logout path and wipe the admin's genuine credentials.
+> Requests are therefore stamped with a `Symbol` at request time, classifying each
+> response by the credential the request *actually carried*, backed by a module latch
+> that stays true for the page's lifetime. Once ended, the **request** interceptor also
+> rejects further calls outright, so a stale poller can never re-issue itself under the
+> super-admin's own `X-API-Key`. Three other `clearAuthStorage()` doors reachable from an
+> impersonated tab were closed the same way: the `main.jsx` session-expiry guard,
+> `ProfileMenu` sign-out, and Settings ▸ Active sessions ▸ Sign out.
+
+A 401 renders a **blocking** terminal notice rather than a toast — a toast would leave a
+dead session browsable. The 403 contract is structured (`detail = {error:
+"impersonation_read_only", message}`), matching how `workspace_access_denied` already
+behaves; the UI prefers the backend's message and falls back to generic copy.
 
 **Banner:** persistent red bar — *"Viewing **Acme Corp** as super-admin admin@oyechats.com ·
 safe actions only · expires 12:30"* — plus Exit, which clears sessionStorage and closes
@@ -236,11 +317,25 @@ the tab. Visually distinct from the customer's own banners.
   `replaceState`, the 30-minute ceiling, per-request revocation checks, and single-hop use.
   A POST-based cross-origin handoff would remove it entirely but needs a form-post bridge;
   judged not worth the complexity at this expiry length. Revisit if expiry ever grows.
-- **`APP_BASE_URL`.** `https://app.oyechats.com` is hardcoded at
+- **Hardcoded host → reuse `APP_URL`.** `https://app.oyechats.com` is hardcoded at
   `superadmin_routes_v2.py:319`, so impersonation can never work against localhost or
-  staging. Becomes `os.getenv("APP_BASE_URL", "https://app.oyechats.com")`, following the
-  existing convention — this codebase has no `Settings` class; `app/core/` reads env vars
-  inline (see `middleware.py:105`, `rate_limit.py:21`). Default preserves today's behaviour.
+  staging. It now reads the **existing** `APP_URL` setting (`app/config.py:191`).
+
+  > **Corrected during implementation.** An earlier draft of this spec invented a new
+  > `APP_BASE_URL` env var. That was wrong: `app/config.py` already defines
+  > `APP_URL` ("Customer admin dashboard root", same production default, same
+  > trailing-slash handling), it is already consumed across `email_service.py` to build
+  > customer dashboard links, and the dev `.env` **already sets it to
+  > `http://localhost:5174`**. A second knob would have half-fixed the very bug this
+  > bullet exists to fix — a developer would still be handed a production impersonation
+  > link until they set the new var too, and it would have needed adding to
+  > `.env.example`. Reusing `APP_URL` makes local and staging impersonation work with
+  > zero configuration. `test_redirect_url_uses_the_shared_app_url_setting` pins this,
+  > asserting a stray `APP_BASE_URL` has no effect.
+
+  Note also that this codebase has no `BaseSettings`/`Settings` class, but it *does*
+  have a central constants module at `app/config.py` — env vars are read there at import,
+  not scattered inline.
 - **No privilege escalation.** Impersonating an Account whose `is_superadmin` is true is
   rejected at mint time (the `/impersonate` page already filters these out; the backend
   will now enforce it rather than trusting the UI filter).
@@ -281,7 +376,7 @@ a denied action surfaces a clear message → Exit revokes → the tab's next req
 | `api/app/api/auth.py` | impersonation resolution branch; `impersonation_writable`; write guard |
 | `api/app/api/auth_routes.py` | `POST /auth/impersonation/redeem` |
 | `api/app/api/bot_routes.py`, `canned_response_routes.py`, `lead_routes.py`, `chat_routes.py`, `operator_routes.py` | apply the `@impersonation_writable` marker to the §6.1 endpoints |
-| `api/app/api/superadmin_routes_v2.py` | `APP_BASE_URL`; reject superadmin targets at mint |
+| `api/app/api/superadmin_routes_v2.py` | reuse `APP_URL` for the hand-off host; reject super-admin targets at mint (403) |
 | `app/src/main.jsx` | bootstrap: read → strip → redeem → store |
 | `app/src/services/api.js` | header swap; impersonation-aware 401 handling |
 | `app/src/utils/authStorage.js` | tab-scoped impersonation keys, excluded from the shared bundle |
@@ -295,5 +390,41 @@ pointing `APP_BASE_URL` at localhost or staging works without touching the front
 
 Additive and reversible: no migration (the table already exists), no change to customer
 auth. Shipping the backend before the frontend leaves the current state unchanged (a
-token nothing redeems). The kill switch is an `IMPERSONATION_ENABLED` flag defaulting on —
-flipping it off disables redemption while leaving mint/revoke intact.
+token nothing redeems).
+
+### 14.1 Kill switch (as built)
+
+Two deliberately asymmetric layers, read only through
+`runtime_config.is_impersonation_enabled()`:
+
+| Layer | Where | Role |
+|---|---|---|
+| `IMPERSONATION_ENABLED` | env → `app/config.py` | **Floor.** False ⇒ off, DB not consulted. Survives a DB outage or a rogue `pricing_config` edit. |
+| `impersonation.enabled` | `pricing_config` row | **Fast lever.** Flip via `PUT /superadmin/model-config`; effective on the next request (the write path invalidates the runtime-config cache). No deploy, no restart. |
+
+Both default to on, so nothing changes for existing deployments. An unparseable DB value
+resolves to *enabled* — the env var is the mechanism for an unambiguous off, not a typo.
+
+**Enforced at four points**, all four tested: per-request auth (`_resolve_impersonated_client`),
+the preview-chat resolver (`_resolve_preview_client`), redemption, and minting. Revocation
+deliberately keeps working while the switch is off — it only ever reduces privilege, and an
+operator may need to revoke outstanding tokens *because* they flipped it.
+
+Because validity is re-checked on every request, flipping the switch **ends sessions
+already in flight**, not just new redemptions. The auth path returns 401 (not 403) so the
+customer app's existing "session ended" handling cleanly ejects every impersonated tab;
+redemption returns 403 with a real message, so an operator debugging a flipped switch is
+not told the link expired.
+
+> **Corrected during implementation.** The first draft called this "an
+> `IMPERSONATION_ENABLED` flag" and nothing more. An env-var-only switch needs a deploy to
+> flip, which is the wrong tool in an incident — hence the runtime layer. And the runtime
+> layer was initially inert: `PUT /superadmin/model-config` writes through an explicit
+> `field_to_key` map, so a key absent from it has **no API path at all**. Wiring
+> `impersonation.enabled` into that map (plus surfacing effective state and `locked_by_env`
+> on the matching GET) is what makes the lever real;
+> `test_the_runtime_lever_is_reachable_through_the_api` pins it.
+
+No frontend change was needed: the customer app already renders a terminal notice for 401
+and the server's own message for 403. A super-admin UI toggle is not built — the switch is
+flippable via the API today.
