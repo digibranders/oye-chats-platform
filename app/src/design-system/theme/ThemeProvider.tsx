@@ -6,7 +6,12 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { ThemeContext, type ResolvedTheme, type Theme } from './theme-context';
+import {
+  ThemeContext,
+  type EventOrOrigin,
+  type ResolvedTheme,
+  type Theme,
+} from './theme-context';
 
 const STORAGE_KEY = 'oc_theme';
 const MEDIA_QUERY = '(prefers-color-scheme: dark)';
@@ -41,11 +46,24 @@ function applyTheme(resolved: ResolvedTheme): void {
   root.style.colorScheme = resolved;
 }
 
+function extractOrigin(eventOrOrigin?: EventOrOrigin): { x: number; y: number } {
+  if (!eventOrOrigin) {
+    // Default to top-right corner near the topbar theme toggle button
+    return {
+      x: typeof window !== 'undefined' ? Math.max(window.innerWidth - 80, 0) : 0,
+      y: 32,
+    };
+  }
+  if ('clientX' in eventOrOrigin) {
+    return { x: eventOrOrigin.clientX, y: eventOrOrigin.clientY };
+  }
+  return eventOrOrigin;
+}
+
 /**
  * Theme Provider - light / dark / system with the `.dark` class strategy.
- * `resolvedTheme` is derived from the chosen preference and the OS store, and
- * synced to the document in a single effect (an external-system write, not a
- * state update).
+ * Includes a smooth top-right circular clip-path transition via View Transitions API
+ * without folding or moving any DOM page elements.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readStoredTheme);
@@ -56,14 +74,73 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyTheme(resolvedTheme);
   }, [resolvedTheme]);
 
-  const setTheme = useCallback((next: Theme) => {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, next);
-    setThemeState(next);
-  }, []);
+  const setTheme = useCallback(
+    (next: Theme, eventOrOrigin?: EventOrOrigin) => {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, next);
 
-  const toggle = useCallback(() => {
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
-  }, [resolvedTheme, setTheme]);
+      const nextResolved: ResolvedTheme = next === 'system' ? systemTheme : next;
+      const origin = extractOrigin(eventOrOrigin);
+
+      const prefersReducedMotion =
+        typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      const isSupported =
+        typeof document !== 'undefined' &&
+        'startViewTransition' in document &&
+        !prefersReducedMotion;
+
+      if (!isSupported || nextResolved === resolvedTheme) {
+        setThemeState(next);
+        applyTheme(nextResolved);
+        return;
+      }
+
+      const { x, y } = origin;
+      const endRadius = Math.hypot(
+        Math.max(x, window.innerWidth - x),
+        Math.max(y, window.innerHeight - y)
+      );
+
+      const doc = document as Document & {
+        startViewTransition?: (cb: () => void) => { ready: Promise<void> };
+      };
+
+      if (doc.startViewTransition) {
+        const transition = doc.startViewTransition(() => {
+          setThemeState(next);
+          applyTheme(nextResolved);
+        });
+
+        transition.ready.then(() => {
+          document.documentElement.animate(
+            {
+              clipPath: [
+                `circle(0px at ${x}px ${y}px)`,
+                `circle(${endRadius}px at ${x}px ${y}px)`,
+              ],
+            },
+            {
+              duration: 900,
+              easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+              pseudoElement: '::view-transition-new(root)',
+            }
+          );
+        });
+      } else {
+        setThemeState(next);
+        applyTheme(nextResolved);
+      }
+    },
+    [resolvedTheme, systemTheme],
+  );
+
+  const toggle = useCallback(
+    (eventOrOrigin?: EventOrOrigin) => {
+      setTheme(resolvedTheme === 'dark' ? 'light' : 'dark', eventOrOrigin);
+    },
+    [resolvedTheme, setTheme],
+  );
 
   const value = useMemo(
     () => ({ theme, resolvedTheme, setTheme, toggle }),

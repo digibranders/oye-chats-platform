@@ -354,7 +354,7 @@ export function BillingPage(): ReactElement {
               Subscription-state banners and seat management live here because
               they're about the plan you're ON, not the ones you might switch to. */}
           {activeTab === 'overview' && (
-            <div className="space-y-6">
+            <div className="space-y-8">
               {subscription.scheduledChange && (
                 <ScheduledChangeBanner
                   planName={subscription.scheduledChange.planName}

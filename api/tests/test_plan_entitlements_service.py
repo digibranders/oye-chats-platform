@@ -479,9 +479,9 @@ class TestIsBantEnabledForPlan:
 
 # ── Leads dashboard plan-gate helper ─────────────────────────────────────────
 #
-# ``is_leads_dashboard_enabled`` mirrors the sidebar's ``ent.isFree`` lock so
-# the API refuses to serve leads to Free customers. Every paid slug (including
-# custom super-admin-created tiers that aren't literally "free") passes.
+# ``is_leads_dashboard_enabled`` now grants every resolved plan — Free
+# included — access to the leads dashboard (Free sees a reduced, chat-only
+# surface in the UI). The gate only denies on an entitlements lookup failure.
 
 
 class TestIsLeadsDashboardEnabled:
@@ -495,13 +495,15 @@ class TestIsLeadsDashboardEnabled:
             features={},
         )
 
-    def test_free_plan_denied(self):
+    def test_free_plan_allowed(self):
+        # Free now reaches the leads dashboard too (reduced surface in the UI);
+        # the API-level gate only denies on an entitlements lookup failure.
         session = MagicMock()
         with patch(
             "app.services.plan_entitlements_service.get_entitlements",
             return_value=self._entitlements("free"),
         ):
-            assert is_leads_dashboard_enabled(1, session) is False
+            assert is_leads_dashboard_enabled(1, session) is True
 
     @pytest.mark.parametrize("slug", ["starter", "standard", "professional", "custom-paid"])
     def test_paid_slugs_allowed(self, slug):

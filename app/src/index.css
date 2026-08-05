@@ -560,3 +560,20 @@ fieldset:disabled *:not(label) {
   color: #1e293b;
 }
 
+/* ── View Transitions API: Top-Right Color Sweep (No Page Fold) ── */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+  display: block;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+

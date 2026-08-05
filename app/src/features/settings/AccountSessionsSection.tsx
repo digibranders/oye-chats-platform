@@ -55,9 +55,6 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
                     </span>
                   ) : null}
                 </p>
-                <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">
-                  The browser you’re using right now.
-                </p>
               </div>
               <StatusBadge tone="success" dot>
                 Current

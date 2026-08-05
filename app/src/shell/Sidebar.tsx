@@ -13,13 +13,11 @@ import type { UpgradeIntentKey } from '../context/upgradeIntents';
 /** Primary-nav routes that are Free-plan-gated: the destination is a paid
  *  feature, so a Free workspace renders the item as a `LockedNavItem` that opens
  *  the upgrade modal (with the mapped intent's copy) instead of routing. Backend
- *  enforces the same gate (`plan_entitlements_service.py`; the `/leads` API and
- *  live-chat endpoints 403 for Free), so this is UX, not the security boundary.
- *  - `/inbox`  Support / live chat is paid (`live_chat` feature).
- *  - `/leads`  Leads dashboard + qualification are paid. */
+ *  enforces the same gate (`plan_entitlements_service.py`; the live-chat
+ *  endpoints 403 for Free), so this is UX, not the security boundary.
+ *  - `/inbox`  Support / live chat is paid (`live_chat` feature). */
 const FREE_LOCKED_NAV: Record<string, UpgradeIntentKey> = {
   '/inbox': 'view_support',
-  '/leads': 'view_leads',
 };
 
 export interface SidebarProps {

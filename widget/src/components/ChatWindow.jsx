@@ -2764,7 +2764,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     aria-label="Scroll to latest message"
                     aria-hidden={isAtBottom}
                     tabIndex={isAtBottom ? -1 : 0}
-                    className={`sticky bottom-1 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-3 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
+                    className={`sticky bottom-1 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 -mb-10 md:-mb-4 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-3 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
                 >
                     <ChevronDown className="w-4 h-4" strokeWidth={2} />
                 </button>

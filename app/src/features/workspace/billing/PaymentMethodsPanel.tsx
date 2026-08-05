@@ -101,14 +101,17 @@ export function PaymentMethodsPanel({ provider, hasPaidPlan }: PaymentMethodsPan
 
   return (
     <Card>
-      <CardContent className="space-y-6">
+      {/* `CardContent` zeroes its top padding (it's meant to pair with a
+          CardHeader). This panel has no header, so restore the top padding to
+          match the card's other sides — otherwise the heading hugs the border. */}
+      <CardContent className="pt-5 space-y-8">
         {/* ── Subscription mandate ─────────────────────────────────────── */}
         <div>
           <SectionHeader
             title="Subscription payment"
             description="The mandate your recurring charges are collected against."
           />
-          <div className="mt-3 flex items-start gap-3 rounded-lg border border-[var(--ds-border)] px-3.5 py-3">
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-[var(--ds-border)] px-3.5 py-3">
             <ShieldCheck size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-text-muted)]" />
             <div className="min-w-0 text-[13px]">
               {hasPaidPlan && provider ? (
@@ -150,13 +153,13 @@ export function PaymentMethodsPanel({ provider, hasPaidPlan }: PaymentMethodsPan
           )}
 
           {methods === null ? (
-            <p className="mt-3 text-[13px] text-[var(--ds-text-muted)]">Loading…</p>
+            <p className="mt-4 text-[13px] text-[var(--ds-text-muted)]">Loading…</p>
           ) : methods.length === 0 ? (
-            <p className="mt-3 text-[13px] text-[var(--ds-text-muted)]">
+            <p className="mt-4 text-[13px] text-[var(--ds-text-muted)]">
               Nothing saved yet. Tick “save this card” when you buy credits and it’ll appear here.
             </p>
           ) : (
-            <ul className="mt-3 space-y-2">
+            <ul className="mt-4 space-y-2">
               {methods.map((m) => (
                 <li
                   key={m.id}
@@ -194,7 +197,7 @@ export function PaymentMethodsPanel({ provider, hasPaidPlan }: PaymentMethodsPan
             </ul>
           )}
 
-          <p className={cn('mt-3 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]')}>
+          <p className={cn('mt-5 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]')}>
             We never see or store your card number. Only the last four digits, the network and the
             issuing bank are kept — RBI rules prohibit storing anything more.
           </p>
