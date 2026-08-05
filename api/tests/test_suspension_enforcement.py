@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from app.api import auth
 
@@ -25,6 +25,16 @@ from app.api import auth
 @contextmanager
 def _session_ctx(session):
     yield session
+
+
+def _request(method: str = "GET") -> Request:
+    """A minimal ASGI request.
+
+    Every client-resolving dependency takes one so the impersonation write
+    guard can inspect the matched route; these tests exercise the ordinary
+    (non-impersonated) credential paths, where it is never consulted.
+    """
+    return Request({"type": "http", "method": method, "path": "/test", "headers": []})
 
 
 class _ScalarResult:
@@ -147,7 +157,9 @@ class TestGetCurrentClient:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+            auth.get_current_client(
+                _request(), api_key="client-key-123", operator_key=None, legacy_agent_key=None, impersonation_token=None
+            )
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_suspended"
@@ -158,7 +170,9 @@ class TestGetCurrentClient:
         session.execute.return_value = _ExecuteResult(client)
         _patch_session(monkeypatch, session)
 
-        result = auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+        result = auth.get_current_client(
+            _request(), api_key="client-key-123", operator_key=None, legacy_agent_key=None, impersonation_token=None
+        )
         assert result is client
 
     def test_superadmin_never_suspended_allowed(self, monkeypatch):
@@ -169,7 +183,9 @@ class TestGetCurrentClient:
         session.execute.return_value = _ExecuteResult(admin)
         _patch_session(monkeypatch, session)
 
-        result = auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+        result = auth.get_current_client(
+            _request(), api_key="client-key-123", operator_key=None, legacy_agent_key=None, impersonation_token=None
+        )
         assert result is admin
 
     def test_suspended_client_via_operator_key_rejected(self, monkeypatch):
@@ -184,7 +200,9 @@ class TestGetCurrentClient:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client(api_key=None, operator_key="op-key", legacy_agent_key=None)
+            auth.get_current_client(
+                _request(), api_key=None, operator_key="op-key", legacy_agent_key=None, impersonation_token=None
+            )
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_suspended"
@@ -200,7 +218,7 @@ class TestGetCurrentClientStrict:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client_strict(api_key="client-key-123")
+            auth.get_current_client_strict(_request(), api_key="client-key-123", impersonation_token=None)
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_suspended"
@@ -211,7 +229,7 @@ class TestGetCurrentClientStrict:
         session.execute.return_value = _ExecuteResult(client)
         _patch_session(monkeypatch, session)
 
-        result = auth.get_current_client_strict(api_key="client-key-123")
+        result = auth.get_current_client_strict(_request(), api_key="client-key-123", impersonation_token=None)
         assert result is client
 
 
@@ -226,10 +244,12 @@ class TestGetCurrentClientOrOperator:
 
         with pytest.raises(HTTPException) as exc:
             auth.get_current_client_or_operator(
+                _request(),
                 api_key="client-key-123",
                 operator_key=None,
                 legacy_agent_key=None,
                 workspace_id_raw=None,
+                impersonation_token=None,
             )
 
         assert exc.value.status_code == 403
@@ -242,10 +262,12 @@ class TestGetCurrentClientOrOperator:
         _patch_session(monkeypatch, session)
 
         result = auth.get_current_client_or_operator(
+            _request(),
             api_key="client-key-123",
             operator_key=None,
             legacy_agent_key=None,
             workspace_id_raw=None,
+            impersonation_token=None,
         )
         assert result["type"] == "client"
         assert result["entity"] is client
@@ -278,10 +300,12 @@ class TestGetCurrentClientOrOperator:
 
         with pytest.raises(HTTPException) as exc:
             auth.get_current_client_or_operator(
+                _request(),
                 api_key=None,
                 operator_key="op-key",
                 legacy_agent_key=None,
                 workspace_id_raw=None,
+                impersonation_token=None,
             )
 
         assert exc.value.status_code == 403
@@ -363,7 +387,9 @@ class TestGetCurrentClientDeactivated:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+            auth.get_current_client(
+                _request(), api_key="client-key-123", operator_key=None, legacy_agent_key=None, impersonation_token=None
+            )
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_deleted"
@@ -379,7 +405,9 @@ class TestGetCurrentClientDeactivated:
         _patch_session(monkeypatch, session)
 
         with pytest.raises(HTTPException) as exc:
-            auth.get_current_client(api_key=None, operator_key="op-key", legacy_agent_key=None)
+            auth.get_current_client(
+                _request(), api_key=None, operator_key="op-key", legacy_agent_key=None, impersonation_token=None
+            )
 
         assert exc.value.status_code == 403
         assert exc.value.detail == "account_deleted"
@@ -392,7 +420,9 @@ class TestGetCurrentClientDeactivated:
         session.execute.return_value = _ExecuteResult(admin)
         _patch_session(monkeypatch, session)
 
-        result = auth.get_current_client(api_key="client-key-123", operator_key=None, legacy_agent_key=None)
+        result = auth.get_current_client(
+            _request(), api_key="client-key-123", operator_key=None, legacy_agent_key=None, impersonation_token=None
+        )
         assert result is admin
 
 

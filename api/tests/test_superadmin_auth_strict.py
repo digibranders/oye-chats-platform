@@ -12,7 +12,7 @@ lookup, and the wiring is verified by signature introspection.
 import inspect
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.params import Depends as DependsParam
 
 from app.api.auth import get_current_client_strict, get_superadmin
@@ -30,6 +30,7 @@ def test_get_superadmin_uses_strict_auth():
 def test_strict_auth_rejects_operator_only_request():
     """With no X-API-Key, strict auth 401s before any DB lookup — an operator
     key alone (which get_current_client_strict ignores) can never satisfy it."""
+    request = Request({"type": "http", "method": "GET", "path": "/superadmin/clients", "headers": []})
     with pytest.raises(HTTPException) as exc:
-        get_current_client_strict(api_key="")
+        get_current_client_strict(request, api_key="", impersonation_token=None)
     assert exc.value.status_code == 401

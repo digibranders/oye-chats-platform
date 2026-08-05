@@ -74,7 +74,14 @@ def test_owner_preview_resolves_bot_and_bypasses_origin(db):
     with _patch_session(db):
         # domain_check_enabled=True + a non-matching allowlist, yet preview must
         # succeed — the origin check is intentionally skipped for the owner.
-        result = get_bot_for_chat(request=None, preview=True, bot_id=bot.id, bot_key="", api_key="prev-owner-key")
+        result = get_bot_for_chat(
+            request=None,
+            preview=True,
+            bot_id=bot.id,
+            bot_key="",
+            api_key="prev-owner-key",
+            impersonation_token=None,
+        )
     assert result.id == bot.id
     assert getattr(result, "_is_preview", False) is True
 
@@ -88,7 +95,14 @@ def test_preview_non_owner_gets_404(db):
     db.flush()
     db.commit()
     with _patch_session(db), pytest.raises(HTTPException) as exc:
-        get_bot_for_chat(request=None, preview=True, bot_id=bot.id, bot_key="", api_key="prev-b-key")
+        get_bot_for_chat(
+            request=None,
+            preview=True,
+            bot_id=bot.id,
+            bot_key="",
+            api_key="prev-b-key",
+            impersonation_token=None,
+        )
     assert exc.value.status_code == 404
 
 
