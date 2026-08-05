@@ -103,6 +103,11 @@ class TestDeleteDocument:
         session.query.return_value.filter.return_value.delete.return_value = 5
         monkeypatch.setattr(document_routes, "get_session", lambda: _session_ctx(session))
         monkeypatch.setattr(document_routes, "cache_delete_prefix", MagicMock())
+        # Post-delete the route re-derives the bot's "trained" counters from the
+        # documents table. That's covered against a real DB in
+        # tests/services/test_crawl_state_content_guard.py; here the session is a
+        # MagicMock, so stub it out rather than have the route count mocks.
+        monkeypatch.setattr(document_routes, "sync_bot_knowledge_state", MagicMock())
 
         app = _build_app(auth_override=_client_auth())
         tc = TestClient(app)

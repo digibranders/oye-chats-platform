@@ -372,6 +372,20 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
                 logger.error(f"Could not move {file_name} out of upload folder: {mv_err}")
 
     logger.info(f"Folder ingestion complete! Processed {processed_count} files.")
+    # Uploads run no crawl, so nothing else would ever mark this bot as trained:
+    # before this, uploading documents left the dashboard reading "Nothing
+    # learned yet" forever. Best-effort — a bookkeeping failure must not fail an
+    # ingest whose chunks are already committed.
+    if bot_id and processed_count > 0:
+        try:
+            from app.db.repository import sync_bot_knowledge_state
+            from app.db.session import get_session
+
+            with get_session() as session:
+                sync_bot_knowledge_state(session, bot_id)
+                session.commit()
+        except Exception:
+            logger.warning("failed to sync knowledge state for bot %s (non-fatal)", bot_id, exc_info=True)
     return processed_count
 
 
