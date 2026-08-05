@@ -220,12 +220,24 @@ marked) · `brand-tone/detect`, `brand-tone/preview`, `seed-questions` (tone con
 each burns an LLM call) · qualification-score overrides · `PATCH /client/{settings,profile}`
 (Account config, not AI Agent config).
 
-**§6.1 row 1 is broader in practice than its wording.** There is exactly one bot-config
-endpoint, `PATCH /bots/{bot_id}`. Marking it grants everything in `UpdateBotRequest` —
-which was verified to carry no billing or credential fields, but does include
+**§6.1 row 1 was broader in practice than its wording — now field-guarded.** There is
+exactly one bot-config endpoint, `PATCH /bots/{bot_id}`. Marking it grants everything in
+`UpdateBotRequest` — which carries no billing or credential fields, but did include
 `allowed_domains` / `domain_check_enabled` (the widget's origin allowlist, a security
 control), `session_share_domain`, notification and reply-to emails, live-chat timeouts,
-business hours and the full qualification config. Accept that scope or split the endpoint.
+business hours and the full qualification config.
+
+> **Corrected after review.** Rather than accept that scope wholesale, the endpoint now
+> rejects a small deny-set for impersonated callers only: `allowed_domains`,
+> `domain_check_enabled`, `session_share_domain`, `notification_email`,
+> `reply_to_email`. These are persistent changes that outlive the 30-minute token — the
+> first three re-scope where the public `bot_key` may be embedded, the last two redirect
+> the customer's lead notifications. Mixed payloads are rejected whole, so a benign field
+> cannot smuggle one through. The real owner's own `X-API-Key` is unaffected; the guard
+> keys on `_impersonator_id`. Pinned by `test_ai_agent_config_edit_rejects_security_sensitive_fields`
+> and `test_owner_still_edits_the_guarded_fields`. The banner copy changed from "safe
+> actions only" to "limited actions" to match: the allowlist admits real config writes,
+> so the honest claim is scope-limited, not harmless.
 
 ### 6.3 What the guard structurally cannot cover
 
@@ -310,6 +322,18 @@ the tab. Visually distinct from the customer's own banners.
   attributing an admin's edit to the customer.
 - Rejected writes are logged at WARN with actor, target and route — a spike means the
   allowlist is wrong, or someone is probing.
+
+> **Timing, made explicit after review.** The central `impersonation.write` row is
+> written and committed inside the auth dependency — *before* the endpoint's own authz
+> (ownership, plan gating, 404s) or business logic runs. It therefore records that a
+> write was **authorized to proceed**, not that it succeeded: an endpoint that
+> subsequently 403s, 404s or rolls back still leaves the row. The row now carries
+> `phase: "authorized"` so a reader can tell. Recording post-hoc instead would
+> *under*-report — a handler that crashes after mutating state would lose the trail
+> entirely — which is the worse failure for a compensating control, so the over-reporting
+> direction is the deliberate choice. Answering "what did this admin actually change"
+> means joining against the endpoint's own audit rows, not reading `phase=authorized` as
+> a completed mutation.
 
 ## 10. Security Notes
 
@@ -400,7 +424,7 @@ Two deliberately asymmetric layers, read only through
 | Layer | Where | Role |
 |---|---|---|
 | `IMPERSONATION_ENABLED` | env → `app/config.py` | **Floor.** False ⇒ off, DB not consulted. Survives a DB outage or a rogue `pricing_config` edit. |
-| `impersonation.enabled` | `pricing_config` row | **Fast lever.** Flip via `PUT /superadmin/model-config`. No deploy, no restart. Effective within **60s fleet-wide** — see the propagation caveat below. |
+| `impersonation.enabled` | `pricing_config` row | **Fast lever.** Flip via `PUT /superadmin/model-config`. No deploy, no restart. Effective **fleet-wide on the next request** — the key is read uncached; see below. |
 
 Both default to on, so nothing changes for existing deployments. An unparseable DB value
 resolves to *enabled* — the env var is the mechanism for an unambiguous off, not a typo.
@@ -410,15 +434,28 @@ the preview-chat resolver (`_resolve_preview_client`), redemption, and minting. 
 deliberately keeps working while the switch is off — it only ever reduces privilege, and an
 operator may need to revoke outstanding tokens *because* they flipped it.
 
-> **Propagation caveat — corrected after review.** An earlier draft claimed the lever is
-> "effective on the next request". That holds only for a single worker.
+> **Preview-path parity, corrected after review.** `_resolve_preview_client` re-checked
+> that the *target* is not a super-admin but not that the *actor* still is — so a demoted
+> or offboarded admin's outstanding token kept exercising the target's AI Agent (and
+> therefore reading its knowledge-base answers, the customer's proprietary content) on
+> this one path until expiry, while every ordinary request 401'd. It now mirrors
+> `_resolve_impersonated_client`'s actor check. Pinned by
+> `test_preview_path_also_rejects_a_demoted_actor`.
+
+> **Propagation — caveat found in review, then closed.** An earlier draft claimed the
+> lever is "effective on the next request"; that held only for a single worker.
 > `runtime_config` caches `pricing_config` in-process with a 60-second TTL, and
 > `invalidate_runtime_config_cache()` resets a module global — so the `PUT` only
-> invalidates the cache of the **one Gunicorn worker that served it**. With
-> `WEB_CONCURRENCY > 1`, every other worker keeps admitting impersonation for up to 60s.
-> The env floor has no such delay but needs a restart. If a sub-60s fleet-wide stop is
-> ever required, publish the invalidation over the existing Redis instance or read this
-> one key uncached (it is a single indexed row on a path that already does a token lookup).
+> invalidated the cache of the **one Gunicorn worker that served it**, and with
+> `WEB_CONCURRENCY > 1` every other worker kept admitting impersonation for up to 60s.
+> A kill switch with a 60-second bypass window is not a kill switch, so
+> `is_impersonation_enabled()` now reads this one key through
+> `runtime_config._get_uncached()` — a single indexed-row SELECT, on a path that
+> already does a token lookup — making the lever effective fleet-wide on the next
+> request. It falls back to the cached value if that read fails, so a DB blip degrades
+> to the old behaviour rather than erroring. `test_lever_reads_bypass_the_ttl_cache`
+> pins the property against a stale cache that still says enabled. Every other
+> `runtime_config` key keeps the cheap cached path. The env floor still needs a restart.
 
 Because validity is re-checked on every request, flipping the switch **ends sessions
 already in flight** — subject to that propagation window, and to the fact that a request
