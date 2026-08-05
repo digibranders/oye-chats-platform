@@ -45,6 +45,7 @@ import requests
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import config
 from app.config import (
     CHECKOUT_TEST_CLIENT_IDS,
     EXTRA_SEAT_PRICE_USD_CENTS,
@@ -86,6 +87,22 @@ RAZORPAY_HTTP_TIMEOUT = (
 MIN_DISCOUNTED_PLAN_PAISE = 100
 # Same floor for the USD rail, in cents — Razorpay's international minimum.
 MIN_DISCOUNTED_PLAN_CENTS_USD = 50
+
+
+class IntlPaymentsDisabled(Exception):
+    """A USD-rail gateway mandate was requested while INTL_PAYMENTS_ENABLED is off.
+
+    Deliberately NOT a ``RazorpayBillingError``: the broad billing-error
+    handlers convert those into "please try again" 502s, but this is a policy
+    refusal, not a gateway fault. It propagates to the app-level handler in
+    ``app/core/middleware.py``, which maps it to the same 409
+    ``intl_usd_pending`` contract the checkout quote already renders — so
+    ``/change-plan``, ``/resume`` and ``/seats`` can no longer mint a USD
+    mandate with the kill switch off (P1-2/F8), and the customer gets the
+    contact-sales card instead of an opaque error. In webhook/cron contexts
+    (scheduled-change promotion, seat carry) it fails loud into the
+    dead-letter/retry machinery rather than silently opening the USD rail.
+    """
 
 
 class RazorpayBillingError(Exception):
@@ -400,6 +417,16 @@ def create_subscription(
     # what guarantees none of them can silently mint an INR mandate for an
     # international customer.
     currency = charge_currency(getattr(client, "billing_country", None))
+    # The intl kill switch is enforced HERE — not only at the /checkout route —
+    # because every subscription path flows through this function (P1-2/F8).
+    # Read via the config module (not the from-import) so ops/tests can flip it
+    # without a process restart being the only truth. Test clients are exempt:
+    # they charge the ₹1 INR test plan regardless of resolved rail.
+    if currency == "USD" and not config.INTL_PAYMENTS_ENABLED and client.id not in CHECKOUT_TEST_CLIENT_IDS:
+        raise IntlPaymentsDisabled(
+            f"client {client.id} resolves to the USD rail (billing_country="
+            f"{getattr(client, 'billing_country', None)!r}) but INTL_PAYMENTS_ENABLED is off"
+        )
     razorpay_plan_id = _plan_id_for_rail(plan, billing_cycle, currency)
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         if not RAZORPAY_TEST_PLAN_ID:
@@ -714,6 +741,10 @@ def create_seat_addon_subscription(
         raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
 
     currency = charge_currency(getattr(client, "billing_country", None))
+    # Same service-layer kill switch as ``create_subscription`` (P1-2/F8) —
+    # the /seats route reaches here directly, bypassing the checkout gate.
+    if currency == "USD" and not config.INTL_PAYMENTS_ENABLED and client.id not in CHECKOUT_TEST_CLIENT_IDS:
+        raise IntlPaymentsDisabled(f"client {client.id} resolves to the USD seat rail but INTL_PAYMENTS_ENABLED is off")
     seat_plan_id = RAZORPAY_SEAT_PLAN_ID_USD if currency == "USD" else RAZORPAY_SEAT_PLAN_ID
     if not seat_plan_id:
         env_var = "RAZORPAY_SEAT_PLAN_ID_USD" if currency == "USD" else "RAZORPAY_SEAT_PLAN_ID"

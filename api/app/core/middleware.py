@@ -72,6 +72,27 @@ async def session_ownership_exception_handler(request: Request, exc):
     )
 
 
+async def intl_payments_disabled_handler(request: Request, exc):
+    """Map ``IntlPaymentsDisabled`` (service-layer USD kill switch, P1-2/F8) to
+    the 409 ``intl_usd_pending`` contract the checkout quote already renders —
+    so /change-plan, /resume and /seats surface the same contact-sales card
+    instead of an opaque 5xx when a non-Indian account hits a paid action with
+    international payments off. Logged at WARNING: it is a policy refusal the
+    ops team may want to notice (a real customer wanted to pay), not a bug.
+    """
+    logger.warning("USD-rail request refused (INTL_PAYMENTS_ENABLED off): %s", exc)
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": {
+                "reason": "intl_usd_pending",
+                "message": "USD billing for international customers is coming soon. Please contact sales.",
+                "contact_sales": "developer@oyechats.com",
+            }
+        },
+    )
+
+
 async def generic_exception_handler(request: Request, exc: Exception):
     """Catch-all handler for unhandled exceptions. Tags Sentry events with request context."""
     logger.error(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}", exc_info=True)
