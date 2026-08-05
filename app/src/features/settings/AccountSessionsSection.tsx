@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, Monitor } from 'lucide-react';
 import { Button, Card, SectionHeader, StatusBadge } from '../../design-system';
 import { clearAuthStorage } from '../../utils/authStorage';
+import { endImpersonationSession, isImpersonating } from '../../utils/impersonation';
 
 export interface AccountSessionsSectionProps {
   /** The signed-in account's email, shown against the current device. */
@@ -23,6 +24,14 @@ export function AccountSessionsSection({ email }: AccountSessionsSectionProps): 
   const navigate = useNavigate();
 
   const handleSignOut = (): void => {
+    // In an impersonated support session this button ends the SUPPORT session
+    // only. `clearAuthStorage()` clears the shared localStorage bundle, which
+    // holds the super-admin's own credentials for every other tab of this
+    // browser - signing out of a customer's Account must never touch them.
+    if (isImpersonating()) {
+      endImpersonationSession('Impersonation session ended. You can close this tab.');
+      return;
+    }
     // Clear both localStorage + sessionStorage so a session-only login leaves no
     // stale shadow that would auto-log the user back in. Mirrors the shell's
     // TopBar logout so behaviour is identical wherever the user signs out.

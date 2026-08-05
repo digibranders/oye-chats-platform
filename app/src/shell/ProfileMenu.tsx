@@ -5,6 +5,7 @@ import { cn, Popover, Skeleton, StatusBadge } from '../design-system';
 import { getCurrentUser } from '../services/api';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
+import { endImpersonationSession, isImpersonating } from '../utils/impersonation';
 import type { CurrentUser } from '../types/domain';
 
 const AVATAR_TRIGGER_SIZE = 36;
@@ -132,6 +133,14 @@ export function ProfileMenu() {
   const handleSignOut = useCallback(
     (close: () => void) => {
       close();
+      // Signing out of an impersonated tab ends the SUPPORT session only.
+      // `clearAuthStorage()` wipes the shared localStorage bundle, i.e. the
+      // super-admin's own credentials in every other tab of this browser - the
+      // one thing an impersonation session must never do.
+      if (isImpersonating()) {
+        endImpersonationSession('Impersonation session ended. You can close this tab.');
+        return;
+      }
       clearAuthStorage();
       clearTrialBannerDismissals();
       navigate('/login');

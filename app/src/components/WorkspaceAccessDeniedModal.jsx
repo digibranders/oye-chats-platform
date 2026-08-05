@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom';
 import { Building2, Headphones, LogOut, ShieldOff } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { clearAuthStorage } from '../utils/authStorage';
+import { endImpersonationSessionFromSignOut } from '../utils/impersonation';
 import { cn } from '../lib/utils';
 
 export default function WorkspaceAccessDeniedModal() {
@@ -44,6 +45,9 @@ export default function WorkspaceAccessDeniedModal() {
     }
 
     function handleSignOut() {
+        // An impersonated tab must end only the support session — see
+        // endImpersonationSessionFromSignOut.
+        if (endImpersonationSessionFromSignOut()) return;
         clearAuthStorage();
         clearAccessDenied();
         navigate('/login', { replace: true });

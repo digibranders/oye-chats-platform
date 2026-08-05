@@ -22,6 +22,7 @@ import { AlertTriangle, CheckCircle2, Gift, Loader2 } from 'lucide-react';
 import { Button, buttonVariants, Card } from '../../design-system';
 import { acceptAffiliateInviteExisting, lookupAffiliateInvite } from '../../services/api';
 import { clearAuthStorage, getAuthItem } from '../../utils/authStorage';
+import { endImpersonationSessionFromSignOut } from '../../utils/impersonation';
 
 type LookupPhase =
   | { readonly status: 'loading' }
@@ -200,6 +201,8 @@ export function AffiliateInvite(): ReactElement {
               variant="outline"
               className="mt-6 w-full"
               onClick={() => {
+                // An impersonated tab must end only the support session.
+                if (endImpersonationSessionFromSignOut()) return;
                 clearAuthStorage();
                 // Reload so the guards re-read the now-empty auth storage and this
                 // page falls through to the signed-out CTAs.

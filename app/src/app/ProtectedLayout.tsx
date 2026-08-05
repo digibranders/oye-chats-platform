@@ -1,5 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { getAuthItem } from '../utils/authStorage';
+import { isImpersonating } from '../utils/impersonation';
+import ImpersonationBanner from '../components/ImpersonationBanner';
 import { WorkspaceProvider } from '../context/WorkspaceContext';
 import { BotProvider } from '../context/BotContext';
 import { CrawlProvider } from '../context/CrawlContext';
@@ -38,29 +40,39 @@ function loginUrlWithNext(pathname: string, search: string): string {
  */
 export function ProtectedLayout() {
   const { pathname, search } = useLocation();
-  const isAuthenticated = Boolean(getAuthItem('admin_token'));
+  // Two credentials open this boundary: a customer's own `admin_token` (shared
+  // across tabs via localStorage) and a super-admin's tab-scoped impersonation
+  // token. The latter has no `admin_token` at all - without this the redeemed
+  // support session would bounce straight to /login.
+  const isAuthenticated = isImpersonating() || Boolean(getAuthItem('admin_token'));
 
   if (!isAuthenticated) {
     return <Navigate to={loginUrlWithNext(pathname, search)} replace />;
   }
 
   return (
-    <WorkspaceProvider>
-      <BotProvider>
-        <CrawlProvider>
-          {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces
-              render prices in the account's charge currency (INR/USD). */}
-          <CurrencyProvider>
-            <NotificationProvider>
-              <EntitlementsProvider>
-                <UpgradeModalProvider>
-                  <Outlet />
-                </UpgradeModalProvider>
-              </EntitlementsProvider>
-            </NotificationProvider>
-          </CurrencyProvider>
-        </CrawlProvider>
-      </BotProvider>
-    </WorkspaceProvider>
+    <>
+      {/* Outside the provider tree: the bar needs no data context, and it must
+          survive a provider-level failure so the super-admin is never left
+          browsing someone else's Account without the warning. */}
+      <ImpersonationBanner />
+      <WorkspaceProvider>
+        <BotProvider>
+          <CrawlProvider>
+            {/* CurrencyProvider (fed by /subscriptions/geo) lets billing surfaces
+                render prices in the account's charge currency (INR/USD). */}
+            <CurrencyProvider>
+              <NotificationProvider>
+                <EntitlementsProvider>
+                  <UpgradeModalProvider>
+                    <Outlet />
+                  </UpgradeModalProvider>
+                </EntitlementsProvider>
+              </NotificationProvider>
+            </CurrencyProvider>
+          </CrawlProvider>
+        </BotProvider>
+      </WorkspaceProvider>
+    </>
   );
 }

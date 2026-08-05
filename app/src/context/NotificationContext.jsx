@@ -34,6 +34,7 @@ import {
 } from 'react';
 
 import { getAuthItem } from '../utils/authStorage';
+import { isImpersonating } from '../utils/impersonation';
 import {
     clearAllNotifications,
     deleteNotification,
@@ -56,6 +57,16 @@ function resolveWsBase() {
 }
 
 function buildAuthSubprotocol() {
+    // Never open this socket from an impersonated tab. The only credential
+    // available here is the shared localStorage `admin_token` — the
+    // super-admin's OWN key — so connecting would stream the admin's
+    // notifications into a tab whose banner says "Viewing <Account>", mixing
+    // two identities in one list. The server also cannot revalidate an
+    // impersonation token on this channel, so revoke/expiry would not close it.
+    // Impersonation is a support-diagnostic scope; live notifications are not
+    // part of it.
+    if (isImpersonating()) return null;
+
     const token = getAuthItem('admin_token');
     if (!token) return null;
     const authType = getAuthItem('auth_type');

@@ -211,6 +211,35 @@
   --sidebar-border: var(--color-surface-800);
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Impersonation bar (components/ImpersonationBanner.jsx).
+
+   A super-admin support session owns the top edge of the viewport, so the whole
+   app shifts down by exactly the bar's height. The bar is `position: fixed`, so
+   padding on <body> moves normal-flow content but NOT the shell's `fixed` rail
+   or its `sticky` top bar - both are viewport-relative and have to be offset
+   explicitly, which is what the two data-attribute hooks below are for.
+
+   `.oc-impersonating` is on <body> only while a session is live; the class is
+   added/removed by the banner itself, so a normal customer session pays nothing.
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  --oc-impersonation-bar-h: 2.25rem; /* must match the banner's h-9 */
+}
+
+body.oc-impersonating {
+  padding-top: var(--oc-impersonation-bar-h);
+}
+
+body.oc-impersonating [data-app-sidebar] {
+  top: var(--oc-impersonation-bar-h);
+  height: calc(100vh - var(--oc-impersonation-bar-h));
+}
+
+body.oc-impersonating [data-app-topbar] {
+  top: var(--oc-impersonation-bar-h);
+}
+
 body {
   background-color: var(--bg);
   color: var(--text);

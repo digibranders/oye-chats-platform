@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { verifyEmail, resendVerification } from '../services/api';
 import { cn } from '../lib/utils';
 import { getAuthItem, setAuthItem, removeAuthItem, clearAuthStorage } from '../utils/authStorage';
+import { endImpersonationSessionFromSignOut } from '../utils/impersonation';
 
 const RESEND_COOLDOWN = 30;
 const OTP_LENGTH = 6;
@@ -329,6 +330,8 @@ export default function VerifyEmail() {
             Wrong account?{' '}
             <button
               onClick={() => {
+                // An impersonated tab must end only the support session.
+                if (endImpersonationSessionFromSignOut()) return;
                 // Only wipe auth keys (not unrelated app state) so a
                 // session-only login is fully cleared from both stores.
                 clearAuthStorage();

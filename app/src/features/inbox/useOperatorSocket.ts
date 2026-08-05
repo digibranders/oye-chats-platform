@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getChatHistory } from '../../services/api';
 import { getAuthItem } from '../../utils/authStorage';
+import { isImpersonating } from '../../utils/impersonation';
 import {
   AUTH_FAILED_CLOSE_CODE,
   buildSubprotocol,
@@ -366,7 +367,14 @@ export function useOperatorSocket({ enabled }: UseOperatorSocketOptions): Operat
 
     const token = getAuthItem('admin_token');
     const authType = getAuthItem('auth_type');
-    if (!token) {
+    // Never open the operator channel from an impersonated tab. The only
+    // credential available is the shared `admin_token` — the super-admin's own
+    // key — so the socket would join live-chat as the ADMIN while the rest of
+    // the page shows the impersonated Account, and the backend cannot
+    // revalidate an impersonation token on this channel (revoke/expiry would
+    // not close it). Taking over a live visitor conversation is outside the
+    // support-diagnostic scope anyway (design §6.2).
+    if (!token || isImpersonating()) {
       queueMicrotask(() => {
         if (mountedRef.current) setStatus('idle');
       });

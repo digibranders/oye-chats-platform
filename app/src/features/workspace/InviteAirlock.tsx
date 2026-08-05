@@ -31,6 +31,7 @@ import { AlertTriangle, Building2, CheckCircle2, Clock, Loader2, LogIn, LogOut, 
 import { Button, Card, cn } from '../../design-system';
 import { acceptInvitePublic, getCurrentUser, getInvitePublic } from '../../services/api';
 import { clearAuthStorage, getAuthItem, setAuthBundle } from '../../utils/authStorage';
+import { endImpersonationSessionFromSignOut } from '../../utils/impersonation';
 import type { CurrentUser } from '../../types/domain';
 
 /** Invite metadata as returned by `GET /invites/by-token/{token}`. */
@@ -281,6 +282,9 @@ function SwitchAccount({
   const navigate = useNavigate();
   const isOperator = variant === 'operator';
   const signOutAndSwitch = (): void => {
+    // An impersonated tab must end only the support session — see
+    // endImpersonationSessionFromSignOut.
+    if (endImpersonationSessionFromSignOut()) return;
     clearAuthStorage();
     const next = encodeURIComponent(window.location.pathname);
     navigate(`/login?next=${next}&email=${encodeURIComponent(invite.email || '')}`);

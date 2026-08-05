@@ -1,6 +1,13 @@
 import axios from 'axios';
 import { getAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
+import {
+    IMPERSONATION_FORBIDDEN_MESSAGE,
+    endImpersonationSession,
+    getImpersonationToken,
+    isImpersonating,
+    isImpersonationSessionEnded,
+} from '../utils/impersonation';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -101,6 +108,25 @@ function getWorkspaceAbortSignal() {
     return currentWorkspaceAbortController.signal;
 }
 
+/**
+ * Marker set on the axios request config for every request issued under an
+ * impersonation credential. The response interceptor reads it back off
+ * ``error.config`` so it can classify a failure by the credential the request
+ * ACTUALLY carried, instead of re-reading storage that a concurrent failure may
+ * already have cleared. A Symbol so it can never collide with an axios option.
+ */
+const IMPERSONATED_REQUEST = Symbol('oyechats.impersonatedRequest');
+
+/**
+ * Drop a header regardless of whether ``headers`` is a plain object or an
+ * ``AxiosHeaders`` instance (the latter matches case-insensitively).
+ */
+function dropHeader(headers, name) {
+    if (!headers) return;
+    if (typeof headers.delete === 'function') headers.delete(name);
+    else delete headers[name];
+}
+
 // Request interceptor: inject API key (supports both Client and Operator auth).
 // Reads via authStorage so session-only logins ("Remember me" off) land in
 // sessionStorage and still attach correctly here. Also attaches
@@ -109,6 +135,40 @@ function getWorkspaceAbortSignal() {
 // workspace they joined via an invite).
 api.interceptors.request.use(
     (config) => {
+        // ── Impersonation: the token IS the session ──────────────────────
+        // A super-admin support session authenticates with a short-lived,
+        // revocable ``X-Impersonation-Token`` and NOTHING else. The permanent
+        // credentials (``X-API-Key``/``X-Operator-Key``) and the workspace hints
+        // derived from them are suppressed outright: the backend re-resolves the
+        // target Account from the token on every request, and sending the
+        // super-admin's own key alongside would make the effective identity
+        // ambiguous. This branch returns before the normal path so
+        // non-impersonated behaviour below is byte-for-byte unchanged.
+        const impersonationToken = getImpersonationToken();
+        if (impersonationToken) {
+            config.headers['X-Impersonation-Token'] = impersonationToken;
+            dropHeader(config.headers, 'X-API-Key');
+            dropHeader(config.headers, 'X-Operator-Key');
+            dropHeader(config.headers, 'X-Workspace-Id');
+            dropHeader(config.headers, 'X-Acting-Role');
+            config[IMPERSONATED_REQUEST] = true;
+            if (!config.signal) {
+                config.signal = getWorkspaceAbortSignal();
+            }
+            return config;
+        }
+
+        // The session ended (expired, revoked, or the operator hit Exit) but
+        // components are still mounted and pollers still tick. Cancel locally
+        // rather than letting the request fall through to the branch below,
+        // where it would silently re-authenticate as whatever real session this
+        // browser has in localStorage - a support tab must never quietly become
+        // the super-admin's own account. Cancellations are swallowed by the
+        // response interceptor's ``isCancel`` guard.
+        if (isImpersonationSessionEnded()) {
+            return Promise.reject(new axios.CanceledError('Impersonation session ended'));
+        }
+
         const token = getAuthItem('admin_token');
         const authType = getAuthItem('auth_type'); // 'client' or 'operator'
         if (token) {
@@ -149,6 +209,50 @@ api.interceptors.request.use(
     (error) => Promise.reject(error)
 );
 
+/** Structured error code the backend's impersonation write guard returns on 403. */
+const IMPERSONATION_READ_ONLY_CODE = 'impersonation_read_only';
+
+/** Methods the impersonation write guard always permits (read-only verbs). */
+const IMPERSONATION_SAFE_METHODS = ['get', 'head', 'options'];
+
+/**
+ * True when a 403 under impersonation is the backend's write guard refusing a
+ * non-allowlisted mutation.
+ *
+ * Primary signal is the structured ``detail.error`` code. The method check is
+ * the fallback for a denial that arrives without it (an intermediary, or a
+ * backend older than the guard): the guard only ever refuses mutations, so a
+ * 403 on a safe method came from somewhere else (plan gating, ownership) and
+ * must keep its own message.
+ */
+function isImpersonationBlockedWrite(error) {
+    const detail = error.response?.data?.detail;
+    if (detail && typeof detail === 'object') {
+        return detail.error === IMPERSONATION_READ_ONLY_CODE;
+    }
+    const method = (error.config?.method || '').toString().toLowerCase();
+    return !IMPERSONATION_SAFE_METHODS.includes(method);
+}
+
+/**
+ * Give a write-guard 403 a human sentence on ``error.message``.
+ *
+ * The structured ``detail`` is left intact - that is how every other structured
+ * error in this app behaves (``workspace_access_denied``, ``must_subscribe``,
+ * ``insufficient_credits``), and ``buildApiError`` already lifts
+ * ``detail.message`` out of it. What it does NOT cover is the call sites that
+ * use the axios error directly, which would otherwise show the raw "Request
+ * failed with status code 403". The backend's own copy wins when present; the
+ * constant is the fallback when the denial carries no message at all.
+ */
+function applyImpersonationForbiddenCopy(error) {
+    const detail = error.response?.data?.detail;
+    let message = '';
+    if (typeof detail === 'string') message = detail;
+    else if (detail && typeof detail.message === 'string') message = detail.message;
+    error.message = message || IMPERSONATION_FORBIDDEN_MESSAGE;
+}
+
 // Response interceptor: handle auth errors globally
 api.interceptors.response.use(
     (response) => response,
@@ -162,6 +266,38 @@ api.interceptors.response.use(
         }
 
         const status = error.response?.status;
+
+        // ── Impersonation short-circuit - MUST stay above everything below ──
+        // A support session has its own lifecycle. The backend re-validates the
+        // token on every request, so a revoke or an expiry surfaces as a 401 on
+        // the very next call, and the write guard refuses non-allowlisted
+        // mutations with a 403.
+        //
+        // Neither may reach the auto-logout block further down. That block calls
+        // ``clearAuthStorage()``, which wipes the SHARED localStorage auth bundle
+        // - i.e. the super-admin's genuine credentials in every other tab of this
+        // browser. Returning early here is what guarantees it is unreachable
+        // while impersonating; nothing between this point and that block may be
+        // allowed to run either, so this check is the first thing after
+        // ``status`` is known.
+        //
+        // Three independent ways to recognise the context, so none of them
+        // failing can let a 401 through to the auto-logout: the per-request
+        // marker (survives a concurrent 401 that already cleared the session),
+        // live session state, and the "this tab WAS an impersonation tab" latch.
+        if (
+            error.config?.[IMPERSONATED_REQUEST] === true
+            || isImpersonating()
+            || isImpersonationSessionEnded()
+        ) {
+            if (status === 401) {
+                endImpersonationSession('This impersonation session expired or was revoked.');
+            } else if (status === 403 && isImpersonationBlockedWrite(error)) {
+                applyImpersonationForbiddenCopy(error);
+            }
+            return Promise.reject(error);
+        }
+
         const authType = getAuthItem('auth_type');
         const detailRaw = error.response?.data?.detail;
         const detail = (detailRaw || '').toString().toLowerCase();
@@ -225,9 +361,35 @@ api.interceptors.response.use(
 );
 
 /**
+ * Redeem the raw token from a super-admin impersonation link.
+ *
+ * Deliberately bypasses the shared ``api`` instance: this call must carry NO
+ * credential at all (the token in the body IS the authentication), and at the
+ * moment it runs there is no impersonation session yet for the request
+ * interceptor to key off - so going through it would attach whatever real
+ * session this browser happens to have in localStorage.
+ *
+ * @param {string} token - the raw token lifted from ``?impersonation=``.
+ * @returns {Promise<Object>} ``{ client_id, name, email, expires_at, actor_email, is_impersonation }``
+ * @throws {Error} decorated with ``.status`` - 401 means expired, revoked or unknown.
+ */
+export const redeemImpersonation = async (token) => {
+    try {
+        const response = await axios.post(
+            `${API_BASE_URL}/auth/impersonation/redeem`,
+            { token },
+            { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
+        );
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'This impersonation link could not be redeemed');
+    }
+};
+
+/**
  * Authenticate admin and receive API Key
- * @param {string} email 
- * @param {string} password 
+ * @param {string} email
+ * @param {string} password
  * @returns {Promise<Object>} The API response with access_token and name
  */
 /**
@@ -1196,6 +1358,20 @@ export const previewChat = async (botId, question, sessionId) => {
 /** Auth headers for the raw-fetch streaming preview (mirrors the axios interceptor). */
 function previewStreamHeaders() {
     const headers = { 'Content-Type': 'application/json' };
+
+    // Impersonation MUST be handled here as well as in the axios interceptor:
+    // this path uses raw fetch(), so the interceptor never runs. Sending the
+    // shared localStorage `admin_token` from an impersonated tab would
+    // authenticate the preview as the SUPER-ADMIN'S OWN Account — 404-ing on
+    // the impersonated bot_id, or leaking the admin's identity into a session
+    // whose banner says otherwise. Send only the impersonation credential and
+    // suppress the other four headers, exactly as the interceptor does.
+    const impersonationToken = getImpersonationToken();
+    if (impersonationToken) {
+        headers['X-Impersonation-Token'] = impersonationToken;
+        return headers;
+    }
+
     const token = getAuthItem('admin_token');
     const authType = getAuthItem('auth_type');
     if (token) {
