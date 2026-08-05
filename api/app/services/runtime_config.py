@@ -26,6 +26,7 @@ from app.config import (
     CHUNK_SIZE,
     CRAWL_PROVIDER_PRIMARY,
     FALLBACK_MODEL,
+    IMPERSONATION_ENABLED,
     LLM_MODEL,
 )
 from app.db.models import PricingConfig
@@ -208,6 +209,48 @@ def get_crawl_provider_primary() -> str:
     if value not in _CRAWL_PROVIDERS:
         return CRAWL_PROVIDER_PRIMARY if CRAWL_PROVIDER_PRIMARY in _CRAWL_PROVIDERS else "spider"
     return value
+
+
+_TRUTHY = ("1", "true", "yes", "on")
+_FALSY = ("0", "false", "no", "off")
+
+
+def is_impersonation_enabled() -> bool:
+    """Whether super-admin impersonation may be used at all (design §14).
+
+    Two layers, deliberately asymmetric:
+
+    * ``IMPERSONATION_ENABLED`` (env) is the **floor**. False here means off,
+      full stop — the DB is not consulted. It survives a DB outage and a rogue
+      ``pricing_config`` edit.
+    * ``impersonation.enabled`` (pricing_config row) is the **fast lever**:
+      flip it from the super-admin UI and it takes effect on the next request,
+      no deploy or restart, because the super-admin write path calls
+      ``invalidate_runtime_config_cache``.
+
+    Because validity is re-checked on every request, turning this off also
+    ends every session already in flight — which is the point of a kill
+    switch. Revocation of individual tokens keeps working while it is off.
+
+    An unparseable DB value resolves to enabled (matching the env default)
+    rather than silently disabling the feature; the env var is the mechanism
+    for a hard, unambiguous off.
+    """
+    if not IMPERSONATION_ENABLED:
+        return False
+
+    raw = get("impersonation.enabled", True)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value in _FALSY:
+            return False
+        if value in _TRUTHY:
+            return True
+    return True
 
 
 def snapshot() -> dict[str, Any]:

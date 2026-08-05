@@ -432,6 +432,20 @@ def _env_flag(name: str, *, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+# ── Impersonation kill switch ────────────────────────────────────────────────
+#
+# Hard off-switch for super-admin impersonation (design §14). Default ON so
+# nothing changes for existing deployments.
+#
+# This is the *floor*: when set false, impersonation is off no matter what the
+# runtime ``impersonation.enabled`` row in pricing_config says. The runtime row
+# is the fast lever (flip from the super-admin UI, no deploy, no restart); this
+# env var is the one that survives a DB outage or a rogue DB edit, which is
+# exactly the situation an operator would be reaching for a kill switch in.
+# Read via ``runtime_config.is_impersonation_enabled()`` — never directly.
+IMPERSONATION_ENABLED = _env_flag("IMPERSONATION_ENABLED", default=True)
+
+
 # ── Payment remediation feature flags (docs/billing/2026-06-29-remediation-plan.md) ──
 #
 # WEBHOOK_RETRY_ON_ERROR (default ON): when a verified webhook's processing
