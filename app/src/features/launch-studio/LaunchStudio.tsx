@@ -44,8 +44,14 @@ function readProgress(): number {
  * LaunchStudio - the onboarding state machine. Reads the current step from the
  * URL (`/launch/:step`), enforces forward-gating (you can revisit reached steps
  * but not skip ahead), and persists progress so the flow resumes after a reload.
- * On completion it redirects to the dashboard and never returns.
- * TODO(phase-2b): call completeOnboarding() on finish once auth/data is wired.
+ * On completion it calls `completeOnboarding()`, clears local progress and
+ * redirects to the dashboard.
+ *
+ * Entry points: the Home empty-state CTA, and the post-signup redirect for a
+ * brand-new account (`OAuthCallback` / `VerifyEmail`), which is gated on
+ * `!onboarding_complete && bot_count === 0` - so a user who created an agent
+ * here is never sent back through onboarding even if the completion call above
+ * fails to land.
  */
 export function LaunchStudio() {
   const { step } = useParams();

@@ -60,7 +60,7 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
 
       setState((prev) => ({
         ...prev,
-        messages: [...prev.messages, { role: 'user', text: q }, { role: 'bot', text: '' }],
+        messages: [...prev.messages, { role: 'user', text: q }],
         pending: true,
       }));
 
@@ -69,12 +69,16 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
         onFinal: () => setState((prev) => ({ ...prev, pending: false })),
         onError: () =>
           setState((prev) => {
-            const next = prev.messages.slice();
-            const last = next[next.length - 1];
-            if (last && last.role === 'bot' && !last.text) {
-              next[next.length - 1] = { ...last, text: 'Sorry, I couldn’t answer that just now.' };
-            }
-            return { ...prev, messages: next, pending: false };
+            // A turn that already streamed text keeps its partial answer; only a
+            // turn that produced nothing gets the fallback line (appended as a
+            // fresh bot message, since no placeholder was pre-created).
+            const last = prev.messages[prev.messages.length - 1];
+            if (last && last.role === 'bot' && last.text) return { ...prev, pending: false };
+            return {
+              ...prev,
+              messages: appendChunk(prev.messages, 'Sorry, I couldn’t answer that just now.'),
+              pending: false,
+            };
           }),
       });
     },

@@ -8,6 +8,7 @@ import {
   CircleDashed,
   AlertCircle,
   RefreshCw,
+  Wand2,
 } from 'lucide-react';
 import {
   Button,
@@ -20,6 +21,7 @@ import {
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { useBotContext } from '../../context/BotContext';
 import { type Bot } from '../../types/domain';
+import { hasLaunchProgress, resumeLaunchPath } from '../launch-studio/resume';
 import { summarizeAgents } from './agent-status';
 import { AgentCard } from './AgentCard';
 import { CreateAgentDialog } from './CreateAgentDialog';
@@ -135,16 +137,32 @@ export function AgentsPage(): ReactElement {
   }, [refreshBots]);
 
   const hasAgents = bots.length > 0;
+  // Only offered when the user actually abandoned Launch Studio mid-flow. A
+  // workspace with no agents already gets the guided path from the empty state
+  // below, and a finished workspace shouldn't be pulled back into onboarding.
+  const showResumeSetup = hasAgents && hasLaunchProgress();
 
   return (
     <PageContainer
       title="AI Chatbots"
       description="Every AI chatbot in your workspace, and how healthy each one is."
       actions={
-        <Button onClick={handleAddAgent}>
-          <Plus size={16} aria-hidden="true" />
-          New agent
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Launch Studio saves progress but had no door back in once the user
+              closed it (its only entry was Home's zero-agent empty state, and
+              the flow itself creates the first agent). Surface the resume here
+              while onboarding is unfinished. */}
+          {showResumeSetup && (
+            <Button variant="outline" onClick={() => navigate(resumeLaunchPath())}>
+              <Wand2 size={16} aria-hidden="true" />
+              Resume setup
+            </Button>
+          )}
+          <Button onClick={handleAddAgent}>
+            <Plus size={16} aria-hidden="true" />
+            New agent
+          </Button>
+        </div>
       }
     >
       {error ? (
