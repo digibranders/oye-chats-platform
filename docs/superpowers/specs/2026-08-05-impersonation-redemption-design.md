@@ -400,7 +400,7 @@ Two deliberately asymmetric layers, read only through
 | Layer | Where | Role |
 |---|---|---|
 | `IMPERSONATION_ENABLED` | env → `app/config.py` | **Floor.** False ⇒ off, DB not consulted. Survives a DB outage or a rogue `pricing_config` edit. |
-| `impersonation.enabled` | `pricing_config` row | **Fast lever.** Flip via `PUT /superadmin/model-config`; effective on the next request (the write path invalidates the runtime-config cache). No deploy, no restart. |
+| `impersonation.enabled` | `pricing_config` row | **Fast lever.** Flip via `PUT /superadmin/model-config`. No deploy, no restart. Effective within **60s fleet-wide** — see the propagation caveat below. |
 
 Both default to on, so nothing changes for existing deployments. An unparseable DB value
 resolves to *enabled* — the env var is the mechanism for an unambiguous off, not a typo.
@@ -410,8 +410,20 @@ the preview-chat resolver (`_resolve_preview_client`), redemption, and minting. 
 deliberately keeps working while the switch is off — it only ever reduces privilege, and an
 operator may need to revoke outstanding tokens *because* they flipped it.
 
+> **Propagation caveat — corrected after review.** An earlier draft claimed the lever is
+> "effective on the next request". That holds only for a single worker.
+> `runtime_config` caches `pricing_config` in-process with a 60-second TTL, and
+> `invalidate_runtime_config_cache()` resets a module global — so the `PUT` only
+> invalidates the cache of the **one Gunicorn worker that served it**. With
+> `WEB_CONCURRENCY > 1`, every other worker keeps admitting impersonation for up to 60s.
+> The env floor has no such delay but needs a restart. If a sub-60s fleet-wide stop is
+> ever required, publish the invalidation over the existing Redis instance or read this
+> one key uncached (it is a single indexed row on a path that already does a token lookup).
+
 Because validity is re-checked on every request, flipping the switch **ends sessions
-already in flight**, not just new redemptions. The auth path returns 401 (not 403) so the
+already in flight** — subject to that propagation window, and to the fact that a request
+which has already passed the auth check will still complete: revocation and the kill
+switch both stop *subsequent* requests, not one mid-flight. The auth path returns 401 (not 403) so the
 customer app's existing "session ended" handling cleanly ejects every impersonated tab;
 redemption returns 403 with a real message, so an operator debugging a flipped switch is
 not told the link expired.
