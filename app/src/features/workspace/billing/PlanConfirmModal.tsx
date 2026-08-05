@@ -2,7 +2,14 @@ import { type ReactElement, useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, Check, ExternalLink, Gift, Info, Loader2, Sparkles } from 'lucide-react';
 import { Button, Input, Modal, Skeleton, cn } from '../../../design-system';
 import { applyReferralCode, getCheckoutQuote, getReferralStatus } from '../../../services/api';
-import { formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
+import {
+  formatCredits,
+  formatFreeMonths,
+  formatMoneyMinor,
+  promotionAppliesToPlan,
+  type PlanView,
+  type PromotionView,
+} from '../billingModel';
 import type { BillingCycle } from './planMath';
 import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
 
@@ -96,6 +103,16 @@ export interface PlanConfirmModalProps {
   trialUsed: boolean;
   /** Monthly price of the current plan (minor units) - decides upgrade vs downgrade. */
   currentMonthlyPriceMinor: number;
+  /**
+   * Current plan's chat-history retention window (`limits.chat_history_days`;
+   * `-1` = unlimited, `null`/omitted = unknown). Used only to warn, on a
+   * downgrade, when the visible history window will shrink.
+   */
+  currentChatHistoryDays?: number | null;
+  /** Active launch promotion the client qualifies for, if any (drives the free-period display + checkout routing). */
+  promotion?: PromotionView | null;
+  /** Bot whose subscription this change targets (agent switcher selection); null = account-level view. */
+  botId?: number | null;
   onSuccess: (message: string) => void;
   /**
    * Fired when checkout is refused because the buyer's statutory billing
@@ -123,6 +140,9 @@ export function PlanConfirmModal({
   hasActiveSubscription,
   trialUsed,
   currentMonthlyPriceMinor,
+  currentChatHistoryDays = null,
+  promotion,
+  botId = null,
   onSuccess,
   onBillingDetailsRequired,
 }: PlanConfirmModalProps): ReactElement | null {
@@ -131,11 +151,18 @@ export function PlanConfirmModal({
     currentSubscriptionStatus,
     hasActiveSubscription,
     trialUsed,
+    promotion,
+    botId,
     onSuccess,
     onDone: onClose,
     onBillingDetailsRequired,
   });
   const { reset } = checkout;
+
+  // When the promo covers this plan, the customer pays ₹0 now and the first
+  // charge is deferred, so the modal must say so, not quote the full price.
+  // Monthly-only: annual + promo would bill a full year after the free period.
+  const promoApplies = plan ? cycle === 'monthly' && promotionAppliesToPlan(promotion ?? null, plan) : false;
 
   const [quote, setQuote] = useState<QuoteState>({
     loading: false,
@@ -282,6 +309,19 @@ export function PlanConfirmModal({
   // USD pending) both route to the sales team rather than the pay button.
   const contactOnly = blocked || plan.isEnterprise;
 
+  // Chat-history visibility drop. On a paid→paid downgrade to a tier with a
+  // shorter (finite) retention window, older conversations disappear from view.
+  // Only warn on a REAL shrink (current unlimited, or strictly larger than the
+  // target); a shorter target with an unknown/equal current stays silent to
+  // avoid a false alarm. Data is retained, not deleted — say so.
+  const targetHistoryDays = plan.limits?.chat_history_days;
+  const showHistoryWarning =
+    intent === 'downgrade' &&
+    typeof targetHistoryDays === 'number' &&
+    targetHistoryDays > 0 &&
+    (currentChatHistoryDays === -1 ||
+      (typeof currentChatHistoryDays === 'number' && currentChatHistoryDays > targetHistoryDays));
+
   // Referral discount preview. The platform charges on the INR rail (a blocked
   // intl checkout never reaches this UI), so the discounted headline from the
   // server quote, the struck original, and the savings figure are all INR and
@@ -365,26 +405,44 @@ export function PlanConfirmModal({
             <Skeleton className="mt-3 h-9 w-32 rounded" />
           ) : (
             <div className="mt-3 space-y-1">
-              <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                <p className="text-[34px] font-bold leading-none tracking-tight text-[var(--ds-text)]">
-                  {quote.amountDisplay ?? priceText(plan, cycle)}
-                </p>
-                {discountActive && (
-                  <>
+              {promoApplies && promotion ? (
+                <>
+                  <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                    <p className="text-[34px] font-bold leading-none tracking-tight text-[var(--ds-text)]">
+                      Free
+                    </p>
                     <span className="text-[16px] font-medium text-[var(--ds-text-subtle)] line-through">
-                      {formatMoneyMinor(originalMinor)}
+                      {priceText(plan, cycle)}
                     </span>
-                    <span className="inline-flex items-center rounded-full bg-[var(--ds-success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ds-success)]">
-                      {referral.discountPct}% off
-                    </span>
-                  </>
-                )}
-              </div>
-              {discountActive && savingsMinor > 0 && (
-                <p className="text-[12px] font-medium text-[var(--ds-success)]">
-                  You save {formatMoneyMinor(savingsMinor)}
-                  {cycleSuffix} with code {referral.code}
-                </p>
+                  </div>
+                  <p className="text-[12px] font-medium text-[var(--ds-accent-text)]">
+                    First {formatFreeMonths(promotion.freeCycles)} free · then {priceText(plan, cycle)} · ₹0 today
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                    <p className="text-[34px] font-bold leading-none tracking-tight text-[var(--ds-text)]">
+                      {quote.amountDisplay ?? priceText(plan, cycle)}
+                    </p>
+                    {discountActive && (
+                      <>
+                        <span className="text-[16px] font-medium text-[var(--ds-text-subtle)] line-through">
+                          {formatMoneyMinor(originalMinor)}
+                        </span>
+                        <span className="inline-flex items-center rounded-full bg-[var(--ds-success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ds-success)]">
+                          {referral.discountPct}% off
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {discountActive && savingsMinor > 0 && (
+                    <p className="text-[12px] font-medium text-[var(--ds-success)]">
+                      You save {formatMoneyMinor(savingsMinor)}
+                      {cycleSuffix} with code {referral.code}
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -485,6 +543,19 @@ export function PlanConfirmModal({
             <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" />
             {INTENT_NOTE[intent]}
           </p>
+        )}
+
+        {/* Downgrade heads-up: the visible conversation-history window shrinks.
+            Informational (not a blocker) - the data is retained, just hidden. */}
+        {showHistoryWarning && (
+          <div className="flex items-start gap-2 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-text)]">
+            <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
+            <span>
+              On {plan.name} you’ll see the most recent{' '}
+              <span className="font-medium">{targetHistoryDays} days</span> of conversation history.
+              Older conversations stay stored but are hidden until you’re back on a higher plan.
+            </span>
+          </div>
         )}
 
         {/* Money-path feedback */}

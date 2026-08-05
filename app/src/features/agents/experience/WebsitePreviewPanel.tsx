@@ -1,6 +1,6 @@
 import { type ReactElement, useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Globe, Loader2, RefreshCw } from 'lucide-react';
-import { Button, Input, SectionHeader } from '../../../design-system';
+import { Button, Input, Modal } from '../../../design-system';
 import { getBotPreviewUrl } from '../../../services/api';
 
 export interface WebsitePreviewPanelProps {
@@ -8,6 +8,11 @@ export interface WebsitePreviewPanelProps {
   botKey: string | null;
   /** The agent's configured website, used to prefill the URL field. */
   website: string | null;
+  /** Controlled visibility - the panel only renders when open. Triggered from
+   *  the Preview card's launcher icon rather than an in-card toggle. */
+  open: boolean;
+  /** Close callback, wired to the launcher's toggle. */
+  onClose: () => void;
 }
 
 /** How long to wait for the hosted preview's ready ping before warning it may be blocked. */
@@ -32,8 +37,12 @@ function normalizeUrl(raw: string): string {
  * page, so we listen for the demo page's ready ping and, if it never arrives,
  * surface a graceful "open in a new tab" fallback instead of a broken frame.
  */
-export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProps): ReactElement | null {
-  const [open, setOpen] = useState(false);
+export function WebsitePreviewPanel({
+  botKey,
+  website,
+  open,
+  onClose,
+}: WebsitePreviewPanelProps): ReactElement | null {
   // Agent (and its website) is resolved before this panel mounts, so a lazy
   // initial value is stable - no prefill effect (and its sync setState) needed.
   const [urlInput, setUrlInput] = useState<string>(() => website ?? '');
@@ -83,24 +92,18 @@ export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProp
   const previewSrc = loadedUrl ? getBotPreviewUrl(botKey, loadedUrl, { edit: true }) : '';
 
   return (
-    <section className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5">
-      <SectionHeader
-        title="Preview on my website"
-        description="See the widget on your own site. It shows your saved settings - save first, then reload."
-        actions={
-          <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
-            <Globe size={14} />
-            {open ? 'Hide preview' : 'Open preview'}
-          </Button>
-        }
-      />
-
-      {open && (
-        <div className="mt-4 space-y-3">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Preview on my website"
+      description="See the widget on your own site. It shows your saved settings - save first, then reload."
+      size="lg"
+    >
+      <div className="space-y-3">
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               value={urlInput}
-              placeholder="https://your-website.com"
+              placeholder="Enter your link, e.g. https://your-website.com"
               aria-label="Website URL to preview"
               onChange={(e) => setUrlInput(e.target.value)}
               onKeyDown={(e) => {
@@ -131,7 +134,7 @@ export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProp
                   src={previewSrc}
                   title="Website preview with the chat widget"
                   onLoad={() => setFrameLoaded(true)}
-                  className="h-[600px] w-full"
+                  className="h-[520px] w-full"
                   sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                 />
               </div>
@@ -156,8 +159,7 @@ export function WebsitePreviewPanel({ botKey, website }: WebsitePreviewPanelProp
               )}
             </div>
           )}
-        </div>
-      )}
-    </section>
+      </div>
+    </Modal>
   );
 }

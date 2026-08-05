@@ -50,7 +50,7 @@ export function PastDueBanner(): ReactElement | null {
 
     const load = async (): Promise<void> => {
       try {
-        const data = (await getPaymentRecovery(botId ?? undefined)) as RecoveryState;
+        const data = (await getPaymentRecovery(botId ?? undefined)) as unknown as RecoveryState;
         if (!cancelled) setState(data);
       } catch {
         // A failed probe must never surface as an error banner — the customer

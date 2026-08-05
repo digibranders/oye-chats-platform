@@ -14,7 +14,7 @@ from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Document
-from app.db.repository import get_ingested_documents, get_pages_for_source
+from app.db.repository import count_knowledge_state, get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
 from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
@@ -142,6 +142,31 @@ def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depend
     except Exception as e:
         logger.error(f"Failed to fetch documents: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch documents.") from e
+
+
+@router.get("/documents/knowledge-state")
+def get_knowledge_state_endpoint(
+    bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_operator)
+):
+    """Whether this bot's knowledge was deactivated by a plan lapse to Free.
+
+    ``deactivated`` is true when the bot has any inactive chunk — the signal the
+    admin uses to show the "re-crawl / re-upload to reactivate on Free, or
+    upgrade to restore" banner. A brand-new Free bot has 0 inactive chunks and
+    therefore never sees it.
+    """
+    _verify_bot_ownership(bot_id, auth["client_id"])
+    try:
+        with get_session() as session:
+            counts = count_knowledge_state(session, bot_id=bot_id, client_id=auth["client_id"])
+        return {
+            "active_count": counts["active"],
+            "inactive_count": counts["inactive"],
+            "deactivated": counts["inactive"] > 0,
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch knowledge state: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch knowledge state.") from e
 
 
 @router.get("/documents/pages", response_model=DocumentPagesResponse)

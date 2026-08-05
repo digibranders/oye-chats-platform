@@ -30,7 +30,7 @@ from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount, seat_price
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
-from app.services import credit_service, invoice_service, razorpay_customer_service
+from app.services import credit_service, invoice_service, plan_entitlements_service, razorpay_customer_service
 from app.services.plan_service import (
     get_account_subscription,
     get_active_plans,
@@ -184,6 +184,28 @@ def list_plans():
             }
             for p in plans
         ]
+
+
+# ── Authenticated: Launch promotion (display) ──
+
+
+@router.get("/promo")
+def get_active_promotion(client: Client = Depends(get_current_client)):
+    """The launch promotion the current client qualifies for, for billing display.
+
+    Returns ``{"active": false}`` when none applies, else a display projection
+    (``free_cycles``, ``ends_at``, ``eligible_plan_ids``). This is DISPLAY ONLY —
+    checkout independently re-validates eligibility server-side before deferring
+    any charge, so a stale or forged response can never grant the offer.
+    """
+    from app.services import promotion_service
+
+    with get_session() as session:
+        # The dependency-provided client is detached; re-read in-session so the
+        # eligibility query and created_at read are against a live row.
+        row = session.get(Client, client.id) or client
+        promo = promotion_service.resolve_client_promotion(session, row)
+        return promotion_service.serialize_public(promo)
 
 
 # ── Authenticated: Current subscription ──
@@ -349,6 +371,10 @@ def get_current_subscription(
                 "cancel_at_period_end": sub.cancel_at_period_end,
                 "payment_provider": sub.payment_provider,
                 "created_at": sub.created_at.isoformat() if sub.created_at else None,
+                # Launch-promo free period end (first-charge date). Set only while
+                # the subscription is on an offer; lets the UI show "Free until X"
+                # so a promo customer knows they are not yet being billed.
+                "promo_free_until": (sub.promo_free_until.isoformat() if sub.promo_free_until else None),
                 "scheduled_change": (
                     {
                         "plan_id": sub.scheduled_plan_id,
@@ -362,8 +388,46 @@ def get_current_subscription(
                 ),
             }
 
+        # Downgrade re-auth grace state. During the window after a paid→paid
+        # downgrade cutover, the customer sits on a short-lived ``past_due``
+        # grace row on the TARGET plan (``transition_service.promote_scheduled_change``)
+        # while they still owe the one-time authorization of the new UPI mandate.
+        # ``sub.status`` reads ``past_due`` — which the billing UI would otherwise
+        # render as a failed-payment banner — so surface a distinct signal the
+        # frontend can turn into a "finish your downgrade" prompt instead. Only
+        # populated for the grace row; ``None`` in every ordinary state.
+        from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON
+
+        reauth_data = None
+        if sub is not None and sub.status == "past_due" and sub.cancel_reason == DOWNGRADE_REAUTH_GRACE_REASON:
+            from app.config import PAYMENT_FAILED_GRACE_DAYS
+
+            grace_until = None
+            days_left = None
+            if sub.past_due_since is not None:
+                since = sub.past_due_since
+                if since.tzinfo is None:
+                    since = since.replace(tzinfo=UTC)
+                grace_until_dt = since + timedelta(days=PAYMENT_FAILED_GRACE_DAYS)
+                grace_until = grace_until_dt.isoformat()
+                days_left = max(0, (grace_until_dt - datetime.now(UTC)).days)
+            reauth_data = {
+                "required": True,
+                "reason": "downgrade_reauth",
+                # ``plan`` here IS the grace row's plan — i.e. the tier the
+                # customer downgraded TO and will keep if they re-authorize.
+                "target_plan_name": plan.name if plan is not None else None,
+                # Wall-clock deadline after which the grace row expires to Free
+                # (``task_expire_past_due_subscriptions``), plus a rounded
+                # days-left for the banner copy.
+                "grace_until": grace_until,
+                "days_left": days_left,
+            }
+
         return {
             "subscription": sub_data,
+            # Non-null only during a downgrade re-auth grace window (see above).
+            "reauth": reauth_data,
             # ``plan`` can be None in the per-agent view when the selected agent
             # has no subscription of its own yet — the frontend renders that as
             # "no paid subscription", so emit null rather than dereferencing it.
@@ -750,7 +814,16 @@ def payment_recovery(client: Client = Depends(get_current_client), bot_id: int |
         if sub is None:
             sub = get_client_subscription(session, client.id)
 
-        if sub is None or sub.status != "past_due":
+        # A downgrade re-auth grace row is ``past_due`` but is NOT a failed
+        # payment: it has no gateway mandate and awaits a first authorization,
+        # not a rescue. Surfacing it in the dunning "payment failed — recover"
+        # banner would be wrong (and there is no mandate to build a recovery
+        # link from). The re-auth CTA reaches the customer via the cutover email
+        # instead, so this endpoint treats the grace row as not-past-due.
+        from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON
+
+        is_reauth_grace = sub is not None and sub.cancel_reason == DOWNGRADE_REAUTH_GRACE_REASON
+        if sub is None or sub.status != "past_due" or is_reauth_grace:
             return {
                 "past_due": False,
                 "recoverable": False,
@@ -1280,6 +1353,31 @@ def create_checkout(
             discount_bps, _ = discount_service.resolve_customer_discount_bps(session, client)
         else:
             discount_bps = 0
+
+        # Launch-promo: a time-boxed free period realised by deferring the first
+        # charge (Razorpay ``start_at``). Only resolved on Razorpay — the sole
+        # provider that can honour ``start_at`` today. A promo and a referral
+        # discount do NOT stack: the promo already gives 100% off for its free
+        # cycles, and billing must resume at FULL price afterwards, so we force
+        # ``discount_bps = 0`` when a promo applies. The slot is claimed
+        # atomically here (under the per-client billing lock) so a capped promo
+        # can never oversell; if the cap was exhausted between eligibility and
+        # here, we fall back to normal pricing.
+        promo_start_at: int | None = None
+        promo_extra_notes: dict[str, str] | None = None
+        # Monthly-only: "3 months free" on an ANNUAL cycle would defer the first
+        # charge 3 months and then bill the ENTIRE year at once — a nasty surprise
+        # that does not match the offer. Annual checkouts are charged normally
+        # (no promo). The frontend also hides the offer on the annual cycle.
+        if provider == "razorpay" and request.billing_cycle == "monthly":
+            from app.services import promotion_service
+
+            promo = promotion_service.resolve_active_promotion(session, client, plan)
+            if promo is not None and promotion_service.consume_slot(session, promo):
+                free_until = promotion_service.free_period_end(promo, datetime.now(UTC))
+                promo_start_at = int(free_until.timestamp())
+                discount_bps = 0
+                promo_extra_notes = {"oyechats_promotion_id": str(promo.id)}
         # Create the gateway Customer before minting the subscription. It is the
         # anchor every saved payment instrument hangs off
         # (/v1/customers/{id}/tokens), so without it saved cards are
@@ -1297,7 +1395,13 @@ def create_checkout(
 
         try:
             result = razorpay_service.create_subscription(
-                session, client, plan, request.billing_cycle, discount_bps=discount_bps
+                session,
+                client,
+                plan,
+                request.billing_cycle,
+                discount_bps=discount_bps,
+                start_at=promo_start_at,
+                extra_notes=promo_extra_notes,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1331,6 +1435,7 @@ def create_checkout(
 class ChangePlanRequest(BaseModel):
     plan_id: int
     billing_cycle: str | None = None  # None = keep current cycle
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/change-plan")
@@ -1351,13 +1456,20 @@ def change_plan(
     with get_session() as session:
         # Serialize this client's billing mutations (H1) before reading state.
         lock_client_for_billing(session, client.id)
-        from app.services.plan_service import get_client_subscription, get_plan_by_id
+        from app.services.plan_service import get_plan_by_id
 
         new_plan = get_plan_by_id(session, request.plan_id)
         if not new_plan or not new_plan.is_active:
             raise HTTPException(status_code=404, detail="Target plan not found or inactive.")
 
-        sub = get_client_subscription(session, client.id)
+        # Target the subscription the customer is actually looking at (N3).
+        # ``_resolve_target_subscription`` targets the selected bot's own row,
+        # falling back to the ACCOUNT subscription (``bot_id IS NULL``) — NOT
+        # ``get_client_subscription``, which spans per-bot rows and returns the
+        # highest-priced one. Using the latter here meant a downgrade/upgrade
+        # from a per-agent Billing view mutated (and cancelled the Razorpay
+        # mandate of) a DIFFERENT, pricier bot's subscription.
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
 
         # Universal precheck — same plan is a no-op UNLESS the current
         # subscription is a trial that hasn't been paid for yet. A trialing
@@ -1429,6 +1541,7 @@ def change_plan(
                 credit_service.reset_monthly_plan_credits(session, client.id, bot_id=new_sub.bot_id)
                 credit_service.grant_for_subscription(session, new_sub)
                 session.commit()
+                plan_entitlements_service.invalidate(client.id)
                 logger.info(
                     "Client %s reactivated from trial_expired onto Free (old sub %s canceled)",
                     client.id,
@@ -1483,6 +1596,9 @@ def change_plan(
                 credit_service.grant_for_subscription(session, sub)
                 msg = f"Switched to {new_plan.name} immediately."
             session.commit()
+            # Plan (or its cancellation track) just changed → drop cached
+            # entitlements so Free-tier limits/features apply without the 60s lag.
+            plan_entitlements_service.invalidate(client.id)
             logger.info(
                 "Client %s downgraded to Free (had_razorpay=%s)",
                 client.id,
@@ -1556,6 +1672,27 @@ def change_plan(
                     },
                 )
 
+            # Document overflow → 409, same hard-block contract as seats. A
+            # downgrade to a tier with a smaller knowledge-base allowance is
+            # refused until the customer deletes enough uploaded documents to
+            # fit; the frontend points them at the Knowledge base to do so.
+            doc_overflow = transition_service.check_document_overflow(session, client.id, new_plan)
+            if doc_overflow is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "document_overflow",
+                        "current_documents": doc_overflow.current_documents,
+                        "allowed_documents": doc_overflow.allowed_documents,
+                        "excess": doc_overflow.excess,
+                        "message": (
+                            f"You have {doc_overflow.current_documents} uploaded document(s) but "
+                            f"{new_plan.name} includes {doc_overflow.allowed_documents}. "
+                            f"Delete {doc_overflow.excess} document(s) before downgrading."
+                        ),
+                    },
+                )
+
             billing_cycle = request.billing_cycle or sub.billing_cycle or "monthly"
             try:
                 cutover_at = transition_service.schedule_paid_downgrade(session, sub, new_plan, billing_cycle)
@@ -1577,11 +1714,22 @@ def change_plan(
             }
 
         # ── Branch 3: paid target → Razorpay checkout ──
+        # Reached when the targeted bot has no active subscription: a downgraded
+        # (Free) bot returning to paid, or a first Free bot going paid. When a
+        # bot_id is targeted (per-agent Billing), revive THAT bot in place —
+        # carry its id so activation reattaches the new sub and reactivates its
+        # knowledge, keeping the same bot_key/embed. Without a bot_id it is an
+        # account-level purchase.
         billing_cycle = request.billing_cycle or (sub.billing_cycle if sub else "monthly")
         from app.services import razorpay_service
 
         try:
-            result = razorpay_service.create_subscription(session, client, new_plan, billing_cycle)
+            if request.bot_id is not None:
+                result = razorpay_service.create_bot_resubscription(
+                    session, client, new_plan, bot_id=request.bot_id, billing_cycle=billing_cycle
+                )
+            else:
+                result = razorpay_service.create_subscription(session, client, new_plan, billing_cycle)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:

@@ -1,26 +1,15 @@
 import { useCallback, useState, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Bot as BotIcon,
-  Plus,
-  Radio,
-  Sparkles,
-  CircleDashed,
-  AlertCircle,
-  RefreshCw,
-} from 'lucide-react';
+import { Bot as BotIcon, Plus, AlertCircle, RefreshCw } from 'lucide-react';
 import {
   Button,
   Card,
   EmptyState,
   PageContainer,
-  SectionHeader,
   Skeleton,
 } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
 import { useBotContext } from '../../context/BotContext';
 import { type Bot } from '../../types/domain';
-import { summarizeAgents } from './agent-status';
 import { AgentCard } from './AgentCard';
 import { CreateAgentDialog } from './CreateAgentDialog';
 import { AgentActionsMenu } from './AgentActionsMenu';
@@ -38,19 +27,6 @@ function AgentGridCard({ bot, onChanged }: { bot: Bot; onChanged: () => void }):
       <div className="absolute right-3 top-3">
         <AgentActionsMenu bot={bot} onChanged={onChanged} />
       </div>
-    </div>
-  );
-}
-
-/** The portfolio summary row - four honest counts derived from the agent list. */
-function AgentsSummary({ bots }: { bots: Bot[] }): ReactElement {
-  const summary = summarizeAgents(bots);
-  return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <MetricCard label="Total agents" value={summary.total} icon={BotIcon} />
-      <MetricCard label="Live" value={summary.live} icon={Radio} />
-      <MetricCard label="Training" value={summary.training} icon={Sparkles} />
-      <MetricCard label="Not live" value={summary.notLive} icon={CircleDashed} />
     </div>
   );
 }
@@ -138,8 +114,8 @@ export function AgentsPage(): ReactElement {
 
   return (
     <PageContainer
-      title="AI Chatbots"
-      description="Every AI chatbot in your workspace, and how healthy each one is."
+      title="Your agents"
+      description="Select an agent to view its health, knowledge and settings."
       actions={
         <Button onClick={handleAddAgent}>
           <Plus size={16} aria-hidden="true" />
@@ -183,22 +159,13 @@ export function AgentsPage(): ReactElement {
           }
         />
       ) : (
-        <div className="space-y-6">
-          <AgentsSummary bots={bots} />
-          <div className="space-y-4">
-            <SectionHeader
-              title="Your agents"
-              description="Select an agent to view its health, knowledge and settings."
-            />
-            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {bots.map((bot) => (
-                <li key={bot.id}>
-                  <AgentGridCard bot={bot} onChanged={handleChanged} />
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {bots.map((bot) => (
+            <li key={bot.id}>
+              <AgentGridCard bot={bot} onChanged={handleChanged} />
+            </li>
+          ))}
+        </ul>
       )}
 
       <CreateAgentDialog

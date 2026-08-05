@@ -70,8 +70,8 @@ export function AppearanceSection(): ReactElement {
             : 'Choose how OyeChats looks on this device.'
         }
       />
-      <Card className="p-6">
-        <div role="radiogroup" aria-labelledby="appearance-heading" className="grid gap-3 sm:grid-cols-3">
+      <Card className="p-4">
+        <div role="radiogroup" aria-labelledby="appearance-heading" className="grid gap-2.5 sm:grid-cols-3">
           {THEME_OPTIONS.map((option, index) => {
             const Icon = option.icon;
             const active = theme === option.id;
@@ -88,7 +88,7 @@ export function AppearanceSection(): ReactElement {
                 onClick={(e) => setTheme(option.id, e)}
                 onKeyDown={(event) => handleKeyDown(event, index)}
                 className={cn(
-                  'group relative flex flex-col gap-3 rounded-xl border p-4 text-left transition-colors',
+                  'group relative flex flex-col gap-2.5 rounded-lg border p-3 text-left transition-colors',
                   'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                   active
                     ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)]'
@@ -98,24 +98,24 @@ export function AppearanceSection(): ReactElement {
                 <span
                   aria-hidden="true"
                   className={cn(
-                    'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                    'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                     active
                       ? 'bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]'
                       : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]',
                   )}
                 >
-                  <Icon size={18} />
+                  <Icon size={16} />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-[14px] font-semibold text-[var(--ds-text)]">{option.label}</p>
+                  <p className="text-[13px] font-semibold text-[var(--ds-text)]">{option.label}</p>
                   <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">{option.description}</p>
                 </div>
                 {active && (
                   <span
                     aria-hidden="true"
-                    className="absolute right-3 top-3 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]"
+                    className="absolute right-2.5 top-2.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-[var(--ds-accent)] text-[var(--ds-accent-fg)]"
                   >
-                    <Check size={12} />
+                    <Check size={11} />
                   </span>
                 )}
               </button>

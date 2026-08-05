@@ -606,7 +606,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 @limiter.limit("10/minute", key_func=key_from_bot_key)
 def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
-    from app.services.plan_entitlements_service import is_lead_source_attribution_enabled
+    from app.services.plan_entitlements_service import is_lead_source_attribution_enabled_for_bot
 
     try:
         with get_session() as session:
@@ -619,7 +619,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             # copy that Standard / Professional clients see in the Leads UI.
             utm_snapshot: dict | None = None
             journey_snapshot: list | None = None
-            if bot.client_id and is_lead_source_attribution_enabled(bot.client_id, session):
+            if getattr(bot, "id", None) is not None and is_lead_source_attribution_enabled_for_bot(bot.id, session):
                 utm_snapshot = chat_session.utm_params or None
                 journey_snapshot = chat_session.visitor_journey or None
 

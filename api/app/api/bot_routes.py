@@ -567,17 +567,20 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     # operator. The operator side of the platform 403s the toggle endpoint,
     # so this exposed surface is the last visible artifact to clean up.
     from app.db.session import get_session as _get_session
-    from app.services.plan_service import get_client_plan, is_feature_enabled
+    from app.services import plan_entitlements_service
 
     plan_includes_live_chat = False
     plan_slug = "free"
     _plan_branding_removable = False  # fail-closed: never hide branding on resolution error
     try:
         with _get_session() as _s:
-            _plan = get_client_plan(_s, bot.client_id)
-            plan_includes_live_chat = is_feature_enabled(_plan, "live_chat")
-            plan_slug = (_plan.slug or "free").lower()
-            _plan_branding_removable = is_feature_enabled(_plan, "branding_removable")
+            # Per-bot: the widget reflects THIS bot's own plan (with account
+            # fallback), so a bot downgraded to Starter re-shows branding and
+            # loses live chat even while a sibling bot stays on a higher tier.
+            _ents = plan_entitlements_service.get_bot_entitlements(bot.id, _s)
+            plan_includes_live_chat = _ents.has_feature("live_chat")
+            plan_slug = (_ents.plan_slug or "free").lower()
+            _plan_branding_removable = _ents.has_feature("branding_removable")
     except Exception:
         # Fail closed — if we can't resolve the plan, hide live chat AND
         # apply Free-plan widget-behavior locks. Safer than leaking a paid

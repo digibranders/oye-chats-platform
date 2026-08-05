@@ -46,10 +46,12 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_ingest_web_batch,
     task_invoice_reconciliation_alert,
     task_process_webhook_retries,
+    task_promo_precharge_reminders,
     task_promote_scheduled_downgrades,
     task_prune_stale_events,
     task_reconcile_orphaned_seat_addons,
     task_reembed_document,
+    task_refresh_promo_free_credits,
     task_render_invoice_pdfs,
     task_renew_due_subscriptions,
     task_send_email,
@@ -138,6 +140,8 @@ class WorkerSettings:
         task_send_email,
         task_send_template_email,
         task_renew_due_subscriptions,
+        task_refresh_promo_free_credits,
+        task_promo_precharge_reminders,
         task_promote_scheduled_downgrades,
         task_expire_old_topups,
         task_expire_trials,
@@ -173,6 +177,11 @@ class WorkerSettings:
         cron(task_process_webhook_retries, second={0, 30}),
         cron(task_worker_heartbeat, second={0, 30}),
         cron(task_renew_due_subscriptions, hour=0, minute=5),
+        # Launch-promo free-window credit refresh — runs just after the renewal
+        # cron. Grants each free month's credits for subs whose deferred charge
+        # (and thus no ``subscription.charged``) means the renewal cron skips
+        # them. Keyed on aligned free-month boundaries, so no double-grant.
+        cron(task_refresh_promo_free_credits, hour=0, minute=6),
         # Scheduled-downgrade safety net — runs after the renewal cron so a
         # row whose period just rolled forward via renewal isn't picked up
         # for promotion in the same tick. The Razorpay
@@ -183,6 +192,9 @@ class WorkerSettings:
         cron(task_delete_expired_trial_data, hour=0, minute=20),
         cron(task_expire_trials, minute=15),
         cron(task_trial_reminder_emails, hour=9, minute=0),
+        # Launch-promo pre-charge reminder — a working-hours send ~10 days before
+        # the free period ends, so the first real charge is never a surprise.
+        cron(task_promo_precharge_reminders, hour=9, minute=15),
         # Dunning auto-expire — once a day at 00:25 UTC, after the trial
         # crons so a same-day card rescue beats the grace-elapsed cut.
         cron(task_expire_past_due_subscriptions, hour=0, minute=25),

@@ -36,16 +36,28 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.dates import add_months
 from app.db.models import Client, Operator, Plan, Subscription
 from app.services import credit_service, email_service
 
 logger = logging.getLogger("oyechats.transitions")
+
+
+# ``cancel_reason`` stamped on the short-lived GRACE subscription created at a
+# paid→paid downgrade cutover (see ``promote_scheduled_change``). The grace row
+# holds the customer at the TARGET plan's entitlements — never Free — during the
+# window where they still owe the one-time UPI re-authorization of the new
+# mandate. The marker distinguishes it from a genuine failed-payment ``past_due``
+# so the dunning email / recovery paths skip it, while the existing
+# ``task_expire_past_due_subscriptions`` cron still expires it to Free after
+# ``PAYMENT_FAILED_GRACE_DAYS`` if the customer never re-authorizes.
+DOWNGRADE_REAUTH_GRACE_REASON = "awaiting_downgrade_reauth"
 
 
 # ── Rollover ──────────────────────────────────────────────────────────────────
@@ -98,6 +110,66 @@ def check_seat_overflow(session: Session, client_id: int, target_plan: Plan) -> 
     if active <= allowed:
         return None
     return SeatOverflow(active_seats=active, allowed_seats=allowed)
+
+
+# ── Document overflow ───────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DocumentOverflow:
+    """Returned by ``check_document_overflow`` when the customer can't downgrade yet."""
+
+    current_documents: int
+    allowed_documents: int
+
+    @property
+    def excess(self) -> int:
+        return max(0, self.current_documents - self.allowed_documents)
+
+
+def check_document_overflow(session: Session, client_id: int, target_plan: Plan) -> DocumentOverflow | None:
+    """Return ``DocumentOverflow`` if uploaded-document count exceeds the target plan.
+
+    Mirrors :func:`check_seat_overflow` for the knowledge base: a paid→paid
+    downgrade to a tier with a smaller ``limits.documents`` allowance is refused
+    until the customer deletes enough uploaded documents to fit. Unlike operator
+    seats (a hard ceiling), documents are otherwise grandfathered at upload time,
+    so this guard is what turns "downgrade" into an explicit "get under the limit
+    first" decision instead of a silent over-quota state.
+
+    Counting matches ``plan_entitlements_service._build_usage`` exactly — distinct
+    ``document_name`` WHERE ``source == 'upload'`` — so the number the block quotes
+    is the same one the customer sees in their usage panel. Crawled pages are
+    governed by the per-period ``page_scraping`` credit budget, not this stored
+    cap, so they are intentionally excluded.
+
+    Returns ``None`` when the plan's ``documents`` limit is ``UNLIMITED`` (``-1``),
+    missing, or already satisfied — the helper is pure; the caller decides whether
+    to refuse or merely warn.
+    """
+    from sqlalchemy import distinct
+
+    from app.db.models import Document
+
+    limits = target_plan.limits or {}
+    raw_allowed = limits.get("documents")
+    # UNLIMITED (-1) or an unset cap → nothing to enforce.
+    if raw_allowed is None or int(raw_allowed) < 0:
+        return None
+    allowed = int(raw_allowed)
+
+    current = int(
+        session.scalar(
+            select(func.count(distinct(Document.document_name))).where(
+                Document.client_id == client_id,
+                Document.source == "upload",
+            )
+        )
+        or 0
+    )
+    if current <= allowed:
+        return None
+    return DocumentOverflow(current_documents=current, allowed_documents=allowed)
 
 
 # ── Upgrade (paid → paid, immediate, Razorpay) ────────────────────────────────
@@ -386,6 +458,69 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     sub.scheduled_change_at = None
     session.flush()
 
+    # Hold the customer at the TARGET plan's entitlements — never Free — for the
+    # re-authorization window. The old row just went terminal and the freshly
+    # created Razorpay mandate below is UNAUTHORIZED, so without a local row
+    # ``get_client_subscription`` would find nothing active and entitlements
+    # would fall back to Free until the customer re-authorizes (which may be
+    # never). This short-lived ``past_due`` grace row on ``new_plan`` keeps the
+    # active-set populated so the customer lands on the plan they downgraded TO.
+    #
+    # It deliberately carries NO gateway mandate (``razorpay_subscription_id``
+    # stays NULL): the real ``subscription.activated`` for the new mandate then
+    # takes the clean "local is None" branch in ``_handle_subscription_activated``
+    # (grants the target allowance), rather than the reactivation branch that
+    # would not grant the new period's credits.
+    #
+    # Cleanup of THIS grace row at that activation depends on ``bot_id``:
+    #   * Account-level downgrade (``bot_id IS NULL``, the common path): the
+    #     activation sibling-cancel sweep already clears active-set rows WHERE
+    #     ``bot_id IS NULL``, so it cancels this grace row for free.
+    #   * Per-bot downgrade (``bot_id IS NOT NULL``): that sweep does NOT touch
+    #     bot-scoped rows, and ``ix_subscriptions_client_bot_active`` is a UNIQUE
+    #     partial index allowing only ONE active-set row per (client, bot).
+    #     CONTRACT for the per-bot activation branch: before inserting the new
+    #     bot-scoped active row it MUST cancel any ``status='past_due'`` row for
+    #     the same (client_id, bot_id) whose ``cancel_reason`` equals
+    #     ``DOWNGRADE_REAUTH_GRACE_REASON`` — otherwise the insert collides on
+    #     that unique index and activation fails. Until that lands (today's
+    #     activation still creates a ``bot_id IS NULL`` row), a bot-scoped grace
+    #     row merely self-heals via the expire cron below (≤ 7 days): stale data
+    #     at worst, never a lost downgrade or a blocked re-auth.
+    #
+    # If the customer never re-authorizes, ``task_expire_past_due_subscriptions``
+    # flips this row to ``expired`` after ``PAYMENT_FAILED_GRACE_DAYS`` (7 days)
+    # via ``past_due_since`` — at which point they correctly drop to Free. No
+    # credits are granted here: the balance simply carries until real activation.
+    grace_start = datetime.now(UTC)
+    grace = Subscription(
+        client_id=sub.client_id,
+        plan_id=new_plan.id,
+        bot_id=sub.bot_id,
+        status="past_due",
+        billing_cycle=billing_cycle,
+        operator_quantity=1,
+        current_period_start=grace_start,
+        current_period_end=add_months(grace_start, 12 if billing_cycle == "annual" else 1),
+        past_due_since=grace_start,
+        payment_provider="razorpay",
+        razorpay_subscription_id=None,
+        prev_razorpay_subscription_id=sub.razorpay_subscription_id or None,
+        cancel_reason=DOWNGRADE_REAUTH_GRACE_REASON,
+    )
+    grace.plan = new_plan
+    session.add(grace)
+    session.flush()
+
+    # The old (higher-tier) subscription just expired and the grace row now
+    # carries the target-tier entitlements, so cached entitlements are stale.
+    # Drop them immediately instead of waiting out the 60s TTL, so the downgrade
+    # takes effect at cutover.
+    if client is not None:
+        from app.services import plan_entitlements_service
+
+        plan_entitlements_service.invalidate(client.id)
+
     payload = razorpay_service.create_subscription(
         session,
         client,
@@ -435,6 +570,70 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
         new_plan.slug,
     )
     return payload
+
+
+# ── Bot-scoped grace cleanup (called by the per-bot activation branch) ────────
+
+
+def cancel_bot_scoped_reauth_grace(session: Session, client_id: int, bot_id: int | None) -> int:
+    """Cancel the bot-scoped downgrade re-auth grace row for ``(client_id, bot_id)``.
+
+    Companion to the grace row minted in :func:`promote_scheduled_change`. The
+    account-level sibling-cancel sweep in ``_handle_subscription_activated`` only
+    clears active-set rows WHERE ``bot_id IS NULL``, so a PER-BOT downgrade's
+    grace row (``bot_id NOT NULL``) survives it. Because
+    ``ix_subscriptions_client_bot_active`` is a UNIQUE partial index over
+    ``(client_id, bot_id)`` for the active set, that lingering ``past_due`` grace
+    row collides with the new bot-scoped active row the per-bot activation branch
+    inserts. Call this FIRST from that branch (before the INSERT) to free the
+    index slot.
+
+    Scope is deliberately narrow: it only touches rows in the active set whose
+    ``cancel_reason`` is ``DOWNGRADE_REAUTH_GRACE_REASON``, so it can never cancel
+    a real paid subscription. Idempotent — returns 0 when there is nothing to
+    cancel. ``bot_id IS NULL`` is a no-op: account-level grace is the existing
+    sweep's responsibility, and matching NULL here could cancel a legacy
+    account-level grace row that the caller did not mean to touch.
+
+    Returns the number of grace rows cancelled (normally 0 or 1).
+    """
+    if bot_id is None:
+        return 0
+
+    rows = (
+        session.execute(
+            select(Subscription).where(
+                Subscription.client_id == client_id,
+                Subscription.bot_id == bot_id,
+                Subscription.cancel_reason == DOWNGRADE_REAUTH_GRACE_REASON,
+                # Only the active-set statuses participate in the unique index, so
+                # only those can collide with the incoming INSERT. Rows already
+                # swept/expired are left as-is.
+                Subscription.status.in_(("active", "trialing", "past_due")),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return 0
+
+    now = datetime.now(UTC)
+    for row in rows:
+        # Mirror the account-level sweep's terminal flip. ``cancel_reason`` is
+        # left as the grace marker so the audit trail still shows why the row
+        # existed (superseded by a successful re-auth, not a dunning lapse).
+        row.status = "canceled"
+        row.canceled_at = now
+    session.flush()
+
+    logger.info(
+        "Cancelled %d bot-scoped re-auth grace row(s) for client=%s bot=%s at re-auth activation",
+        len(rows),
+        client_id,
+        bot_id,
+    )
+    return len(rows)
 
 
 # ── Pending-proration application (called inside the activation webhook) ──────

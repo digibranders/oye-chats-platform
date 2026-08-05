@@ -52,6 +52,7 @@ import { BillingDetailsModal } from './billing/BillingDetailsModal';
 import { BillingOverview } from './billing/BillingOverview';
 import { PaymentMethodsPanel } from './billing/PaymentMethodsPanel';
 import { PlansPanel } from './billing/PlansPanel';
+import { PromotionBanner } from './billing/PromotionBanner';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
 import {
@@ -101,6 +102,10 @@ export function BillingPage(): ReactElement {
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [activeTab, setActiveTab] = useState<BillingTab>('overview');
   const [confirmPlan, setConfirmPlan] = useState<PlanView | null>(null);
+  // The plan a checkout was blocked on for missing billing details. Held so the
+  // confirm step can resume automatically once the details are saved, instead of
+  // stranding the customer after they fill the form.
+  const [pendingPlan, setPendingPlan] = useState<PlanView | null>(null);
   const [topupOpen, setTopupOpen] = useState(false);
   const [seatDialog, setSeatDialog] = useState<{ open: boolean; delta: number }>({
     open: false,
@@ -140,6 +145,8 @@ export function BillingPage(): ReactElement {
     const wanted = missing.map((f) => LABELS[f] ?? f);
     const list =
       wanted.length > 1 ? `${wanted.slice(0, -1).join(', ')} and ${wanted.at(-1)}` : wanted[0] ?? 'billing details';
+    // Remember the plan so checkout can resume after the details are saved.
+    setPendingPlan(confirmPlan);
     setConfirmPlan(null);
     setDetailsPrompt(`Add your ${list} so we can issue a valid tax invoice for this purchase.`);
     setDetailsOpen(true);
@@ -425,15 +432,21 @@ export function BillingPage(): ReactElement {
 
           {/* Plans - switch surface only: the grid + cycle toggle. */}
           {activeTab === 'plans' && data.availablePlans.length > 0 && (
-            <PlansPanel
-              plans={data.availablePlans}
-              currentSlug={plan?.slug ?? 'free'}
-              cycle={cycle}
-              onCycleChange={setCycle}
-              onSelect={(candidate) => setConfirmPlan(candidate)}
-              currentStatus={subscription.status}
-              trialEnd={subscription.trialEnd}
-            />
+            <div className="space-y-5">
+              {data.promotion && (
+                <PromotionBanner promotion={data.promotion} plans={data.availablePlans} />
+              )}
+              <PlansPanel
+                plans={data.availablePlans}
+                currentSlug={plan?.slug ?? 'free'}
+                cycle={cycle}
+                onCycleChange={setCycle}
+                onSelect={(candidate) => setConfirmPlan(candidate)}
+                currentStatus={subscription.status}
+                trialEnd={subscription.trialEnd}
+                promotion={data.promotion}
+              />
+            </div>
           )}
 
           {activeTab === 'invoices' && (
@@ -462,6 +475,9 @@ export function BillingPage(): ReactElement {
         hasActiveSubscription={Boolean(subscription?.hasActive)}
         trialUsed={data?.trialUsed ?? false}
         currentMonthlyPriceMinor={plan?.monthlyPriceMinor ?? 0}
+        currentChatHistoryDays={plan?.limits?.chat_history_days ?? null}
+        promotion={data?.promotion ?? null}
+        botId={billingBotId}
         onSuccess={handleSuccess}
         onBillingDetailsRequired={handleBillingDetailsRequired}
       />
@@ -491,10 +507,21 @@ export function BillingPage(): ReactElement {
         onClose={() => {
           setDetailsOpen(false);
           setDetailsPrompt(null);
+          // Cancelled the form: drop the held plan so a stale one can't resurface.
+          setPendingPlan(null);
         }}
         onSuccess={(message) => {
           setDetailsPrompt(null);
-          handleSuccess(message);
+          if (pendingPlan) {
+            // Details are now on file: resume the checkout the customer was
+            // mid-way through by re-opening the confirm step for that plan.
+            showNotice({ tone: 'info', message });
+            setConfirmPlan(pendingPlan);
+            setPendingPlan(null);
+          } else {
+            // Plain details edit (from the Billing details tab): reload as before.
+            handleSuccess(message);
+          }
         }}
       />
 

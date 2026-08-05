@@ -478,6 +478,149 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     return count
 
 
+async def task_refresh_promo_free_credits(ctx: dict) -> int:
+    """Cron: refresh monthly plan credits for subscriptions inside a launch-promo
+    free window.
+
+    During the free period Razorpay fires no ``subscription.charged`` events, and
+    a deferred sub carries ``current_period_end = None`` so
+    ``task_renew_due_subscriptions`` skips it. Without this cron the customer
+    gets one month of credits for a multi-month free window and runs dry.
+
+    Each run grants the CURRENT free month's allowance, at most once, keyed on
+    the aligned free-month boundary (``current_free_period_end``). Those
+    boundaries land on ``promo_free_until`` and earlier, so they never collide
+    with the first paid charge (keyed on Razorpay's later period end) or the
+    auth-time grant (keyed on the first boundary). Idempotent per period via
+    ``last_granted_period_end``, and per-row isolated so one bad sub can't abort
+    the batch.
+
+    Returns the number of subscriptions that received a fresh grant.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models import Subscription
+    from app.db.session import get_session
+    from app.services import credit_service
+    from app.services.promotion_service import current_free_period_end
+
+    def _refresh() -> int:
+        now_utc = datetime.now(UTC)
+        refreshed = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status == "active",
+                        Subscription.promotion_id.is_not(None),
+                        Subscription.promo_free_until.is_not(None),
+                        Subscription.promo_free_until > now_utc,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                try:
+                    period_end = current_free_period_end(sub.promo_free_until, now_utc)
+                    if credit_service.grant_subscription_period_once(session, sub, period_end):
+                        refreshed += 1
+                    session.commit()
+                except Exception:
+                    logger.exception(
+                        "Promo free-credit refresh failed for subscription %s (client %s); skipping",
+                        getattr(sub, "id", "?"),
+                        getattr(sub, "client_id", "?"),
+                    )
+                    session.rollback()
+        return refreshed
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _refresh)
+    if count:
+        logger.info("task_refresh_promo_free_credits: refreshed credits for %d subscription(s)", count)
+    return count
+
+
+async def task_promo_precharge_reminders(ctx: dict) -> int:
+    """Cron: remind a launch-promo customer before their first real charge.
+
+    Fires once, ~10 days before ``promo_free_until``, so the month-4 charge is
+    never a surprise (chargeback prevention). Idempotent via
+    ``promo_reminder_sent['pre_charge']`` and per-row isolated. Best-effort like
+    every other lifecycle email: a Brevo failure is logged and the marker still
+    advances so a broken send never re-fires daily.
+
+    Returns the number of reminders sent.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.db.models import Client, Subscription
+    from app.db.session import get_session
+    from app.services.email_service import send_promo_precharge_reminder_email
+
+    remind_days = 10
+
+    def _run() -> int:
+        now = datetime.now(UTC)
+        window_end = now + timedelta(days=remind_days)
+        sent = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status == "active",
+                        Subscription.promotion_id.is_not(None),
+                        Subscription.promo_free_until.is_not(None),
+                        Subscription.promo_free_until > now,  # not yet charged
+                        Subscription.promo_free_until <= window_end,  # within the reminder window
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                if (sub.promo_reminder_sent or {}).get("pre_charge"):
+                    continue
+                owner = session.get(Client, sub.client_id)
+                if owner is None or not owner.email:
+                    continue
+                plan = sub.plan
+                plan_name = plan.name if plan else "your plan"
+                price_minor = (plan.monthly_price_cents if plan else 0) or 0
+                amount_display = f"₹{price_minor // 100:,}"
+                pfu = sub.promo_free_until
+                if pfu.tzinfo is None:
+                    pfu = pfu.replace(tzinfo=UTC)
+                charge_date = f"{pfu.day} {pfu:%b %Y}"
+                try:
+                    send_promo_precharge_reminder_email(
+                        owner.email,
+                        name=owner.name,
+                        plan_name=plan_name,
+                        charge_date=charge_date,
+                        amount_display=amount_display,
+                    )
+                    _mark_marker(sub, "promo_reminder_sent", "pre_charge", now)
+                    sent += 1
+                except Exception as exc:
+                    logger.warning("task_promo_precharge_reminders: send failed for client %s: %s", sub.client_id, exc)
+            session.commit()
+        return sent
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_promo_precharge_reminders: sent %d reminder(s)", count)
+    return count
+
+
 async def task_promote_scheduled_downgrades(ctx: dict) -> int:
     """Cron: promote subscriptions whose scheduled downgrade cutover has passed.
 
@@ -1112,6 +1255,8 @@ def _expire_past_due_cycle(session) -> int:
     # would roll the whole expiry back while the suspension emails had already
     # gone out — customers told their agents are offline while still fully
     # entitled, and re-told tomorrow.
+    from app.services.knowledge_state_service import deactivate_bot_knowledge
+
     for sub in subs:
         sub.status = "expired"
         # Surface the dunning end-of-life in canceled_at so the
@@ -1122,13 +1267,26 @@ def _expire_past_due_cycle(session) -> int:
             sub.canceled_at = now
         if not sub.cancel_reason:
             sub.cancel_reason = "dunning_grace_elapsed"
+        # Paid → Free: deactivate this bot's knowledge (reversible) so it stops
+        # answering from a paid-tier KB. Data is retained, not deleted. getattr:
+        # legacy account-level subs (bot_id=None) and no-op for tests' mocks.
+        deactivate_bot_knowledge(session, getattr(sub, "bot_id", None))
         flipped += 1
     session.commit()
 
     # Pass 2 — best-effort notification. Each success is committed on its own
     # so one bad row cannot cost another its marker.
+    from app.services.transition_service import DOWNGRADE_REAUTH_GRACE_REASON
+
     for sub in subs:
         if (sub.dunning_emails_sent or {}).get(SUSPENDED_MARKER):
+            continue
+        # A downgrade re-auth grace row that lapsed is NOT a failed-payment
+        # suspension — the customer chose to downgrade and simply never
+        # re-authorized. The Pass-1 flip above already dropped them to Free;
+        # sending a "your <plan> subscription was suspended" email here would be
+        # wrong copy (and there is no mandate to build a recovery link from).
+        if sub.cancel_reason == DOWNGRADE_REAUTH_GRACE_REASON:
             continue
         try:
             owner = session.get(Client, sub.client_id)
@@ -2169,6 +2327,13 @@ def _run_dunning_cycle(session) -> int:
             .where(
                 Subscription.status == "past_due",
                 Subscription.past_due_since.is_not(None),
+                # Dunning recovers a FAILED GATEWAY CHARGE, so it only applies to
+                # rows with a real mandate. Excluding NULL-mandate rows keeps the
+                # short-lived downgrade re-auth grace row (created by
+                # ``transition_service.promote_scheduled_change`` with no
+                # ``razorpay_subscription_id``) out of the "your payment failed"
+                # cadence — it is awaiting a first authorization, not a rescue.
+                Subscription.razorpay_subscription_id.is_not(None),
             )
             # Oldest first so the customers closest to suspension are served
             # even if the batch is truncated. The limit bounds the FIRST run

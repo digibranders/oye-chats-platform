@@ -3,9 +3,10 @@ import { NavLink } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { OyeChatsMark } from './OyeChatsMark';
 import { PRIMARY_NAV, SECONDARY_NAV, navForRole, type NavItem } from './nav.config';
-import { cn, StatusBadge } from '../design-system';
+import { cn } from '../design-system';
 import { useEntitlements } from '../hooks/useEntitlements';
 import { useSelectedBotPlan } from '../hooks/useSelectedBotPlan';
+import { usePromoFreePeriod } from '../hooks/usePromoFreePeriod';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import type { UpgradeIntentKey } from '../context/upgradeIntents';
@@ -164,6 +165,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
   // divider as account context. Only rendered in the expanded rail (the
   // collapsed icon rail has no room for a text chip).
   const planName = useSelectedBotPlan();
+  const promoFreeUntil = usePromoFreePeriod();
 
   // When the mobile drawer is closed it's translated off-canvas but its links
   // would still be focusable / in the AX tree - `inert` removes it entirely.
@@ -210,8 +212,13 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
           context directly above the Settings divider. Left-aligned with the nav
           rows; the badge sizes to its own text. */}
       {showLabels && planName && (
-        <div className="shrink-0 px-3 pb-1 pt-2">
-          <StatusBadge tone="neutral">{planName} Plan</StatusBadge>
+        <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-1 pt-2">
+          <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">{planName} Plan</span>
+          {promoFreeUntil && (
+            <span className="promo-shimmer text-[11px] font-semibold">
+              Free until {new Date(promoFreeUntil).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+            </span>
+          )}
         </div>
       )}
 

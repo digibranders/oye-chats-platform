@@ -59,7 +59,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.pricing import charge_currency, format_amount
-from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
+from app.db.models import Bot, Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
 from app.services import credit_service, email_service, invoice_service
 
 if TYPE_CHECKING:
@@ -353,6 +353,7 @@ def create_subscription(
     total_count: int | None = None,
     extra_notes: dict[str, str] | None = None,
     discount_bps: int | None = None,
+    start_at: int | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
@@ -379,6 +380,10 @@ def create_subscription(
         downgrade cutover, per-bot) and recurs on all future charges.
       * an explicit ``int`` (including ``0``) → use that value verbatim,
         bypassing auto-resolution (e.g. to force full price).
+
+    ``start_at`` (Unix seconds, optional) defers the first charge — used by the
+    launch-promo free period. The mandate is authorised at checkout but no
+    invoice is generated until ``start_at``; billing then runs at full price.
     """
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
@@ -454,16 +459,24 @@ def create_subscription(
     # quantity multiplies the WHOLE plan amount (₹4,599×2 = ₹9,198, not ₹4,599+₹499).
     quantity = max(int(seat_quantity or 1), 1)
 
+    data: dict[str, Any] = {
+        "plan_id": razorpay_plan_id,
+        "total_count": int(total_count),
+        "customer_notify": 1,
+        "quantity": quantity,
+        "notes": notes,
+    }
+    # Launch-promo free period: defer the FIRST charge to ``start_at`` (Unix
+    # seconds). The customer authorises the mandate now (card token / UPI
+    # Autopay) but Razorpay generates no invoice until this timestamp — after
+    # which billing proceeds at the plan's full price. This is the native
+    # "free trial on a subscription" primitive and, unlike a discounted plan,
+    # it self-reverts to full price with no further intervention.
+    if start_at is not None:
+        data["start_at"] = int(start_at)
+
     try:
-        subscription = rzp.subscription.create(
-            data={
-                "plan_id": razorpay_plan_id,
-                "total_count": int(total_count),
-                "customer_notify": 1,
-                "quantity": quantity,
-                "notes": notes,
-            }
-        )
+        subscription = rzp.subscription.create(data=data)
     except Exception as exc:
         logger.exception(
             "Razorpay subscription.create failed for client %s plan %s: %s",
@@ -1003,6 +1016,39 @@ def create_per_bot_subscription(
     )
 
 
+def create_bot_resubscription(
+    session: Session,
+    client: Client,
+    plan: Plan,
+    *,
+    bot_id: int,
+    billing_cycle: str = "monthly",
+) -> dict[str, Any]:
+    """Mint a Razorpay subscription that RE-funds an EXISTING bot (revive-in-place).
+
+    Unlike :func:`create_per_bot_subscription` (which mints a NEW bot on
+    activation), this carries the existing ``bot_id`` so
+    :func:`_handle_subscription_activated` reattaches the new subscription to
+    that bot and reactivates its previously-deactivated knowledge — the bot
+    keeps its ``bot_key`` / embed and its old knowledge comes back. Used when a
+    downgraded (Free) bot, or a first Free bot, moves to a paid plan from the
+    per-agent billing view.
+
+    No trial — the bot is returning to paid, not starting fresh.
+    """
+    extra_notes: dict[str, str] = {
+        "purpose": "revive_bot",
+        "bot_id": str(int(bot_id)),
+    }
+    return create_subscription(
+        session,
+        client,
+        plan,
+        billing_cycle=billing_cycle,
+        extra_notes=extra_notes,
+    )
+
+
 def verify_subscription_payment_signature(
     *,
     razorpay_payment_id: str,
@@ -1305,6 +1351,9 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
     The dispatch table is intentionally small. Razorpay supports more events,
     but only these affect billing state for OyeChats:
 
+    * ``subscription.authenticated`` → grants a deferred launch-promo sub (which
+                                    sits in ``authenticated`` until start_at); a
+                                    no-op ACK for ordinary subs
     * ``subscription.activated``  → first authentication, grant initial credits
     * ``subscription.charged``    → recurring renewal, reset + grant credits
     * ``subscription.cancelled``  → mark canceled in our DB
@@ -1341,6 +1390,10 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
             return _handle_seat_addon_event(session, event_name, sub_entity, payload)
 
     handlers = {
+        # Fires at mandate authorisation. Only grants for a deferred launch-promo
+        # sub (which stays ``authenticated`` until start_at); a no-op ACK for
+        # ordinary subs, which ``subscription.activated`` still handles.
+        "subscription.authenticated": _handle_subscription_authenticated,
         "subscription.activated": _handle_subscription_activated,
         "subscription.charged": _handle_subscription_charged,
         "subscription.cancelled": _handle_subscription_cancelled,
@@ -1464,6 +1517,17 @@ def _plan_id_from_notes(notes: dict[str, Any] | None) -> int | None:
     if not notes:
         return None
     raw = notes.get("oyechats_plan_id") or notes.get("plan_id")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _promotion_id_from_notes(notes: dict[str, Any] | None) -> int | None:
+    """Launch-promo id stamped on the Razorpay subscription at checkout, if any."""
+    if not notes:
+        return None
+    raw = notes.get("oyechats_promotion_id")
     try:
         return int(raw) if raw is not None else None
     except (TypeError, ValueError):
@@ -1736,12 +1800,37 @@ def _grant_subscription_period(
     return credit_service.grant_subscription_period_once(session, subscription, period_end, invoice_id=invoice_id)
 
 
+def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
+    """Mandate authenticated — the entitlement grant point for a launch-promo sub.
+
+    Verified live against Razorpay (§4 of the launch-offer plan): a subscription
+    created with a future ``start_at`` (the promo free period) sits in
+    ``authenticated`` — Razorpay does NOT fire ``subscription.activated`` until
+    the free period ends at ``start_at``. Granting only on ``activated`` would
+    therefore leave a free-period customer with NO access for the whole window.
+
+    Only promo subscriptions (``notes.oyechats_promotion_id``) are granted here;
+    ordinary subscriptions are ACKed and granted by ``subscription.activated`` as
+    before, so the non-promo money-path is completely unchanged. Delegates to the
+    activation handler, which is grant-once — its "local already exists" branch
+    does NOT re-grant — so the real ``activated`` / first ``charged`` that fire
+    later at ``start_at`` cannot double-grant.
+    """
+    sub_entity = _extract_subscription_entity(payload) or {}
+    notes = sub_entity.get("notes") or {}
+    if not _promotion_id_from_notes(notes):
+        return "authenticated ack (non-promo; activated will grant)"
+    return _handle_subscription_activated(session, payload)
+
+
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
     """First mandate-authentication or restart after a paused state.
 
     Creates the local Subscription row if it doesn't exist yet, grants the
     initial month's credits, and stores the Razorpay customer id.
     """
+    from app.services import plan_entitlements_service
+
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
         return "subscription entity missing"
@@ -1778,7 +1867,35 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # one active subscription per bot concurrently.
         is_per_bot = (notes.get("purpose") or "").lower() == "per_bot_subscription"
 
-        if not is_per_bot:
+        # Revive-in-place branch: this subscription re-funds an EXISTING bot that
+        # lapsed to Free (or a Free bot #1 going paid). Unlike per-bot, it does
+        # NOT mint a new Bot — it reattaches to ``notes.bot_id`` and reactivates
+        # that bot's deactivated knowledge. Ownership is validated here as
+        # defense-in-depth (the checkout route already scoped it).
+        is_revive = (notes.get("purpose") or "").lower() == "revive_bot"
+        revive_bot_id: int | None = None
+        if is_revive and client_id is not None:
+            try:
+                candidate = int(notes.get("bot_id"))
+            except (TypeError, ValueError):
+                candidate = None
+            if (
+                candidate is not None
+                and session.execute(
+                    select(Bot.id).where(Bot.id == candidate, Bot.client_id == client_id).limit(1)
+                ).first()
+            ):
+                revive_bot_id = candidate
+            else:
+                logger.warning(
+                    "revive_bot activation for %s: bot_id %s not owned by client %s — treating as account-level",
+                    razorpay_sub_id,
+                    notes.get("bot_id"),
+                    client_id,
+                )
+                is_revive = False
+
+        if not is_per_bot and not is_revive:
             # Account-level (legacy) flow: cancel any existing subscription
             # this new one is replacing.
             #
@@ -1849,10 +1966,39 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         if is_per_bot:
             new_bot = _create_bot_from_subscription_notes(session, client_id, None, plan_id, notes)
 
+        # The bot this subscription funds: a freshly-minted one (per-bot), the
+        # existing bot being revived (revive_bot), or NULL (account-level).
+        funded_bot_id = new_bot.id if new_bot is not None else (revive_bot_id if is_revive else None)
+
+        # Close the per-bot downgrade re-auth seam. A per-bot downgrade's grace
+        # row (transition_service.promote_scheduled_change) is bot-scoped, but a
+        # plain re-auth lands in THIS account-level branch with funded_bot_id
+        # None, so the ``bot_id IS NULL`` sibling sweep above never cancels it —
+        # leaving an orphaned past_due grace row (and, once downgrade re-auth
+        # revives in place, a collision on the (client_id, bot_id) unique index).
+        # Prefer the bot this activation funds; otherwise recover it via the
+        # prev-mandate link the grace row and this activation share, then cancel
+        # it through the shared helper before the INSERT.
+        from app.services import transition_service
+
+        grace_bot_id = funded_bot_id
+        if grace_bot_id is None and prev_rzp_sub_id and client_id is not None:
+            grace_bot_id = session.execute(
+                select(Subscription.bot_id).where(
+                    Subscription.client_id == client_id,
+                    Subscription.prev_razorpay_subscription_id == prev_rzp_sub_id,
+                    Subscription.cancel_reason == transition_service.DOWNGRADE_REAUTH_GRACE_REASON,
+                    Subscription.status.in_(("active", "trialing", "past_due")),
+                    Subscription.bot_id.is_not(None),
+                )
+            ).scalar_one_or_none()
+        if grace_bot_id is not None and client_id is not None:
+            transition_service.cancel_bot_scoped_reauth_grace(session, client_id, grace_bot_id)
+
         local = Subscription(
             client_id=client_id,
             plan_id=plan_id,
-            bot_id=new_bot.id if new_bot is not None else None,
+            bot_id=funded_bot_id,
             status="active",
             billing_cycle=notes.get("billing_cycle", "monthly"),
             operator_quantity=quantity,
@@ -1862,16 +2008,27 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             razorpay_subscription_id=razorpay_sub_id,
             razorpay_customer_id=customer_id,
             prev_razorpay_subscription_id=prev_rzp_sub_id,
+            # Launch-promo linkage. ``promotion_id`` comes from the checkout
+            # notes; ``promo_free_until`` mirrors the Razorpay ``start_at`` (the
+            # deferred first-charge moment) and drives the pre-charge reminder
+            # email. Both NULL for ordinary (non-promo) subscriptions.
+            promotion_id=_promotion_id_from_notes(notes),
+            promo_free_until=(
+                datetime.fromtimestamp(sub_entity["start_at"], tz=UTC) if sub_entity.get("start_at") else None
+            ),
         )
         session.add(local)
         session.flush()
 
-        if is_per_bot and new_bot is not None:
-            # Now back-link the bot to the freshly inserted subscription so
-            # the bot row knows which sub funds it. Uses ``post_update`` on
-            # the Bot.subscription relationship to avoid the circular FK.
-            new_bot.subscription_id = local.id
-            session.flush()
+        if funded_bot_id is not None:
+            # Bot-scoped activation (per-bot new bot OR revive-in-place). Back-link
+            # the bot to the freshly inserted subscription so the bot row knows
+            # which sub funds it. Uses ``post_update`` on the Bot.subscription
+            # relationship to avoid the circular FK.
+            bot_row = new_bot if new_bot is not None else session.get(Bot, funded_bot_id)
+            if bot_row is not None:
+                bot_row.subscription_id = local.id
+                session.flush()
             # Finding H-A: grant through the period-marker helper (not the raw
             # ``grant_for_subscription``) so ``last_granted_period_end`` is set
             # exactly like the account-level path below. A UPI ``activated`` can
@@ -1888,15 +2045,26 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 cycle = local.billing_cycle or notes.get("billing_cycle") or "monthly"
                 grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
             _grant_subscription_period(session, local, grant_period_end)
+            if is_revive:
+                # Revive-in-place: restore the knowledge this bot deactivated when
+                # it lapsed to Free (no-op when it had none).
+                from app.services.knowledge_state_service import reactivate_bot_knowledge
+
+                reactivate_bot_knowledge(session, funded_bot_id)
             logger.info(
-                "Activated per-bot Razorpay subscription %s → local %s (client %s, bot %s)",
+                "Activated %s Razorpay subscription %s → local %s (client %s, bot %s)",
+                "revive-in-place" if is_revive else "per-bot",
                 razorpay_sub_id,
                 local.id,
                 client_id,
-                new_bot.id,
+                funded_bot_id,
             )
             _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
-            return f"Per-bot subscription activated: client {client_id}, bot {new_bot.id}"
+            # New active plan → drop cached entitlements so the new tier takes
+            # effect immediately rather than after the 60s TTL.
+            plan_entitlements_service.invalidate(client_id)
+            label = "Revive-in-place" if is_revive else "Per-bot"
+            return f"{label} subscription activated: client {client_id}, bot {funded_bot_id}"
 
         # Expire any unused plan_grant from the prior subscription before
         # handing out the new plan's allowance. Without this, a free-tier
@@ -1925,6 +2093,15 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         if grant_period_end is None and current_period_start is not None:
             cycle = (local.billing_cycle if local else None) or notes.get("billing_cycle") or "monthly"
             grant_period_end = add_months(current_period_start, 12 if cycle == "annual" else 1)
+        # Launch-promo: the free period defers billing, so Razorpay sends no
+        # current period yet (both are None here). Key this first grant on the
+        # first free-month boundary so ``task_refresh_promo_free_credits`` treats
+        # this month as already granted and never re-grants it. Paid charges key
+        # on Razorpay's own (later) period end, so they can never collide.
+        if grant_period_end is None and getattr(local, "promo_free_until", None) is not None:
+            from app.services.promotion_service import current_free_period_end
+
+            grant_period_end = current_free_period_end(local.promo_free_until)
         _grant_subscription_period(session, local, grant_period_end)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent —
@@ -2033,7 +2210,16 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             local.id,
             client_id,
         )
+        # Back to a paid plan → restore any knowledge deactivated by a prior
+        # lapse on this bot (no-op when the bot has none).
+        from app.services.knowledge_state_service import reactivate_bot_knowledge
+
+        reactivate_bot_knowledge(session, local.bot_id)
         _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
+        # New active plan → drop cached entitlements so the new tier's
+        # features/limits (and, at a downgrade cutover, the exit from the
+        # re-auth gap) take effect immediately rather than after the 60s TTL.
+        plan_entitlements_service.invalidate(client_id)
         return f"Subscription activated for client {client_id}"
 
     # A subscription already flipped canceled/expired (by us or by Razorpay)
@@ -2076,6 +2262,10 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
     # 1 until their next seat charge. Re-derive from included + authorized seats.
     included = int((local.plan.included_operator_seats if local.plan else 1) or 1)
     local.operator_quantity = included + int(local.seat_addon_quantity or 0)
+    # Back to a paid plan → restore any knowledge deactivated by a prior lapse.
+    from app.services.knowledge_state_service import reactivate_bot_knowledge
+
+    reactivate_bot_knowledge(session, local.bot_id)
     session.flush()
     return f"Subscription {razorpay_sub_id} re-activated"
 
@@ -2323,6 +2513,12 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
 
     local.status = "canceled"
     local.canceled_at = datetime.now(UTC)
+    # Paid → Free: keep the bot's data but deactivate its knowledge so it stops
+    # answering from a paid-tier KB until the customer re-adds on Free or
+    # re-upgrades (reversible; see knowledge_state_service).
+    from app.services.knowledge_state_service import deactivate_bot_knowledge
+
+    deactivate_bot_knowledge(session, local.bot_id)
     session.flush()
     return f"Subscription {sub_entity.get('id')} cancelled"
 
@@ -2349,6 +2545,11 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
         return f"Subscription {sub_entity.get('id')} completed → promoted scheduled change"
 
     local.status = "expired"
+    # Paid → Free (natural end-of-life): deactivate this bot's knowledge, same
+    # as the cancel / dunning-expiry paths.
+    from app.services.knowledge_state_service import deactivate_bot_knowledge
+
+    deactivate_bot_knowledge(session, local.bot_id)
     session.flush()
     return f"Subscription {sub_entity.get('id')} completed"
 

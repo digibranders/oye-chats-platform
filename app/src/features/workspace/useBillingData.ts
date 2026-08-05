@@ -14,6 +14,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
+  getActivePromotion,
   getBillingDetails,
   getCurrentSubscription,
   getInvoices,
@@ -23,10 +24,12 @@ import {
   buildBillingDetails,
   buildInvoice,
   buildPlan,
+  buildPromotion,
   buildSubscription,
   type BillingDetailsView,
   type InvoiceView,
   type PlanView,
+  type PromotionView,
   type SubscriptionView,
 } from './billingModel';
 
@@ -42,6 +45,8 @@ export interface BillingData {
   details: BillingDetailsView;
   /** True once the client has consumed their lifetime free trial - gates the trial CTA. */
   trialUsed: boolean;
+  /** Active launch promotion the client qualifies for, else null. Display only. */
+  promotion: PromotionView | null;
 }
 
 export interface UseBillingDataResult {
@@ -67,13 +72,16 @@ async function loadBillingData(botId?: number | null): Promise<BillingData> {
   // per-agent Billing overview); plans (catalog) and billing details are
   // account-level and stay unscoped.
   const scope = botId ?? undefined;
-  const [subscriptionRaw, plansRaw, invoicesResult, detailsRaw] = await Promise.all([
+  const [subscriptionRaw, plansRaw, invoicesResult, detailsRaw, promotionRaw] = await Promise.all([
     getCurrentSubscription(scope),
     getSubscriptionPlans().catch((): Array<Record<string, unknown>> => []),
     getInvoices(scope)
       .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: false }))
       .catch(() => ({ rows: [] as Array<Record<string, unknown>>, error: true })),
     getBillingDetails().catch((): Record<string, unknown> => ({})),
+    // Promo is a decorative overlay — a failure must never blank the page, so it
+    // degrades to "no promotion" independently like plans/invoices/details.
+    getActivePromotion().catch((): Record<string, unknown> => ({ active: false })),
   ]);
 
   const envelope =
@@ -91,6 +99,7 @@ async function loadBillingData(botId?: number | null): Promise<BillingData> {
     invoicesError: invoicesResult.error,
     details: buildBillingDetails(detailsRaw),
     trialUsed: envelope.trial_used === true,
+    promotion: buildPromotion(promotionRaw),
   };
 }
 

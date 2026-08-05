@@ -257,6 +257,10 @@ class RegisterRequest(BaseModel):
     # signup. Silent on invalid/self-referral — registration must never fail
     # because of a referral problem.
     referral_code: str | None = None
+    # Optional launch-promo code captured from the campaign link's ``?code=``.
+    # Makes the offer link-exclusive (only link arrivals qualify). Silent on
+    # unknown codes — a bad link must never fail signup.
+    promo_code: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -318,6 +322,9 @@ class RegisterResponse(BaseModel):
     client_id: int
     name: str
     is_superadmin: bool = False
+    # True when the account is already verified at signup (local dev auto-verify).
+    # Lets the client skip the OTP screen and go straight to the dashboard.
+    is_verified: bool = False
     company_name: str | None = None
     website: str | None = None
     message: str = "Account created successfully."
@@ -656,6 +663,12 @@ def resend_verification(request: Request, body: ResendVerificationRequest):
             client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
             session.commit()
 
+            # Dev convenience — see the register handler. Never logs in production.
+            from app.config import APP_ENV
+
+            if APP_ENV != "production":
+                logger.info("[DEV] resent verification OTP for %s: %s", client.email, otp)
+
             try:
                 from app.services.email_service import send_verification_otp_email
 
@@ -922,12 +935,41 @@ def register(request: Request, body: RegisterRequest):
                     )
                     session.rollback()
 
+            # Launch-promo first-touch attribution from the campaign link's
+            # ``?code=``. Best-effort — an unknown code silently no-ops so a bad
+            # link never blocks a signup; a valid one stamps the account so the
+            # link-exclusive offer resolves at checkout.
+            if body.promo_code:
+                try:
+                    from app.services.promotion_service import attribute_signup_code
+
+                    attribute_signup_code(session, new_client.id, body.promo_code)
+                    session.commit()
+                except Exception as promo_err:
+                    logger.warning(
+                        "promo_attribution_failed for client %s: %s",
+                        new_client.id,
+                        promo_err,
+                    )
+                    session.rollback()
+
             # Generate and persist the email OTP (15-minute window).
             otp = str(secrets.randbelow(900000) + 100000)
             new_client.email_otp = otp
             new_client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
-            new_client.is_verified = False
+            from app.config import APP_ENV, DEV_AUTO_VERIFY_EMAIL
+
+            # Auto-verify ONLY when the double-gated DEV_AUTO_VERIFY_EMAIL flag is
+            # on (explicit opt-in AND non-production). Production always leaves this
+            # False, so accounts still require a real OTP exactly as before.
+            new_client.is_verified = DEV_AUTO_VERIFY_EMAIL
             session.commit()
+
+            if DEV_AUTO_VERIFY_EMAIL:
+                logger.info("[DEV] auto-verified %s (local email delivery is gated)", new_client.email)
+            elif APP_ENV != "production":
+                # Non-dev local envs still get the OTP in the log (never in production).
+                logger.info("[DEV] email verification OTP for %s: %s", new_client.email, otp)
 
             # Fire verification email after commit — failure must not roll back the account.
             try:
@@ -947,7 +989,7 @@ def register(request: Request, body: RegisterRequest):
                 "client_id": new_client.id,
                 "name": new_client.name,
                 "is_superadmin": False,
-                "is_verified": False,
+                "is_verified": bool(new_client.is_verified),
                 "company_name": new_client.company_name,
                 "website": new_client.website,
                 "message": "Account created successfully.",

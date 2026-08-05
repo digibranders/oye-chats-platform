@@ -302,11 +302,18 @@ def get_lead_info_by_session(session, session_id: str) -> LeadInfo | None:
 
 
 def _owner_filter(model, bot_id=None, client_id=None):
-    """Return a filter clause scoped to bot_id AND client_id when both are provided.
+    """Return a filter scoped to bot_id AND client_id, and to ACTIVE knowledge.
 
     Defense-in-depth: always include client_id when available so that a bot_id
     belonging to a different client can never match, even if the caller forgets
     to validate bot ownership beforehand.
+
+    When ``model`` carries an ``is_active`` flag (``Document`` does), the clause
+    also excludes deactivated chunks — knowledge a bot keeps but no longer
+    answers from after its plan lapsed to Free (see ``knowledge_state_service``).
+    Every retrieval / listing path routes through here, so the active-only rule
+    is enforced in one place. Dedup (``is_document_processed``) applies its own
+    active guard so a Free re-crawl can rebuild fresh active chunks.
 
     Raises:
         ValueError: when both ``bot_id`` and ``client_id`` are missing/falsy.
@@ -320,10 +327,16 @@ def _owner_filter(model, bot_id=None, client_id=None):
         raise ValueError("_owner_filter requires at least one of bot_id or client_id")
 
     if bot_id and client_id:
-        return and_(model.bot_id == bot_id, model.client_id == client_id)
-    if bot_id:
-        return model.bot_id == bot_id
-    return model.client_id == client_id
+        tenant = and_(model.bot_id == bot_id, model.client_id == client_id)
+    elif bot_id:
+        tenant = model.bot_id == bot_id
+    else:
+        tenant = model.client_id == client_id
+
+    active = getattr(model, "is_active", None)
+    if active is not None:
+        return and_(tenant, active.is_(True))
+    return tenant
 
 
 def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
@@ -432,6 +445,34 @@ def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) 
     """
     stmt = select(func.count()).select_from(Document).where(_owner_filter(Document, bot_id, client_id))
     return session.execute(stmt).scalar_one()
+
+
+def count_knowledge_state(session, bot_id: int = None, client_id: int = None) -> dict:
+    """Active vs deactivated chunk counts for a bot.
+
+    Drives the "re-crawl to reactivate on Free" banner. Deliberately does NOT
+    use ``_owner_filter`` (which now excludes inactive chunks) — this needs to
+    see BOTH states. ``inactive > 0`` means a plan lapse deactivated knowledge,
+    which is what distinguishes a downgraded bot from a brand-new empty one.
+    """
+    from sqlalchemy import and_
+
+    if not bot_id and not client_id:
+        return {"active": 0, "inactive": 0}
+    if bot_id and client_id:
+        scope = and_(Document.bot_id == bot_id, Document.client_id == client_id)
+    elif bot_id:
+        scope = Document.bot_id == bot_id
+    else:
+        scope = Document.client_id == client_id
+
+    active = session.execute(
+        select(func.count()).select_from(Document).where(scope, Document.is_active.is_(True))
+    ).scalar_one()
+    inactive = session.execute(
+        select(func.count()).select_from(Document).where(scope, Document.is_active.is_(False))
+    ).scalar_one()
+    return {"active": int(active or 0), "inactive": int(inactive or 0)}
 
 
 def get_all_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> list:
@@ -620,8 +661,14 @@ def delete_chunks_for_url(
 def is_document_processed(
     session, client_id: int | None = None, file_hash: str = "", bot_id: int | None = None
 ) -> bool:
-    """Check if a document with the given hash already exists."""
-    stmt = select(Document.id).where(Document.file_hash == file_hash)
+    """Check if an ACTIVE document with the given hash already exists.
+
+    Scoped to ``is_active`` so a Free re-crawl / re-upload after a downgrade
+    (which deactivated the old chunks) is NOT skipped as a duplicate — it
+    rebuilds fresh active knowledge. A later re-upgrade reactivates the old
+    chunks; any resulting overlap is harmless.
+    """
+    stmt = select(Document.id).where(Document.file_hash == file_hash, Document.is_active.is_(True))
     if bot_id:
         stmt = stmt.where(Document.bot_id == bot_id)
     elif client_id:
@@ -698,7 +745,7 @@ def search_similar_documents(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE bot_id = :bot_id AND client_id = :client_id
+               WHERE bot_id = :bot_id AND client_id = :client_id AND is_active
                      AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
@@ -710,7 +757,8 @@ def search_similar_documents(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE bot_id = :owner_id AND embedding <=> CAST(:emb AS vector) < :max_dist
+               WHERE bot_id = :owner_id AND is_active
+                     AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
         )
@@ -720,7 +768,8 @@ def search_similar_documents(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE client_id = :owner_id AND embedding <=> CAST(:emb AS vector) < :max_dist
+               WHERE client_id = :owner_id AND is_active
+                     AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
         )
@@ -767,17 +816,21 @@ def _session_owner_filter(bot_id=None, client_id=None):
 
 
 def _doc_owner_filter(bot_id=None, client_id=None):
-    """Return filter for Document based on bot_id or client_id.
+    """Return filter for Document based on bot_id or client_id, active chunks only.
 
-    Defense-in-depth: always include client_id when available.
+    Defense-in-depth: always include client_id when available. Scoped to
+    ``is_active`` so downgraded (deactivated) knowledge drops out of dashboard
+    document counts too, matching what retrieval and the KB list show.
     """
     from sqlalchemy import and_
 
     if bot_id and client_id:
-        return and_(Document.bot_id == bot_id, Document.client_id == client_id)
-    if bot_id:
-        return Document.bot_id == bot_id
-    return Document.client_id == client_id
+        tenant = and_(Document.bot_id == bot_id, Document.client_id == client_id)
+    elif bot_id:
+        tenant = Document.bot_id == bot_id
+    else:
+        tenant = Document.client_id == client_id
+    return and_(tenant, Document.is_active.is_(True))
 
 
 def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days: int = None):

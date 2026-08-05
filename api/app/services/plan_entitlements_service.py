@@ -75,7 +75,11 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import PREFIX, get_redis
 from app.db.models import Bot, Plan
-from app.services.plan_service import get_client_subscription
+from app.services.plan_service import (
+    get_account_subscription,
+    get_client_subscription,
+    get_subscription_for_bot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +218,12 @@ def _cache_key(client_id: int, *, with_usage: bool) -> str:
     return f"{PREFIX}entitlements:{client_id}:{suffix}"
 
 
+def _bot_cache_key(bot_id: int, *, with_usage: bool) -> str:
+    """Per-bot entitlement cache slot, namespaced apart from the account slots."""
+    suffix = "full" if with_usage else "bare"
+    return f"{PREFIX}entitlements:bot:{bot_id}:{suffix}"
+
+
 def invalidate(client_id: int) -> None:
     """Drop both cache slots for this client.
 
@@ -287,6 +297,69 @@ def get_entitlements(
     return result
 
 
+def get_bot_entitlements(
+    bot_id: int,
+    db_session: Session,
+    *,
+    include_usage: bool = False,
+    use_cache: bool = True,
+) -> PlanEntitlements:
+    """Resolve entitlements for a SINGLE bot from that bot's own subscription.
+
+    Unlike :func:`get_entitlements` (account view, highest-priced sub across all
+    bots), this follows the subscription funding ``bot_id`` — falling back to the
+    account-level subscription when the bot has none. Use it for gates whose
+    behaviour is inherently per-bot (a bot's widget, its RAG qualification, its
+    outbound webhooks), so a bot downgraded to Starter loses its features even
+    while a sibling bot stays on a higher tier.
+
+    Fails closed: an unknown bot resolves to the Free fallback rather than
+    inheriting anything, matching the deny-by-default policy of this module.
+    """
+    client_id = db_session.execute(select(Bot.client_id).where(Bot.id == bot_id)).scalar_one_or_none()
+    if client_id is None:
+        # Unknown/deleted bot — never inherit features. Recompute a Free result
+        # off a client_id of 0 (no subscription rows → Free fallback in _compute).
+        return _compute(0, db_session, include_usage=include_usage, bot_id=None)
+
+    if use_cache:
+        redis = get_redis()
+        if redis is not None:
+            try:
+                raw = redis.get(_bot_cache_key(bot_id, with_usage=include_usage))
+                if raw is not None:
+                    return PlanEntitlements(**json.loads(raw))
+            except Exception:
+                logger.debug("bot entitlements cache read failed for bot=%s", bot_id, exc_info=True)
+
+    result = _compute(client_id, db_session, include_usage=include_usage, bot_id=bot_id)
+
+    if use_cache:
+        redis = get_redis()
+        if redis is not None:
+            try:
+                redis.setex(
+                    _bot_cache_key(bot_id, with_usage=include_usage),
+                    CACHE_TTL_SECONDS,
+                    json.dumps(result.to_json_dict()),
+                )
+            except Exception:
+                logger.debug("bot entitlements cache write failed for bot=%s", bot_id, exc_info=True)
+    return result
+
+
+def invalidate_bot(bot_id: int) -> None:
+    """Drop both per-bot cache slots. Call on a bot's plan change / seat change."""
+    redis = get_redis()
+    if redis is None:
+        return
+    try:
+        redis.delete(_bot_cache_key(bot_id, with_usage=True))
+        redis.delete(_bot_cache_key(bot_id, with_usage=False))
+    except Exception:
+        logger.debug("bot entitlements cache invalidate failed for bot=%s", bot_id, exc_info=True)
+
+
 # ── Lead source attribution gate ──────────────────────────────────────────
 #
 # Lead Source Attribution (UTM + visitor journey persisted on LeadInfo,
@@ -316,6 +389,27 @@ def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> b
         logger.warning(
             "lead_source_attribution: entitlements lookup failed for client=%s — denying",
             client_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in LEAD_SOURCE_ATTRIBUTION_SLUGS
+
+
+def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot includes lead source attribution.
+
+    Per-bot companion to :func:`is_lead_source_attribution_enabled`. Leads are
+    captured per bot, so attribution snapshotting at capture should follow that
+    bot's own subscription (account fallback) — a bot on Starter shouldn't get
+    durable attribution just because a sibling bot is on Standard/Professional.
+    Denies on any resolver error.
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "lead_source_attribution: entitlements lookup failed for bot=%s — denying",
+            bot_id,
             exc_info=True,
         )
         return False
@@ -416,18 +510,56 @@ def is_bant_enabled_for_plan(client_id: int, db_session: Session) -> bool:
     return bool(entitlements.features.get("bant", False))
 
 
-def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> PlanEntitlements:
-    """Build the entitlements dataclass from primary sources. Internal."""
+def is_bant_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot exposes BANT qualification.
+
+    Per-bot companion to :func:`is_bant_enabled_for_plan`. The rag pipeline runs
+    per bot, so it should gate on that bot's own subscription — otherwise a bot
+    downgraded to Starter keeps running BANT extraction whenever a sibling bot is
+    still on a BANT tier (the account-level resolver returns the highest tier).
+    Falls back to False on any resolver error (deny-by-default).
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "bant_bot_gate: entitlements lookup failed for bot=%s — denying",
+            bot_id,
+            exc_info=True,
+        )
+        return False
+    return bool(entitlements.features.get("bant", False))
+
+
+def _compute(
+    client_id: int, db_session: Session, *, include_usage: bool, bot_id: int | None = None
+) -> PlanEntitlements:
+    """Build the entitlements dataclass from primary sources. Internal.
+
+    ``bot_id`` selects the subscription source. When ``None`` (account view),
+    entitlements follow ``get_client_subscription`` — the HIGHEST-priced active
+    subscription across all the client's bots (remediation H2, so a cheap second
+    bot never downgrades the account UI). When a ``bot_id`` is given (per-bot
+    gate), they follow THAT bot's own subscription, falling back to the
+    account-level subscription when the bot has none — so a bot on Starter no
+    longer inherits a sibling bot's Professional features.
+    """
     # 1. Look up the subscription. ``get_client_subscription`` returns the
     # most-recent non-canceled subscription, which is exactly what
     # entitlements gating cares about.
     subscription = None
     try:
-        subscription = get_client_subscription(db_session, client_id)
+        if bot_id is not None:
+            subscription = get_subscription_for_bot(db_session, client_id, bot_id) or get_account_subscription(
+                db_session, client_id
+            )
+        else:
+            subscription = get_client_subscription(db_session, client_id)
     except Exception:
         logger.warning(
-            "entitlements: failed to load subscription for client=%s — defaulting to Free",
+            "entitlements: failed to load subscription for client=%s bot=%s — defaulting to Free",
             client_id,
+            bot_id,
             exc_info=True,
         )
 
