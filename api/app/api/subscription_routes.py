@@ -1091,9 +1091,13 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     with get_session() as session:
         for plan in get_active_plans(session):
             row = {"plan_id": plan.id, "slug": plan.slug}
+            # Both rails (P1-2/F2): USD drift is just as displayed-vs-charged
+            # as INR drift, and was previously invisible to this diagnostic.
             for cycle, local_minor, rzp_id in (
                 ("monthly", plan.monthly_price_cents, plan.razorpay_plan_id_monthly),
                 ("annual", plan.annual_price_cents, plan.razorpay_plan_id_annual),
+                ("monthly_usd", plan.monthly_price_usd_cents, plan.razorpay_plan_id_monthly_usd),
+                ("annual_usd", plan.annual_price_usd_cents, plan.razorpay_plan_id_annual_usd),
             ):
                 entry = {
                     "local_minor": int(local_minor or 0),

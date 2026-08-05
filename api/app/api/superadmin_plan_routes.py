@@ -90,6 +90,8 @@ class CreatePlanRequest(BaseModel):
     extra_seat_price_cents: int = Field(RAZORPAY_SEAT_PLAN_PRICE_CENTS, ge=0)
     razorpay_plan_id_monthly: str | None = None
     razorpay_plan_id_annual: str | None = None
+    razorpay_plan_id_monthly_usd: str | None = None
+    razorpay_plan_id_annual_usd: str | None = None
     is_active: bool = True
     is_default: bool = False
     sort_order: int = 0
@@ -119,6 +121,8 @@ class UpdatePlanRequest(BaseModel):
     sort_order: int | None = None
     razorpay_plan_id_monthly: str | None = None
     razorpay_plan_id_annual: str | None = None
+    razorpay_plan_id_monthly_usd: str | None = None
+    razorpay_plan_id_annual_usd: str | None = None
 
 
 class UpdateSubscriptionRequest(BaseModel):
@@ -276,6 +280,16 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
     """Create a new pricing plan."""
     _require_write(superadmin)
     _reject_seat_price_drift(request.model_dump())
+    # F7: dual-rail model — INR in *_cents, USD in *_usd_cents. A non-INR plan
+    # currency has no supported meaning anywhere in the platform.
+    if str(request.currency or "INR").upper() != "INR":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unsupported plan currency {request.currency!r}. Plans are INR-primary; "
+                "international pricing lives in the *_usd_cents columns."
+            ),
+        )
     with get_session() as session:
         # Check slug uniqueness
         existing = session.execute(select(Plan).where(Plan.slug == request.slug)).scalars().first()
@@ -312,6 +326,8 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
             extra_seat_price_cents=request.extra_seat_price_cents,
             razorpay_plan_id_monthly=request.razorpay_plan_id_monthly,
             razorpay_plan_id_annual=request.razorpay_plan_id_annual,
+            razorpay_plan_id_monthly_usd=request.razorpay_plan_id_monthly_usd,
+            razorpay_plan_id_annual_usd=request.razorpay_plan_id_annual_usd,
             is_active=request.is_active,
             is_default=request.is_default,
             sort_order=request.sort_order,
@@ -346,16 +362,36 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
             for p in session.execute(select(Plan).where(Plan.is_default.is_(True), Plan.id != plan_id)).scalars().all():
                 p.is_default = False
 
+        # F7 guard: the dual-rail model stores INR minor units in *_cents and
+        # USD minor units in *_usd_cents — a Plan row whose own ``currency`` is
+        # anything but INR would make the mint below mislabel foreign minor
+        # units as paise (and nothing else in the platform supports it). Refuse
+        # the edit rather than mint a mandate at the wrong magnitude.
+        requested_currency = update_data.get("currency")
+        if requested_currency is not None and str(requested_currency).upper() != "INR":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unsupported plan currency {requested_currency!r}. Plans are INR-primary; "
+                    "international pricing lives in the *_usd_cents columns."
+                ),
+            )
+
         # Finding B: Razorpay plans are immutable, so a price edit that leaves
         # razorpay_plan_id_* pointing at the old plan makes "displayed != charged"
         # — the catalog quotes the new price while every new mandate keeps
         # debiting the old one. When a price field changes and the caller didn't
         # also supply a matching new plan id, mint a fresh Razorpay plan and swap
         # the id in the SAME update so the two never diverge. (The discounted-plan
-        # cache self-heals separately via resolve_discounted_plan.)
+        # cache self-heals separately via resolve_discounted_plan.) Covers BOTH
+        # rails (P1-2/F2): a USD price edit previously minted nothing, so the
+        # quote showed the new dollar amount while every new USD mandate kept
+        # debiting the old Razorpay plan.
         _PRICE_TO_PLAN_ID = {
-            "monthly_price_cents": ("razorpay_plan_id_monthly", "monthly"),
-            "annual_price_cents": ("razorpay_plan_id_annual", "yearly"),
+            "monthly_price_cents": ("razorpay_plan_id_monthly", "monthly", "INR"),
+            "annual_price_cents": ("razorpay_plan_id_annual", "yearly", "INR"),
+            "monthly_price_usd_cents": ("razorpay_plan_id_monthly_usd", "monthly", "USD"),
+            "annual_price_usd_cents": ("razorpay_plan_id_annual_usd", "yearly", "USD"),
         }
         # Mint the fresh Razorpay plan(s) FIRST, before mutating anything, so a
         # failure on the second cycle can't leave the row half-updated. Collect
@@ -366,30 +402,34 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
         from app.services import razorpay_service
 
         minted_ids: dict[str, str | None] = {}
-        for price_field, (id_field, period) in _PRICE_TO_PLAN_ID.items():
+        for price_field, (id_field, period, rail_currency) in _PRICE_TO_PLAN_ID.items():
             new_price = update_data.get(price_field)
             if (
                 new_price is not None
                 and int(new_price) != int(getattr(plan, price_field) or 0)
                 and id_field not in update_data
             ):
-                # A ₹0 (free) tier has no recurring Razorpay plan to mint —
+                # A zero (free) price has no recurring Razorpay plan to mint —
                 # create_plan_for_price rejects a non-positive amount with a
                 # ValueError that would escape as a 500. Clear the gateway id
                 # instead so "make this tier free" is a clean, supported edit.
                 if int(new_price) <= 0:
                     minted_ids[id_field] = None
-                    logger.info("Plan %s %s price set to 0 (free) — clearing Razorpay plan id", plan.id, period)
+                    logger.info(
+                        "Plan %s %s (%s) price set to 0 (free) — clearing Razorpay plan id",
+                        plan.id,
+                        period,
+                        rail_currency,
+                    )
                     continue
                 try:
                     new_rzp_id = razorpay_service.create_plan_for_price(
-                        name=f"{plan.name} ({period})",
+                        name=f"{plan.name} ({period}{', USD' if rail_currency == 'USD' else ''})",
                         amount_paise=int(new_price),
                         period=period,
-                        # These fields are INR minor units (paise); a plan whose
-                        # currency is USD has no razorpay_plan_id_* to re-mint, so
-                        # pin INR and never mislabel a paise amount as USD.
-                        currency="INR",
+                        # Each rail mints in its own fixed currency: paise for the
+                        # *_cents fields, cents for *_usd_cents. Never cross-label.
+                        currency=rail_currency,
                     )
                 except razorpay_service.RazorpayBillingError as exc:
                     if minted_ids:
