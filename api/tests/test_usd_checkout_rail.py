@@ -100,9 +100,21 @@ def test_charge_currency_selects_usd_for_foreign_country(country):
 
 
 # ── create_subscription: plan-id selection ────────────────────────────────────
+# These test RAIL SELECTION with the gate open, so they pin
+# INTL_PAYMENTS_ENABLED=True explicitly — the service now enforces the kill
+# switch itself (test_intl_kill_switch.py owns the flag-off behavior), and
+# without the pin these pass or fail based on the local .env's flag value
+# (CI runs with the flag off; a dev box testing the USD rail runs it on).
 
 
-def test_create_subscription_uses_usd_plan_for_foreign_client():
+@pytest.fixture()
+def _intl_on(monkeypatch):
+    from app import config
+
+    monkeypatch.setattr(config, "INTL_PAYMENTS_ENABLED", True)
+
+
+def test_create_subscription_uses_usd_plan_for_foreign_client(_intl_on):
     from app.services import razorpay_service
 
     fake = _fake_rzp("sub_usd")
@@ -116,7 +128,7 @@ def test_create_subscription_uses_usd_plan_for_foreign_client():
     assert result["billing_plan_id"] == "plan_starter_usd_monthly"
 
 
-def test_create_subscription_uses_usd_annual_plan_for_foreign_client():
+def test_create_subscription_uses_usd_annual_plan_for_foreign_client(_intl_on):
     from app.services import razorpay_service
 
     fake = _fake_rzp("sub_usd_annual")
@@ -141,7 +153,7 @@ def test_create_subscription_keeps_inr_plan_for_domestic_and_unknown(country):
     assert fake.subscription.create.call_args.kwargs["data"]["plan_id"] == "plan_starter_inr_monthly"
 
 
-def test_create_subscription_refuses_foreign_client_without_usd_plan():
+def test_create_subscription_refuses_foreign_client_without_usd_plan(_intl_on):
     """The dangerous failure is a silent INR fallback: a US customer charged
     ₹449 instead of $9. A missing USD id must raise instead."""
     from app.services import razorpay_service
@@ -162,7 +174,7 @@ def test_create_subscription_refuses_foreign_client_without_usd_plan():
 # ── Seat add-on ───────────────────────────────────────────────────────────────
 
 
-def test_seat_addon_uses_usd_seat_plan_for_foreign_client():
+def test_seat_addon_uses_usd_seat_plan_for_foreign_client(_intl_on):
     from app.services import razorpay_service
 
     fake = _fake_rzp("sub_seat_usd")
@@ -179,7 +191,7 @@ def test_seat_addon_uses_usd_seat_plan_for_foreign_client():
     assert "$5" in payload["description"]
 
 
-def test_seat_addon_refuses_foreign_client_without_usd_seat_plan():
+def test_seat_addon_refuses_foreign_client_without_usd_seat_plan(_intl_on):
     from app.services import razorpay_service
 
     fake = _fake_rzp()
