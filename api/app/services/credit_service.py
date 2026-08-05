@@ -803,9 +803,15 @@ def _backfill_plan_grant_reference(session: Session, subscription: Subscription,
             .where(
                 *_scope_clause(subscription.client_id, subscription.bot_id),
                 CreditLedger.reason == "plan_grant",
+                # Positive rows only: reset debits share reason="plan_grant"
+                # and a NULL reference_id, and rows written in one transaction
+                # share the same server-side created_at — without these two
+                # guards the invoice link could land on a NEGATIVE reset row,
+                # silently disabling precise refund clawback (P0-1 aggravator).
+                CreditLedger.delta > 0,
                 CreditLedger.reference_id.is_(None),
             )
-            .order_by(CreditLedger.created_at.desc())
+            .order_by(CreditLedger.created_at.desc(), CreditLedger.id.desc())
             .limit(1)
         )
         .scalars()
@@ -941,6 +947,7 @@ def clawback_refund(
     bot_id: int | None = None,
     reasons: tuple[str, ...] = ("plan_grant", "topup"),
     invoice_id: int | None = None,
+    allow_unlinked_fallback: bool = False,
 ) -> tuple[int, int | None]:
     """Reverse credits on a refunded subscription / top-up invoice.
 
@@ -1010,13 +1017,29 @@ def clawback_refund(
 
     if linked_grants:
         grants = linked_grants
+    elif not allow_unlinked_fallback:
+        # No grant is linked to this invoice and the caller did not authorise
+        # the legacy guess. Claw NOTHING: seat add-on and withheld-credit
+        # invoices legitimately fund no grant, and guessing "most recent grant
+        # in scope" wiped whole plan allowances for a ₹449 seat refund (P0-1).
+        # A missed clawback is recoverable by ops; a wrong one is not.
+        logger.error(
+            "clawback_refund: no grant linked to invoice %s (client=%s bot=%s reasons=%s) "
+            "and unlinked fallback not allowed — nothing clawed; review manually",
+            invoice_id,
+            client_id,
+            bot_id,
+            reasons,
+        )
+        return (0, None)
     else:
-        # Fallback for legacy / unlinked grants (rows created before C2 linking,
-        # or an activation grant with no invoice): the most-recent matching grant
-        # in scope is in practice the one this invoice paid for. Kept to a SINGLE
-        # row here — summing every unlinked grant in scope could reverse a later
+        # Fallback for legacy / unlinked grants (rows created before C2 linking
+        # and before ``Invoice.kind``): the most-recent matching grant in scope
+        # is in practice the one this invoice paid for. Kept to a SINGLE row
+        # here — summing every unlinked grant in scope could reverse a later
         # period's still-in-use credits, which the invoice linkage above exists
-        # to prevent.
+        # to prevent. Callers may only set ``allow_unlinked_fallback`` for
+        # invoices whose ``kind`` is NULL (pre-migration rows).
         one = (
             session.execute(
                 select(CreditLedger)

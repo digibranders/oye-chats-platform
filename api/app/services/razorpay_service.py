@@ -1336,6 +1336,7 @@ def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str,
         currency=str(pay_entity.get("currency") or "INR").lower(),
         status="paid",
         razorpay_payment_id=payment_id,
+        kind="seat",  # clawback routing (P0-1): seat charges fund NO credit grant
         description="Operator seat add-on",
         paid_at=_capture_paid_at(pay_entity),
         inr_amount_minor=_base_amount_minor(pay_entity),
@@ -2386,6 +2387,7 @@ def _ensure_subscription_charge_invoice(
         razorpay_invoice_id=razorpay_invoice_id,
         period_start=period_start,
         period_end=period_end,
+        kind="plan_charge",  # clawback routing (P0-1): this charge funds a plan_grant
         description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
         # Finding G: date from the real capture instant so the FY serial + doc
         # date land in the correct GST period at a month/FY boundary.
@@ -2512,6 +2514,10 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             local.id,
             local.status,
         )
+        # This charge funded NO credits — mark it so a later refund of it (the
+        # prescribed ops action) claws nothing instead of guessing at a grant.
+        if period_invoice is not None:
+            period_invoice.kind = "withheld_charge"
         session.flush()
         return f"Subscription {razorpay_sub_id} charged after cancellation — invoice recorded, not reactivated"
 
@@ -2580,6 +2586,9 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.gateway_cancel_executed_at = datetime.now(UTC)
         local.status = "canceled"
         local.canceled_at = local.canceled_at or datetime.now(UTC)
+        # Credits withheld → the refund this log prescribes must claw nothing.
+        if period_invoice is not None:
+            period_invoice.kind = "withheld_charge"
         session.flush()
         logger.error(
             "subscription.charged for %s (client %s) renewed a subscription that was cancelled "
@@ -2936,6 +2945,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         currency=str((pay_entity or {}).get("currency", "INR")).lower(),
         status="paid",
         razorpay_payment_id=rzp_payment_id,
+        kind="topup",  # clawback routing (P0-1): this charge funds a topup grant
         description=topup_description,
         paid_at=_capture_paid_at(pay_entity),  # finding G: real capture instant
         inr_amount_minor=_base_amount_minor(pay_entity),
@@ -3066,20 +3076,31 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         return f"Invoice {inv.id} has no recorded charge amount"
 
     # Reverse credits from the SAME ledger scope and grant type the payment
-    # credited (remediation C2): the invoice records the bot scope, and a
-    # subscription invoice (subscription_id set) paid for a plan_grant while a
-    # one-off invoice paid for a topup.
-    reasons = ("plan_grant",) if inv.subscription_id is not None else ("topup",)
-    clawed, entry_id = credit_service.clawback_refund(
-        session,
-        client_id=inv.client_id,
-        charge_minor=charge_minor,
-        refund_minor=refund_minor,
-        note=f"Refund clawback for Razorpay refund {refund_entity.get('id', '?')}",
-        bot_id=inv.bot_id,
-        reasons=reasons,
-        invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
-    )
+    # credited (remediation C2), routed by what the charge was FOR (P0-1):
+    # seat / withheld charges funded no grant and must claw nothing.
+    reasons = _clawback_reasons_for(inv)
+    if reasons is None:
+        clawed, entry_id = 0, None
+        logger.info(
+            "Refund of %s invoice %s (kind=%s) — no credit grant to reverse by design",
+            refund_entity.get("id"),
+            inv.id,
+            inv.kind,
+        )
+    else:
+        clawed, entry_id = credit_service.clawback_refund(
+            session,
+            client_id=inv.client_id,
+            charge_minor=charge_minor,
+            refund_minor=refund_minor,
+            note=f"Refund clawback for Razorpay refund {refund_entity.get('id', '?')}",
+            bot_id=inv.bot_id,
+            reasons=reasons,
+            invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
+            # Only pre-kind legacy rows may fall back to the most-recent-grant
+            # guess; kind-stamped rows with no linked grant claw nothing (P0-1).
+            allow_unlinked_fallback=inv.kind is None,
+        )
 
     # Razorpay refunds may be partial; keep the full/partial distinction so the
     # billing UI can render the right copy. The Section 34 credit note is NOT
@@ -3178,6 +3199,28 @@ def _invoice_for_payment(session: Session, payment_id: str) -> Invoice | None:
     return session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
 
 
+def _clawback_reasons_for(inv: Invoice) -> tuple[str, ...] | None:
+    """Which grant type a refund/chargeback of ``inv`` should reverse.
+
+    ``None`` means the charge funded NO credit grant (seat add-ons,
+    withheld-credit charges after cancellation) — claw nothing. Deriving this
+    from ``subscription_id`` presence was P0-1: seat and withheld invoices
+    carry a subscription_id, so refunding one fell through to the
+    most-recent-grant fallback and wiped an unrelated plan allowance.
+
+    Legacy rows (``kind`` IS NULL, pre-migration) keep the old heuristic; they
+    are also the only rows allowed the unlinked-grant fallback.
+    """
+    if inv.kind in ("seat", "withheld_charge"):
+        return None
+    if inv.kind == "topup":
+        return ("topup",)
+    if inv.kind == "plan_charge":
+        return ("plan_grant",)
+    # Legacy (kind IS NULL): pre-kind heuristic.
+    return ("plan_grant",) if inv.subscription_id is not None else ("topup",)
+
+
 def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
     """A dispute/chargeback was opened. Razorpay withdraws the funds only on
     ``lost``, so here we just flag the invoice; the credit clawback happens in
@@ -3213,17 +3256,30 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
         return f"Payment {payment_id} not found locally"
     charge_minor = int(inv.amount_cents or 0)
     dispute_minor = int(dispute.get("amount") or charge_minor)
-    reasons = ("plan_grant",) if inv.subscription_id is not None else ("topup",)
-    clawed, _entry = credit_service.clawback_refund(
-        session,
-        client_id=inv.client_id,
-        charge_minor=charge_minor,
-        refund_minor=dispute_minor,
-        note=f"Chargeback clawback for Razorpay dispute {dispute_id or '?'}",
-        bot_id=inv.bot_id,
-        reasons=reasons,
-        invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
-    )
+    # Same kind-based routing as refunds (P0-1): a lost dispute on a seat or
+    # withheld charge reverses nothing — those charges funded no grant.
+    reasons = _clawback_reasons_for(inv)
+    if reasons is None:
+        clawed = 0
+        logger.info(
+            "Dispute %s lost on %s invoice %s (kind=%s) — no credit grant to reverse by design",
+            dispute_id,
+            inv.kind,
+            inv.id,
+            inv.kind,
+        )
+    else:
+        clawed, _entry = credit_service.clawback_refund(
+            session,
+            client_id=inv.client_id,
+            charge_minor=charge_minor,
+            refund_minor=dispute_minor,
+            note=f"Chargeback clawback for Razorpay dispute {dispute_id or '?'}",
+            bot_id=inv.bot_id,
+            reasons=reasons,
+            invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
+            allow_unlinked_fallback=inv.kind is None,
+        )
     inv.status = "dispute_lost"
     session.flush()
     # Chargeback = funds withdrawn → same Section 34 credit note as a refund.

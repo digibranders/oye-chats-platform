@@ -736,3 +736,210 @@ def test_expire_old_topups_scopes_expiry_debit_to_the_bot_ledger(db):
     # Bot balance is drained to zero; the account pool raw sum is untouched.
     assert _balances(db, client.id, bot.id) == 0
     assert _raw_pool_sum(db, client.id) == pool_before
+
+
+# ── P0-1: clawback misattribution by invoice kind ────────────────────────────
+# A refund/dispute must claw back only what the refunded invoice actually
+# funded. Seat add-on invoices and withheld-credit charges carry a
+# subscription_id but granted NOTHING — deriving intent from subscription_id
+# presence made a ₹449 seat refund wipe the customer's entire plan allowance
+# via the most-recent-grant fallback. ``Invoice.kind`` now records what the
+# charge was for; the fallback is reserved for legacy (kind IS NULL) rows.
+
+
+def _sub_with_plan(db, client, bot, *, slug):
+    plan = Plan(name=slug.title(), slug=slug, monthly_price_cents=44900, credits_per_month=10000)
+    db.add(plan)
+    db.flush()
+    sub = Subscription(
+        client_id=client.id, plan_id=plan.id, bot_id=bot.id, status="active", payment_provider="razorpay"
+    )
+    db.add(sub)
+    db.flush()
+    return sub
+
+
+def test_seat_invoice_refund_claws_nothing(db):
+    """Refunding a seat add-on invoice must not touch the plan grant."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-seat1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-seat1")
+    # Activation-style plan grant with NO invoice link — exactly the shape the
+    # legacy fallback would have (wrongly) clawed.
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_seat_1",
+        description="Operator seat add-on",
+        kind="seat",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_seat_1", 44900, refund_id="rfnd_seat_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000  # plan grant untouched
+    db.refresh(inv)
+    assert inv.status == "refunded"  # money bookkeeping still happens
+
+
+def test_withheld_charge_refund_claws_nothing(db):
+    """A charged-after-cancellation invoice granted no credits; refunding it
+    (the operationally PRESCRIBED action) must not reverse an older grant."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-withheld1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-withheld1")
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_withheld_1",
+        kind="withheld_charge",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_withheld_1", 44900, refund_id="rfnd_wh_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000
+
+
+def test_dispute_lost_on_seat_invoice_claws_nothing(db):
+    client = _client(db)
+    bot = _bot(db, client, key="bot-seatdisp")
+    sub = _sub_with_plan(db, client, bot, slug="pro-seatdisp")
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_seat_disp",
+        kind="seat",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_dispute_lost(db, _dispute_payload("pay_seat_disp", dispute_id="disp_seat_1", amount=44900))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000
+    db.refresh(inv)
+    assert inv.status == "dispute_lost"
+
+
+def test_kind_stamped_invoice_without_link_never_falls_back(db):
+    """A kind-stamped plan charge with no linked grant claws NOTHING — the
+    most-recent-grant guess is reserved for pre-kind legacy rows. A missed
+    clawback is recoverable by ops; a wrong one is not."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-nolink")
+    sub = _sub_with_plan(db, client, bot, slug="pro-nolink")
+    # Unlinked grant from a LATER period than the refunded invoice.
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_nolink_1",
+        kind="plan_charge",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_nolink_1", 44900, refund_id="rfnd_nolink_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 10000
+
+
+def test_legacy_null_kind_keeps_fallback_behavior(db):
+    """Pre-kind rows (kind IS NULL) keep the historical most-recent-grant
+    fallback — for them the heuristic is usually right and C2 linking never
+    existed."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-legacy1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-legacy1")
+    credit_service.grant_plan_credits(db, client.id, 10000, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_legacy_1",
+        kind=None,
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_legacy_1", 44900, refund_id="rfnd_legacy_1"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 0  # fallback clawed the grant
+
+
+def test_backfill_reference_skips_negative_reset_rows(db):
+    """_backfill_plan_grant_reference must link the invoice to a POSITIVE grant
+    row, never a reset row — even when the reset row is newer and shares the
+    same server-side created_at (same transaction)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-backfill1")
+    sub = _sub_with_plan(db, client, bot, slug="pro-backfill1")
+
+    # Positive grant first (lower id), negative reset row second (higher id),
+    # both flushed in ONE transaction so created_at (func.now()) is identical.
+    grant = CreditLedger(client_id=client.id, bot_id=bot.id, delta=10000, reason="plan_grant")
+    db.add(grant)
+    db.flush()
+    reset = CreditLedger(client_id=client.id, bot_id=bot.id, delta=-4000, reason="plan_grant", grant_id=grant.id)
+    db.add(reset)
+    db.flush()
+
+    inv = Invoice(
+        client_id=client.id,
+        subscription_id=sub.id,
+        bot_id=bot.id,
+        amount_cents=44900,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_backfill_1",
+        kind="plan_charge",
+    )
+    db.add(inv)
+    db.flush()
+
+    credit_service._backfill_plan_grant_reference(db, sub, inv.id)
+    db.commit()
+
+    db.refresh(grant)
+    db.refresh(reset)
+    assert grant.reference_id == inv.id  # positive row linked
+    assert reset.reference_id is None  # reset row untouched

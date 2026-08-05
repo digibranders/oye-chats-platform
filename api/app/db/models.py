@@ -1430,6 +1430,15 @@ class Invoice(Base):
     # Description for line items (e.g. "Starter Plan - Monthly" or "Overage: 500 messages")
     description = Column(Text, nullable=True)
 
+    # What this charge was FOR — drives refund/dispute clawback routing (P0-1):
+    #   plan_charge     → funded a plan_grant (claw that grant)
+    #   topup           → funded a topup grant (claw that grant)
+    #   seat            → operator seat add-on; funded NO credit grant
+    #   withheld_charge → charged after cancellation; credits were withheld
+    # NULL = legacy row predating the column; only those may use the
+    # most-recent-grant clawback fallback (see credit_service.clawback_refund).
+    kind = Column(String(16), nullable=True)
+
     paid_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -1503,7 +1512,20 @@ class Invoice(Base):
 _INVOICE_FROZEN_EXEMPT = frozenset(
     # refunded_minor accompanies the ``status`` transition (partially_refunded /
     # refunded) — a post-issuance lifecycle field, not a frozen tax/amount column.
-    {"pdf_url", "invoice_url", "emailed_at", "status", "refunded_minor", "irn", "signed_qr", "razorpay_invoice_id"}
+    # ``kind`` is clawback-routing metadata, not part of the legal document; the
+    # charged handler stamps withheld_charge AFTER the invoice is finalized
+    # (the withhold decision happens later in the same handler).
+    {
+        "pdf_url",
+        "invoice_url",
+        "emailed_at",
+        "status",
+        "refunded_minor",
+        "irn",
+        "signed_qr",
+        "razorpay_invoice_id",
+        "kind",
+    }
 )
 
 
