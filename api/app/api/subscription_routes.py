@@ -1025,7 +1025,11 @@ def checkout_quote(
         usd_plan_id = (
             plan.razorpay_plan_id_annual_usd if billing_cycle == "annual" else plan.razorpay_plan_id_monthly_usd
         )
-        if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id:
+        # amount_minor > 0 (F6): a wired USD plan id with a NULL/0 *_usd_cents
+        # column would otherwise advertise "$0" with checkout_supported=true —
+        # while the immutable Razorpay plan bills its real amount. A tier whose
+        # USD price isn't configured is intl-pending, not free.
+        if not is_domestic and INTL_PAYMENTS_ENABLED and usd_plan_id and amount_minor > 0:
             return {
                 "country": country,
                 "currency": currency,

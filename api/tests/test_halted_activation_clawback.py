@@ -169,3 +169,59 @@ def test_pending_also_revokes_unpaid_activation_grant(db):
     assert sub.status == "past_due"
     assert credit_service.get_balance(db, client.id, bot_id=None) == 0
     assert sub.last_granted_period_end == PERIOD_START
+
+
+def test_paid_seat_invoice_does_not_mask_unpaid_activation(db):
+    """F5 — seat add-on invoices stamp the main sub's id but pay for seats,
+    not the plan. A successfully-charged seat mandate must not defeat the
+    unpaid-activation revoke when the first PLAN debit failed."""
+    client = _client(db, "seat-mask@e.com")
+    plan = _plan(db, slug="std-seat-mask")
+    sub = _activated_sub(db, client, plan, rzp_id="sub_seat_mask", period_start=PERIOD_START, period_end=PERIOD_END)
+    # The seat charge succeeded while the plan's first debit failed.
+    db.add(
+        Invoice(
+            client_id=client.id,
+            subscription_id=sub.id,
+            amount_cents=44900,
+            currency="inr",
+            status="paid",
+            kind="seat",
+            description="Operator seat add-on",
+            razorpay_payment_id="pay_seat_mask",
+        )
+    )
+    db.commit()
+    assert credit_service.get_balance(db, client.id, bot_id=None) == plan.credits_per_month
+
+    rzp._handle_subscription_halted(db, _halted_payload("sub_seat_mask"))
+    db.commit()
+
+    # The unpaid activation grant is revoked despite the paid seat invoice.
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 0
+
+
+def test_legacy_null_kind_paid_invoice_still_masks_revoke(db):
+    """Legacy rows (kind IS NULL) must keep counting as plan charges — the
+    is_distinct_from filter excludes only known seat invoices."""
+    client = _client(db, "legacy-mask@e.com")
+    plan = _plan(db, slug="std-legacy-mask")
+    sub = _activated_sub(db, client, plan, rzp_id="sub_legacy_mask", period_start=PERIOD_START, period_end=PERIOD_END)
+    db.add(
+        Invoice(
+            client_id=client.id,
+            subscription_id=sub.id,
+            amount_cents=94900,
+            currency="inr",
+            status="paid",
+            kind=None,
+            razorpay_payment_id="pay_legacy_mask",
+        )
+    )
+    db.commit()
+
+    rzp._handle_subscription_halted(db, _halted_payload("sub_legacy_mask"))
+    db.commit()
+
+    # Paid (legacy) plan charge exists → no revoke.
+    assert credit_service.get_balance(db, client.id, bot_id=None) == plan.credits_per_month

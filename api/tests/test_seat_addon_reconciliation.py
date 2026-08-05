@@ -154,3 +154,89 @@ def test_detect_only_mode_does_not_cancel(db, monkeypatch):
     assert result["orphans"] == ["addon_detect"]
     assert result["cancelled"] == []
     assert cancelled == []
+
+
+# ── F3/F4: USD rail coverage ─────────────────────────────────────────────────
+
+
+def test_iterator_accepts_both_seat_rails(db, monkeypatch):
+    """F3 — the sweep's defensive plan-id filter must admit BOTH seat plan ids;
+    filtering to the INR id alone hid every USD seat mandate from orphan
+    reconciliation."""
+    pages = [
+        {
+            "items": [
+                {"id": "sub_inr", "plan_id": "plan_seat_inr", "notes": {"purpose": "seat_addon"}},
+                {"id": "sub_usd", "plan_id": "plan_seat_usd", "notes": {"purpose": "seat_addon"}},
+                {"id": "sub_wrongplan", "plan_id": "plan_main", "notes": {"purpose": "seat_addon"}},
+                {"id": "sub_notseat", "plan_id": "plan_seat_inr", "notes": {"purpose": "topup"}},
+            ]
+        },
+        {"items": []},
+    ]
+
+    class _FakeRzp:
+        class subscription:
+            @staticmethod
+            def all(params):
+                return pages.pop(0)
+
+    monkeypatch.setattr(razorpay_service, "_get_razorpay", lambda: _FakeRzp())
+    monkeypatch.setattr(razorpay_service, "RAZORPAY_SEAT_PLAN_ID", "plan_seat_inr")
+    monkeypatch.setattr(razorpay_service, "RAZORPAY_SEAT_PLAN_ID_USD", "plan_seat_usd")
+
+    got = [item["id"] for item in razorpay_service.iter_seat_addon_subscriptions()]
+    assert got == ["sub_inr", "sub_usd"]
+
+
+def test_razorpay_originated_cancellation_retires_seat_addon(db, monkeypatch):
+    """F4 — a cancellation arriving FROM Razorpay (customer cancelled in their
+    UPI app / Razorpay's emails) must retire the seat add-on mandate like every
+    other cancellation path, parking the count for a later reactivation."""
+    client = _client(db, "rzp-cancel-seat@e.com")
+    plan = _plan(db, "std-rzp-cancel-seat")
+    sub = _sub(db, client, plan, status="active", seat_addon_id="addon_live", seats=2)
+    db.commit()
+
+    cancelled: list[str] = []
+
+    def _fake_cancel_seat_addon(session, subscription):
+        cancelled.append(subscription.seat_addon_subscription_id)
+        subscription.seat_addon_subscription_id = None
+        subscription.seat_addon_quantity = 0
+
+    monkeypatch.setattr(razorpay_service, "cancel_seat_addon", _fake_cancel_seat_addon)
+
+    razorpay_service._handle_subscription_cancelled(
+        db, {"subscription": {"entity": {"id": sub.razorpay_subscription_id}}}
+    )
+    db.commit()
+    db.refresh(sub)
+
+    assert cancelled == ["addon_live"]
+    assert sub.status == "canceled"
+    assert sub.seat_addon_pending_quantity == 2  # parked, not lost
+
+
+def test_seat_cancel_failure_does_not_fail_the_cancellation(db, monkeypatch):
+    """A seat-cancel gateway failure is logged for reconciliation but must not
+    5xx the plan-cancellation bookkeeping (the orphan sweep is the retry)."""
+    client = _client(db, "rzp-cancel-seatfail@e.com")
+    plan = _plan(db, "std-rzp-cancel-seatfail")
+    sub = _sub(db, client, plan, status="active", seat_addon_id="addon_stuck", seats=1)
+    db.commit()
+
+    def _boom(session, subscription):
+        raise razorpay_service.RazorpayBillingError("gateway down")
+
+    monkeypatch.setattr(razorpay_service, "cancel_seat_addon", _boom)
+
+    result = razorpay_service._handle_subscription_cancelled(
+        db, {"subscription": {"entity": {"id": sub.razorpay_subscription_id}}}
+    )
+    db.commit()
+    db.refresh(sub)
+
+    assert "cancelled" in result
+    assert sub.status == "canceled"
+    assert sub.seat_addon_subscription_id == "addon_stuck"  # pointer intact for the sweep

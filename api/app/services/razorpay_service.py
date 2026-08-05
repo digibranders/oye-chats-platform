@@ -656,22 +656,36 @@ def resolve_discounted_plan(
     period = "yearly" if billing_cycle == "annual" else "monthly"
 
     rzp = _get_razorpay()
-    plan = rzp.plan.create(
-        data={
-            "period": period,
-            "interval": 1,
-            "item": {
-                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}% {currency}",
-                "amount": discounted_paise,
-                "currency": currency,
-            },
-            "notes": {
-                "base_plan_id": str(base_plan.id),
-                "discount_bps": str(discount_bps),
-                "currency": currency,
-            },
-        }
-    )
+    try:
+        plan = rzp.plan.create(
+            data={
+                "period": period,
+                "interval": 1,
+                "item": {
+                    "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}% {currency}",
+                    "amount": discounted_paise,
+                    "currency": currency,
+                },
+                "notes": {
+                    "base_plan_id": str(base_plan.id),
+                    "discount_bps": str(discount_bps),
+                    "currency": currency,
+                },
+            }
+        )
+    except Exception as exc:
+        # The only gateway call in this module that leaked a raw SDK exception
+        # (F7-low): a Razorpay 5xx here surfaced as an unhandled error to the
+        # checkout route instead of the typed billing error every caller of
+        # create_subscription already maps to a clean 502.
+        logger.exception(
+            "Razorpay plan.create failed for discounted plan (base=%s cycle=%s bps=%s %s)",
+            base_plan.id,
+            billing_cycle,
+            discount_bps,
+            currency,
+        )
+        raise RazorpayBillingError("Could not create the discounted plan. Please try again.") from exc
 
     if cached is not None:
         # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps,
@@ -990,7 +1004,12 @@ def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) 
             if (item_notes.get("purpose") or "").lower() != "seat_addon":
                 continue
             item_plan_id = item.get("plan_id")
-            if item_plan_id and item_plan_id != RAZORPAY_SEAT_PLAN_ID:
+            # Both rails (F3): the USD seat plan is just as much a seat add-on
+            # as the INR one — filtering to the INR id alone hid every USD seat
+            # mandate from orphan reconciliation, leaving an orphaned $5/seat
+            # debit with no sweep coverage.
+            seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
+            if item_plan_id and seat_plan_ids and item_plan_id not in seat_plan_ids:
                 continue
             yield item
         if len(items) < page_size:
@@ -2717,6 +2736,27 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
 
     local.status = "canceled"
     local.canceled_at = datetime.now(UTC)
+    # A Razorpay-originated cancellation (customer cancelled via their UPI app
+    # or Razorpay's emails/dashboard) must retire the seat add-on mandate too
+    # (F4) — every other cancellation path does, and without this the per-seat
+    # mandate kept debiting a customer who had cancelled their plan. Same
+    # park-as-pending semantics as execute_gateway_cancellation; a failure is
+    # logged for reconciliation but must not fail the plan cancel bookkeeping.
+    if local.seat_addon_subscription_id:
+        wanted_seats = int(local.seat_addon_quantity or 0)
+        try:
+            cancel_seat_addon(session, local)
+            if wanted_seats > 0:
+                local.seat_addon_pending_quantity = wanted_seats
+        except Exception:
+            logger.error(
+                "Seat add-on cancel FAILED for %s (client %s) during a Razorpay-originated "
+                "cancellation — the seat mandate is STILL LIVE at Razorpay and will keep "
+                "debiting until the orphan sweep or manual reconciliation catches it.",
+                sub_entity.get("id"),
+                local.client_id,
+                exc_info=True,
+            )
     session.flush()
     return f"Subscription {sub_entity.get('id')} cancelled"
 
@@ -2828,12 +2868,24 @@ def _revoke_unpaid_activation_grant(session: Session, local: Subscription) -> bo
     if marker is None or start is None or marker <= start:
         return False
 
-    # Any successful charge on THIS subscription writes a paid Invoice; its
-    # absence means the activation grant was never paid. Scoped to this sub so a
-    # client's other (per-bot) subscriptions can't mask an unpaid first charge.
+    # Any successful PLAN charge on THIS subscription writes a paid Invoice;
+    # its absence means the activation grant was never paid. Scoped to this sub
+    # so a client's other (per-bot) subscriptions can't mask an unpaid first
+    # charge. Seat add-on invoices are excluded (F5): they stamp the main sub's
+    # id but pay for seats, not the plan — a successfully-charged seat mandate
+    # must not mask a failed first plan debit and let the customer keep a full
+    # unpaid period of credits (the exact leak this revoke exists to close).
     has_paid_charge = (
         session.execute(
-            select(Invoice.id).where(Invoice.subscription_id == local.id, Invoice.status == "paid").limit(1)
+            select(Invoice.id)
+            .where(
+                Invoice.subscription_id == local.id,
+                Invoice.status == "paid",
+                # is_distinct_from: legacy rows (kind IS NULL) must still count
+                # as plan charges — a plain != would exclude them too.
+                Invoice.kind.is_distinct_from("seat"),
+            )
+            .limit(1)
         )
         .scalars()
         .first()
