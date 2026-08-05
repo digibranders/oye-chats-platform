@@ -71,9 +71,14 @@ function PreviewSafeLink({ href, children, ...props }) {
  * Font stack used by the embeddable widget (see widget/src/index.css `:host`).
  * Applied to the Live Preview subtree so its typography matches the real
  * rendered widget instead of inheriting the dashboard's Inter body font.
+ *
+ * Must stay byte-identical to `--font-sans` in widget/src/index.css — that
+ * file carries the note on why no Office-bundled face (Calibri, Gill Sans MT)
+ * may lead it. If you change one, change both, or the preview starts lying
+ * about what visitors see.
  */
 export const WIDGET_FONT_STACK =
-    "'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif";
+    "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif";
 
 /**
  * WidgetChatPreview - a faithful, static mock of the embeddable chat widget's
@@ -139,7 +144,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
     return (
         /* Chat Window Preview Wrapper - mirrors the real widget's classic
            (light) theme 1:1 (see widget/src/components/{themeConfigs,
-           ChatWindow,WelcomeScreen,ChatInput}.jsx). The Calibri font stack
+           ChatWindow,WelcomeScreen,ChatInput}.jsx). The font stack
            matches widget/src/index.css so the preview can't drift from
            what visitors actually see. */
         <div
