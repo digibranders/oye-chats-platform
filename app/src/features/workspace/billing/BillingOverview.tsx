@@ -23,6 +23,13 @@ export interface BillingOverviewProps {
   onViewUsage: () => void;
   /** Selected agent id: scopes the credits meter to that agent's pool. */
   botId?: number | null;
+  /**
+   * Bumped by the page's `reload()`. The meter owns its own fetch, so without
+   * this it kept rendering the pre-mutation balance after a plan change,
+   * top-up, or reactivation - the panel beside it updating while the credits
+   * card silently disagreed.
+   */
+  refreshToken?: number;
 }
 
 /**
@@ -51,6 +58,7 @@ export function BillingOverview({
   onBuyCredits,
   onViewUsage,
   botId = null,
+  refreshToken = 0,
 }: BillingOverviewProps): ReactElement {
   const [balance, setBalance] = useState<CreditBalance | null>(null);
 
@@ -70,7 +78,7 @@ export function BillingOverview({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshToken]);
 
   // Scope the meter to the selected agent's own credit pool, using the same
   // resolver the Usage page uses so the two surfaces always show the identical

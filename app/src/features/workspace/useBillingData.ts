@@ -49,6 +49,12 @@ export interface UseBillingDataResult {
   error: string | null;
   data: BillingData | null;
   reload: () => void;
+  /**
+   * Increments on every `reload()`. Panels that own an independent fetch (the
+   * credits meter) take this as a dep so they converge with the page instead of
+   * showing pre-mutation numbers next to updated ones.
+   */
+  reloadKey: number;
 }
 
 interface Fetched {
@@ -132,5 +138,6 @@ export function useBillingData(botId?: number | null): UseBillingDataResult {
     error: result.error,
     data: result.data,
     reload,
+    reloadKey,
   };
 }

@@ -19,12 +19,13 @@ export interface CancelSubscriptionModalProps {
 
 /**
  * CancelSubscriptionModal - the explicit, reversible cancel flow. Cancellation
- * is cancel-at-period-end (the backend calls the provider's cycle-end cancel and
- * only marks `cancel_at_period_end` until the webhook fires), so the plan stays
- * fully active until the period closes - the industry-standard behaviour. This
- * dialog states that plainly, spells out what happens after, keeps the tone calm
- * rather than alarming, and captures an optional reason. It's fully reversible:
- * on success the Billing page surfaces a Reactivate banner until the period ends.
+ * is cancel-at-period-end: the backend records the intent and leaves the payment
+ * mandate alone until a couple of days before the period closes, so the plan
+ * stays fully active until then AND reactivating is a free, instant flag flip
+ * rather than a fresh checkout. This dialog states that plainly, spells out what
+ * happens after, keeps the tone calm rather than alarming, and captures an
+ * optional reason. On success the Billing page surfaces a Reactivate banner
+ * until the period ends.
  */
 export function CancelSubscriptionModal({
   open,
@@ -109,7 +110,7 @@ export function CancelSubscriptionModal({
             `Full access to ${planName} continues until ${endLabel}.`,
             'After that, your agents stop replying and go offline.',
             'Any top-up credits you’ve bought stay valid - they don’t expire for 12 months.',
-            `Changed your mind? Reactivate anytime before ${endLabel} to stay on the plan.`,
+            `Changed your mind? Reactivate anytime before ${endLabel} - it's instant, and there's nothing to pay.`,
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5">
               <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">

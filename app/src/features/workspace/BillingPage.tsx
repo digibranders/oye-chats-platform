@@ -36,11 +36,13 @@ import {
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import {
   cancelScheduledChange,
+  getCurrentSubscription,
   getInvoices,
   resumeSubscription,
   verifyRazorpaySubscription,
 } from '../../services/api';
 import { openRazorpayCheckout } from '../../lib/razorpay';
+import { pollUntil } from '../../lib/pollUntil';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
@@ -56,6 +58,7 @@ import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import type { BillingCycle } from './billing/planMath';
 import {
   buildInvoice,
+  buildSubscription,
   formatDate,
   formatMoneyMinor,
   INVOICE_KIND_LABEL,
@@ -85,7 +88,7 @@ export function BillingPage(): ReactElement {
   // plan-switch stays account-scoped until per-agent checkout ships.
   const { selectedBot } = useBotContext();
   const billingBotId = selectedBot?.id ?? null;
-  const { loading, error, data, reload } = useBillingData(billingBotId);
+  const { loading, error, data, reload, reloadKey } = useBillingData(billingBotId);
   const navigate = useNavigate();
   const { feedback: notice, notify: showNotice, dismiss: dismissNotice } = useFeedback();
 
@@ -145,21 +148,64 @@ export function BillingPage(): ReactElement {
     setDetailsOpen(true);
   };
 
-  const handleSuccess = (message: string): void => {
-    showNotice({ tone: 'info', message });
-    reload();
-  };
+  const handleSuccess = useCallback(
+    (message: string): void => {
+      showNotice({ tone: 'info', message });
+      reload();
+    },
+    [showNotice, reload],
+  );
 
   // Subscription-lifecycle reversals (undo a scheduled downgrade / reactivate a
   // pending cancellation). Both APIs exist; the banners were display-only.
   const [lifecycleBusy, setLifecycleBusy] = useState<'cancel_scheduled' | 'reactivate' | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
+  /**
+   * Wait for the server to actually reflect a lifecycle change before telling
+   * the customer it happened.
+   *
+   * The mandate-authorising paths settle out of band: Razorpay's
+   * `subscription.activated` webhook is what supersedes the old subscription
+   * row, and it lands seconds (sometimes minutes) after the checkout modal
+   * closes. Refetching once on success reads pre-webhook state, so the page
+   * kept showing "ends on ... and won't renew" directly underneath a
+   * "Subscription reactivated" toast. Poll instead, and only claim the outcome
+   * once `/subscriptions/current` agrees.
+   */
+  const settleLifecycleChange = useCallback(
+    async (settledMessage: string, pendingMessage: string): Promise<void> => {
+      const outcome = await pollUntil({
+        read: () => getCurrentSubscription(billingBotId ?? undefined),
+        done: (raw) => {
+          const envelope = (raw ?? {}) as Record<string, unknown>;
+          return buildSubscription(envelope.subscription).cancelAtPeriodEnd === false;
+        },
+      });
+      // On timeout the payment is still real and the webhook will still land -
+      // say what we actually know rather than asserting a renewal we can't see.
+      handleSuccess(outcome.status === 'settled' ? settledMessage : pendingMessage);
+    },
+    [billingBotId, handleSuccess],
+  );
+
   const handleCancelScheduled = async (): Promise<void> => {
     setLifecycleBusy('cancel_scheduled');
     setLifecycleError(null);
     try {
-      await cancelScheduledChange();
+      const res = (await cancelScheduledChange()) as Record<string, unknown> | undefined;
+      // `/cancel-scheduled-change` can also answer `reauthorise_required` when
+      // the downgrade already cancelled the mandate at the gateway. Ignoring it
+      // (as this used to) told the customer they were staying on their plan
+      // while no mandate existed to renew it.
+      if (String(res?.mandate_action || '') === 'reauthorise_required') {
+        setLifecycleError(
+          (res?.message as string) ||
+            'Your payment mandate was cancelled at the payment provider. Re-authorise payment to stay on this plan.',
+        );
+        reload();
+        return;
+      }
       handleSuccess('Scheduled change cancelled - you’ll stay on your current plan.');
     } catch (err) {
       setLifecycleError(err instanceof Error ? err.message : 'Couldn’t cancel the scheduled change.');
@@ -171,15 +217,23 @@ export function BillingPage(): ReactElement {
   /**
    * Reactivate a subscription that is scheduled to cancel.
    *
-   * Razorpay has NO un-cancel for an at-cycle-end cancellation, so `/resume`
-   * deliberately does NOT clear the local flags and instead returns
-   * `mandate_action: "reauthorise_required"` with a fresh checkout payload.
-   * This handler used to ignore that response and claim "reactivated - it will
-   * keep renewing", which was simply untrue: no mandate was authorised, so the
-   * "won't renew" banner correctly stayed put and the customer was told the
-   * opposite of what happened. The backend went to real lengths to be honest
-   * here (see its docstring and test_billing_bl3_resume.py); the UI has to
-   * carry that through rather than paper over it.
+   * Two shapes come back from `/subscriptions/resume`:
+   *
+   * - `mandate_action: "none"` - the mandate is still live because `/cancel`
+   *   only recorded intent and the gateway cancel hasn't been issued yet. The
+   *   server has already cleared the flag; there is nothing to pay. This is the
+   *   path almost every customer takes.
+   * - `mandate_action: "reauthorise_required"` - the gateway cancel already
+   *   fired and Razorpay has no un-cancel, so a fresh mandate must be
+   *   authorised. `first_charge_at` says when that mandate first bills; it is
+   *   the end of the period the customer already paid for, not today.
+   *
+   * In the second case the local row deliberately stays on the cancellation
+   * track until the activation webhook lands. Asserting "reactivated - it will
+   * keep renewing" the moment verify returned was the bug: verify answers 200
+   * with `subscription_known: false` when Razorpay is still reporting the
+   * subscription as created/pending, so the toast claimed success while the
+   * "won't renew" banner underneath it was still correct.
    */
   const handleReactivate = async (): Promise<void> => {
     setLifecycleBusy('reactivate');
@@ -219,9 +273,16 @@ export function BillingPage(): ReactElement {
           throw cbErr;
         }
 
+        const firstCharge = res?.first_charge_at as string | undefined;
+        const settled = firstCharge
+          ? `Subscription reactivated - it will keep renewing. Your next charge is ${formatDate(firstCharge)}.`
+          : 'Subscription reactivated - it will keep renewing.';
+        const pending = 'Payment authorised - we’re finalising your reactivation.';
+
         // Stage 2 - the mandate is already authorised, so a verification
         // failure must not read as a failure to the customer. The activation
-        // webhook is the authoritative reconciler.
+        // webhook is the authoritative reconciler either way, which is why both
+        // branches converge on the same poll rather than asserting an outcome.
         try {
           await verifyRazorpaySubscription({
             razorpay_payment_id: cb.razorpay_payment_id,
@@ -230,15 +291,16 @@ export function BillingPage(): ReactElement {
             razorpay_signature: cb.razorpay_signature,
           });
         } catch {
-          handleSuccess('Payment authorised - we’re finalising your reactivation.');
+          await settleLifecycleChange(settled, pending);
           return;
         }
-        handleSuccess('Subscription reactivated - it will keep renewing.');
+        await settleLifecycleChange(settled, pending);
         return;
       }
 
-      // No mandate needed (e.g. the gateway sub was still live). Trust the
-      // server's own message rather than asserting an outcome.
+      // Mandate still live - the server cleared the flag itself, so this is
+      // already true by the time we get here. Trust its message; it names the
+      // renewal date.
       handleSuccess(
         (res?.message as string) || 'Subscription reactivated - it will keep renewing.',
       );
@@ -390,6 +452,7 @@ export function BillingPage(): ReactElement {
                 onBuyCredits={handleBuyCredits}
                 onViewUsage={() => void navigate('/workspace/usage')}
                 botId={billingBotId}
+                refreshToken={reloadKey}
               />
 
               {/* What they're paying WITH. Deliberately below the plan card:

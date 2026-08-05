@@ -50,7 +50,9 @@ export function PastDueBanner(): ReactElement | null {
 
     const load = async (): Promise<void> => {
       try {
-        const data = (await getPaymentRecovery(botId ?? undefined)) as RecoveryState;
+        // Unvalidated wire shape — go through `unknown` rather than asserting a
+        // JSON object is already this interface.
+        const data = (await getPaymentRecovery(botId ?? undefined)) as unknown as RecoveryState;
         if (!cancelled) setState(data);
       } catch {
         // A failed probe must never surface as an error banner — the customer
