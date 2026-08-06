@@ -35,9 +35,9 @@
       "gzip": true
     },
     {
-      "name": "Vendor chunk (React + axios + services)",
+      "name": "Vendor chunk (React + axios + services incl. journey tracking)",
       "path": "dist/app/oyechats-vendor.*.js",
-      "limit": "65 KB",
+      "limit": "67 KB",
       "gzip": true
     },
     {
