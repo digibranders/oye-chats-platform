@@ -104,3 +104,96 @@ def test_serialize_attaches_stats_when_given():
 def test_serialize_null_plan_ids_means_all():
     out = routes._serialize(_promo(eligible_plan_ids=None))
     assert out["eligible_plan_ids"] is None
+
+
+# ── Window guards (HTTP-level) ───────────────────────────────────────────────
+
+
+def _admin_api(db, monkeypatch):
+    from contextlib import contextmanager
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api import superadmin_promotion_routes
+    from app.api.auth import get_superadmin
+    from app.db.models import Client
+
+    @contextmanager
+    def _ctx():
+        yield db
+
+    admin = Client(name="A", email="promo-admin@test.example", api_key="key-promo-admin", is_superadmin=True)
+    db.add(admin)
+    db.flush()
+    monkeypatch.setattr(superadmin_promotion_routes, "get_session", lambda: _ctx())
+    app = FastAPI()
+    app.include_router(superadmin_promotion_routes.router)
+    app.dependency_overrides[get_superadmin] = lambda: admin
+    return TestClient(app)
+
+
+def test_create_refuses_a_window_that_is_already_over(db, monkeypatch):
+    # A past end saves an offer nobody can redeem while the list shows it
+    # "active" — this exact state burned two live test campaigns.
+    from datetime import UTC, datetime, timedelta
+
+    api = _admin_api(db, monkeypatch)
+    res = api.post(
+        "/superadmin/promotions",
+        json={
+            "name": "Expired on arrival",
+            "code": "DEAD1",
+            "starts_at": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+            "ends_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            "free_cycles": 1,
+        },
+    )
+    assert res.status_code == 400, res.text
+    assert "past" in res.json()["detail"].lower()
+
+
+def test_pausing_an_expired_campaign_still_works(db, monkeypatch):
+    # The past-end guard applies only when ends_at is being SET — a pause
+    # toggle (or rename) on an already-expired campaign must not 400.
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models import Promotion
+
+    api = _admin_api(db, monkeypatch)
+    promo = Promotion(
+        name="Old campaign",
+        code="OLD1",
+        starts_at=datetime.now(UTC) - timedelta(days=30),
+        ends_at=datetime.now(UTC) - timedelta(days=1),
+        free_cycles=1,
+    )
+    db.add(promo)
+    db.flush()
+
+    res = api.put(f"/superadmin/promotions/{promo.id}", json={"is_active": False})
+    assert res.status_code == 200, res.text
+
+
+def test_update_refuses_setting_a_past_end(db, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models import Promotion
+
+    api = _admin_api(db, monkeypatch)
+    promo = Promotion(
+        name="Live campaign",
+        code="LIVE1",
+        starts_at=datetime.now(UTC) - timedelta(days=1),
+        ends_at=datetime.now(UTC) + timedelta(days=7),
+        free_cycles=1,
+    )
+    db.add(promo)
+    db.flush()
+
+    res = api.put(
+        f"/superadmin/promotions/{promo.id}",
+        json={"ends_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat()},
+    )
+    assert res.status_code == 400, res.text
+    assert "pause" in res.json()["detail"].lower()

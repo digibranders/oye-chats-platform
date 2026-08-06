@@ -53,6 +53,23 @@ def _validate_window_and_bounds(
         raise HTTPException(status_code=400, detail="max_redemptions must be greater than 0 (or null for uncapped).")
 
 
+def _refuse_past_end(ends_at: datetime) -> None:
+    """Refuse SETTING a window end that is already over.
+
+    A past end saves an offer nobody can ever redeem — the campaign shows
+    "active" in the list while every eligibility check correctly refuses it
+    (this exact state burned two live test runs). Applied only when ends_at is
+    being SET (create, or an update that includes it): pausing or renaming an
+    already-expired campaign must keep working, and ending a live one is what
+    the is_active toggle is for.
+    """
+    if ends_at <= datetime.now(UTC):
+        raise HTTPException(
+            status_code=400,
+            detail="ends_at is in the past — the offer would be expired on save. Pause the campaign instead.",
+        )
+
+
 def _validate_eligible_plan_ids(session, plan_ids: list[int] | None) -> None:
     """Reject an eligible_plan_ids list that references non-existent plans.
 
@@ -246,6 +263,7 @@ def create_promotion(request: CreatePromotionRequest, superadmin: Client = Depen
     starts_at = _ensure_utc(request.starts_at)
     ends_at = _ensure_utc(request.ends_at)
     _validate_window_and_bounds(starts_at, ends_at, request.free_cycles, request.max_redemptions)
+    _refuse_past_end(ends_at)
 
     with get_session() as session:
         _validate_eligible_plan_ids(session, request.eligible_plan_ids)
@@ -297,6 +315,8 @@ def update_promotion(
             updates.get("free_cycles", promo.free_cycles),
             updates.get("max_redemptions", promo.max_redemptions),
         )
+        if "ends_at" in updates and updates["ends_at"] is not None:
+            _refuse_past_end(updates["ends_at"])
         if "eligible_plan_ids" in updates:
             _validate_eligible_plan_ids(session, updates["eligible_plan_ids"])
             updates["eligible_plan_ids"] = updates["eligible_plan_ids"] or None
