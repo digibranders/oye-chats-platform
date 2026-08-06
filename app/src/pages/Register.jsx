@@ -53,7 +53,26 @@ export default function Register() {
   const affiliateToken = searchParams.get('affiliate_token') || '';
   // Launch-promo code from the campaign link (?code=). Passed through to
   // registration so the offer is link-exclusive; unknown codes no-op server-side.
-  const promoCode = searchParams.get('code') || '';
+  // Kept in sessionStorage as a fallback: the param is fragile — hopping to
+  // Login and back, or any in-app navigation, drops the query string, and two
+  // live campaign tests lost their attribution exactly that way. First-touch:
+  // a fresh ?code= always wins over a stored one.
+  const urlPromoCode = searchParams.get('code') || '';
+  if (urlPromoCode) {
+    try {
+      sessionStorage.setItem('oyechats_promo_code', urlPromoCode);
+    } catch {
+      /* storage unavailable (private mode) — the URL param still works */
+    }
+  }
+  let promoCode = urlPromoCode;
+  if (!promoCode) {
+    try {
+      promoCode = sessionStorage.getItem('oyechats_promo_code') || '';
+    } catch {
+      promoCode = '';
+    }
+  }
   // Deep-link round-trip target. Invite airlock routes here as
   // ``/register?next=/invite/<token>&email=<invite_email>`` so a fresh
   // signup lands back on the airlock to auto-accept. Also honoured by the
