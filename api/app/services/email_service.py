@@ -914,6 +914,40 @@ def send_trial_days_left_email(to_email: str, *, name: str | None, days_remainin
         _capture_email_failure(exc, event="trial_days_left", email=to_email, days_remaining=days_remaining)
 
 
+def send_promo_precharge_reminder_email(
+    to_email: str,
+    *,
+    name: str | None,
+    plan_name: str,
+    charge_date: str,
+    amount_display: str,
+) -> None:
+    """Fired ~10 days before a launch-promo free period ends, so the customer's
+    first real charge is never a surprise (chargeback prevention)."""
+    safe_plan = esc(plan_name)
+    subject = f"Your free months on {BRAND_NAME} end soon"
+    inner = (
+        h1(f"Hi {_first_name(name)} — your free {safe_plan} period ends on {esc(charge_date)}")
+        + p(
+            f"You&rsquo;ve been on {strong(safe_plan)} free of charge. On {strong(esc(charge_date))} your "
+            f"first payment of {strong(esc(amount_display))} will be collected from the card or UPI on file, "
+            f"and your plan continues without a gap."
+        )
+        + p("Nothing to do to keep going. If you&rsquo;d like to change or cancel, you can do it anytime before then.")
+        + button("Manage your plan", f"{APP_URL}/billing")
+        + p(f"Questions? Reply to this email or write to {_SUPPORT_LINK}.", top=8)
+    )
+    try:
+        send_email_async(
+            to_email,
+            subject,
+            shell(subject=subject, preheader=f"Your first charge is on {charge_date}.", inner=inner),
+        )
+    except Exception as exc:
+        logger.warning("promo_precharge_email_failed for %s: %s", _redact(to_email), exc)
+        _capture_email_failure(exc, event="promo_precharge", email=to_email)
+
+
 def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, data_retention_until) -> None:
     """Fired the moment the expiry cron flips status to trial_expired."""
     safe_plan = esc(plan_name)

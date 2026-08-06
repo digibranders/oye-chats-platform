@@ -124,6 +124,27 @@
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+/* Very light gold shimmer for the promo "Free until …" label. Slow + subtle;
+   a pale highlight band drifts across a warm gold base. Falls back to solid
+   gold when the viewer prefers reduced motion. */
+.promo-shimmer {
+  background: linear-gradient(100deg, #cfa23c 44%, #f4e6b6 50%, #cfa23c 56%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shimmer 4.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .promo-shimmer {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: #e0b64d;
+    color: #e0b64d;
+  }
+}
 @keyframes pulse-soft {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }

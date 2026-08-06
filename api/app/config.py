@@ -445,6 +445,14 @@ def _env_flag(name: str, *, default: bool) -> bool:
 # Read via ``runtime_config.is_impersonation_enabled()`` — never directly.
 IMPERSONATION_ENABLED = _env_flag("IMPERSONATION_ENABLED", default=True)
 
+# Local-dev ONLY: auto-verify new signups so the signup -> checkout flow is
+# testable without working email delivery (Brevo blocks unactivated accounts).
+# DOUBLE-gated for safety: it requires the explicit ``DEV_AUTO_VERIFY_EMAIL``
+# flag AND a non-production ``APP_ENV``. So it can NEVER bypass email
+# verification in production, even if the flag is accidentally left on or
+# ``APP_ENV`` is misconfigured. Defaults OFF.
+DEV_AUTO_VERIFY_EMAIL = _env_flag("DEV_AUTO_VERIFY_EMAIL", default=False) and APP_ENV != "production"
+
 
 # ── Payment remediation feature flags (docs/billing/2026-06-29-remediation-plan.md) ──
 #

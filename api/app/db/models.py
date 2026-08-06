@@ -103,6 +103,13 @@ class Client(Base):
     )
     referral_attributed_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Launch-promo attribution. Set once at signup from the campaign link's
+    # ``?code=`` when it matches a known promotion. Makes the offer
+    # link-exclusive: only accounts that arrived through the campaign link
+    # qualify (promotion_service matches this against the promo's ``code``).
+    # NULL = signed up without a promo code (organic → normal pricing).
+    signup_promo_code = Column(String, nullable=True)
+
     # Set when the trial hard-delete cron purges the workspace after the
     # 15-day retention window. Stamped Client rows still exist for
     # support / audit but no longer count as "active customers".
@@ -496,6 +503,14 @@ class Document(Base):
     # fragile ``document_name LIKE 'http%'`` heuristic for the documents quota —
     # a file literally named ``https-notes.pdf`` is no longer mis-classified.
     source = Column(String, nullable=False, default="upload", server_default="upload")
+    # Whether this chunk is currently part of the bot's live knowledge. Every
+    # retrieval / listing query is scoped to ``is_active = true`` (repository.py).
+    # Set to false in bulk (per bot) when a paid subscription lapses to Free
+    # (``knowledge_state_service.deactivate_bot_knowledge``): the bot keeps its
+    # data but stops answering from it until the customer re-adds knowledge on
+    # Free or re-upgrades, which flips it back to true. Indexed because it joins
+    # the tenant filter on the hottest query path (vector search).
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
@@ -1182,6 +1197,62 @@ class Plan(Base):
     )
 
 
+class Promotion(Base):
+    """A time-boxed acquisition campaign — e.g. "sign up this month, 3 months free".
+
+    Config lives in a row (not code) so a super admin can launch, pause, and
+    expire an offer without a deploy. ``is_active`` is the pause switch; the
+    signup window is ``[starts_at, ends_at]``; ``free_cycles`` billing periods
+    are granted at 100% off via a deferred Razorpay ``start_at`` (the first real
+    charge lands ``free_cycles`` months after the mandate is authorised).
+
+    Entitlements always follow the subscription's ``plan_id`` — the promo only
+    defers *billing*, never access.
+    """
+
+    __tablename__ = "promotions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Optional human code for a shareable link (``?code=LAUNCH3``). NULL = a
+    # pure date-window offer with no code. Unique when present.
+    code = Column(String, unique=True, index=True, nullable=True)
+    name = Column(String, nullable=False)
+
+    # The pause switch — flip to false to stop new redemptions instantly,
+    # without deleting the campaign or touching subscriptions already on it.
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+
+    # Signup window. A client is eligible only when created within
+    # ``[starts_at, ends_at]`` AND the offer is resolved during that window.
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    ends_at = Column(DateTime(timezone=True), nullable=False)
+
+    # Free billing periods granted at 100% off before the first real charge.
+    free_cycles = Column(Integer, default=3, server_default="3", nullable=False)
+
+    # NULL = every active paid plan is eligible. Otherwise a JSON array of
+    # ``Plan.id`` the offer applies to (e.g. monthly-only tiers).
+    eligible_plan_ids = Column(JSONB, nullable=True)
+
+    # Optional hard cap. NULL = uncapped (the launch default). When set,
+    # redemptions are gated by an atomic guarded increment on ``redeemed_count``
+    # so concurrent checkouts can never oversell the cap.
+    max_redemptions = Column(Integer, nullable=True)
+    redeemed_count = Column(Integer, default=0, server_default="0", nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ck_promotions_window_order"),
+        CheckConstraint("free_cycles > 0", name="ck_promotions_free_cycles_positive"),
+        CheckConstraint(
+            "max_redemptions IS NULL OR max_redemptions > 0",
+            name="ck_promotions_max_redemptions_positive",
+        ),
+    )
+
+
 class Subscription(Base):
     """Links a Client to a Plan — tracks billing state and payment provider details."""
 
@@ -1263,6 +1334,19 @@ class Subscription(Base):
     # that predate the discount engine.
     razorpay_billing_plan_id = Column(String, nullable=True)
 
+    # ── Launch-promo (deferred-charge free period) ──────────────────────────
+    # Set when this subscription was created under a Promotion. Entitlements
+    # still follow ``plan_id``; the promo only defers the first charge. SET NULL
+    # on promotion delete so billing history survives a campaign cleanup.
+    promotion_id = Column(Integer, ForeignKey("promotions.id", ondelete="SET NULL"), nullable=True)
+    # The moment the free period ends and the first real charge lands — mirrors
+    # the Razorpay subscription ``start_at``. NULL for non-promo subscriptions.
+    promo_free_until = Column(DateTime(timezone=True), nullable=True)
+    # Idempotency log for promo reminder emails (keys e.g. ``pre_charge``),
+    # mirroring ``trial_emails_sent``. Missing key == not yet sent, so the
+    # reminder cron re-runs safely.
+    promo_reminder_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
+
     # Payment provider IDs
     payment_provider = Column(String, default="razorpay", server_default="razorpay", nullable=False)  # razorpay|manual
     razorpay_subscription_id = Column(String, unique=True, index=True, nullable=True)
@@ -1317,6 +1401,7 @@ class Subscription(Base):
     # Subscription instance touch ``.scheduled_plan.name`` without a
     # second query.
     scheduled_plan = relationship("Plan", foreign_keys=[scheduled_plan_id])
+    promotion = relationship("Promotion")
     invoices = relationship("Invoice", back_populates="subscription", cascade="all, delete-orphan")
 
     __table_args__ = (

@@ -1,7 +1,15 @@
 import { type ReactElement } from 'react';
 import { Check } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
-import { formatCredits, formatDate, formatMoneyMinor, type PlanView } from '../billingModel';
+import {
+  formatCredits,
+  formatDate,
+  formatFreeMonths,
+  formatMoneyMinor,
+  promotionAppliesToPlan,
+  type PlanView,
+  type PromotionView,
+} from '../billingModel';
 import type { BillingCycle } from './planMath';
 
 /** A subscription that hasn't converted to paid yet - its own plan card offers activation. */
@@ -55,6 +63,8 @@ export interface PlanCardsProps {
   currentStatus?: string | null;
   /** Trial end date (ISO) - shown on the trialing plan's own card. */
   trialEnd?: string | null;
+  /** Active launch promotion - eligible cards lead with "Free", then the price. */
+  promotion?: PromotionView | null;
 }
 
 /**
@@ -74,6 +84,7 @@ export function PlanCards({
   onSelect,
   currentStatus = null,
   trialEnd = null,
+  promotion = null,
 }: PlanCardsProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -82,14 +93,23 @@ export function PlanCards({
   // recommendation is suppressed to keep one accent per view.
   const trialing = isUnconverted(currentStatus);
 
+  // Plans the launch promo applies to (monthly cycle only). When an offer is
+  // live, the single accent belongs to the offer plan - the free months ARE the
+  // hero action - so the ordinary "recommended upgrade" accent stands down to
+  // keep one accent per view.
+  const hasPromo =
+    cycle === 'monthly' && ordered.some((p) => promotionAppliesToPlan(promotion, p));
+
   // The recommended upgrade = the cheapest plan strictly above the current price.
-  // On the top plan (or while trialing) there is no recommendation.
+  // On the top plan, while trialing, or when a promo owns the accent, there is
+  // no separate recommendation.
   const currentPrice = ordered.find((p) => p.slug === currentSlug)?.monthlyPriceMinor ?? 0;
-  const recommendedSlug = trialing
-    ? null
-    : ordered
-        .filter((p) => p.monthlyPriceMinor > currentPrice)
-        .sort((a, b) => a.monthlyPriceMinor - b.monthlyPriceMinor)[0]?.slug ?? null;
+  const recommendedSlug =
+    trialing || hasPromo
+      ? null
+      : ordered
+          .filter((p) => p.monthlyPriceMinor > currentPrice)
+          .sort((a, b) => a.monthlyPriceMinor - b.monthlyPriceMinor)[0]?.slug ?? null;
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -101,11 +121,17 @@ export function PlanCards({
         const isRecommended = plan.slug === recommendedSlug;
         const isDowngrade = !isCurrent && plan.monthlyPriceMinor < currentPrice;
         const { amount, suffix, billed } = price(plan, cycle);
+        // A launch promo defers this plan's first charge - lead with "Free" and
+        // caption the price that resumes after the free period. Monthly-only:
+        // "3 months free" on an annual cycle would bill a full year after the
+        // free period, so the offer never shows on the annual toggle.
+        const promoApplies = cycle === 'monthly' && promotionAppliesToPlan(promotion, plan);
 
-        // Exactly one accent: the recommended upgrade, or - while trialing - the
-        // current plan's own card (its activation is the priority action).
+        // Exactly one accent: the offer plan (free months are the hero action),
+        // else the recommended upgrade, else - while trialing - the current
+        // plan's own card (its activation is the priority action).
         const cardTone =
-          isRecommended || isTrialingCurrent
+          promoApplies || isRecommended || isTrialingCurrent
             ? 'border-[var(--ds-accent)] bg-[var(--ds-bg-surface)] shadow-[0_0_0_1px_var(--ds-accent),0_8px_24px_-12px_var(--ds-accent)]'
             : isCurrent
               ? 'border-[var(--ds-border)] bg-[var(--ds-bg-sunken)]'
@@ -116,7 +142,7 @@ export function PlanCards({
         // primary; other upgrade = outline; downgrade = quiet ghost. An
         // enterprise tier always routes to sales rather than checkout.
         const ctaVariant =
-          isTrialingCurrent || isRecommended
+          isTrialingCurrent || isRecommended || promoApplies
             ? 'primary'
             : plan.isEnterprise
               ? 'outline'
@@ -129,11 +155,13 @@ export function PlanCards({
             ? 'Current plan'
             : plan.isEnterprise
               ? 'Contact sales'
-              : isRecommended
-                ? `Upgrade to ${plan.name}`
-                : isDowngrade
-                  ? 'Downgrade'
-                  : 'Select';
+              : promoApplies && promotion
+                ? `Start ${formatFreeMonths(promotion.freeCycles)} free`
+                : isRecommended
+                  ? `Upgrade to ${plan.name}`
+                  : isDowngrade
+                    ? 'Downgrade'
+                    : 'Select';
         // Only a genuinely-current PAID plan is a dead button; a trial can be
         // activated from its own card.
         const ctaDisabled = isCurrent && !isTrialingCurrent;
@@ -153,20 +181,40 @@ export function PlanCards({
                 <StatusBadge tone="neutral" dot>
                   Current
                 </StatusBadge>
+              ) : promoApplies && promotion ? (
+                <StatusBadge tone="accent">{formatFreeMonths(promotion.freeCycles)} free</StatusBadge>
               ) : isRecommended ? (
                 <StatusBadge tone="accent">Recommended</StatusBadge>
               ) : null}
             </div>
 
-            <div className="mt-3 flex items-baseline gap-1">
-              <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">{amount}</span>
-              {suffix && <span className="text-[13px] text-[var(--ds-text-muted)]">{suffix}</span>}
-            </div>
-            {/* Reserve the caption row so annual/monthly toggling doesn't shift
-                card heights; annual fills it with the billed-yearly total. */}
-            <p className="mt-1 min-h-[15px] text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
-              {billed}
-            </p>
+            {promoApplies && promotion ? (
+              <>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">Free</span>
+                  <span className="text-[13px] text-[var(--ds-text-subtle)] line-through">
+                    {amount}
+                    {suffix}
+                  </span>
+                </div>
+                <p className="mt-1 min-h-[15px] text-[11px] font-medium uppercase tracking-wide text-[var(--ds-accent-text)]">
+                  First {formatFreeMonths(promotion.freeCycles)} free · then {amount}
+                  {suffix}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="mt-3 flex items-baseline gap-1">
+                  <span className="text-2xl font-bold tracking-tight text-[var(--ds-text)]">{amount}</span>
+                  {suffix && <span className="text-[13px] text-[var(--ds-text-muted)]">{suffix}</span>}
+                </div>
+                {/* Reserve the caption row so annual/monthly toggling doesn't shift
+                    card heights; annual fills it with the billed-yearly total. */}
+                <p className="mt-1 min-h-[15px] text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
+                  {billed}
+                </p>
+              </>
+            )}
 
             <ul className="mt-4 flex-1 space-y-2 text-[13px] text-[var(--ds-text-muted)]">
               {highlights(plan).map((item) => (

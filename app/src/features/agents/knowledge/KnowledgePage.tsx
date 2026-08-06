@@ -30,7 +30,7 @@ import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
 import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
-import { getDocuments, getDocumentPages, deleteDocument } from '../../../services/api';
+import { getDocuments, getDocumentPages, deleteDocument, getKnowledgeState } from '../../../services/api';
 import type { KnowledgeSource, SourcePage } from '../../../types/domain';
 import { PagesDrawer } from '../../launch-studio/PagesDrawer';
 import { AddKnowledgePanel } from './AddKnowledgePanel';
@@ -79,6 +79,23 @@ export function KnowledgePage(): ReactElement {
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // True when a plan lapse to Free deactivated this bot's knowledge (there are
+  // inactive chunks). Drives the "re-crawl / upgrade to reactivate" banner. A
+  // brand-new Free bot has no inactive chunks, so it never shows.
+  const [knowledgeDeactivated, setKnowledgeDeactivated] = useState(false);
+
+  const refreshKnowledgeState = useCallback(async (): Promise<void> => {
+    if (agentId == null) {
+      setKnowledgeDeactivated(false);
+      return;
+    }
+    try {
+      const state = await getKnowledgeState(agentId);
+      setKnowledgeDeactivated(Boolean(state?.deactivated));
+    } catch {
+      // Non-fatal: the banner is a nudge, never block the page on it.
+    }
+  }, [agentId]);
 
   // ── Re-crawl lifecycle ────────────────────────────────────────────
   const [recrawlLoadingFor, setRecrawlLoadingFor] = useState<string | null>(null);
@@ -112,13 +129,14 @@ export function KnowledgePage(): ReactElement {
       // Drop the result if the user switched agents while this was in flight.
       if (activeAgentIdRef.current !== requestedFor) return;
       setSources(data ?? []);
+      void refreshKnowledgeState();
     } catch (err) {
       if (activeAgentIdRef.current !== requestedFor) return;
       setActionError(
         err instanceof Error ? err.message : "We couldn't refresh your knowledge sources.",
       );
     }
-  }, [agentId]);
+  }, [agentId, refreshKnowledgeState]);
 
   // Initial / agent-switch load. The reset lives inside the async task (not the
   // effect body) so no state is set synchronously during the effect.
@@ -132,7 +150,10 @@ export function KnowledgePage(): ReactElement {
       setActionError(null);
       try {
         const data = await getDocuments(agentId);
-        if (!cancelled) setSources(data ?? []);
+        if (!cancelled) {
+          setSources(data ?? []);
+          void refreshKnowledgeState();
+        }
       } catch (err) {
         if (!cancelled) {
           setLoadError(
@@ -145,7 +166,7 @@ export function KnowledgePage(): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [agentId]);
+  }, [agentId, refreshKnowledgeState]);
 
   // When a crawl for THIS agent reaches a terminal state, pull the fresh source
   // list so newly-learned pages appear.
@@ -526,6 +547,30 @@ export function KnowledgePage(): ReactElement {
         />
       ) : (
         <div className="space-y-6">
+          {knowledgeDeactivated && (
+            <div
+              className="flex items-start gap-3 rounded-2xl border border-[var(--ds-info)] bg-[var(--ds-info-soft)] p-4"
+              role="status"
+            >
+              <span
+                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--ds-info)] text-white"
+                aria-hidden="true"
+              >
+                <Sparkles size={16} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold text-[var(--ds-text)]">
+                  Your knowledge is paused on Free
+                </p>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
+                  Your assistant kept its data but stopped answering from it when your plan moved to
+                  Free. Re-crawl your website or upload documents below to reactivate it on Free.
+                  Upgrade to restore all of your previous knowledge instantly.
+                </p>
+              </div>
+            </div>
+          )}
+
           {stats.total > 0 && (
             <>
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

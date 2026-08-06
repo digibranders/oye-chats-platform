@@ -80,6 +80,17 @@ export interface PlanView {
   limits: Record<string, number>;
 }
 
+export interface PromotionView {
+  id: number | null;
+  name: string | null;
+  /** Billing cycles granted free before the first real charge (e.g. 3). */
+  freeCycles: number;
+  /** Campaign end (ISO) — after this, new signups stop qualifying. */
+  endsAt: string | null;
+  /** Plan ids the offer covers; `null` = every paid plan. */
+  eligiblePlanIds: number[] | null;
+}
+
 export interface ScheduledChangeView {
   planName: string | null;
   effectiveAt: string | null;
@@ -177,6 +188,60 @@ export function buildPlan(raw: unknown): PlanView | null {
     features,
     limits: toNumberMap(record.limits),
   };
+}
+
+/**
+ * Coerce the `/subscriptions/promo` payload into a PromotionView, or `null` when
+ * no promotion is active for the client (`{ active: false }`). Display-only —
+ * checkout re-validates eligibility server-side, so this never grants the offer.
+ */
+export function buildPromotion(raw: unknown): PromotionView | null {
+  const record = asRecord(raw);
+  if (!record || record.active !== true) return null;
+  const idsRaw = record.eligible_plan_ids;
+  const eligiblePlanIds = Array.isArray(idsRaw)
+    ? idsRaw.map((value) => toNumber(value)).filter((id) => id > 0)
+    : null;
+  return {
+    id: toNumber(record.id) || null,
+    name: toOptionalText(record.name),
+    freeCycles: toNumber(record.free_cycles),
+    endsAt: toOptionalText(record.ends_at),
+    eligiblePlanIds,
+  };
+}
+
+/** Whether a promotion's free period applies to a plan (paid, non-enterprise, in scope). */
+export function promotionAppliesToPlan(promo: PromotionView | null, plan: PlanView): boolean {
+  if (!promo || !plan.isPaid || plan.isEnterprise) return false;
+  return promo.eligiblePlanIds === null || promo.eligiblePlanIds.includes(plan.id);
+}
+
+/** "3 months" / "1 month" — the free-period length as a bare noun phrase. */
+export function formatFreeMonths(freeCycles: number): string {
+  const months = Math.max(0, Math.floor(freeCycles));
+  return `${months} month${months === 1 ? '' : 's'}`;
+}
+
+/**
+ * A sentence fragment naming which plans a promotion covers, for the banner
+ * copy. Unrestricted (`eligiblePlanIds` null/empty) → "any monthly plan";
+ * otherwise the named plan(s) in catalog order, e.g. "the Standard plan" or
+ * "the Standard or Professional plan". Falls back to "any monthly plan" if the
+ * ids resolve to no known plan, so the banner never renders a blank scope.
+ */
+export function formatPromotionScope(promotion: PromotionView, plans: PlanView[]): string {
+  const ids = promotion.eligiblePlanIds;
+  if (!ids || ids.length === 0) return 'any monthly plan';
+  const allowed = new Set(ids);
+  const names = plans
+    .filter((plan) => allowed.has(plan.id))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((plan) => plan.name);
+  if (names.length === 0) return 'any monthly plan';
+  if (names.length === 1) return `the ${names[0]} plan`;
+  const last = names[names.length - 1];
+  return `the ${names.slice(0, -1).join(', ')} or ${last} plan`;
 }
 
 export function buildSubscription(raw: unknown): SubscriptionView {

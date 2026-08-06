@@ -51,6 +51,9 @@ export default function Register() {
   // there so the accept-existing endpoint can wire the affiliate row.
   const [searchParams] = useSearchParams();
   const affiliateToken = searchParams.get('affiliate_token') || '';
+  // Launch-promo code from the campaign link (?code=). Passed through to
+  // registration so the offer is link-exclusive; unknown codes no-op server-side.
+  const promoCode = searchParams.get('code') || '';
   // Deep-link round-trip target. Invite airlock routes here as
   // ``/register?next=/invite/<token>&email=<invite_email>`` so a fresh
   // signup lands back on the airlock to auto-accept. Also honoured by the
@@ -108,16 +111,20 @@ export default function Register() {
         companyName.trim() || null,
         website.trim() || null,
         billingCountry || null,
+        promoCode || null,
       );
 
       // Register defaults to ``persistent=true`` - newly signed-up
       // customers should stay logged in across browser restarts unless
       // they explicitly opt out via Login → Remember me.
+      // The backend auto-verifies accounts in local development (no working email
+      // there), so honour that flag and skip the OTP screen when already verified.
+      const alreadyVerified = data.is_verified === true;
       setAuthBundle({
         admin_token: data.access_token,
         admin_name: data.name,
         admin_client_id: data.client_id,
-        admin_is_verified: 'false',
+        admin_is_verified: alreadyVerified ? 'true' : 'false',
         admin_pending_email: email.trim(),
         auth_type: 'client',
         is_superadmin: 'false',
@@ -141,7 +148,12 @@ export default function Register() {
       // so recipients still round-trip back to their airlock after verifying.
       const postVerifyNext =
         safeNext || (affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '');
-      navigate(postVerifyNext ? `/verify-email?next=${encodeURIComponent(postVerifyNext)}` : '/verify-email');
+      if (alreadyVerified) {
+        // Dev auto-verify: no OTP needed, go straight in.
+        navigate(postVerifyNext || '/', { replace: true });
+      } else {
+        navigate(postVerifyNext ? `/verify-email?next=${encodeURIComponent(postVerifyNext)}` : '/verify-email');
+      }
     } catch (err) {
       // Detect the "email already registered" backend rejection so we can
       // offer a one-click redirect to Login with the current query params

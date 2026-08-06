@@ -1,7 +1,7 @@
 import { type ReactElement } from 'react';
 import { ExternalLink, SlidersHorizontal, Wand2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Card, StatusBadge, type StatusBadgeProps } from '../../../design-system';
+import { BotAvatar, Card, StatusBadge, type StatusBadgeProps } from '../../../design-system';
 import { useWorkspace } from '../../../context/WorkspaceContext';
 import { type Bot } from '../../../types/domain';
 import { hasLaunchProgress, resumeLaunchPath } from '../../launch-studio/resume';
@@ -47,7 +47,6 @@ export function AgentOverviewHero({
 }: AgentOverviewHeroProps): ReactElement {
   const { currentWorkspaceId } = useWorkspace();
   const createdDate = formatCreatedDate(agent.created_at);
-  const initial = agent.name ? agent.name.charAt(0).toUpperCase() : 'A';
   // The "Setup Needed" badge is exactly where a half-finished agent surfaces,
   // so it's where the way back into guided setup belongs. Offered only while
   // setup is genuinely outstanding - a healthy agent shouldn't be nudged back
@@ -59,24 +58,19 @@ export function AgentOverviewHero({
   const needsSetup = health.level === 'setup' && hasLaunchProgress(currentWorkspaceId, agent.id);
 
   return (
-    <Card className="p-6">
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4">
-          {agent.bot_logo ? (
-            <img
-              src={agent.bot_logo}
-              alt=""
-              className="h-14 w-14 rounded-2xl object-cover ring-1 ring-[var(--ds-border)]"
-            />
-          ) : (
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[var(--ds-accent-soft)] text-xl font-bold text-[var(--ds-accent)] ring-1 ring-[var(--ds-border)]">
-              {initial}
-            </div>
-          )}
+    <Card className="p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <BotAvatar
+            bot={agent}
+            size={40}
+            radius="xl"
+            className="ring-1 ring-[var(--ds-border)]"
+          />
 
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-xl font-bold tracking-tight text-[var(--ds-text)]">
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
                 {agent.name}
               </h1>
               <StatusBadge tone={BADGE_TONE_BY_HEALTH_LEVEL[health.level]} dot>
@@ -84,7 +78,7 @@ export function AgentOverviewHero({
               </StatusBadge>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 text-[13px] text-[var(--ds-text-muted)]">
+            <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--ds-text-muted)]">
               {createdDate && <span>Created {createdDate}</span>}
               {createdDate && agent.website && <span aria-hidden="true">•</span>}
               {agent.website && (
@@ -114,9 +108,9 @@ export function AgentOverviewHero({
           )}
           <Link
             to={`${agentBasePath}/experience`}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-elevated)] px-4 py-2 text-[13px] font-semibold text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-elevated)] px-3 py-1.5 text-[13px] font-semibold text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]"
           >
-            <SlidersHorizontal size={15} aria-hidden="true" />
+            <SlidersHorizontal size={14} aria-hidden="true" />
             <span>Edit experience</span>
           </Link>
         </div>

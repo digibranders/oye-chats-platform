@@ -1,11 +1,11 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
-import { Eye } from 'lucide-react';
+import { Eye, Globe } from 'lucide-react';
 import {
   Button,
   EmptyState,
   PageContainer,
-  SectionHeader,
   Skeleton,
+  cn,
 } from '../../../design-system';
 import { Tabs, type TabItem } from '../../../design-system/components/Tabs';
 import { useAgent } from '../../../context/AgentContext';
@@ -70,6 +70,9 @@ export function ExperiencePage(): ReactElement {
   const [justSaved, setJustSaved] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // The on-demand "preview on my website" panel, launched from the Preview
+  // card's corner icon (replaces the old always-present full-width card).
+  const [websitePreviewOpen, setWebsitePreviewOpen] = useState(false);
 
   // Load the agent's settings once per agent (and on retry). Local state is
   // reset synchronously first, then the fetch resolves; every post-fetch
@@ -291,7 +294,29 @@ export function ExperiencePage(): ReactElement {
           {/* Preview column */}
           <aside className="lg:sticky lg:top-6 lg:self-start">
             <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5">
-              <SectionHeader title="Preview" className="mb-4" />
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h2 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
+                  Preview
+                </h2>
+                {agent?.bot_key && (
+                  <button
+                    type="button"
+                    onClick={() => setWebsitePreviewOpen((v) => !v)}
+                    title="Preview on my website"
+                    aria-label="Preview on my website"
+                    aria-pressed={websitePreviewOpen}
+                    className={cn(
+                      'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-ring)]',
+                      websitePreviewOpen
+                        ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
+                        : 'border-[var(--ds-border)] text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)]',
+                    )}
+                  >
+                    <Globe size={15} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
               <ExperiencePreview
                 draft={draft}
                 agentName={draft.displayName.trim() || agent?.name || 'Your agent'}
@@ -300,9 +325,15 @@ export function ExperiencePage(): ReactElement {
           </aside>
         </div>
 
-        {/* Real "preview on my website" - loads the hosted demo page (which
-            overlays the live widget on the customer's URL) in an iframe. */}
-        <WebsitePreviewPanel botKey={agent?.bot_key ?? null} website={agent?.website ?? null} />
+        {/* On-demand "preview on my website" - loads the hosted demo page (which
+            overlays the live widget on the customer's URL) in an iframe. Opened
+            from the Preview card's corner launcher above. */}
+        <WebsitePreviewPanel
+          botKey={agent?.bot_key ?? null}
+          website={agent?.website ?? null}
+          open={websitePreviewOpen}
+          onClose={() => setWebsitePreviewOpen(false)}
+        />
         </div>
       ) : null}
     </PageContainer>

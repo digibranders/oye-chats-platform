@@ -30,7 +30,6 @@ import {
   PageContainer,
   Select,
   Skeleton,
-  StatusBadge,
   cn,
 } from '../../design-system';
 // MetricCard + DataTable are Foundation-phase components not yet re-exported
@@ -54,6 +53,7 @@ import {
   TIER_ORDER,
   filterLeads,
   formatDateTime,
+  humanizeDimension,
   leadDisplayName,
   leadInitials,
   normalizeTier,
@@ -69,8 +69,7 @@ const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: strin
 /** How the lead table is ordered. Exposed via the "Sort by" control. */
 const SORT_OPTIONS = [
   { value: 'recent', label: 'Latest activity' },
-  { value: 'score', label: 'Highest score' },
-  { value: 'quality', label: 'Quality' },
+  { value: 'quality', label: 'BANT' },
 ] as const;
 type SortKey = (typeof SORT_OPTIONS)[number]['value'];
 
@@ -82,9 +81,6 @@ function leadActivityTime(lead: Lead): number {
 
 /** Comparator per sort key. Every option has a stable secondary tiebreak. */
 function leadComparator(sortBy: SortKey): (a: Lead, b: Lead) => number {
-  if (sortBy === 'score') {
-    return (a, b) => b.score - a.score || leadActivityTime(b) - leadActivityTime(a);
-  }
   if (sortBy === 'quality') {
     return (a, b) =>
       TIER_ORDER.indexOf(normalizeTier(b.status)) - TIER_ORDER.indexOf(normalizeTier(a.status)) ||
@@ -138,13 +134,60 @@ function downloadCsv(content: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** The quality pill cell, shared by the table. */
-function QualityCell({ lead }: { lead: Lead }): ReactElement {
-  const tier = TIER_META[normalizeTier(lead.status)];
-  // The plain-language label carries the meaning on its own; we deliberately
-  // avoid a hover-only native `title` (not keyboard-focusable, announced
-  // inconsistently by screen readers).
-  return <StatusBadge tone={tier.tone}>{tier.label}</StatusBadge>;
+/**
+ * Canonical B-A-N-T display order. The backend emits a bot's framework
+ * dimensions in its own order (e.g. need/timeline/authority/budget); we surface
+ * them in Budget → Authority → Need → Timeline order so the chips always read
+ * "BANT". Dimensions outside this set (MEDDIC/CHAMP frameworks) sort after the
+ * BANT four, keeping their original relative order (Array#sort is stable).
+ */
+const BANT_ORDER: readonly string[] = ['budget', 'authority', 'need', 'timeline'];
+
+function bantOrderIndex(key: string): number {
+  const index = BANT_ORDER.indexOf(key.toLowerCase());
+  return index === -1 ? BANT_ORDER.length : index;
+}
+
+/**
+ * BantSignal - the at-a-glance qualification cell: one small chip per framework
+ * dimension (Budget / Authority / Need / Timeline for a BANT bot, or the bot's
+ * real dimensions for MEDDIC/CHAMP). A chip turns green once that dimension is
+ * "accepted" - i.e. the AI captured a positive signal for it (score > 0);
+ * un-assessed dimensions stay a quiet neutral. This restores the "which boxes
+ * has this lead ticked?" read the table used to give, in place of the single
+ * plain-language quality pill (the tier still drives the top filters, the sort,
+ * and the detail drawer's verdict).
+ */
+function BantSignal({ lead }: { lead: Lead }): ReactElement {
+  const dimensions = Object.entries(lead.bant ?? {}).sort(
+    ([a], [b]) => bantOrderIndex(a) - bantOrderIndex(b),
+  );
+  if (dimensions.length === 0) {
+    return <span className="text-[12px] text-[var(--ds-text-subtle)]">-</span>;
+  }
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label="Qualification signals">
+      {dimensions.map(([key, dim]) => {
+        const accepted = (dim?.score ?? 0) > 0;
+        const label = humanizeDimension(key);
+        return (
+          <span
+            key={key}
+            title={`${label}: ${dim?.value || 'Not captured'}`}
+            aria-label={`${label}: ${accepted ? 'captured' : 'not captured'}`}
+            className={cn(
+              'flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold uppercase',
+              accepted
+                ? 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
+                : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]',
+            )}
+          >
+            {label.charAt(0)}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -409,12 +452,12 @@ export function LeadsPage(): ReactElement {
       },
       {
         key: 'status',
-        header: 'Quality',
+        header: <span className="text-[var(--ds-success)]">BANT</span>,
         render: (lead) =>
           isFree ? (
             <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
           ) : (
-            <QualityCell lead={lead} />
+            <BantSignal lead={lead} />
           ),
       },
       {

@@ -435,10 +435,14 @@ export const registerClient = async (
     companyName = null,
     website = null,
     billingCountry = null,
+    promoCode = null,
 ) => {
     try {
         const payload = { name, email, password, company_name: companyName, website };
         if (billingCountry) payload.billing_country = billingCountry;
+        // Launch-promo code from the campaign link (?code=) — makes the offer
+        // link-exclusive. Silently ignored server-side when unknown.
+        if (promoCode) payload.promo_code = promoCode;
         const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {
@@ -730,6 +734,24 @@ export const getDocuments = async (botId) => {
     } catch (error) {
         console.error('API Error fetching documents:', error);
         throw buildApiError(error, 'Failed to load documents');
+    }
+};
+
+/**
+ * Whether this bot's knowledge was deactivated by a plan lapse to Free.
+ * `deactivated` is true when the bot has any inactive chunk — drives the
+ * "re-crawl / re-upload to reactivate" banner on the Knowledge page.
+ * @param {number} botId
+ * @returns {Promise<{active_count:number, inactive_count:number, deactivated:boolean}>}
+ */
+export const getKnowledgeState = async (botId) => {
+    try {
+        const url = botId ? `/documents/knowledge-state?bot_id=${botId}` : '/documents/knowledge-state';
+        const response = await api.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching knowledge state:', error);
+        throw buildApiError(error, 'Failed to load knowledge state');
     }
 };
 
@@ -2081,6 +2103,19 @@ export const getSubscriptionPlans = async () => {
     }
 };
 
+// Launch-promo eligibility for the CURRENT client (billing display only).
+// Returns `{ active: false }` or the promo projection
+// `{ active: true, id, name, free_cycles, ends_at, eligible_plan_ids }`.
+// Checkout re-validates server-side, so this is never the gate.
+export const getActivePromotion = async () => {
+    try {
+        const response = await api.get('/subscriptions/promo');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load promotion');
+    }
+};
+
 // ─── Per-bot checkout ────────────────────────────────────────────────────────
 // Mints a Razorpay subscription that funds exactly one new bot. The bot row
 // is created server-side only after payment captures (via the activation
@@ -2293,11 +2328,12 @@ export const startTrial = async (planSlug) => {
     }
 };
 
-export const changePlan = async (planId, billingCycle = null) => {
+export const changePlan = async (planId, billingCycle = null, botId = null) => {
     try {
         const response = await api.post('/subscriptions/change-plan', {
             plan_id: planId,
             billing_cycle: billingCycle,
+            ...(botId != null ? { bot_id: botId } : {}),
         });
         return response.data;
     } catch (error) {
