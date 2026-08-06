@@ -41,6 +41,10 @@ class Client(Base):
     billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
     billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
     billing_email = Column(String, nullable=True)  # falls back to login email
+    # Newest billing-geo contradiction (claimed country vs server-side IP geo),
+    # both directions — durable GST/FEMA review trail, not just a WARN log.
+    geo_mismatch_at = Column(DateTime(timezone=True), nullable=True)
+    geo_mismatch_detail = Column(String(500), nullable=True)
     # Razorpay Customer id — the identity anchor for saved payment instruments.
     # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without
     # this there is no saved-card capability at all.

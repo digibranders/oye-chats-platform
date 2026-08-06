@@ -237,6 +237,35 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     buyer_country = buyer.billing_country if buyer else None
     kind = supply_kind(seller.state_code, buyer_state, buyer_country)
 
+    # Export backstop (P0-2): ``billing_country`` is customer-writable history,
+    # so an INR-settled charge classified as an export needs corroboration from
+    # a fact the customer cannot write — has this account EVER been charged in
+    # a foreign currency? A genuine international buyer bills on the USD rail
+    # (Razorpay settles it in INR, but the charge currency is USD); an account
+    # with an all-rupee charge history claiming an export is the self-declared
+    # country flip. Refusal, not error: the row stays unnumbered so
+    # ``backfill_unnumbered_invoices`` retries and ``reconciliation_anomalies``
+    # surfaces it for review, mirroring the FX-refusal path below.
+    if kind == "export" and (invoice.currency or "inr").strip().lower() in ("", "inr"):
+        has_foreign_charge = session.execute(
+            select(Invoice.id)
+            .where(
+                Invoice.client_id == invoice.client_id,
+                Invoice.currency.is_not(None),
+                func.lower(Invoice.currency) != "inr",
+            )
+            .limit(1)
+        ).first()
+        if not has_foreign_charge:
+            logger.warning(
+                "invoice %s not finalized: INR-settled charge classified as export for client %s "
+                "with no foreign-currency charge history — likely a self-declared billing_country "
+                "flip; leaving unnumbered for reconciliation",
+                invoice.id,
+                invoice.client_id,
+            )
+            return False
+
     # A non-INR charge is issued in its own currency and carries an INR mirror
     # for the return. ``fx`` is None on the (overwhelmingly common) rupee path.
     try:

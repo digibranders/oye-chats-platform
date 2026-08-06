@@ -253,6 +253,55 @@ class CreditsGrant(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class BillingCountryOverride(BaseModel):
+    country: str = Field(min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/clients/{client_id}/billing-country")
+def override_billing_country(
+    client_id: int,
+    body: BillingCountryOverride,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Relocate an account's billing country — the ONLY path while a mandate is live.
+
+    ``PUT /billing-details`` freezes ``billing_country`` under a live Razorpay
+    mandate (it is the tax-classification fact for every invoice — P0-2), so a
+    genuine relocation is an ops action: verify the customer, re-point the
+    mandate to the new rail, then record the new country here with a reason.
+    Audit-logged; the same GSTIN⇒IN consistency rule as the customer route
+    applies (a domestic GST registration cannot bill from abroad).
+    """
+    _require_write(admin)
+    country = body.country.strip().upper()
+    with get_session() as session:
+        client = session.get(Client, client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Account not found")
+        if client.gstin and country != "IN":
+            raise HTTPException(
+                status_code=422,
+                detail="Account has a GSTIN on record — clear it before moving billing_country off IN.",
+            )
+        before = {"billing_country": client.billing_country}
+        client.billing_country = country
+        session.flush()
+        record_audit(
+            session,
+            actor=admin,
+            action="client.billing_country.override",
+            target_type="client",
+            target_id=client_id,
+            before=before,
+            after={"billing_country": country, "reason": body.reason},
+            request=request,
+        )
+        session.commit()
+        return {"billing_country": country}
+
+
 @router.post("/clients/{client_id}/credits")
 def grant_credits(
     client_id: int,

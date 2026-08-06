@@ -873,7 +873,9 @@ def get_billing_details(client: Client = Depends(get_current_client)):
 
 
 @router.put("/billing-details")
-def update_billing_details(body: BillingDetailsBody, client: Client = Depends(get_current_client)):
+def update_billing_details(
+    body: BillingDetailsBody, http_request: Request = None, client: Client = Depends(get_current_client)
+):
     fields = body.model_dump(exclude_unset=True)
 
     gstin_provided = "gstin" in fields
@@ -896,6 +898,40 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
 
     with get_session() as session:
         row = session.get(Client, client.id)
+
+        # ``billing_country`` is a TAX FACT, not a profile field: ``supply_kind``
+        # classifies every invoice from it, so flipping it under a live INR
+        # mandate turns subsequent renewals into self-declared zero-rated
+        # exports (P0-2). While any active-set subscription carries a Razorpay
+        # mandate the *classification* country is frozen — writes that keep the
+        # classification (IN→IN, NULL→IN) still pass so a subscribed customer
+        # can complete their billing details. Rail change = churn event;
+        # genuine relocations go through the audited superadmin override.
+        if country_provided and (new_country or "IN") != ((row.billing_country or "IN").strip().upper() or "IN"):
+            live_mandate = session.execute(
+                select(Subscription.id)
+                .where(
+                    Subscription.client_id == row.id,
+                    Subscription.status.in_(("active", "trialing", "past_due")),
+                    Subscription.razorpay_subscription_id.is_not(None),
+                )
+                .limit(1)
+            ).first()
+            if live_mandate:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "reason": "billing_country_locked",
+                        "message": (
+                            "Your billing country is locked while a subscription mandate is "
+                            "active, because it determines how your invoices are taxed. "
+                            "If you have genuinely relocated, contact support — the change "
+                            "requires re-pointing your payment mandate to the new billing rail."
+                        ),
+                        "contact": "developer@oyechats.com",
+                    },
+                )
+
         # Cross-field consistency is checked on the EFFECTIVE (stored +
         # incoming) values so a two-request sequence can't assemble an
         # incoherent combination a single request would have rejected.
@@ -955,6 +991,14 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
             row.billing_state_code = eff_state if eff_gstin else (new_state if state_provided else eff_state)
         if "billing_email" in fields:
             row.billing_email = (fields["billing_email"] or "").strip() or None
+        # An ACCEPTED foreign-country write (no live mandate → allowed) from an
+        # IN-detected request is the P0-2 signal shape — record it durably even
+        # though the write itself is legitimate, so a later export
+        # classification for this account has a review trail.
+        if country_provided and new_country and http_request is not None:
+            mismatch = _geo_mismatch_detail(new_country, resolve_country(http_request))
+            if mismatch:
+                _flag_geo_mismatch(session, row.id, mismatch)
         session.commit()
         session.refresh(row)
         # Keep the gateway's customer record aligned with the invoice buyer
@@ -1194,13 +1238,54 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     return {"plans": out}
 
 
-def _is_suspicious_geo_claim(confirmed_country: str, detected_country: str | None) -> bool:
-    """Flag a domestic (IN) billing claim that contradicts the server-side geo
-    signal (audit F35). A specific foreign detection while the customer claims IN
-    is a GST/FEMA audit signal. Unknown detection (None — geo lookups legitimately
-    fail) is not suspicious, and a non-IN confirmed country never reaches the INR
-    rail so it is out of scope here."""
-    return confirmed_country == "IN" and detected_country not in (None, "IN")
+def _geo_mismatch_detail(confirmed_country: str, detected_country: str | None) -> str | None:
+    """Describe a billing-country claim that contradicts the server-side geo
+    signal, or ``None`` when there is nothing suspicious (audit F35 / P0-2).
+
+    Bidirectional, because both directions are tax signals:
+
+    * claims **IN**, detected foreign — a domestic INR/GST classification from
+      abroad (FEMA / place-of-supply review);
+    * claims **foreign**, detected IN — a zero-rated export classification from
+      inside India: the exact self-declared flip that turns a domestic supply
+      into GST leakage.
+
+    Unknown detection (``None`` — geo lookups legitimately fail) is never
+    suspicious, and a foreign claim from a *different* foreign country is a
+    curiosity (travel, VPN), not a tax signal.
+    """
+    if detected_country is None or confirmed_country == detected_country:
+        return None
+    if confirmed_country == "IN":
+        return f"claims billing_country=IN but IP geo detected {detected_country} (GST/FEMA review)"
+    if detected_country == "IN":
+        return f"claims billing_country={confirmed_country} (zero-rated export) but IP geo detected IN (GST review)"
+    return None
+
+
+def _flag_geo_mismatch(session, client_id: int, detail: str) -> None:
+    """Stamp the persistent geo-mismatch columns on the account (newest wins).
+
+    The WARN log is the alert; these columns are the durable review trail —
+    log retention is shorter than a GST assessment window.
+    """
+    logger.warning("Billing geo mismatch: client=%s %s", client_id, detail)
+    row = session.get(Client, client_id)
+    if row is not None:
+        row.geo_mismatch_at = datetime.now(UTC)
+        row.geo_mismatch_detail = detail[:500]
+
+
+def _flag_geo_mismatch_standalone(client_id: int, detail: str) -> None:
+    """Best-effort ``_flag_geo_mismatch`` for callers outside a session (the
+    checkout/top-up resolver runs before their transaction opens). A flag
+    write must never fail the customer's money path."""
+    try:
+        with get_session() as session:
+            _flag_geo_mismatch(session, client_id, detail)
+            session.commit()
+    except Exception:
+        logger.exception("Failed to persist geo-mismatch flag for client %s", client_id)
 
 
 def _resolve_confirmed_billing_country_or_409(
@@ -1227,7 +1312,7 @@ def _resolve_confirmed_billing_country_or_409(
     Resolution order mirrors ``checkout_quote``: explicit per-request confirmation
     wins, then the account's stored country, then the domestic default (IN) for
     backward-compat callers that omit it. The server-side IP geo signal is
-    cross-checked (not hard-enforced — see ``_is_suspicious_geo_claim``) and a
+    cross-checked (not hard-enforced — see ``_geo_mismatch_detail``) and a
     domestic claim that contradicts a specific foreign detection is logged as a
     GST/FEMA audit signal.
 
@@ -1237,12 +1322,9 @@ def _resolve_confirmed_billing_country_or_409(
     confirmed_country = (request_country or client.billing_country or "IN").strip().upper()
 
     detected_country = resolve_country(http_request)
-    if _is_suspicious_geo_claim(confirmed_country, detected_country):
-        logger.warning(
-            "Billing geo mismatch: client=%s claims billing_country=IN but IP geo detected %s (GST/FEMA review)",
-            client.id,
-            detected_country,
-        )
+    mismatch = _geo_mismatch_detail(confirmed_country, detected_country)
+    if mismatch:
+        _flag_geo_mismatch_standalone(client.id, mismatch)
 
     if confirmed_country != "IN" and not allow_usd:
         raise HTTPException(
