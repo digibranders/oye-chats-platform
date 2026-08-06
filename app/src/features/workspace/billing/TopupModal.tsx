@@ -86,12 +86,15 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [submittingPack, setSubmittingPack] = useState<number | null>(null);
   const [error, setError] = useState('');
+  // Neutral (non-error) feedback — e.g. "you cancelled, nothing was charged".
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     if (!open) return undefined;
     let cancelled = false;
     setLoadingPacks(true);
     setError('');
+    setNotice('');
     getTopupPacks()
       .then((data) => {
         if (!cancelled) setPacks(Array.isArray(data) ? (data as unknown as TopupPack[]) : []);
@@ -116,6 +119,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
     }
     setSubmittingPack(amount);
     setError('');
+    setNotice('');
     try {
       const result = (await initiateTopup(amount, { botId })) as Record<string, unknown>;
       // Fail fast on a malformed order payload instead of opening Razorpay with
@@ -158,7 +162,13 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
       onSuccess?.('Payment successful - credits will appear in a few seconds.');
       onClose();
     } catch (err: unknown) {
-      if ((err as { code?: string })?.code === 'dismissed') return;
+      // The customer closed the Razorpay sheet themselves. Detected via the
+      // modal's ondismiss (src/lib/razorpay.js) — say so, or returning to the
+      // app reads as "nothing happened / did my payment go through?".
+      if ((err as { code?: string })?.code === 'dismissed') {
+        setNotice('Payment cancelled - you were not charged.');
+        return;
+      }
       const detail =
         (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
           ?.detail ?? (err as { detail?: unknown })?.detail;
@@ -204,6 +214,15 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
           className="mb-4 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-danger)]"
         >
           {error}
+        </div>
+      )}
+
+      {notice && !error && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-2)] px-3 py-2.5 text-[13px] text-[var(--ds-text-muted)]"
+        >
+          {notice}
         </div>
       )}
 
