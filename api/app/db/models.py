@@ -1509,14 +1509,14 @@ class Invoice(Base):
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Amount
-    amount_cents = Column(Integer, nullable=False)
+    amount_cents = Column(BigInteger, nullable=False)
     currency = Column(String, default="inr", server_default="inr", nullable=False)
     status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
     # Cumulative refunded amount (minor units) across ALL refund events for this
     # charge. Accumulated per refund event (deduped on refund id) so the status
     # flips to "refunded" once several PARTIAL refunds sum to the full charge,
     # instead of staying "partially_refunded" forever (finding #5).
-    refunded_minor = Column(Integer, default=0, server_default="0", nullable=False)
+    refunded_minor = Column(BigInteger, default=0, server_default="0", nullable=False)
 
     # Provider references
     razorpay_payment_id = Column(String, unique=True, index=True, nullable=True)
@@ -1559,12 +1559,12 @@ class Invoice(Base):
     buyer_snapshot = Column(JSONB, nullable=True)
     place_of_supply = Column(String(2), nullable=True)  # GST state code
     supply_kind = Column(String, nullable=True)  # intra|inter|export
-    taxable_value_minor = Column(Integer, nullable=True)
+    taxable_value_minor = Column(BigInteger, nullable=True)
     tax_rate_bps = Column(Integer, nullable=True)
-    cgst_minor = Column(Integer, nullable=True)
-    sgst_minor = Column(Integer, nullable=True)
-    igst_minor = Column(Integer, nullable=True)
-    total_tax_minor = Column(Integer, nullable=True)
+    cgst_minor = Column(BigInteger, nullable=True)
+    sgst_minor = Column(BigInteger, nullable=True)
+    igst_minor = Column(BigInteger, nullable=True)
+    total_tax_minor = Column(BigInteger, nullable=True)
     hsn_sac = Column(String(8), nullable=True)
     is_export = Column(Boolean, nullable=False, default=False, server_default="false")
 
@@ -1581,9 +1581,9 @@ class Invoice(Base):
     # settlement and the FIRC exactly. The rate is stored alongside it (INR per
     # one foreign unit, x1e6, integer — never a float on a statutory record)
     # purely so the arithmetic is reproducible on the face of the invoice.
-    inr_amount_minor = Column(Integer, nullable=True)
-    inr_taxable_value_minor = Column(Integer, nullable=True)
-    inr_total_tax_minor = Column(Integer, nullable=True)
+    inr_amount_minor = Column(BigInteger, nullable=True)
+    inr_taxable_value_minor = Column(BigInteger, nullable=True)
+    inr_total_tax_minor = Column(BigInteger, nullable=True)
     fx_rate_micros = Column(BigInteger, nullable=True)
     fx_rate_source = Column(String(32), nullable=True)  # razorpay_base_amount
     line_items = Column(JSONB, nullable=True)
