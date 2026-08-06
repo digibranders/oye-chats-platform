@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import {
-  Inbox,
-  Mail,
   MailOpen,
-  CheckCheck,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
   MousePointerClick,
 } from 'lucide-react';
 import { Button, EmptyState, Skeleton, cn } from '../../design-system';
-import { MetricCard } from '../../design-system/components/MetricCard';
 import { ConversationCard } from '../../design-system/components/ConversationCard';
 import { getCannedResponses } from '../../services/api';
 import { type CannedResponse } from '../../types/domain';
@@ -80,8 +76,6 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
     [messages, selectedId],
   );
 
-  const newCount = messages.filter((m) => m.status === 'new').length;
-  const repliedCount = messages.filter((m) => m.status === 'replied').length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   function handleSelect(id: number, status: string | undefined): void {
@@ -122,13 +116,6 @@ export function OfflineMessagesPanel({ botId }: OfflineMessagesPanelProps): Reac
 
   return (
     <div className="space-y-6">
-      {/* Volume at a glance */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <MetricCard label="Total messages" value={total.toLocaleString()} icon={Inbox} />
-        <MetricCard label="New on this page" value={newCount} icon={Mail} />
-        <MetricCard label="Replied on this page" value={repliedCount} icon={CheckCheck} />
-      </div>
-
       {/* Filter */}
       <StatusFilterBar
         value={statusFilter}

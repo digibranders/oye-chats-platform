@@ -9,12 +9,10 @@ import {
 } from 'react';
 import {
   AlertTriangle,
-  Calendar,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Copy,
-  Mail,
   Pencil,
   Plus,
   Send,
@@ -1370,33 +1368,6 @@ function EmailPanel({ bot, onSaved, onFeedback }: BotPanelProps): ReactElement {
   );
 }
 
-// ── Status tile ───────────────────────────────────────────────────────────────
-
-interface StatusTileProps {
-  icon: typeof WebhookIcon;
-  label: string;
-  value: string;
-  connected: boolean;
-  detail: string;
-}
-
-function StatusTile({ icon: Icon, label, value, connected, detail }: StatusTileProps): ReactElement {
-  return (
-    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5 shadow-[var(--ds-shadow-sm)]">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-          <Icon size={18} aria-hidden="true" />
-        </span>
-        <StatusBadge tone={connected ? 'success' : 'neutral'} dot>
-          {connected ? 'Connected' : 'Not set up'}
-        </StatusBadge>
-      </div>
-      <p className="mt-3 text-[13px] font-medium text-[var(--ds-text-muted)]">{label}</p>
-      <p className="mt-0.5 text-[18px] font-bold tracking-tight text-[var(--ds-text)]">{value}</p>
-      <p className="mt-1 text-[12px] text-[var(--ds-text-subtle)]">{detail}</p>
-    </div>
-  );
-}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -1477,18 +1448,6 @@ export function IntegrationsPage(): ReactElement {
     );
   }
 
-  // ── Derived connection status for the overview tiles ─────────────────────────
-
-  const settings = selectedBot ? readIntegrations(selectedBot) : null;
-
-  const activeWebhookCount = webhooks.filter((webhook) => webhook.is_active).length;
-  const meetingConnected = !!settings?.meeting_booking_enabled;
-  const meetingProviderName = settings?.meeting_provider
-    ? (MEETING_PROVIDERS.find((item) => item.id === settings.meeting_provider)?.name ??
-      settings.meeting_provider)
-    : null;
-  const recipientCount = settings?.notification_emails?.default?.length ?? 0;
-
   // ── Render ───────────────────────────────────────────────────────────────────
 
   const feedbackBanner: ReactNode = <FeedbackBanner feedback={feedback} onDismiss={dismiss} />;
@@ -1514,44 +1473,8 @@ export function IntegrationsPage(): ReactElement {
   }
 
   return (
-    <PageContainer
-      title="Integrations"
-      description="See what’s connected to this agent - and wire up your CRM, calendar, and inbox."
-    >
+    <PageContainer title="Integrations">
       {feedbackBanner}
-
-      {/* Connection overview - answers "what is connected?" at a glance. */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatusTile
-          icon={WebhookIcon}
-          label="Webhooks"
-          value={
-            webhooksLoading
-              ? '-'
-              : `${activeWebhookCount} active`
-          }
-          connected={activeWebhookCount > 0}
-          detail={
-            webhooks.length > 0
-              ? `${webhooks.length} endpoint${webhooks.length === 1 ? '' : 's'} total`
-              : 'Push events to your CRM'
-          }
-        />
-        <StatusTile
-          icon={Calendar}
-          label="Meeting booking"
-          value={meetingConnected ? (meetingProviderName ?? 'Enabled') : 'Off'}
-          connected={meetingConnected}
-          detail={meetingConnected ? 'Visitors can book in chat' : 'Let visitors book a call'}
-        />
-        <StatusTile
-          icon={Mail}
-          label="Email routing"
-          value={recipientCount > 0 ? `${recipientCount} recipient${recipientCount === 1 ? '' : 's'}` : 'Default'}
-          connected={recipientCount > 0}
-          detail={recipientCount > 0 ? 'Team notifications on' : 'Route notifications to your team'}
-        />
-      </div>
 
       <Tabs
         ariaLabel="Integration sections"

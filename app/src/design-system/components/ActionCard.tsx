@@ -1,6 +1,7 @@
 import { ArrowRight, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/cn';
+import { IconTile } from './IconTile';
 
 interface ActionCardBaseProps {
   /** The action, e.g. "Train your AI". */
@@ -38,9 +39,12 @@ export function ActionCard({
 
   const inner = (
     <>
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)] transition-colors group-hover:bg-[var(--ds-accent)] group-hover:text-[var(--ds-accent-fg)]">
-        <Icon size={20} aria-hidden="true" />
-      </span>
+      <IconTile
+        icon={Icon}
+        tone="accent"
+        size="md"
+        className="transition-colors group-hover:from-[var(--ds-accent)] group-hover:to-[var(--ds-accent)] group-hover:text-[var(--ds-accent-fg)] group-hover:ring-[var(--ds-accent)]"
+      />
       <span className="min-w-0 flex-1">
         <span className="block text-[14px] font-semibold text-[var(--ds-text)]">{title}</span>
         <span className="mt-0.5 block text-[13px] leading-relaxed text-[var(--ds-text-muted)]">

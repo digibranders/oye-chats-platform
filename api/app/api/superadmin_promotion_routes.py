@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
-from app.db.models import Client, Plan, Promotion, Subscription
+from app.db.models import Bot, Client, Plan, Promotion, Subscription
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -189,6 +189,54 @@ def get_promotion(promotion_id: int, superadmin: Client = Depends(get_superadmin
         if promo is None:
             raise HTTPException(status_code=404, detail="Promotion not found.")
         return _serialize(promo, _promotion_stats(session, promo.id))
+
+
+@router.get("/promotions/{promotion_id}/redemptions")
+def list_promotion_redemptions(promotion_id: int, superadmin: Client = Depends(get_superadmin)):
+    """The customers who redeemed this promotion.
+
+    One row per subscription carrying this ``promotion_id`` (a redemption is a
+    subscription minted through the offer), newest first, joined to the client,
+    bot, and plan. ``status`` is the subscription's lifecycle (active / past_due
+    / canceled / expired) so a superadmin can see who is still in the free
+    period, who converted to paid, and who churned.
+    """
+    with get_session() as session:
+        promo = session.get(Promotion, promotion_id)
+        if promo is None:
+            raise HTTPException(status_code=404, detail="Promotion not found.")
+
+        rows = session.execute(
+            select(Subscription, Client, Bot, Plan)
+            .join(Client, Client.id == Subscription.client_id)
+            .outerjoin(Bot, Bot.id == Subscription.bot_id)
+            .outerjoin(Plan, Plan.id == Subscription.plan_id)
+            .where(Subscription.promotion_id == promotion_id)
+            .order_by(Subscription.created_at.desc())
+        ).all()
+
+        now = datetime.now(UTC)
+        redemptions = [
+            {
+                "subscription_id": sub.id,
+                "status": sub.status,
+                "client_id": sub.client_id,
+                "client_name": client.name if client else None,
+                "client_email": client.email if client else None,
+                "bot_id": sub.bot_id,
+                "bot_name": bot.name if bot else None,
+                "plan_name": plan.name if plan else None,
+                "promo_free_until": sub.promo_free_until.isoformat() if sub.promo_free_until else None,
+                # Convenience flags for the UI: still in the free window vs past it.
+                "in_free_period": bool(sub.promo_free_until and _ensure_utc(sub.promo_free_until) > now),
+                "redeemed_at": sub.created_at.isoformat() if sub.created_at else None,
+            }
+            for sub, client, bot, plan in rows
+        ]
+        return {
+            "promotion": _serialize(promo, _promotion_stats(session, promo.id)),
+            "redemptions": redemptions,
+        }
 
 
 @router.post("/promotions")

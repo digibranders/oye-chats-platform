@@ -185,6 +185,7 @@ def add_chat_message(
     bot_id: int = None,
     media_card: dict | None = None,
     media_secondary: list | None = None,
+    is_unanswered: bool = False,
 ):
     """Save a message to chat history. Supports both client_id (legacy) and bot_id (new).
 
@@ -200,6 +201,7 @@ def add_chat_message(
         content=content,
         media_card=media_card,
         media_secondary=media_secondary,
+        is_unanswered=is_unanswered,
     )
     session.add(new_message)
     session.flush()
@@ -1025,6 +1027,70 @@ def get_top_questions(session, client_id: int = None, limit: int = 5, bot_id: in
 
     results = session.execute(stmt).all()
     return [{"question": r.content, "count": r.count} for r in results]
+
+
+def get_unanswered_questions(
+    session, client_id: int = None, bot_id: int = None, limit: int = 50, days: int | None = None
+):
+    """Top questions the bot could NOT answer from its knowledge base.
+
+    Each bot message flagged ``is_unanswered`` (the no-info pivot) is paired
+    with the user message that immediately preceded it in the same session -
+    that user turn is the question. Questions are grouped case-insensitively;
+    the representative shown is the most-recent phrasing. Ordered by frequency,
+    with recency as the tiebreak.
+
+    Scoped to a single ``bot_id`` when given, else to every bot owned by
+    ``client_id``. ``days`` optionally limits to a trailing window.
+    """
+    params: dict = {"limit": limit}
+    if bot_id is not None:
+        scope = "s.bot_id = :bot_id"
+        params["bot_id"] = bot_id
+    else:
+        scope = "s.bot_id IN (SELECT id FROM bots WHERE client_id = :client_id)"
+        params["client_id"] = client_id
+
+    since = ""
+    if days is not None and days > 0:
+        since = "AND b.created_at >= now() - make_interval(days => :days)"
+        params["days"] = days
+
+    sql = text(
+        f"""
+        SELECT (array_agg(q.question ORDER BY q.asked_at DESC))[1] AS question,
+               count(*)        AS ask_count,
+               max(q.asked_at) AS last_asked
+        FROM chat_messages b
+        JOIN chat_sessions s ON s.id = b.session_id
+        CROSS JOIN LATERAL (
+            SELECT btrim(u.content) AS question, u.created_at AS asked_at
+            FROM chat_messages u
+            WHERE u.session_id = b.session_id
+              AND u.role = 'user'
+              AND u.id < b.id
+            ORDER BY u.id DESC
+            LIMIT 1
+        ) q
+        WHERE b.role = 'bot'
+          AND b.is_unanswered IS TRUE
+          AND {scope}
+          {since}
+          AND length(btrim(q.question)) > 0
+        GROUP BY lower(btrim(q.question))
+        ORDER BY ask_count DESC, last_asked DESC
+        LIMIT :limit
+        """
+    )
+    rows = session.execute(sql, params).fetchall()
+    return [
+        {
+            "question": r.question,
+            "count": int(r.ask_count),
+            "last_asked": r.last_asked.isoformat() if r.last_asked else None,
+        }
+        for r in rows
+    ]
 
 
 def get_message_activity(session, client_id: int = None, days: int = None, bot_id: int = None):

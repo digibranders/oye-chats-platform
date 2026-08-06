@@ -34,6 +34,7 @@ import { getDocuments, getDocumentPages, deleteDocument, getKnowledgeState } fro
 import type { KnowledgeSource, SourcePage } from '../../../types/domain';
 import { PagesDrawer } from '../../launch-studio/PagesDrawer';
 import { AddKnowledgePanel } from './AddKnowledgePanel';
+import { KnowledgeGapsPanel } from './KnowledgeGapsPanel';
 import { AutoRecrawlCard } from './AutoRecrawlCard';
 import { RecrawlMenu } from './RecrawlMenu';
 import { RecrawlDiffModal } from './RecrawlDiffModal';
@@ -640,6 +641,10 @@ export function KnowledgePage(): ReactElement {
               />
             )}
           </section>
+
+          {/* Knowledge gaps sit between what the AI knows (Sources) and the
+              fix (Add knowledge): the insight and its remedy in one place. */}
+          <KnowledgeGapsPanel agentId={agentId} />
 
           <AddKnowledgePanel
             agentId={agentId}

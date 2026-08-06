@@ -16,10 +16,11 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <title>OyeChats Admin</title>
   <script>
-    // Apply the persisted theme before first paint to avoid a light/dark flash.
-    // Mirrors the design-system ThemeProvider: key 'oc_theme', DEFAULT 'system'
-    // (unset resolves against the OS preference). Keep this in sync with
-    // STORAGE_KEY in src/design-system/theme/ThemeProvider.tsx.
+    // Apply the persisted theme + contrast before first paint to avoid a flash.
+    // Mirrors the design-system ThemeProvider: keys 'oc_theme' (DEFAULT 'system',
+    // unset resolves against the OS preference) and 'oc_contrast' (DEFAULT
+    // 'default'). Keep this in sync with STORAGE_KEY / CONTRAST_STORAGE_KEY in
+    // src/design-system/theme/ThemeProvider.tsx.
     (function () {
       try {
         var m = localStorage.getItem('oc_theme');           // 'light' | 'dark' | 'system' | null
@@ -29,6 +30,9 @@
         var el = document.documentElement;
         el.classList.toggle('dark', dark);
         el.style.colorScheme = dark ? 'dark' : 'light';
+        if (localStorage.getItem('oc_contrast') === 'high') {
+          el.setAttribute('data-contrast', 'high');
+        }
       } catch (e) { /* localStorage unavailable - ignore */ }
     })();
   </script>

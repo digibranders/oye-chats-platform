@@ -1,22 +1,16 @@
 import { type ReactNode } from 'react';
-import { type LucideIcon } from 'lucide-react';
-import { cn } from '../../../design-system';
+import { cn, IconTile, type TileIcon } from '../../../design-system';
 
 /** Semantic tint for a channel's leading glyph. */
 export type ChannelIconTone = 'accent' | 'success' | 'info' | 'neutral';
 
-const iconToneStyles: Record<ChannelIconTone, string> = {
-  accent: 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]',
-  success: 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]',
-  info: 'bg-[var(--ds-info-soft)] text-[var(--ds-info)]',
-  neutral: 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]',
-};
-
 export interface ChannelCardProps {
-  /** Channel glyph (Website / Meetings / WhatsApp …). */
-  icon: LucideIcon;
+  /** Channel glyph (Website / Meetings / WhatsApp …) — Lucide icon or brand glyph. */
+  icon: TileIcon;
   /** Tint of the glyph. Defaults to `accent`. */
   iconTone?: ChannelIconTone;
+  /** Set for self-colored brand glyphs (WhatsApp / Messenger) so tone won't recolor them. */
+  brand?: boolean;
   /** Channel name, e.g. "Website". */
   name: string;
   /** One line on what this channel does. */
@@ -50,6 +44,7 @@ function slugify(value: string): string {
 export function ChannelCard({
   icon: Icon,
   iconTone = 'accent',
+  brand = false,
   name,
   description,
   status,
@@ -67,15 +62,13 @@ export function ChannelCard({
       )}
     >
       <div className="flex items-start gap-4 p-5">
-        <span
-          className={cn(
-            'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
-            iconToneStyles[iconTone],
-          )}
-          aria-hidden="true"
-        >
-          <Icon size={20} />
-        </span>
+        {brand ? (
+          <span className="inline-flex h-10 w-10 shrink-0 overflow-hidden rounded-[11px] shadow-[var(--ds-shadow-sm)] ring-1 ring-inset ring-[var(--ds-border-strong)]/30">
+            <Icon size={40} aria-hidden="true" />
+          </span>
+        ) : (
+          <IconTile icon={Icon} tone={iconTone} size="md" />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">

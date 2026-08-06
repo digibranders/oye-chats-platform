@@ -42,6 +42,7 @@ import {
   Button,
   Card,
   FeedbackBanner,
+  IconTile,
   InsightCard,
   PageContainer,
   Skeleton,
@@ -259,9 +260,7 @@ export function ApiKeysPage(): ReactElement {
       {/* ── Secret key ──────────────────────────────────────────────────────── */}
       <Card className="p-6">
         <div className="mb-5 flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-            <KeyRound size={18} aria-hidden="true" />
-          </span>
+          <IconTile icon={KeyRound} tone="accent" size="md" />
           <div className="min-w-0">
             <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">Secret key</h2>
             <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
@@ -400,9 +399,7 @@ export function ApiKeysPage(): ReactElement {
       {/* ── How to use it ───────────────────────────────────────────────────── */}
       <Card className="p-6">
         <div className="mb-4 flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]">
-            <Terminal size={18} aria-hidden="true" />
-          </span>
+          <IconTile icon={Terminal} tone="neutral" size="md" />
           <div className="min-w-0">
             <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">How to use your key</h2>
             <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">

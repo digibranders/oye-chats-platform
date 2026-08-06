@@ -13,14 +13,11 @@
 import { type ReactElement, useCallback, useMemo, useState } from 'react';
 import {
   AlertCircle,
-  BadgeCheck,
   Bell,
   ChevronRight,
   Download,
-  Gauge,
   Lock,
   MessageSquare,
-  Trophy,
   Users,
   X,
 } from 'lucide-react';
@@ -35,7 +32,6 @@ import {
 // MetricCard + DataTable are Foundation-phase components not yet re-exported
 // from the design-system barrel (the orchestrator wires those exports), so we
 // import them from their module paths directly.
-import { MetricCard } from '../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
@@ -58,7 +54,6 @@ import {
   leadInitials,
   normalizeTier,
 } from './leadModel';
-import type { LeadStatsSummary } from './leadModel';
 
 const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
   { value: 'named', label: 'Named leads' },
@@ -215,17 +210,6 @@ function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
 }
 
 /** The metric row; only shown once stats resolve. */
-function LeadsOverview({ stats }: { stats: LeadStatsSummary }): ReactElement {
-  return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <MetricCard label="Total leads" value={stats.total.toLocaleString()} icon={Users} />
-      <MetricCard label="Qualified" value={stats.qualified.toLocaleString()} icon={BadgeCheck} />
-      <MetricCard label="Ready to buy" value={stats.sql.toLocaleString()} icon={Trophy} />
-      <MetricCard label="Avg. score" value={`${stats.avgScore}`} icon={Gauge} />
-    </div>
-  );
-}
-
 export function LeadsPage(): ReactElement {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
@@ -574,7 +558,6 @@ export function LeadsPage(): ReactElement {
   return (
     <PageContainer
       title="Leads"
-      description="The people who talked to your AI - most recent chats first."
       actions={
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => void handleMarkAllRead()} disabled={!hasUnread}>
@@ -621,8 +604,6 @@ export function LeadsPage(): ReactElement {
 
       {status === 'ready' && stats && (
         <>
-          <LeadsOverview stats={stats} />
-
           {/* Filters */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div
@@ -736,6 +717,7 @@ export function LeadsPage(): ReactElement {
             rows={filtered}
             rowKey={(lead) => lead.session_id}
             caption="Leads captured by your AI chatbots"
+            pageSize={20}
             onRowClick={openLead}
             empty={
               leads.length === 0 ? (

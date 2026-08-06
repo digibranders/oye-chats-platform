@@ -1,4 +1,5 @@
-import { Code2, MessageCircle, MessagesSquare, type LucideIcon } from 'lucide-react';
+import { Code2 } from 'lucide-react';
+import { MessengerGlyph, WhatsAppGlyph, type TileIcon } from '../../../design-system';
 
 /**
  * A connection surface that is planned but not yet live. Rendered as a quiet,
@@ -12,8 +13,10 @@ export interface ComingSoonChannel {
   name: string;
   /** One line on what it will do. */
   description: string;
-  /** Leading glyph. */
-  icon: LucideIcon;
+  /** Leading glyph - a Lucide icon or a self-colored brand glyph. */
+  icon: TileIcon;
+  /** True when `icon` is a self-colored brand mark (so the tile tone won't recolor it). */
+  brand?: boolean;
 }
 
 /**
@@ -26,13 +29,15 @@ export const COMING_SOON_CHANNELS: readonly ComingSoonChannel[] = [
     id: 'whatsapp',
     name: 'WhatsApp',
     description: 'Answer customers on WhatsApp with the same trained agent.',
-    icon: MessageCircle,
+    icon: WhatsAppGlyph,
+    brand: true,
   },
   {
     id: 'messenger',
     name: 'Messenger',
     description: 'Connect your Facebook Page inbox to your agent.',
-    icon: MessagesSquare,
+    icon: MessengerGlyph,
+    brand: true,
   },
   {
     id: 'api',

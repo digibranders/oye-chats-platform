@@ -2,6 +2,7 @@
 // split-chunk correctness logic is unit-tested independently.
 // See sentinelStripper.test.js for regression coverage.
 import { createSentinelStripper } from './sentinelStripper.js';
+import { readSessionId } from './storage-keys.js';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -443,21 +444,34 @@ export const sendTranscriptEmail = async (sessionId, recipientEmail) => {
 
 /**
  * Journey capture — records the ordered list of page paths the visitor
- * touches on the host site before opening chat. Powers the "before chat"
- * timeline on the admin Leads page for Standard-plan clients.
+ * touches on the host site before, during, and after chatting. Powers
+ * the "before chat" attribution on the Leads page AND the Journeys view
+ * under Analytics (top pages / paths that convert / post-chat activity).
  *
  * Stored in sessionStorage (namespaced per bot) so it clears when the tab
  * closes — matches GDPR expectations and mirrors how UTM capture works.
  * Uses a small in-memory dedupe against the last entry so a SPA that
  * fires history.pushState multiple times for the same route doesn't
  * balloon the array.
+ *
+ * Every entry carries a ``phase`` tag — ``pre`` before chat opens, ``chat``
+ * for event markers, ``post`` for pages the visitor sees after chat has
+ * been opened at least once. The transition is a one-way flip stored in
+ * sessionStorage under ``oyechats_chat_phase_<botKey>``; once flipped,
+ * every subsequent auto-appended pathname is tagged ``post``.
  */
-const JOURNEY_MAX_ENTRIES = 50;
+const JOURNEY_MAX_ENTRIES = 200;
 const JOURNEY_PATH_MAX_LEN = 500;
+const JOURNEY_FLUSH_THROTTLE_MS = 10_000;
 
 const _journeyKey = () => {
     const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
     return `oyechats_journey_${botKey}`;
+};
+
+const _journeyPhaseKey = () => {
+    const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
+    return `oyechats_chat_phase_${botKey}`;
 };
 
 const _readJourney = () => {
@@ -479,17 +493,165 @@ const _writeJourney = (entries) => {
     }
 };
 
-const _appendJourneyEntry = (path) => {
-    if (typeof path !== 'string' || !path) return;
+const _currentPhase = () => {
+    try {
+        return sessionStorage.getItem(_journeyPhaseKey()) === 'post' ? 'post' : 'pre';
+    } catch {
+        return 'pre';
+    }
+};
+
+const _flipToPostPhase = () => {
+    try {
+        sessionStorage.setItem(_journeyPhaseKey(), 'post');
+    } catch {
+        /* private mode — accept the loss of phase distinction */
+    }
+};
+
+// Append a journey entry. ``options.phase`` overrides the current phase
+// (used for chat-phase markers); ``options.event`` attaches a whitelisted
+// event name (chat_opened, handoff_requested, meeting_booked,
+// offline_message_sent, chat_closed, lead_captured). Dedupes against the
+// tail using the (path, phase, event) triple so a marker fired twice by
+// racy UI code doesn't double-write.
+const _appendJourneyEntry = (path, options = {}) => {
+    if (typeof path !== 'string' || !path) return null;
     const trimmed = path.slice(0, JOURNEY_PATH_MAX_LEN);
+    const phase = options.phase || _currentPhase();
+    const event = typeof options.event === 'string' ? options.event : undefined;
     const entries = _readJourney();
     const last = entries[entries.length - 1];
-    if (last && last.path === trimmed) return; // dedupe same-path bursts
-    entries.push({ path: trimmed, ts: new Date().toISOString() });
+    if (
+        last &&
+        last.path === trimmed &&
+        last.phase === phase &&
+        last.event === event
+    ) {
+        return null; // same-tail dedupe
+    }
+    const entry = { path: trimmed, ts: new Date().toISOString(), phase };
+    if (event) entry.event = event;
+    entries.push(entry);
     if (entries.length > JOURNEY_MAX_ENTRIES) {
         entries.splice(0, entries.length - JOURNEY_MAX_ENTRIES);
     }
     _writeJourney(entries);
+    return entry;
+};
+
+// Throttled per-session flush of the full current journey to the
+// backend. Multiple appends in a 10-second window coalesce into one
+// POST (the pending timer sees the freshest journey since sessionStorage
+// is the source of truth). Uses sendBeacon on pagehide so the last
+// post-chat navigation still lands even if the tab is being torn down.
+const _lastJourneyFlushAt = new Map(); // sessionId -> ms timestamp
+const _pendingJourneyFlush = new Map(); // sessionId -> timeout id
+let _pagehideHookInstalled = false;
+
+const _flushJourneyNow = (sessionId, { beacon = false } = {}) => {
+    if (!sessionId) return;
+    _lastJourneyFlushAt.set(sessionId, Date.now());
+    const pending = _pendingJourneyFlush.get(sessionId);
+    if (pending) {
+        clearTimeout(pending);
+        _pendingJourneyFlush.delete(sessionId);
+    }
+    const journey = _readJourney();
+    if (!journey.length) return;
+    const payload = JSON.stringify({
+        session_id: sessionId,
+        journey,
+    });
+    if (beacon && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        try {
+            const blob = new Blob([payload], { type: 'application/json' });
+            navigator.sendBeacon(`${API_URL}/chat/behavioral-signals`, blob);
+            return;
+        } catch {
+            /* fall through to fetch */
+        }
+    }
+    fetch(`${API_URL}/chat/behavioral-signals`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: payload,
+        keepalive: true,
+    }).catch(() => {
+        /* non-critical — dropped update just means the next tick catches up */
+    });
+};
+
+const _installPagehideHook = (sessionIdRef) => {
+    if (_pagehideHookInstalled || typeof window === 'undefined') return;
+    _pagehideHookInstalled = true;
+    const flush = () => {
+        const id = typeof sessionIdRef === 'function' ? sessionIdRef() : sessionIdRef;
+        if (id) _flushJourneyNow(id, { beacon: true });
+    };
+    try {
+        window.addEventListener('pagehide', flush);
+        window.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') flush();
+        });
+    } catch {
+        /* very old browser — accept the loss of a final beacon */
+    }
+};
+
+/**
+ * Fire-and-forget throttled journey sync. Callers append entries via
+ * ``_appendJourneyEntry`` (directly or through ``markChatEvent``) and
+ * then invoke this to flush; multiple calls inside a 10-second window
+ * coalesce into a single POST.
+ */
+export const sendJourneyUpdate = (sessionId) => {
+    if (!sessionId) return;
+    _installPagehideHook(() => sessionId);
+    const now = Date.now();
+    const last = _lastJourneyFlushAt.get(sessionId) || 0;
+    const wait = Math.max(0, JOURNEY_FLUSH_THROTTLE_MS - (now - last));
+    if (wait === 0) {
+        _flushJourneyNow(sessionId);
+        return;
+    }
+    if (_pendingJourneyFlush.has(sessionId)) return; // already scheduled
+    const timer = setTimeout(() => _flushJourneyNow(sessionId), wait);
+    _pendingJourneyFlush.set(sessionId, timer);
+};
+
+// Remembered by markChatEvent + collectPageContext so the SPA history
+// hooks can flush post-phase page changes to the backend without every
+// caller having to thread sessionId through history.pushState.
+let _activeJourneySessionId = null;
+
+const _appendAndMaybeFlush = (path) => {
+    const before = _currentPhase();
+    const entry = _appendJourneyEntry(path);
+    if (!entry) return;
+    // Once chat has been opened, SPA route changes are the interesting
+    // "post-chat behavior" signal — flush them (throttled) to the
+    // backend. Pre-chat navigations rely on the init POST + subsequent
+    // markChatEvent flushes.
+    if (before === 'post' && _activeJourneySessionId) {
+        sendJourneyUpdate(_activeJourneySessionId);
+    }
+};
+
+/**
+ * Record a chat lifecycle marker (chat_opened / chat_closed) or a
+ * conversion event (handoff_requested / meeting_booked /
+ * offline_message_sent / lead_captured) anchored to the current page,
+ * and trigger a flush. ``chat_opened`` also flips the phase flag so
+ * every subsequent auto-appended pathname is tagged ``post``.
+ */
+export const markChatEvent = (sessionId, eventName) => {
+    if (!eventName || typeof window === 'undefined') return;
+    if (sessionId) _activeJourneySessionId = sessionId;
+    const path = window.location?.pathname || '/';
+    const entry = _appendJourneyEntry(path, { phase: 'chat', event: eventName });
+    if (eventName === 'chat_opened') _flipToPostPhase();
+    if (entry && _activeJourneySessionId) sendJourneyUpdate(_activeJourneySessionId);
 };
 
 let _journeyHooksInstalled = false;
@@ -507,15 +669,15 @@ const _installJourneyHooks = () => {
         const origReplace = window.history.replaceState;
         window.history.pushState = function (...args) {
             const ret = origPush.apply(this, args);
-            _appendJourneyEntry(window.location.pathname);
+            _appendAndMaybeFlush(window.location.pathname);
             return ret;
         };
         window.history.replaceState = function (...args) {
             const ret = origReplace.apply(this, args);
-            _appendJourneyEntry(window.location.pathname);
+            _appendAndMaybeFlush(window.location.pathname);
             return ret;
         };
-        window.addEventListener('popstate', () => _appendJourneyEntry(window.location.pathname));
+        window.addEventListener('popstate', () => _appendAndMaybeFlush(window.location.pathname));
     } catch {
         /* host page may freeze history — accept the loss of SPA journey entries */
     }
@@ -529,11 +691,27 @@ const _installJourneyHooks = () => {
  * so "journey before chat" captures the pages a visitor browses BEFORE opening
  * the chat, not just the page where they happened to open it. Idempotent: the
  * history hooks install once, and same-path bursts dedupe.
+ *
+ * Also rehydrates ``_activeJourneySessionId`` from persisted chat state so
+ * mid-chat page reloads keep flushing post-phase navigations to the
+ * backend without waiting for the next markChatEvent to re-seed it.
  */
 export const recordPageVisit = () => {
     if (typeof window === 'undefined') return;
-    _appendJourneyEntry(window.location.pathname);
+    _appendAndMaybeFlush(window.location.pathname);
     _installJourneyHooks();
+    if (!_activeJourneySessionId && _currentPhase() === 'post') {
+        try {
+            const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || undefined;
+            const persisted = readSessionId(botKey);
+            if (persisted) {
+                _activeJourneySessionId = persisted;
+                _installPagehideHook(() => _activeJourneySessionId);
+            }
+        } catch {
+            /* storage-keys unavailable — skip rehydration */
+        }
+    }
 };
 
 /**

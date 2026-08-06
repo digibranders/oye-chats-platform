@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback } from '../services/api';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -61,14 +61,29 @@ const sanitizeMarkdown = (text) => {
         .trim();
 };
 
-// Centered divider — iMessage/WhatsApp style system transition message
-const SystemMessage = ({ text }) => (
-    <div className="flex items-center gap-2 my-2 px-4">
-        <div className="flex-1 h-px bg-gray-100" />
-        <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{text}</span>
-        <div className="flex-1 h-px bg-gray-100" />
-    </div>
-);
+// Centered iMessage/WhatsApp-style system transition line. Short labels (a
+// timestamp, "Alice left") stay on one line with side dividers; a long
+// sentence wraps to a centered pill without dividers, so it never forces the
+// chat panel wider than its container.
+const SystemMessage = ({ text }) => {
+    const isShort = typeof text === 'string' && text.length <= 28;
+    if (isShort) {
+        return (
+            <div className="flex items-center gap-2 my-2 px-4 min-w-0">
+                <div className="flex-1 h-px bg-gray-100" />
+                <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{text}</span>
+                <div className="flex-1 h-px bg-gray-100" />
+            </div>
+        );
+    }
+    return (
+        <div className="my-2 px-4 flex justify-center min-w-0">
+            <span className="max-w-[85%] text-center text-[11px] leading-relaxed text-gray-400 font-medium break-words">
+                {text}
+            </span>
+        </div>
+    );
+};
 
 // Initials helper — handles unicode names and empty values defensively.
 const getInitials = (name) => {
@@ -1345,6 +1360,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             const fallbackReason = response?.fallback_reason || response?.state || null;
 
             handoffFormInjectedRef.current = false;
+            markChatEvent(sessionId, 'handoff_requested');
 
             if (suggestedAction === 'offline_form') {
                 // The visitor just submitted name+email. Instantly bouncing
@@ -1662,6 +1678,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             writeSessionId(newSessionId, { shareDomain: settings?.session_share_domain });
         }
         await submitLeadCapture(newSessionId, formData);
+        markChatEvent(newSessionId, 'lead_captured');
         markLeadCaptured();
         setShowLeadForm(false);
         setShowWelcome(true);
@@ -1842,6 +1859,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 reason: liveChatState?.fallbackReason || 'manual',
                 transcript,
             });
+            markChatEvent(sessionId, 'offline_message_sent');
             setOfflineSubmitted(true);
         } catch {
             setOfflineError(true);
@@ -2764,7 +2782,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     aria-label="Scroll to latest message"
                     aria-hidden={isAtBottom}
                     tabIndex={isAtBottom ? -1 : 0}
-                    className={`sticky bottom-1 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 -mb-10 md:-mb-4 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-3 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
+                    className={`sticky bottom-3 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 -mb-8 md:-mb-6 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-0 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
                 >
                     <ChevronDown className="w-4 h-4" strokeWidth={2} />
                 </button>
@@ -2790,6 +2808,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         if (!sid) return;
                         try {
                             await submitMeetingBooked(sid, bookingData);
+                            markChatEvent(sid, 'meeting_booked');
                             setMeetingBooked(true);
                             setShowBooking(false);
                             setMessages(prev => [
