@@ -302,6 +302,36 @@ def override_billing_country(
         return {"billing_country": country}
 
 
+@router.get("/reconciliation/gateway")
+def gateway_reconciliation_runs(
+    limit: int = Query(default=7, ge=1, le=60),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Latest gateway-reconciliation runs (blueprint §7). Read-only; the
+    newest run's ``report.deltas`` names exactly what disagrees between
+    Razorpay and local money state — an empty list means the daily safety net
+    ran and found nothing."""
+    from app.db.models import ReconciliationRun
+
+    with get_session() as session:
+        rows = (
+            session.execute(select(ReconciliationRun).order_by(ReconciliationRun.ran_at.desc()).limit(limit))
+            .scalars()
+            .all()
+        )
+        return {
+            "runs": [
+                {
+                    "id": row.id,
+                    "ran_at": row.ran_at.isoformat() if row.ran_at else None,
+                    "delta_count": row.delta_count,
+                    "report": row.report,
+                }
+                for row in rows
+            ]
+        }
+
+
 @router.get("/billing-funnel")
 def billing_funnel(
     days: int = Query(default=7, ge=1, le=90),

@@ -390,6 +390,25 @@ async def task_process_webhook_retries(ctx: dict) -> int:
 # ── Credit lifecycle ────────────────────────────────────────────────────────
 
 
+async def task_gateway_reconciliation(ctx: dict) -> int:
+    """Daily cron: the blueprint §7 safety net — diff Razorpay against local
+    money state and ERROR on any delta. Report-only; see
+    ``services.gateway_reconciliation`` for what each delta means. Returns the
+    delta count (0 = clean)."""
+    import asyncio
+
+    from app.db.session import get_session
+    from app.services.gateway_reconciliation import run_gateway_reconciliation
+
+    def _run() -> int:
+        with get_session() as session:
+            report = run_gateway_reconciliation(session)
+        return int(report.get("delta_count") or 0)
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
+
+
 async def task_prune_processed_webhooks(ctx: dict) -> int:
     """Cron: prune processed_webhooks rows older than 180 days.
 

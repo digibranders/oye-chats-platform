@@ -42,6 +42,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_expire_old_topups,
     task_expire_past_due_subscriptions,
     task_expire_trials,
+    task_gateway_reconciliation,
     task_handoff_escalation,
     task_ingest_documents,
     task_ingest_web_batch,
@@ -202,6 +203,10 @@ class WorkerSettings:
         # Replay-dedup hygiene: prune processed_webhooks rows past any realistic
         # Razorpay retry horizon (weekly, quiet hours).
         cron(task_prune_processed_webhooks, weekday=0, hour=1, minute=30),
+        # Blueprint §7 safety net: daily diff of Razorpay captured payments /
+        # live mandates against local invoices, grants and subscription rows.
+        # 02:00 UTC — after the whole 00:0x billing cron train has settled.
+        cron(task_gateway_reconciliation, hour=2, minute=0),
         cron(task_expire_trials, minute=15),
         cron(task_trial_reminder_emails, hour=9, minute=0),
         # Launch-promo pre-charge reminder — a working-hours send ~10 days before

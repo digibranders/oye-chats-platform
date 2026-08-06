@@ -2231,6 +2231,24 @@ class ReferralConversion(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class ReconciliationRun(Base):
+    """One run of the daily gateway reconciliation (blueprint §7, Wave 3.5).
+
+    ``report`` holds the structured deltas so the superadmin surface can show
+    the latest run; the cron also ERROR-logs any delta for Sentry. Report
+    data, not money — rows are prunable.
+    """
+
+    __tablename__ = "reconciliation_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ran_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    window_from = Column(DateTime(timezone=True), nullable=False)
+    window_to = Column(DateTime(timezone=True), nullable=False)
+    delta_count = Column(Integer, nullable=False, server_default="0", default=0)
+    report = Column(JSONB, nullable=False)
+
+
 class BillingFunnelEvent(Base):
     """One detected drop-off in the payment funnel (Wave 3.0).
 
