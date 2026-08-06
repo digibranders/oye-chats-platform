@@ -264,12 +264,23 @@ def execute_paid_upgrade(
     sub.cancel_reason = sub.cancel_reason or "auto_upgrade"
     session.flush()
 
+    extra_notes: dict[str, str] = {"prev_razorpay_subscription_id": sub.razorpay_subscription_id or ""}
+    if sub.bot_id is not None:
+        # A per-bot upgrade replaces THAT bot's mandate. Without these notes
+        # the activation handler scopes its supersede-sweep to the ACCOUNT row
+        # (bot_id IS NULL): the old per-bot mandate stays live next to the new
+        # one — double billing — and the account row gets wrongly retired.
+        # Same convention as /resume; the handler folds oyechats_bot_id into
+        # its bot-scoped sweep + bot re-link and does NOT mint a new bot.
+        extra_notes["purpose"] = "per_bot_subscription"
+        extra_notes["oyechats_bot_id"] = str(sub.bot_id)
+
     payload = razorpay_service.create_subscription(
         session,
         client,
         new_plan,
         billing_cycle,
-        extra_notes={"prev_razorpay_subscription_id": sub.razorpay_subscription_id or ""},
+        extra_notes=extra_notes,
     )
     payload.setdefault("rollover_credits", rollover_credits)
     payload["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id

@@ -1843,7 +1843,30 @@ def change_plan(
         current_cycle = (sub.billing_cycle or "monthly") if sub is not None else "monthly"
         requested_cycle = request.billing_cycle or current_cycle
         same_plan = sub is not None and sub.plan_id == request.plan_id and sub.status != "trialing"
-        if same_plan and requested_cycle == current_cycle:
+        if same_plan:
+            # Re-picking the current plan while a DOWNGRADE is queued means
+            # "I changed my mind — keep my plan". The cure is cancelling the
+            # scheduled change, NOT /resume: schedule_paid_downgrade also sets
+            # cancel_at_period_end + gateway_cancel_executed_at, so the
+            # resume_required hand-off below would route the customer into
+            # Mode 2, mint a re-auth checkout — and leave scheduled_plan_id
+            # set, so the promotion cron would STILL execute the downgrade
+            # they walked away from (review P2-1).
+            if sub.scheduled_plan_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "scheduled_change_pending",
+                        "message": (
+                            "You have a plan change scheduled for the end of this period. "
+                            "Cancel the scheduled change to keep your current plan."
+                        ),
+                    },
+                )
+            # A cancel-pending sub blocks BOTH the same-cycle re-pick and a
+            # cycle switch (review P2-4): executing a billing change on a
+            # subscription the customer explicitly cancelled would silently
+            # resurrect it — reactivation must be its own deliberate step.
             if sub.cancel_at_period_end:
                 raise HTTPException(
                     status_code=409,
@@ -1851,11 +1874,12 @@ def change_plan(
                         "code": "resume_required",
                         "message": (
                             "Your plan is scheduled to cancel at the end of the period. "
-                            "Use Reactivate to keep it — picking the plan again would not."
+                            "Use Reactivate first — then you can change the billing cycle."
                         ),
                     },
                 )
-            raise HTTPException(status_code=400, detail="You are already on this plan.")
+            if requested_cycle == current_cycle:
+                raise HTTPException(status_code=400, detail="You are already on this plan.")
         cycle_switch_up = same_plan and current_cycle == "monthly" and requested_cycle == "annual"
         cycle_switch_down = same_plan and current_cycle == "annual" and requested_cycle == "monthly"
 
@@ -2122,8 +2146,9 @@ def change_plan(
                 detail={
                     "code": "plans_equal_price",
                     "message": (
-                        f"{new_plan.name} costs the same as your current plan, so there is "
-                        "nothing to charge or refund. Contact support if you need to switch."
+                        f"Switching between {new_plan.name} and your current plan isn't "
+                        "automated yet because they are priced the same. Contact support "
+                        "and we'll move you over."
                     ),
                 },
             )
@@ -3062,7 +3087,7 @@ def _validate_coupon_or_400(session, coupon_code: str | None) -> None:
         return
     from app.db.models import Coupon
 
-    coupon = session.execute(select(Coupon).where(Coupon.code == code)).scalar_one_or_none()
+    coupon = session.execute(select(Coupon).where(func.lower(Coupon.code) == code.lower())).scalar_one_or_none()
     now = datetime.now(UTC)
     valid = (
         coupon is not None

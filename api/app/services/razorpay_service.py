@@ -225,7 +225,10 @@ def create_topup_order(
     currency = "INR"
 
     rzp = _get_razorpay()
-    amount_inr = int(amount_inr_major)
+    # round(), not int(): pack prices are operator-edited floats; matching
+    # rounds (Wave 4b), so the CHARGE must round identically or a "1599.99"
+    # pack would match a 1600 request and then debit ₹1599.
+    amount_inr = int(round(float(amount_inr_major)))
     amount_paise = amount_inr * 100
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
@@ -576,6 +579,23 @@ def rebuild_upgrade_checkout(
     status = str(sub.get("status") or "").lower()
     if status not in _AUTHORIZABLE_SUB_STATES:
         logger.info("Pending upgrade sub %s is '%s' — not reusable; caller will re-mint", subscription_id, status)
+        return None
+    # Rail check (Wave 4 review P1-2): the pending sub must bill the SAME
+    # Razorpay plan the caller is asking for. The upgrade-pending key stores
+    # only the local plan id, not the cycle — without this, a customer who
+    # abandoned an ANNUAL upgrade checkout and later asked for MONTHLY was
+    # handed the still-authorizable annual sub captioned "(monthly)" and
+    # charged the annual price on authorization. A mismatch is treated like a
+    # dead pending: caller clears the marker and mints the right rail.
+    expected_plan_id = _plan_id_for_rail(plan, billing_cycle, charge_currency(getattr(client, "billing_country", None)))
+    if expected_plan_id and sub.get("plan_id") and sub.get("plan_id") != expected_plan_id:
+        logger.info(
+            "Pending upgrade sub %s bills plan %s but %s (%s) was requested — not reusable; caller will re-mint",
+            subscription_id,
+            sub.get("plan_id"),
+            expected_plan_id,
+            billing_cycle,
+        )
         return None
     return {
         "provider": "razorpay",

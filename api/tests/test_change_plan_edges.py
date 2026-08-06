@@ -216,3 +216,102 @@ def test_cancel_pending_repick_hands_off_to_resume(db, monkeypatch):
     res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
     assert res.status_code == 409, res.text
     assert res.json()["detail"]["code"] == "resume_required"
+
+
+# ── Wave 4 review findings ───────────────────────────────────────────────────
+
+
+def test_per_bot_upgrade_threads_bot_notes_to_the_mint(db, monkeypatch):
+    # P1-1: without purpose/oyechats_bot_id in the notes, the activation
+    # handler sweeps the ACCOUNT row and leaves the old per-bot mandate live —
+    # double billing.
+    from app.db.models import Bot
+    from app.services import transition_service
+
+    api, client = _mk(db, monkeypatch)
+    lower = _plan(db, slug="edges-bot-low", monthly=44900)
+    higher = _plan(db, slug="edges-bot-high", monthly=94900)
+    bot = Bot(client_id=client.id, name="B", bot_key="bot-edges-up")
+    db.add(bot)
+    db.flush()
+    sub = _active_sub(db, client, lower)
+    sub.bot_id = bot.id
+    db.flush()
+
+    with patch(
+        "app.services.razorpay_service.create_subscription",
+        return_value={"subscription_id": "sub_edges_botup", "key_id": "rzp_test"},
+    ) as mint:
+        payload = transition_service.execute_paid_upgrade(db, client, sub, higher, "monthly")
+    assert payload["subscription_id"] == "sub_edges_botup"
+    notes = mint.call_args.kwargs["extra_notes"]
+    assert notes["purpose"] == "per_bot_subscription"
+    assert notes["oyechats_bot_id"] == str(bot.id)
+
+
+def test_pending_upgrade_reuse_refuses_a_wrong_cycle_sub(db, monkeypatch):
+    # P1-2: an abandoned ANNUAL checkout must never be handed to a customer
+    # who asked for MONTHLY — the rail check treats it as dead and re-mints.
+    from types import SimpleNamespace
+
+    from app.services import razorpay_service
+
+    plan = _plan(db, slug="edges-rail")
+    client = Client(name="R", email="edges-rail@test.example", api_key="key-edges-rail", billing_country="IN")
+    db.add(client)
+    db.flush()
+
+    fake = SimpleNamespace(
+        subscription=SimpleNamespace(
+            fetch=lambda sub_id: {"id": sub_id, "status": "created", "plan_id": "plan_edges-rail_a"}
+        )
+    )
+    monkeypatch.setattr(razorpay_service, "_get_razorpay", lambda: fake)
+
+    # Same rail → reusable.
+    assert razorpay_service.rebuild_upgrade_checkout("sub_pending_rail", client, plan, "annual") is not None
+    # Requested monthly, pending bills annual → refuse reuse.
+    assert razorpay_service.rebuild_upgrade_checkout("sub_pending_rail", client, plan, "monthly") is None
+
+
+def test_scheduled_downgrade_repick_points_at_cancel_scheduled_change(db, monkeypatch):
+    # P2-1: schedule_paid_downgrade also sets cancel_at_period_end, so the
+    # resume hand-off would resurrect the mandate while the promotion cron
+    # STILL executes the abandoned downgrade. The right verb is
+    # cancel-scheduled-change.
+    api, client = _mk(db, monkeypatch)
+    plan = _plan(db, slug="edges-sched")
+    target = _plan(db, slug="edges-sched-low", monthly=44900)
+    sub = _active_sub(db, client, plan, cancel_pending=True)
+    sub.scheduled_plan_id = target.id
+    db.flush()
+    res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["code"] == "scheduled_change_pending"
+
+
+def test_cancel_pending_blocks_cycle_switch_too(db, monkeypatch):
+    # P2-4: a cycle switch on a sub the customer explicitly cancelled would
+    # silently resurrect it — reactivation must be its own deliberate step.
+    api, client = _mk(db, monkeypatch)
+    plan = _plan(db, slug="edges-ccs")
+    _active_sub(db, client, plan, cycle="monthly", cancel_pending=True)
+    with patch("app.services.transition_service.execute_paid_upgrade") as upgrade:
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "annual"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["code"] == "resume_required"
+    assert not upgrade.called
+
+
+def test_coupon_lookup_is_case_insensitive(db, monkeypatch):
+    api, _ = _mk(db, monkeypatch)
+    plan = _plan(db, slug="edges-coupon-case")
+    db.add(Coupon(code="MixedCase10", percent_off=10, is_active=True))
+    db.flush()
+    res = api.post(
+        "/subscriptions/checkout",
+        json={"plan_id": plan.id, "billing_cycle": "monthly", "coupon_code": "mixedcase10"},
+    )
+    # Recognised as the REAL coupon (honest not-redeemable message), not as a typo.
+    assert res.status_code == 400, res.text
+    assert "redeemed online" in res.json()["detail"]
