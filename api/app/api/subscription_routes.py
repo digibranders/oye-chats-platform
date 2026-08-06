@@ -1343,7 +1343,7 @@ def _resolve_confirmed_billing_country_or_409(
         request_country=request_country,
         detected_country=None,  # IP geo is display-grade; never charge on it
     )
-    detected_country = resolve_country(http_request)
+    detected_country = resolve_country(http_request) if http_request is not None else None
 
     if ctx.source == "unresolved" and detected_country not in (None, "IN"):
         raise HTTPException(
@@ -1385,6 +1385,38 @@ def _resolve_confirmed_billing_country_or_409(
     return confirmed_country
 
 
+def _require_precharge_gates(
+    client: Client,
+    http_request: Request | None = None,
+    *,
+    request_country: str | None = None,
+    allow_usd: bool | None = None,
+) -> str:
+    """The shared pre-charge gate for EVERY route that can mint a new Razorpay
+    mandate (Wave 1.3): /checkout, /change-plan Branch 3, /resume Mode 2, and
+    top-ups.
+
+    Runs the billing-country resolution with its trust rules
+    (``billing_country_required`` / GSTIN⇒IN / ``intl_usd_pending`` / geo
+    flagging) and then the Rule 46 billing-identity check. Before this,
+    /change-plan and /resume created real gateway mandates with none of these
+    — a trial→paid conversion through change-plan skipped identity collection
+    entirely, so its activation webhook issued an invoice with no buyer.
+
+    ``allow_usd`` defaults to the intl rail flag (plan mandates); top-up passes
+    ``False`` because its order path is INR-only. Returns the resolved country
+    for callers that need the rail.
+    """
+    country = _resolve_confirmed_billing_country_or_409(
+        request_country=request_country,
+        client=client,
+        http_request=http_request,
+        allow_usd=INTL_PAYMENTS_ENABLED if allow_usd is None else allow_usd,
+    )
+    _require_billing_identity(client)
+    return country
+
+
 @router.post("/checkout")
 def create_checkout(
     request: CheckoutRequest,
@@ -1406,19 +1438,13 @@ def create_checkout(
     # to domestic; a country already on the client is honoured as the fallback.
     # Shared with /credits/topup, which passes allow_usd=False because its order
     # path is still INR-only — see _resolve_confirmed_billing_country_or_409.
-    confirmed_country = _resolve_confirmed_billing_country_or_409(
-        request_country=request.billing_country,
-        client=client,
-        http_request=http_request,
-        allow_usd=INTL_PAYMENTS_ENABLED,
-    )
+    # Country trust rules + Rule 46 buyer identity, shared with every other
+    # mandate-minting route (Wave 1.3). Identity is collected BEFORE the
+    # charge: the invoice is issued from the payment webhook, so this is the
+    # last point at which we can ask who is being billed.
+    confirmed_country = _require_precharge_gates(client, http_request, request_country=request.billing_country)
 
     _assert_no_stacking(client, request.coupon_code)
-
-    # Collect the Rule 46 buyer identity BEFORE the charge: the invoice is
-    # issued from the payment webhook, so this is the last point at which we
-    # can ask who is being billed.
-    _require_billing_identity(client)
 
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
@@ -1866,6 +1892,12 @@ def change_plan(
         billing_cycle = request.billing_cycle or (sub.billing_cycle if sub else "monthly")
         from app.services import razorpay_service
 
+        # Same pre-charge gates as /checkout (Wave 1.3): this branch mints a
+        # REAL authorizable mandate, so it must refuse — for a missing buyer
+        # identity or an untrusted/foreign country — BEFORE subscription.create,
+        # not discover the gap at invoice time.
+        _require_precharge_gates(client, http_request)
+
         try:
             if request.bot_id is not None:
                 result = razorpay_service.create_bot_resubscription(
@@ -2042,6 +2074,7 @@ class ResumeSubscriptionRequest(BaseModel):
 
 @router.post("/resume")
 def resume_subscription(
+    http_request: Request,
     request: ResumeSubscriptionRequest = ResumeSubscriptionRequest(),
     client: Client = Depends(get_current_client),
 ):
@@ -2146,6 +2179,12 @@ def resume_subscription(
             session.flush()
 
         # ── Mode 2: the mandate is dead — re-authorise ────────────────────────
+
+        # Mode 2 mints a REAL new mandate, so it runs the same pre-charge gates
+        # as /checkout (Wave 1.3). Deliberately NOT applied to Mode 1 above —
+        # that path only clears a flag on a live mandate, and an identity gap
+        # must not block a customer from un-cancelling their own subscription.
+        _require_precharge_gates(client, http_request)
 
         # Bill the replacement from the moment the paid period actually runs
         # out. Omitted, Razorpay starts the subscription at authorization and
