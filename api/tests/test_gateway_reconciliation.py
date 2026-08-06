@@ -83,7 +83,12 @@ def test_clean_state_reports_no_deltas(db):
 
 def test_captured_payment_without_invoice_is_a_delta(db):
     _client(db)
-    report = _run(db, payments=[{"id": "pay_recon_ghost", "status": "captured", "amount": 94900}])
+    report = _run(
+        db,
+        payments=[
+            {"id": "pay_recon_ghost", "status": "captured", "amount": 94900, "notes": {"oyechats_client_id": "1"}}
+        ],
+    )
     assert report["delta_count"] == 1
     assert report["deltas"]["captured_payment_without_invoice"] == ["pay_recon_ghost"]
 
@@ -200,7 +205,12 @@ def test_authenticated_deferred_sub_is_live_not_a_zombie(db):
 
 def test_report_is_persisted_with_delta_count(db):
     _client(db)
-    report = _run(db, payments=[{"id": "pay_recon_persist", "status": "captured", "amount": 100}])
+    report = _run(
+        db,
+        payments=[
+            {"id": "pay_recon_persist", "status": "captured", "amount": 100, "notes": {"oyechats_client_id": "1"}}
+        ],
+    )
     assert report["delta_count"] == 1
     row = db.query(ReconciliationRun).order_by(ReconciliationRun.id.desc()).first()
     assert row is not None
@@ -221,3 +231,54 @@ def test_fetch_failure_is_reported_not_raised(db):
     # delta so silence still means "nothing is wrong".
     assert "payments_fetch_failed" in report["deltas"]
     assert report["delta_count"] >= 1
+
+
+def test_unattributed_payment_is_a_soft_delta_not_an_alert(db):
+    # A ₹1 smoke-test charge or dashboard payment link carries no oyechats_*
+    # notes — reported for visibility, but never allowed to poison the ERROR
+    # alert with false accusations.
+    _client(db)
+    report = _run(db, payments=[{"id": "pay_recon_foreign", "status": "captured", "amount": 100, "notes": {}}])
+    assert report["delta_count"] == 0
+    assert report["soft_deltas"]["captured_payment_unattributed"] == ["pay_recon_foreign"]
+
+
+def test_seat_addon_subscription_is_known_locally(db):
+    # Seat add-ons are real gateway subscriptions stored in
+    # seat_addon_subscription_id — they must NOT flag as unknown (that was a
+    # guaranteed daily false positive per seated customer).
+    client = _client(db)
+    plan = _plan(db)
+    db.add(
+        Subscription(
+            client_id=client.id,
+            plan_id=plan.id,
+            status="active",
+            billing_cycle="monthly",
+            operator_quantity=3,
+            payment_provider="razorpay",
+            razorpay_subscription_id="sub_recon_main",
+            seat_addon_subscription_id="sub_recon_seataddon",
+        )
+    )
+    db.flush()
+    report = _run(
+        db,
+        subscriptions=[
+            {"id": "sub_recon_main", "status": "active"},
+            {"id": "sub_recon_seataddon", "status": "active"},
+        ],
+    )
+    assert report["delta_count"] == 0
+
+
+def test_delta_lists_are_capped(db):
+    _client(db)
+    payments = [
+        {"id": f"pay_recon_bulk_{i}", "status": "captured", "amount": 100, "notes": {"oyechats_client_id": "1"}}
+        for i in range(150)
+    ]
+    report = _run(db, payments=payments)
+    bucket = report["deltas"]["captured_payment_without_invoice"]
+    assert len(bucket) == 101
+    assert bucket[-1] == "... and 50 more"

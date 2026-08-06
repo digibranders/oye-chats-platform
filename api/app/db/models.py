@@ -1595,6 +1595,10 @@ class Invoice(Base):
     # auto-emails when NULL, so an admin "regenerate PDF" can never re-email
     # the customer; superadmin resend updates it.
     emailed_at = Column(DateTime(timezone=True), nullable=True)
+    # Recovery-sweep claim marker (NOT delivery). ``emailed_at`` means the send
+    # RETURNED; this is stamped before the attempt so overlapping sweeps can't
+    # double-send, and a stale claim (crashed worker) is re-swept after 1h.
+    email_claimed_at = Column(DateTime(timezone=True), nullable=True)
     # E-invoicing (IRP) — unused until the ₹5cr B2B threshold applies.
     irn = Column(String, nullable=True)
     signed_qr = Column(Text, nullable=True)
@@ -1621,6 +1625,7 @@ _INVOICE_FROZEN_EXEMPT = frozenset(
         "pdf_url",
         "invoice_url",
         "emailed_at",
+        "email_claimed_at",
         "status",
         "refunded_minor",
         "irn",

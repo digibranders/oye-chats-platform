@@ -64,7 +64,7 @@ limiter = Limiter(
 )
 
 
-def money_route_limit(*limit_strings: str):
+def money_route_limit(scope: str, *limit_strings: str):
     """Per-client rate-limit DEPENDENCY for the money routes (M7, Wave 3.2).
 
     The ``@limiter.limit`` decorator resolves the request by finding a
@@ -75,7 +75,10 @@ def money_route_limit(*limit_strings: str):
     slowapi's underlying ``limits`` strategy.
 
     Keys on the client's API key (falling back to IP pre-auth), so the ceiling
-    is per account, not per office NAT. Limits are deliberately generous —
+    is per account, not per office NAT. ``scope`` names the route family so
+    each route gets its OWN bucket — without it, equal limit strings across
+    /checkout and /topup share one storage key and ten failed checkout
+    attempts would 429 an unrelated top-up. Limits are deliberately generous —
     an abuse ceiling that real customers can never feel.
     """
     from fastapi import HTTPException
@@ -86,7 +89,7 @@ def money_route_limit(*limit_strings: str):
     def _dep(request: Request) -> None:
         key = key_from_api_key(request)
         for item in parsed:
-            if not limiter.limiter.hit(item, "money", key):
+            if not limiter.limiter.hit(item, "money", scope, key):
                 raise HTTPException(
                     status_code=429,
                     detail="Too many billing requests — please wait a moment and try again.",

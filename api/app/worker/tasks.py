@@ -444,6 +444,25 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.execute(delete(ProcessedWebhook).where(ProcessedWebhook.event_id.in_(batch_ids)))
                 session.commit()
                 total += len(batch_ids)
+
+            # Funnel telemetry ages out too (90d — the superadmin view caps
+            # its window at 90). Same batched pattern; prunable by design.
+            from app.db.models import BillingFunnelEvent
+
+            funnel_cutoff = datetime.now(UTC) - timedelta(days=90)
+            while True:
+                funnel_ids = (
+                    session.execute(
+                        select(BillingFunnelEvent.id).where(BillingFunnelEvent.created_at < funnel_cutoff).limit(5000)
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not funnel_ids:
+                    break
+                session.execute(delete(BillingFunnelEvent).where(BillingFunnelEvent.id.in_(funnel_ids)))
+                session.commit()
+                total += len(funnel_ids)
         return total
 
     loop = asyncio.get_running_loop()
@@ -2054,6 +2073,29 @@ def _send_invoice_email(to_email: str, invoice, url: str, pdf_bytes: bytes | Non
     send_invoice_email(to_email, invoice, url, pdf_bytes=pdf_bytes)
 
 
+def _stored_invoice_pdf_bytes(invoice) -> bytes | None:
+    """Fetch the PUBLISHED invoice PDF bytes from R2, or None if unreadable.
+
+    The object key embeds a random capability token (see ``_invoice_pdf_key``),
+    so it cannot be re-derived from the invoice number — it must be parsed
+    from the stored ``pdf_url``. The body stream is always closed.
+    """
+    from contextlib import closing
+    from urllib.parse import urlparse
+
+    from app.services.r2_service import get_object as _r2_get_object
+
+    try:
+        key = urlparse(str(invoice.pdf_url or "")).path.lstrip("/")
+        if not key:
+            return None
+        body, _ct = _r2_get_object(key)
+        with closing(body):
+            return body.read()
+    except Exception:
+        return None
+
+
 def _invoice_pdf_key(invoice_number: str) -> str:
     """R2 object key for an invoice PDF.
 
@@ -2082,7 +2124,9 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     path is never involved. Returns the number of PDFs produced.
     """
     import asyncio
+    from datetime import timedelta
 
+    from sqlalchemy import or_ as sa_or
     from sqlalchemy import select as sa_select
     from sqlalchemy import update as sa_update
 
@@ -2175,6 +2219,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
             # are excluded in SQL so they can't starve the batch (they surface
             # via reconciliation_anomalies instead).
             if config.INVOICE_EMAILS_ENABLED:
+                claim_stale_before = _utcnow() - timedelta(hours=1)
                 unmailed = (
                     session.execute(
                         sa_select(InvoiceModel)
@@ -2182,6 +2227,13 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                             InvoiceModel.invoice_number.isnot(None),
                             InvoiceModel.pdf_url.isnot(None),
                             InvoiceModel.emailed_at.is_(None),
+                            # A live claim belongs to a concurrent sweep; a
+                            # STALE claim (>1h) is a crashed worker — re-sweep
+                            # it, or the invoice is silently lost forever.
+                            sa_or(
+                                InvoiceModel.email_claimed_at.is_(None),
+                                InvoiceModel.email_claimed_at < claim_stale_before,
+                            ),
                             InvoiceModel.buyer_snapshot["email"].astext.isnot(None),
                         )
                         .order_by(InvoiceModel.id)
@@ -2191,16 +2243,25 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     .all()
                 )
                 for invoice in unmailed:
-                    # M-5: CLAIM the send first via guarded UPDATE. A slow
-                    # sweep can overlap the next cron tick on the same unmailed
-                    # set; both used to select this row and both sent — the
-                    # customer got their invoice twice. Only the run that wins
-                    # the NULL→now transition sends; a failed send un-claims so
-                    # the next sweep retries.
+                    # M-5: CLAIM the send via guarded UPDATE on the dedicated
+                    # claim column — overlapping sweeps can't double-send, and
+                    # because ``emailed_at`` is stamped only AFTER the send
+                    # returns, a crash between claim and send leaves the row
+                    # visible to the emails_pending alert and re-sweepable once
+                    # the claim goes stale. (The first M-5 cut claimed via
+                    # emailed_at itself, which turned a crash into silent
+                    # permanent loss of a tax document.)
                     claimed = session.execute(
                         sa_update(InvoiceModel)
-                        .where(InvoiceModel.id == invoice.id, InvoiceModel.emailed_at.is_(None))
-                        .values(emailed_at=_utcnow())
+                        .where(
+                            InvoiceModel.id == invoice.id,
+                            InvoiceModel.emailed_at.is_(None),
+                            sa_or(
+                                InvoiceModel.email_claimed_at.is_(None),
+                                InvoiceModel.email_claimed_at < claim_stale_before,
+                            ),
+                        )
+                        .values(email_claimed_at=_utcnow())
                     ).rowcount
                     session.commit()
                     if not claimed:
@@ -2209,25 +2270,28 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                         # L-8: attach the STORED R2 bytes — the customer must
                         # receive the exact document that was published (a
                         # re-render can differ if templates changed since).
-                        # Re-render only when the stored object is unreadable.
-                        try:
-                            from app.services.r2_service import get_object as _r2_get_object
-
-                            body, _ct = _r2_get_object(_invoice_pdf_key(invoice.invoice_number))
-                            pdf = body.read()
-                        except Exception:
+                        # The object key is parsed from pdf_url (the key
+                        # embeds a random capability token, so it cannot be
+                        # re-derived from the invoice number). Re-render only
+                        # when the stored object is unreadable.
+                        pdf = _stored_invoice_pdf_bytes(invoice)
+                        if pdf is None:
                             logger.warning(
                                 "task_render_invoice_pdfs: stored PDF unreadable for invoice %s — re-rendering",
                                 invoice.id,
                             )
                             pdf = _render_invoice_pdf(invoice)
                         _send_invoice_email(invoice.buyer_snapshot["email"], invoice, invoice.pdf_url, pdf_bytes=pdf)
+                        invoice.emailed_at = _utcnow()
+                        invoice.email_claimed_at = None
+                        session.commit()
                         logger.info("task_render_invoice_pdfs: recovered email for invoice %s", invoice.id)
                     except Exception:  # noqa: BLE001 — retried next sweep; alerted daily via emails_pending
                         session.rollback()
-                        # Un-claim so the next sweep retries the send.
+                        # Release the claim so the NEXT sweep retries promptly
+                        # (a crash before this line is covered by staleness).
                         session.execute(
-                            sa_update(InvoiceModel).where(InvoiceModel.id == invoice.id).values(emailed_at=None)
+                            sa_update(InvoiceModel).where(InvoiceModel.id == invoice.id).values(email_claimed_at=None)
                         )
                         session.commit()
                         logger.exception("task_render_invoice_pdfs: recovery email failed for invoice %s", invoice.id)

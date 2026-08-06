@@ -5,13 +5,19 @@ delegating dispatch to razorpay_service.handle_webhook_event.
 """
 
 import logging
+import threading
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.config import RAZORPAY_WEBHOOK_SECRET, WEBHOOK_RETRY_ON_ERROR
 from app.db.models import FailedWebhook
 from app.db.session import get_session
 from app.services import invoice_service
+
+# See razorpay_webhook: webhooks process in their own bounded slice of the
+# threadpool so a delivery burst can't starve every other sync route.
+_WEBHOOK_THREAD_LIMITER = anyio.CapacityLimiter(10)
 
 logger = logging.getLogger(__name__)
 
@@ -28,26 +34,33 @@ router = APIRouter(prefix="/webhooks", tags=["billing-webhooks"])
 _SIG_FAILURE_WINDOW_SECS = 900.0
 _SIG_FAILURE_ALERT_THRESHOLD = 3
 _sig_failures: dict[str, float] = {"count": 0.0, "window_start": 0.0}
+# The webhook pipeline now runs in the threadpool, so this counter is mutated
+# from multiple threads — an unlocked read-modify-write would under-count and
+# could miss the alert threshold.
+_sig_failures_lock = threading.Lock()
 
 
 def _note_signature_failure(now: float) -> None:
-    if now - _sig_failures["window_start"] > _SIG_FAILURE_WINDOW_SECS:
-        _sig_failures["window_start"] = now
-        _sig_failures["count"] = 0.0
-    _sig_failures["count"] += 1
-    if _sig_failures["count"] >= _SIG_FAILURE_ALERT_THRESHOLD:
+    with _sig_failures_lock:
+        if now - _sig_failures["window_start"] > _SIG_FAILURE_WINDOW_SECS:
+            _sig_failures["window_start"] = now
+            _sig_failures["count"] = 0.0
+        _sig_failures["count"] += 1
+        count = _sig_failures["count"]
+    if count >= _SIG_FAILURE_ALERT_THRESHOLD:
         logger.error(
             "Razorpay webhook signature verification failed %d times in the last %.0f min — "
             "check RAZORPAY_WEBHOOK_SECRET against the Razorpay dashboard (a rotated or "
             "mistyped secret rejects EVERY billing event before dead-lettering)",
-            int(_sig_failures["count"]),
+            int(count),
             _SIG_FAILURE_WINDOW_SECS / 60,
         )
 
 
 def _note_signature_success() -> None:
-    _sig_failures["count"] = 0.0
-    _sig_failures["window_start"] = 0.0
+    with _sig_failures_lock:
+        _sig_failures["count"] = 0.0
+        _sig_failures["window_start"] = 0.0
 
 
 def _dead_letter(
@@ -128,9 +141,22 @@ async def razorpay_webhook(request: Request):
         if request.headers.get(k) is not None
     }
 
-    from starlette.concurrency import run_in_threadpool
+    import anyio.to_thread
 
-    return await run_in_threadpool(_process_razorpay_webhook, raw_payload, signature, event_id, replay_headers)
+    # Dedicated capacity limiter: run_in_threadpool draws from anyio's default
+    # 40-token pool shared with EVERY sync route in the app. A Razorpay retry
+    # burst (synchronized redelivery after an outage) with handlers that make
+    # inline gateway calls could otherwise occupy all 40 tokens and queue the
+    # entire API. Webhooks get their own 10 tokens and can never starve the
+    # rest of the app.
+    return await anyio.to_thread.run_sync(
+        _process_razorpay_webhook,
+        raw_payload,
+        signature,
+        event_id,
+        replay_headers,
+        limiter=_WEBHOOK_THREAD_LIMITER,
+    )
 
 
 def _process_razorpay_webhook(

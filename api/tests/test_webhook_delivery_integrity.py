@@ -97,3 +97,32 @@ def test_final_exhaustion_logs_at_error(db, monkeypatch, caplog):
         webhook_service._deliver_webhook(hook.id, "lead.created", {"k": "v"}, attempt=webhook_service._MAX_RETRIES)
 
     assert any("EXHAUSTED" in rec.message for rec in caplog.records)
+
+
+def test_locked_rows_are_skipped_not_double_claimed(db, monkeypatch):
+    # M-4: a row locked by another sweeper must be SKIPPED, not waited on or
+    # double-enqueued. A second raw connection holds FOR UPDATE on the due row
+    # while the sweep runs — with skip_locked the sweep claims zero and the
+    # enqueue is never called. Deleting .with_for_update(skip_locked=True)
+    # makes this test HANG (lock wait), which fails via the enqueue assert
+    # after the statement timeout — either way it cannot pass.
+    import sqlalchemy
+
+    delivery = _due_delivery(db, attempt=3)
+    monkeypatch.setattr(webhook_service, "get_session", lambda: _session_cm(db))
+
+    other = db.get_bind().connect()
+    try:
+        other.execute(sqlalchemy.text("SET statement_timeout = '5s'"))
+        other.execute(sqlalchemy.text("BEGIN"))
+        other.execute(
+            sqlalchemy.text("SELECT id FROM webhook_deliveries WHERE id = :id FOR UPDATE"),
+            {"id": delivery.id},
+        )
+        with patch.object(webhook_service, "queue_webhook_delivery") as queue:
+            queued = webhook_service.process_pending_retries()
+        assert queued == 0
+        assert not queue.called
+    finally:
+        other.execute(sqlalchemy.text("ROLLBACK"))
+        other.close()

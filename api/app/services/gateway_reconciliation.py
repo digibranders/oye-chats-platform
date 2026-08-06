@@ -111,9 +111,14 @@ def run_gateway_reconciliation(
     fetch_captured_payments = fetch_captured_payments or _fetch_captured_payments_sdk
     fetch_gateway_subscriptions = fetch_gateway_subscriptions or _fetch_gateway_subscriptions_sdk
 
-    window_to = datetime.now(UTC)
+    # Trailing-edge freshness lag: a payment captured seconds before the run
+    # whose webhook hasn't landed yet is in-flight, not missing. One hour is
+    # generous for Razorpay webhook delivery + dead-letter retry; the window
+    # overlap means tomorrow's run still covers this hour.
+    window_to = datetime.now(UTC) - timedelta(hours=1)
     window_from = window_to - timedelta(hours=window_hours)
     deltas: dict[str, list[Any]] = {}
+    soft_deltas: dict[str, list[Any]] = {}
 
     # ── 1. Captured payments → invoices → grants ────────────────────────────
     payments: list[dict[str, Any]] = []
@@ -127,9 +132,25 @@ def run_gateway_reconciliation(
         invoices = session.execute(select(Invoice).where(Invoice.razorpay_payment_id.in_(pay_ids))).scalars().all()
         by_pay_id = {inv.razorpay_payment_id: inv for inv in invoices}
 
+        payments_by_id = {str(p["id"]): p for p in payments}
         missing = [pid for pid in pay_ids if pid not in by_pay_id]
         if missing:
-            deltas["captured_payment_without_invoice"] = missing
+            # Split by attribution: a payment whose notes carry no oyechats_*
+            # linkage was not created by this platform (₹1 live smoke tests
+            # from CHECKOUT_TEST_CLIENT_IDS driven off a dev DB, dashboard
+            # payment links, manual charges). Those are a SOFT bucket —
+            # reported, WARNING-logged, but not allowed to poison the ERROR
+            # alert whose whole value is that it only fires for real deltas.
+            def _is_ours(pid: str) -> bool:
+                notes = payments_by_id.get(pid, {}).get("notes") or {}
+                return isinstance(notes, dict) and any(str(k).startswith("oyechats_") for k in notes)
+
+            ours = [pid for pid in missing if _is_ours(pid)]
+            foreign = [pid for pid in missing if pid not in ours]
+            if ours:
+                deltas["captured_payment_without_invoice"] = ours
+            if foreign:
+                soft_deltas["captured_payment_unattributed"] = foreign
 
         # A plan charge funds a credit grant; the linked ledger row is the
         # proof the customer got what they paid for. Scoped to kind ==
@@ -171,6 +192,22 @@ def run_gateway_reconciliation(
             )
         ).all()
         local_status = {rid: status for rid, status in local_rows}
+        # Seat add-ons are REAL gateway subscriptions stored in a different
+        # column (one plan sub + one seat sub per seated customer). Without
+        # this union every live seat mandate would flag as
+        # gateway_sub_without_local on every run — permanent false accusations
+        # that train people to ignore the alert. The owning row's status
+        # stands in for the add-on's local liveness (they live and die
+        # together; the orphan sweep owns finer-grained seat auditing).
+        seat_rows = (
+            session.execute(
+                select(Subscription.seat_addon_subscription_id, Subscription.status).where(
+                    Subscription.seat_addon_subscription_id.is_not(None)
+                )
+            )
+        ).all()
+        for rid, status in seat_rows:
+            local_status.setdefault(rid, status)
 
         unknown_locally = [sid for sid in gw_live_ids if sid not in local_status]
         if unknown_locally:
@@ -198,6 +235,19 @@ def run_gateway_reconciliation(
         if dead_backing:
             deltas["local_active_gateway_dead"] = dead_backing
 
+    def _capped(bucket: dict[str, list[Any]]) -> dict[str, list[Any]]:
+        # A pathological run must not embed tens of thousands of ids in one
+        # JSONB row / Sentry line — first 100 of each list plus a count marker.
+        capped: dict[str, list[Any]] = {}
+        for key, values in bucket.items():
+            if len(values) > 100:
+                capped[key] = values[:100] + [f"... and {len(values) - 100} more"]
+            else:
+                capped[key] = values
+        return capped
+
+    deltas = _capped(deltas)
+    soft_deltas = _capped(soft_deltas)
     delta_count = sum(len(v) for v in deltas.values())
     report = {
         "window_from": window_from.isoformat(),
@@ -205,6 +255,7 @@ def run_gateway_reconciliation(
         "payments_checked": len(payments),
         "gateway_subs_checked": len(gateway_subs),
         "deltas": deltas,
+        "soft_deltas": soft_deltas,
         "delta_count": delta_count,
     }
 
@@ -218,6 +269,8 @@ def run_gateway_reconciliation(
     )
     session.commit()
 
+    if soft_deltas:
+        logger.warning("gateway reconciliation soft deltas (unattributed gateway activity): %s", soft_deltas)
     if delta_count:
         logger.error("gateway reconciliation found %d delta(s): %s", delta_count, deltas)
     else:

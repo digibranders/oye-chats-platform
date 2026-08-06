@@ -1655,9 +1655,14 @@ def replay_failed_webhook(
     on a handler error the row is left untouched and a 502 is returned.
     """
     _require_write(admin)
+    import hashlib
     import json
 
     from app.services import razorpay_service
+
+    def _replay_payload_digest(raw_payload) -> str:
+        body = raw_payload if isinstance(raw_payload, bytes) else str(raw_payload).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
 
     with get_session() as session:
         row = session.get(FailedWebhook, failed_webhook_id)
@@ -1682,7 +1687,15 @@ def replay_failed_webhook(
             raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
 
         try:
-            razorpay_service.handle_webhook_event(session, event, row.event_id)
+            razorpay_service.handle_webhook_event(
+                session,
+                event,
+                row.event_id,
+                # Digest parity with the live route (M-2): a replayed event
+                # must leave the same body-digest dedup row, or a later signed
+                # replay of this body with a fresh header id double-processes.
+                _replay_payload_digest(row.raw_payload),
+            )
         except Exception as exc:
             logger.error(
                 "Failed-webhook replay error for id=%s event_id=%s: %s",

@@ -520,7 +520,7 @@ class VerifyRazorpaySubscriptionRequest(BaseModel):
     razorpay_signature: str
 
 
-@router.post("/verify-razorpay-subscription", dependencies=[Depends(money_route_limit("30/minute"))])
+@router.post("/verify-razorpay-subscription", dependencies=[Depends(money_route_limit("verify-sub", "30/minute"))])
 def verify_razorpay_subscription(
     payload: VerifyRazorpaySubscriptionRequest,
     client: Client = Depends(get_current_client),
@@ -1057,7 +1057,7 @@ class BillingFunnelEventBody(BaseModel):
 @router.post(
     "/billing-events",
     status_code=204,
-    dependencies=[Depends(money_route_limit("60/minute"))],
+    dependencies=[Depends(money_route_limit("billing-events", "10/minute"))],
 )
 def record_billing_funnel_event(body: BillingFunnelEventBody, client: Client = Depends(get_current_client)):
     """Record a detected payment-funnel drop-off (customer closed the Razorpay
@@ -1542,7 +1542,7 @@ def _require_precharge_gates(
     return country
 
 
-@router.post("/checkout", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
+@router.post("/checkout", dependencies=[Depends(money_route_limit("checkout", "10/minute", "50/day"))])
 def create_checkout(
     request: CheckoutRequest,
     http_request: Request,
@@ -1794,7 +1794,7 @@ class ChangePlanRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/change-plan", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
+@router.post("/change-plan", dependencies=[Depends(money_route_limit("change-plan", "10/minute", "50/day"))])
 def change_plan(
     request: ChangePlanRequest,
     http_request: Request,
@@ -2271,7 +2271,7 @@ class ResumeSubscriptionRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/resume", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
+@router.post("/resume", dependencies=[Depends(money_route_limit("resume", "10/minute", "50/day"))])
 def resume_subscription(
     http_request: Request,
     request: ResumeSubscriptionRequest = ResumeSubscriptionRequest(),
@@ -2511,7 +2511,7 @@ class SeatChangeRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/seats", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
+@router.post("/seats", dependencies=[Depends(money_route_limit("seats", "10/minute", "50/day"))])
 def change_seat_count(
     request: SeatChangeRequest,
     http_request: Request,
@@ -3011,7 +3011,7 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
         )
 
 
-@credits_router.post("/topup", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
+@credits_router.post("/topup", dependencies=[Depends(money_route_limit("topup", "10/minute", "50/day"))])
 def initiate_topup(
     request: TopupRequest,
     http_request: Request,
@@ -3141,7 +3141,7 @@ class TopupVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
-@credits_router.post("/topup/verify", dependencies=[Depends(money_route_limit("30/minute"))])
+@credits_router.post("/topup/verify", dependencies=[Depends(money_route_limit("topup-verify", "30/minute"))])
 def verify_topup_payment(
     body: TopupVerifyRequest,
     client: Client = Depends(get_current_client),
