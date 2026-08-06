@@ -183,7 +183,11 @@ def test_checkout_422s_for_gstin_with_confirmed_foreign_country(db, monkeypatch)
     # A domestic GST registration cannot bill on the export rail. Refuse
     # loudly instead of any silent rail coercion — and check it BEFORE the
     # intl kill switch so the flag being off can't mask the contradiction.
+    # Patch BOTH the config module and the by-value import the route module
+    # holds — patching config alone is a no-op for subscription_routes and
+    # would let this test silently split-brain between flag states.
     monkeypatch.setattr(config, "INTL_PAYMENTS_ENABLED", True)
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
     api, _ = _mk(
         db,
         monkeypatch,

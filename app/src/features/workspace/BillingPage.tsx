@@ -327,6 +327,25 @@ export function BillingPage(): ReactElement {
         (res?.message as string) || 'Subscription reactivated - it will keep renewing.',
       );
     } catch (err) {
+      // Resume Mode 2 runs the same pre-charge gates as checkout. A missing
+      // buyer identity is not a failure - hand off to the billing-details
+      // form (same flow the plan checkout uses) instead of a dead-end toast;
+      // the customer clicks Reactivate again after saving.
+      const detail =
+        (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
+          ?.detail ?? (err as { detail?: unknown })?.detail;
+      if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'billing_details_required') {
+        handleBillingDetailsRequired((detail as { missing?: string[] }).missing ?? []);
+        return;
+      }
+      if (
+        detail &&
+        typeof detail === 'object' &&
+        (detail as { reason?: string }).reason === 'billing_country_required'
+      ) {
+        handleBillingDetailsRequired(['billing_country']);
+        return;
+      }
       setLifecycleError(err instanceof Error ? err.message : 'Couldn’t reactivate your subscription.');
     } finally {
       setLifecycleBusy(null);
@@ -565,6 +584,7 @@ export function BillingPage(): ReactElement {
         botId={billingBotId}
         onClose={() => setTopupOpen(false)}
         onSuccess={handleSuccess}
+        onBillingDetailsRequired={handleBillingDetailsRequired}
       />
 
       {seatDialog.open && (

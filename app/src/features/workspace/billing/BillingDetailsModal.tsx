@@ -180,7 +180,7 @@ export function BillingDetailsModal({
             hint={
               gstinEntered
                 ? 'Exactly as it appears on your GST certificate - a mismatch can block your input tax credit.'
-                : 'Printed on your invoices. Leave GSTIN blank if you aren’t GST registered.'
+                : 'Optional - any name you want on your invoices (defaults to your account name). Only GST-registered businesses need their exact registered name.'
             }
             error={errors.legal_name}
           >

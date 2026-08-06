@@ -1,4 +1,5 @@
 import { type ReactElement, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   CalendarClock,
@@ -419,6 +420,7 @@ export function UsagePage(): ReactElement {
     selectedBot && selectedPool ? selectedPool.periodCreditsUsed : balance?.periodCreditsUsed ?? 0;
   // `null` = closed. A target carries the pool the top-up is scoped to: the
   // shared account balance (`botId: null`) or one agent's isolated balance.
+  const navigate = useNavigate();
   const [topupTarget, setTopupTarget] = useState<TopupTarget | null>(null);
   // Single top-up chokepoint for every "Buy credits" affordance (page action +
   // the per-pool heroes). On a paid plan it opens the scoped top-up modal; on
@@ -556,6 +558,9 @@ export function UsagePage(): ReactElement {
         botId={topupTarget?.botId ?? null}
         botName={topupTarget?.botName ?? null}
         onClose={() => setTopupTarget(null)}
+        // Usage has no billing-details form of its own — the Billing page owns
+        // it, so send the customer there to complete the hand-off.
+        onBillingDetailsRequired={() => navigate('../billing')}
         onSuccess={() => {
           setTopupTarget(null);
           retry();

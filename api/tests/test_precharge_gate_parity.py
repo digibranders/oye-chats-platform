@@ -1,6 +1,12 @@
 """Wave 1.3 (P1-1): every route that mints a NEW Razorpay mandate runs the SAME
 pre-charge gates as /checkout.
 
+The identity requirement follows the CGST Rule 46 matrix (see
+``_missing_billing_fields``): a REGISTERED buyer (GSTIN) must carry the
+registered legal name + address; an EXPORT buyer must carry an address; an
+unregistered domestic B2C buyer below ₹50,000 owes NOTHING — payment stays
+open to everyone.
+
 ``/change-plan`` Branch 3 (trial/Free → paid, or a lapsed bot returning to
 paid) and ``/resume`` Mode 2 (dead mandate → fresh subscription) created real
 gateway mandates with none of /checkout's gates: no Rule 46 billing-identity
@@ -51,6 +57,14 @@ def _plan(db, slug="std-gate-parity", monthly=94900) -> Plan:
     return plan
 
 
+# A GST-registered buyer with an incomplete record: the gate must refuse until
+# the registered legal name + address are on file (their ITC depends on it).
+_REGISTERED_INCOMPLETE = {
+    "gstin": "27AAPFU0939F1ZV",
+    "billing_state_code": "27",
+    "billing_country": "IN",
+}
+
 _COMPLETE_IDENTITY = {
     "legal_name": "Acme Pvt Ltd",
     "billing_address": {"line1": "1 Lane", "city": "Mumbai", "postal_code": "400001"},
@@ -80,14 +94,29 @@ _CHECKOUT_PAYLOAD = {"subscription_id": "sub_gate_new", "key_id": "rzp_test", "p
 # ── /change-plan Branch 3 ────────────────────────────────────────────────────
 
 
-def test_change_plan_to_paid_requires_billing_identity(db, monkeypatch):
-    api, _ = _mk(db, monkeypatch)  # no identity at all
+def test_change_plan_registered_buyer_requires_full_identity(db, monkeypatch):
+    # GSTIN on record but no legal name / address: refuse before the mint —
+    # the invoice this mandate produces would break the buyer's ITC claim.
+    api, _ = _mk(db, monkeypatch, **_REGISTERED_INCOMPLETE)
     plan = _plan(db)
     with patch("app.services.razorpay_service.create_subscription", return_value=dict(_CHECKOUT_PAYLOAD)) as mint:
         res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
     assert res.status_code == 409, res.text
     assert res.json()["detail"]["code"] == "billing_details_required"
+    assert set(res.json()["detail"]["missing"]) == {"legal_name", "billing_address"}
     assert not mint.called  # refused BEFORE any gateway mandate exists
+
+
+def test_change_plan_b2c_without_details_proceeds(db, monkeypatch):
+    # Unregistered domestic buyer below ₹50k: Rule 46(f) requires nothing —
+    # asking anyway was blocking legitimate payments. The account name and the
+    # supplier-state fallback (Circular 242) make the invoice valid.
+    api, _ = _mk(db, monkeypatch)  # bare account: no GSTIN, no address, no name
+    plan = _plan(db)
+    with patch("app.services.razorpay_service.create_subscription", return_value=dict(_CHECKOUT_PAYLOAD)) as mint:
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+    assert res.status_code == 200, res.text
+    assert mint.called
 
 
 def test_change_plan_intl_pending_for_stored_foreign_country(db, monkeypatch):
@@ -151,8 +180,8 @@ def _dead_mandate_sub(db, client, plan) -> Subscription:
     return sub
 
 
-def test_resume_mode2_requires_billing_identity(db, monkeypatch):
-    api, client = _mk(db, monkeypatch)  # no identity
+def test_resume_mode2_registered_buyer_requires_full_identity(db, monkeypatch):
+    api, client = _mk(db, monkeypatch, **_REGISTERED_INCOMPLETE)
     plan = _plan(db)
     _dead_mandate_sub(db, client, plan)
     with patch("app.services.razorpay_service.create_subscription", return_value=dict(_CHECKOUT_PAYLOAD)) as mint:
@@ -160,6 +189,16 @@ def test_resume_mode2_requires_billing_identity(db, monkeypatch):
     assert res.status_code == 409, res.text
     assert res.json()["detail"]["code"] == "billing_details_required"
     assert not mint.called
+
+
+def test_resume_mode2_b2c_without_details_proceeds(db, monkeypatch):
+    api, client = _mk(db, monkeypatch)  # bare B2C account
+    plan = _plan(db)
+    _dead_mandate_sub(db, client, plan)
+    with patch("app.services.razorpay_service.create_subscription", return_value=dict(_CHECKOUT_PAYLOAD)) as mint:
+        res = api.post("/subscriptions/resume", json={})
+    assert res.status_code == 200, res.text
+    assert mint.called
 
 
 def test_resume_mode2_with_identity_reauthorises(db, monkeypatch):
@@ -197,3 +236,96 @@ def test_resume_mode1_skips_precharge_gates(db, monkeypatch):
         res = api.post("/subscriptions/resume", json={})
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "resumed"
+
+
+def test_upgrade_now_branch_2a_requires_registered_identity(db, monkeypatch):
+    # Branch 2a (paid → higher paid, upgrade-now) mints a replacement mandate;
+    # identity fields are freely clearable after the original checkout, so the
+    # gate must re-check here too — for the registered buyer it applies to.
+    api, client = _mk(db, monkeypatch, **_REGISTERED_INCOMPLETE)
+    lower = _plan(db, slug="std-gate-lower", monthly=44900)
+    higher = _plan(db, slug="std-gate-higher", monthly=94900)
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=lower.id,
+        status="active",
+        billing_cycle="monthly",
+        operator_quantity=1,
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_gate_upgrade",
+        current_period_end=datetime.now(UTC) + timedelta(days=20),
+    )
+    db.add(sub)
+    db.flush()
+    with patch("app.services.transition_service.execute_paid_upgrade") as upgrade:
+        res = api.post("/subscriptions/change-plan", json={"plan_id": higher.id, "billing_cycle": "monthly"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["code"] == "billing_details_required"
+    assert not upgrade.called
+
+
+def test_seat_addition_requires_registered_identity(db, monkeypatch):
+    api, client = _mk(db, monkeypatch, **_REGISTERED_INCOMPLETE)
+    plan = _plan(db, slug="std-gate-seats")
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        status="active",
+        billing_cycle="monthly",
+        operator_quantity=2,
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_gate_seats",
+    )
+    db.add(sub)
+    db.flush()
+    res = api.post("/subscriptions/seats", json={"delta": 1})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["code"] == "billing_details_required"
+
+
+def test_seat_removal_skips_the_gate(db, monkeypatch):
+    # Removing seats charges nothing — an identity gap must not block it.
+    api, client = _mk(db, monkeypatch)  # no identity
+    plan = _plan(db, slug="std-gate-seatrm")
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        status="active",
+        billing_cycle="monthly",
+        operator_quantity=3,
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_gate_seatrm",
+    )
+    db.add(sub)
+    db.flush()
+    with patch("app.services.razorpay_service.cancel_seat_addon"):
+        res = api.post("/subscriptions/seats", json={"delta": -1})
+    # Anything but the identity 409 proves the gate did not fire; the exact
+    # status depends on seat-addon state, which is not this test's concern.
+    assert res.status_code != 409 or res.json().get("detail", {}).get("code") != "billing_details_required"
+
+
+def test_foreign_buyer_needs_address_for_the_export_invoice(db, monkeypatch):
+    # Rule 46's export proviso wants recipient name + address + destination
+    # country on the document. Country routed them here, name falls back to
+    # the account name — only the address is asked for.
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
+    api, _ = _mk(db, monkeypatch, billing_country="US")  # no address
+    plan = _plan(db)
+    with patch("app.services.razorpay_service.create_subscription", return_value=dict(_CHECKOUT_PAYLOAD)) as mint:
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["missing"] == ["billing_address"]
+    assert not mint.called
+
+
+def test_rule_46f_threshold_asks_for_details_on_big_b2c_invoices(db):
+    # Direct unit check of the ₹50,000 boundary for unregistered buyers.
+    from app.api.subscription_routes import _missing_billing_fields
+
+    bare = Client(name="Big", email="big@t.example", api_key="k-big")
+    assert _missing_billing_fields(bare, amount_minor=49_999_00) == []
+    assert set(_missing_billing_fields(bare, amount_minor=50_000_00)) == {
+        "billing_address",
+        "billing_state_code",
+    }

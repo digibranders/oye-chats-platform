@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 
 from app import config
 from app.api import subscription_routes
-from app.api.auth import get_current_client_strict
+from app.api.auth import get_current_client_strict, require_verified_email
 from app.db.models import AuditLog, Client, Invoice, Plan, Subscription
 from app.services import invoice_service
 from app.services.seller_profile_service import save_seller_profile
@@ -56,9 +56,12 @@ def _mk(db, monkeypatch, **client_kw):
     db.add(client)
     db.flush()
     monkeypatch.setattr(subscription_routes, "get_session", lambda: _ctx(db))
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: None)
     app = FastAPI()
     app.include_router(subscription_routes.router)
+    app.include_router(subscription_routes.credits_router)
     app.dependency_overrides[get_current_client_strict] = lambda: client
+    app.dependency_overrides[require_verified_email] = lambda: client
     return TestClient(app), client
 
 
@@ -380,3 +383,137 @@ def test_domestic_inr_invoice_unaffected(db, invoicing_on):
     db.flush()
 
     assert invoice_service.finalize_invoice(db, inv) is True
+
+
+def test_bot_scoped_mandate_locks_the_freeze(db, monkeypatch):
+    # The freeze deliberately has NO bot_id filter: a client whose only live
+    # mandate is per-bot must not be able to flip the account's tax country.
+    from app.db.models import Bot
+
+    api, client = _mk(db, monkeypatch, billing_country="IN")
+    plan = _plan(db)
+    bot = Bot(client_id=client.id, name="B", bot_key="bot-freeze-scope")
+    db.add(bot)
+    db.flush()
+    sub = _mandated_sub(db, client, plan, rzp_id="sub_freeze_bot")
+    sub.bot_id = bot.id
+    db.flush()
+
+    res = api.put("/subscriptions/billing-details", json={"billing_country": "US"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["reason"] == "billing_country_locked"
+
+
+def test_checkout_country_persist_honours_the_freeze(db, monkeypatch):
+    # Review finding: the checkout persist write bypassed the freeze for
+    # per-bot-mandate holders (the already-subscribed guard is account-scoped,
+    # the freeze is not). /checkout {billing_country} must 409 the same way
+    # PUT does — and mint nothing.
+    from unittest.mock import patch
+
+    from app.db.models import Bot
+
+    api, client = _mk(
+        db,
+        monkeypatch,
+        billing_country="IN",
+        billing_address={"line1": "1 Lane", "city": "Mumbai", "postal_code": "400001"},
+        billing_state_code="27",
+    )
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
+    plan = _plan(db)
+    bot = Bot(client_id=client.id, name="B", bot_key="bot-freeze-checkout")
+    db.add(bot)
+    db.flush()
+    sub = _mandated_sub(db, client, plan, rzp_id="sub_freeze_perbot")
+    sub.bot_id = bot.id
+    db.flush()
+
+    with patch("app.services.razorpay_service.create_subscription") as mint:
+        res = api.post(
+            "/subscriptions/checkout",
+            json={"plan_id": plan.id, "billing_cycle": "monthly", "billing_country": "US"},
+        )
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["reason"] == "billing_country_locked"
+    assert not mint.called
+    db.refresh(client)
+    assert client.billing_country == "IN"
+
+
+def test_topup_country_persist_honours_the_freeze(db, monkeypatch):
+    # Reverse direction: a stored-US client with a live mandate must not flip
+    # US→IN through the top-up side door.
+    api, client = _mk(
+        db,
+        monkeypatch,
+        billing_country="US",
+        billing_address={"line1": "1 Infinite Loop", "city": "Cupertino", "postal_code": "95014"},
+    )
+    _mandated_sub(db, client, _plan(db), rzp_id="sub_freeze_topup")
+
+    res = api.post("/credits/topup", json={"amount": 500, "billing_country": "IN"})
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["reason"] == "billing_country_locked"
+    db.refresh(client)
+    assert client.billing_country == "US"
+
+
+def test_superadmin_override_readonly_role_gets_403(db, monkeypatch):
+    from app.api import superadmin_routes_v2
+    from app.api.auth import get_superadmin
+
+    customer = Client(name="R3", email="r3@test.example", api_key="key-r3", billing_country="IN")
+    readonly = Client(
+        name="RO",
+        email="ro@test.example",
+        api_key="key-ro",
+        is_superadmin=True,
+        superadmin_role="readonly",
+    )
+    db.add_all([customer, readonly])
+    db.flush()
+
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: readonly
+    api = TestClient(app)
+
+    res = api.post(
+        f"/superadmin/clients/{customer.id}/billing-country",
+        json={"country": "US", "reason": "attempted by readonly"},
+    )
+    assert res.status_code == 403, res.text
+    db.refresh(customer)
+    assert customer.billing_country == "IN"
+
+
+def test_superadmin_override_refuses_foreign_country_with_gstin(db, monkeypatch):
+    from app.api import superadmin_routes_v2
+    from app.api.auth import get_superadmin
+
+    customer = Client(
+        name="G",
+        email="g@test.example",
+        api_key="key-g",
+        billing_country="IN",
+        gstin="27AAPFU0939F1ZV",
+    )
+    admin = Client(name="A3", email="a3@test.example", api_key="key-a3", is_superadmin=True)
+    db.add_all([customer, admin])
+    db.flush()
+
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: admin
+    api = TestClient(app)
+
+    res = api.post(
+        f"/superadmin/clients/{customer.id}/billing-country",
+        json={"country": "US", "reason": "relocation with GSTIN still set"},
+    )
+    assert res.status_code == 422, res.text
+    db.refresh(customer)
+    assert customer.billing_country == "IN"

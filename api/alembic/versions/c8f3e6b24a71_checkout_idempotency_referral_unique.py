@@ -32,6 +32,7 @@ def upgrade() -> None:
     op.add_column("clients", sa.Column("pending_checkout_subscription_id", sa.String(), nullable=True))
     op.add_column("clients", sa.Column("pending_checkout_plan_id", sa.Integer(), nullable=True))
     op.add_column("clients", sa.Column("pending_checkout_cycle", sa.String(length=8), nullable=True))
+    op.add_column("clients", sa.Column("pending_checkout_country", sa.String(length=2), nullable=True))
     op.add_column("clients", sa.Column("pending_checkout_at", sa.DateTime(timezone=True), nullable=True))
 
     # Collapse duplicates to the earliest (original-terms) row, then enforce.
@@ -49,6 +50,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_constraint("uq_referral_conversions_client", "referral_conversions", type_="unique")
     op.drop_column("clients", "pending_checkout_at")
+    op.drop_column("clients", "pending_checkout_country")
     op.drop_column("clients", "pending_checkout_cycle")
     op.drop_column("clients", "pending_checkout_plan_id")
     op.drop_column("clients", "pending_checkout_subscription_id")

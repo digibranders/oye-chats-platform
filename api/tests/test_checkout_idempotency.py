@@ -291,3 +291,94 @@ def test_checkout_parks_referral_snapshot_in_notes(db, monkeypatch):
     assert notes.get("oyechats_ref_code_id") == str(code.id)
     assert notes.get("oyechats_ref_affiliate_id") == str(affiliate.id)
     assert notes.get("oyechats_ref_commission_bps") == "1500"
+
+
+def test_checkout_different_cycle_mints_fresh(db, monkeypatch):
+    api, client = _mk(db, monkeypatch)
+    plan = _plan(db, slug="std-idem-cycle")
+    with patch(
+        "app.services.razorpay_service.create_subscription",
+        side_effect=[_mint_payload("sub_idem_m"), _mint_payload("sub_idem_a")],
+    ) as mint:
+        first = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+        second = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "annual"})
+    assert first.status_code == 200 and second.status_code == 200
+    assert mint.call_count == 2
+    db.refresh(client)
+    assert client.pending_checkout_subscription_id == "sub_idem_a"
+
+
+def test_checkout_country_change_never_reuses_wrong_rail(db, monkeypatch):
+    # Click 1 confirms IN (INR pending). Click 2 confirms US (no live mandate,
+    # so the change is legitimate). Reusing the INR checkout would hand a
+    # stored-US account an INR mandate — the divergence Wave 1.2 kills — so
+    # the country is part of the reuse key and a fresh USD mint happens.
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
+    api, client = _mk(db, monkeypatch)
+    plan = _plan(db, slug="std-idem-country")
+    with patch(
+        "app.services.razorpay_service.create_subscription",
+        side_effect=[_mint_payload("sub_idem_inr"), _mint_payload("sub_idem_usd")],
+    ) as mint:
+        first = api.post(
+            "/subscriptions/checkout",
+            json={"plan_id": plan.id, "billing_cycle": "monthly", "billing_country": "IN"},
+        )
+        second = api.post(
+            "/subscriptions/checkout",
+            json={"plan_id": plan.id, "billing_cycle": "monthly", "billing_country": "US"},
+        )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert mint.call_count == 2
+    db.refresh(client)
+    assert client.pending_checkout_country == "US"
+    assert client.pending_checkout_subscription_id == "sub_idem_usd"
+
+
+def test_rebuild_failure_is_a_502_not_a_sibling_mint(db, monkeypatch):
+    # A gateway fetch failure is not evidence the pending sub is dead. Never
+    # guess: 502 and let the customer retry, instead of minting a sibling
+    # mandate against a possibly-live authorizable one.
+    api, client = _mk(db, monkeypatch)
+    plan = _plan(db, slug="std-idem-502")
+    client.pending_checkout_subscription_id = "sub_idem_flaky"
+    client.pending_checkout_plan_id = plan.id
+    client.pending_checkout_cycle = "monthly"
+    client.pending_checkout_country = "IN"
+    db.flush()
+    with (
+        patch("app.services.razorpay_service.create_subscription") as mint,
+        patch(
+            "app.services.razorpay_service.rebuild_upgrade_checkout",
+            side_effect=rzp.RazorpayBillingError("gateway timeout"),
+        ),
+    ):
+        res = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+    assert res.status_code == 502, res.text
+    assert not mint.called
+    db.refresh(client)
+    assert client.pending_checkout_subscription_id == "sub_idem_flaky"  # marker intact
+
+
+def test_dangling_referral_snapshot_never_fails_the_payment_handler(db):
+    # Affiliates/codes are hard-deletable; the ids frozen in gateway notes can
+    # dangle. The insert must be savepoint-guarded — an FK error here would
+    # dead-letter the whole subscription.charged event on every retry.
+    client = Client(name="D", email="idem-dangle@test.example", api_key="key-idem-dangle")
+    db.add(client)
+    db.flush()
+    rzp._record_referral_conversion_from_notes(
+        db,
+        client.id,
+        {
+            "oyechats_ref_code_id": "999999",
+            "oyechats_ref_affiliate_id": "999999",
+            "oyechats_ref_commission_bps": "1500",
+            "oyechats_ref_discount_bps": "0",
+        },
+    )
+    # The surrounding transaction must still be usable (savepoint rolled back,
+    # not the session) and nothing was inserted.
+    assert db.query(ReferralConversion).filter_by(client_id=client.id).count() == 0
+    assert db.query(Client).filter_by(id=client.id).one() is not None

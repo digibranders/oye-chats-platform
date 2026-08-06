@@ -1998,11 +1998,28 @@ def _record_referral_conversion_from_notes(session: Session, client_id: int, not
 
     from app.db.models import ReferralConversion
 
-    session.execute(
-        pg_insert(ReferralConversion.__table__)
-        .values(**values)
-        .on_conflict_do_nothing(constraint="uq_referral_conversions_client")
-    )
+    # SAVEPOINT-guarded: ON CONFLICT only suppresses the unique constraint —
+    # a dangling snapshot (affiliates/codes are hard-deletable; SET NULL fixes
+    # rows but not ids frozen in gateway notes) raises an FK IntegrityError
+    # that would poison the surrounding transaction and dead-letter the
+    # ENTIRE subscription.charged event on every Razorpay retry: customer
+    # pays, gets no credits and no invoice. A lost conversion is recoverable;
+    # a dead payment webhook is not.
+    try:
+        with session.begin_nested():
+            session.execute(
+                pg_insert(ReferralConversion.__table__)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_referral_conversions_client")
+            )
+    except Exception:
+        logger.warning(
+            "Referral conversion insert failed for client %s (stale snapshot %r) — skipping; "
+            "the payment handler must not fail on attribution bookkeeping.",
+            client_id,
+            values,
+            exc_info=True,
+        )
 
 
 def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:

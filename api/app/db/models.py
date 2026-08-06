@@ -53,6 +53,9 @@ class Client(Base):
     pending_checkout_subscription_id = Column(String, nullable=True)
     pending_checkout_plan_id = Column(Integer, nullable=True)
     pending_checkout_cycle = Column(String(8), nullable=True)
+    # The confirmed country the pending sub was minted under — part of the
+    # reuse key so a country change never reuses a wrong-rail checkout.
+    pending_checkout_country = Column(String(2), nullable=True)
     pending_checkout_at = Column(DateTime(timezone=True), nullable=True)
     # Razorpay Customer id — the identity anchor for saved payment instruments.
     # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without

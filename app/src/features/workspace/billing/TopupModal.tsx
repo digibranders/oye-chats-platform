@@ -30,6 +30,13 @@ export interface TopupModalProps {
   onClose: () => void;
   /** Fired after a verified purchase with a status message. */
   onSuccess?: (message: string) => void;
+  /**
+   * Fired when the server refuses the purchase until billing details are on
+   * record (registered/export buyers). The host page opens the billing-details
+   * form focused on the missing fields instead of stranding the customer on
+   * an error banner.
+   */
+  onBillingDetailsRequired?: (missing: string[]) => void;
   botId?: number | null;
   botName?: string | null;
 }
@@ -152,6 +159,22 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
       onClose();
     } catch (err: unknown) {
       if ((err as { code?: string })?.code === 'dismissed') return;
+      const detail =
+        (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
+          ?.detail ?? (err as { detail?: unknown })?.detail;
+      // Registered/export buyers must complete billing details first — hand
+      // off to the form instead of a dead-end banner (B2C buyers below the
+      // Rule 46(f) threshold never hit this).
+      if (
+        detail &&
+        typeof detail === 'object' &&
+        (detail as { code?: string }).code === 'billing_details_required' &&
+        onBillingDetailsRequired
+      ) {
+        onClose();
+        onBillingDetailsRequired((detail as { missing?: string[] }).missing ?? []);
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
     } finally {
       setSubmittingPack(null);
