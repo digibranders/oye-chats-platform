@@ -1587,6 +1587,9 @@ def create_checkout(
         if plan.monthly_price_cents == 0:
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
+        # Never charge full price behind a believed discount (Wave 4a).
+        _validate_coupon_or_400(session, request.coupon_code)
+
         # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
         # FIRST purchase. A subscribed customer hitting it again would mint a
         # SECOND Razorpay subscription + second UPI mandate — Razorpay can't
@@ -1827,15 +1830,58 @@ def change_plan(
         # mandate of) a DIFFERENT, pricier bot's subscription.
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
 
-        # Universal precheck — same plan is a no-op UNLESS the current
-        # subscription is a trial that hasn't been paid for yet. A trialing
-        # customer picking their own trial plan is doing a valid trial→paid
-        # conversion (authorise a card, keep the same features, stop the
-        # trial-expiry cron), so we let that case fall through to Branch 3
-        # (fresh Razorpay checkout). Everything else — a real paying customer
-        # re-picking their existing tier — gets the friendly 400 as before.
-        if sub is not None and sub.plan_id == request.plan_id and sub.status != "trialing":
-            raise HTTPException(status_code=400, detail="You are already on this plan.")
+        # Universal precheck — same plan + SAME CYCLE is a no-op UNLESS the
+        # current subscription is a trial that hasn't been paid for yet (a
+        # trialing customer picking their own plan is a valid trial→paid
+        # conversion and falls through to Branch 3), or the plan is
+        # cancel-pending (the customer is trying to STAY — hand off to the
+        # Reactivate flow instead of a dead-end 400). A same-plan DIFFERENT-
+        # cycle request is a real billing change (Wave 4a): monthly→annual is
+        # an upgrade-now (bigger commitment, charged via the upgrade path),
+        # annual→monthly schedules at period end like any downgrade — plan-id
+        # equality alone used to reject both as "already on this plan".
+        current_cycle = (sub.billing_cycle or "monthly") if sub is not None else "monthly"
+        requested_cycle = request.billing_cycle or current_cycle
+        same_plan = sub is not None and sub.plan_id == request.plan_id and sub.status != "trialing"
+        if same_plan:
+            # Re-picking the current plan while a DOWNGRADE is queued means
+            # "I changed my mind — keep my plan". The cure is cancelling the
+            # scheduled change, NOT /resume: schedule_paid_downgrade also sets
+            # cancel_at_period_end + gateway_cancel_executed_at, so the
+            # resume_required hand-off below would route the customer into
+            # Mode 2, mint a re-auth checkout — and leave scheduled_plan_id
+            # set, so the promotion cron would STILL execute the downgrade
+            # they walked away from (review P2-1).
+            if sub.scheduled_plan_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "scheduled_change_pending",
+                        "message": (
+                            "You have a plan change scheduled for the end of this period. "
+                            "Cancel the scheduled change to keep your current plan."
+                        ),
+                    },
+                )
+            # A cancel-pending sub blocks BOTH the same-cycle re-pick and a
+            # cycle switch (review P2-4): executing a billing change on a
+            # subscription the customer explicitly cancelled would silently
+            # resurrect it — reactivation must be its own deliberate step.
+            if sub.cancel_at_period_end:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "resume_required",
+                        "message": (
+                            "Your plan is scheduled to cancel at the end of the period. "
+                            "Use Reactivate first — then you can change the billing cycle."
+                        ),
+                    },
+                )
+            if requested_cycle == current_cycle:
+                raise HTTPException(status_code=400, detail="You are already on this plan.")
+        cycle_switch_up = same_plan and current_cycle == "monthly" and requested_cycle == "annual"
+        cycle_switch_down = same_plan and current_cycle == "annual" and requested_cycle == "monthly"
 
         # ── Branch 1: target is Free ──
         # No payment needed. If the customer has an upstream provider sub
@@ -1981,7 +2027,7 @@ def change_plan(
             sub is not None
             and sub.razorpay_subscription_id
             and sub.plan
-            and new_plan.monthly_price_cents > (sub.plan.monthly_price_cents or 0)
+            and (new_plan.monthly_price_cents > (sub.plan.monthly_price_cents or 0) or cycle_switch_up)
         ):
             from app.services import razorpay_service, transition_service
 
@@ -2016,7 +2062,7 @@ def change_plan(
             sub is not None
             and sub.razorpay_subscription_id
             and sub.plan
-            and new_plan.monthly_price_cents < (sub.plan.monthly_price_cents or 0)
+            and (new_plan.monthly_price_cents < (sub.plan.monthly_price_cents or 0) or cycle_switch_down)
         ):
             from app.services import razorpay_service, transition_service
 
@@ -2080,6 +2126,32 @@ def change_plan(
                     f"{cutover_at:%b %d, %Y}. You'll keep {sub.plan.name} until then."
                 ),
             }
+
+        # Equal-price, different plan (Wave 4a): matches neither the upgrade
+        # (>) nor the downgrade (<) branch, and the old fall-through to Branch
+        # 3 minted a SECOND mandate while immediately gateway-cancelling the
+        # current one — eating the customer's remaining paid days. There is no
+        # meaningful billing action to take between equal-priced tiers, so
+        # refuse explicitly and let support handle the rare genuine ask.
+        if (
+            sub is not None
+            and sub.razorpay_subscription_id
+            and sub.plan
+            and sub.plan_id != new_plan.id
+            and (sub.plan.monthly_price_cents or 0) > 0
+            and new_plan.monthly_price_cents == sub.plan.monthly_price_cents
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "plans_equal_price",
+                    "message": (
+                        f"Switching between {new_plan.name} and your current plan isn't "
+                        "automated yet because they are priced the same. Contact support "
+                        "and we'll move you over."
+                    ),
+                },
+            )
 
         # ── Branch 3: paid target → Razorpay checkout ──
         # Reached when the targeted bot has no active subscription: a downgraded
@@ -2991,9 +3063,47 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     display-only figure and is accepted only as a last-resort legacy fallback.
     """
     for pack in packs:
-        if int(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0) == requested_amount:
+        # round(), not int(): pack prices come from operator-edited JSON in
+        # pricing_config and can arrive as floats — int() truncation turned a
+        # "1599.99" pack into 1599 and silently failed every match.
+        if int(round(float(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0))) == requested_amount:
             return pack
     return None
+
+
+def _validate_coupon_or_400(session, coupon_code: str | None) -> None:
+    """Refuse any coupon we cannot actually honour (Wave 4a).
+
+    ``coupon_code`` used to be accepted and silently IGNORED — the customer
+    believed a discount applied and was charged full price. There is a
+    ``coupons`` table (superadmin CRUD) but no online redemption realiser, so
+    the honest behaviour is: unknown/inactive/expired → "invalid"; a genuinely
+    valid code → an explicit "not redeemable online" refusal, never a silent
+    full-price charge. (Product default: kill the field; wire redemption only
+    if product asks for it.)
+    """
+    code = (coupon_code or "").strip()
+    if not code:
+        return
+    from app.db.models import Coupon
+
+    coupon = session.execute(select(Coupon).where(func.lower(Coupon.code) == code.lower())).scalar_one_or_none()
+    now = datetime.now(UTC)
+    valid = (
+        coupon is not None
+        and coupon.is_active
+        and (coupon.expires_at is None or coupon.expires_at > now)
+        and (coupon.max_redemptions is None or (coupon.redemptions or 0) < coupon.max_redemptions)
+    )
+    if not valid:
+        raise HTTPException(status_code=400, detail="Invalid or expired coupon code.")
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Coupon codes can't be redeemed online yet — contact developer@oyechats.com "
+            "and we'll apply it to your account."
+        ),
+    )
 
 
 def _assert_no_stacking(client, coupon_code: str | None) -> None:
@@ -3061,6 +3171,26 @@ def initiate_topup(
     with get_session() as session:
         provider = _resolve_provider()
 
+        # topup_allowed is a PLAN feature and was only ever enforced by the
+        # frontend hiding the button (Wave 4b): calling the API directly let a
+        # Free account buy credits the plan matrix says it can't have. All
+        # paid tiers carry the flag; Free does not.
+        from app.services import plan_entitlements_service
+
+        ents = plan_entitlements_service.get_entitlements(client.id, session)
+        if not ents.has_feature("topup_allowed"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "topup_not_allowed",
+                    "plan_slug": ents.plan_slug,
+                    "message": (
+                        f"Credit top-ups aren't available on the {ents.plan_name} plan — "
+                        "upgrade to a paid plan to buy extra credits."
+                    ),
+                },
+            )
+
         # Persist the confirmed country for invoice place-of-supply, mirroring
         # create_checkout. A GSTIN pins the country to IN, so never let a
         # top-up flip it. Only write when the caller explicitly confirmed a
@@ -3123,6 +3253,12 @@ def initiate_topup(
                 # Checkout needs this to tokenise a card (customer_id + save=1).
                 result["customer_id"] = customer_id
             return result
+
+        # Unreachable while _resolve_provider only knows Razorpay — but a
+        # future provider slipping past that guard used to fall off the end of
+        # this function and return an implicit 200 with a null body, which the
+        # frontend would open as a broken checkout. Fail loudly instead.
+        raise HTTPException(status_code=503, detail=f"Top-ups are not supported on provider '{provider}'.")
 
 
 class TopupVerifyRequest(BaseModel):

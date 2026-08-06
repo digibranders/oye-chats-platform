@@ -77,6 +77,9 @@ def _plan(db) -> Plan:
         credits_per_month=10_000,
         included_operator_seats=2,
         is_active=True,
+        # Wave 4b gates top-ups on the plan flag; these tests are about the
+        # COUNTRY freeze, so the fixture plan allows top-ups.
+        features={"topup_allowed": True},
     )
     db.add(plan)
     db.flush()

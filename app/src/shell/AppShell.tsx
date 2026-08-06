@@ -6,6 +6,7 @@ import { CommandPalette } from './CommandPalette';
 import { FeedbackLauncher } from './FeedbackLauncher';
 import { IncomingChatBanner } from './IncomingChatBanner';
 import { InstallAppBanner } from './InstallAppBanner';
+import { PushPermissionNudge } from './PushPermissionNudge';
 import { PastDueBanner } from '../features/workspace/billing/PastDueBanner';
 import { DowngradeReauthBanner } from '../features/workspace/billing/DowngradeReauthBanner';
 import { cn } from '../design-system';
@@ -101,6 +102,7 @@ export function AppShell() {
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <FeedbackLauncher />
       <IncomingChatBanner />
+      <PushPermissionNudge />
       <InstallAppBanner isMobile={isMobile} />
     </div>
   );

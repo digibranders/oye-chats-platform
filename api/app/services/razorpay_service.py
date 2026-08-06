@@ -225,7 +225,10 @@ def create_topup_order(
     currency = "INR"
 
     rzp = _get_razorpay()
-    amount_inr = int(amount_inr_major)
+    # round(), not int(): pack prices are operator-edited floats; matching
+    # rounds (Wave 4b), so the CHARGE must round identically or a "1599.99"
+    # pack would match a 1600 request and then debit ₹1599.
+    amount_inr = int(round(float(amount_inr_major)))
     amount_paise = amount_inr * 100
     if client.id in CHECKOUT_TEST_CLIENT_IDS:
         logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
@@ -576,6 +579,23 @@ def rebuild_upgrade_checkout(
     status = str(sub.get("status") or "").lower()
     if status not in _AUTHORIZABLE_SUB_STATES:
         logger.info("Pending upgrade sub %s is '%s' — not reusable; caller will re-mint", subscription_id, status)
+        return None
+    # Rail check (Wave 4 review P1-2): the pending sub must bill the SAME
+    # Razorpay plan the caller is asking for. The upgrade-pending key stores
+    # only the local plan id, not the cycle — without this, a customer who
+    # abandoned an ANNUAL upgrade checkout and later asked for MONTHLY was
+    # handed the still-authorizable annual sub captioned "(monthly)" and
+    # charged the annual price on authorization. A mismatch is treated like a
+    # dead pending: caller clears the marker and mints the right rail.
+    expected_plan_id = _plan_id_for_rail(plan, billing_cycle, charge_currency(getattr(client, "billing_country", None)))
+    if expected_plan_id and sub.get("plan_id") and sub.get("plan_id") != expected_plan_id:
+        logger.info(
+            "Pending upgrade sub %s bills plan %s but %s (%s) was requested — not reusable; caller will re-mint",
+            subscription_id,
+            sub.get("plan_id"),
+            expected_plan_id,
+            billing_cycle,
+        )
         return None
     return {
         "provider": "razorpay",
@@ -1137,6 +1157,27 @@ def verify_subscription_payment_signature(
         raise SignatureMismatch("Razorpay subscription signature verification failed") from exc
 
 
+def _gateway_sub_is_terminal(razorpay_subscription_id: str | None) -> bool:
+    """Authoritative post-failure check: is the subscription ACTUALLY terminal?
+
+    F8: the cancel error paths used to sniff English substrings out of the SDK
+    exception ("not cancellable", "cancelled status") — the SDK discards
+    Razorpay's structured error code, and a rewording of the description would
+    silently turn every already-terminal cancel into a raised 502 (or, worse,
+    a substring coincidence would swallow a real failure). Instead of parsing
+    prose, ask Razorpay for the subscription's actual status: terminal → the
+    desired outcome ("stop charging") already holds and the cancel failure is
+    a no-op; anything else (or an unreachable gateway) → the failure is real.
+    """
+    if not razorpay_subscription_id:
+        return False
+    try:
+        sub = _get_razorpay().subscription.fetch(razorpay_subscription_id)
+    except Exception:
+        return False
+    return (sub.get("status") or "").lower() in ("cancelled", "completed", "expired")
+
+
 def cancel_subscription_by_id(razorpay_subscription_id: str, *, at_period_end: bool = False) -> None:
     """Cancel a Razorpay subscription that has no local ``Subscription`` row.
 
@@ -1159,8 +1200,7 @@ def cancel_subscription_by_id(razorpay_subscription_id: str, *, at_period_end: b
             data={"cancel_at_cycle_end": 1 if at_period_end else 0},
         )
     except Exception as exc:
-        exc_msg = str(exc).lower()
-        if "not cancellable" in exc_msg or "cancelled status" in exc_msg or "completed status" in exc_msg:
+        if _gateway_sub_is_terminal(razorpay_subscription_id):
             logger.warning(
                 "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
                 razorpay_subscription_id,
@@ -1229,12 +1269,11 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
             data={"cancel_at_cycle_end": 1 if at_period_end else 0},
         )
     except Exception as exc:
-        # Razorpay returns BadRequestError when the subscription is already in
-        # a terminal state (cancelled/completed). The desired outcome — "stop
-        # charging the customer" — is already achieved, so treat it as a no-op
-        # instead of surfacing a 502 to the caller.
-        exc_msg = str(exc).lower()
-        if "not cancellable" in exc_msg or "cancelled status" in exc_msg or "completed status" in exc_msg:
+        # Razorpay rejects cancels on already-terminal subscriptions. The
+        # desired outcome — "stop charging the customer" — is already achieved
+        # in that case, so verify terminality AUTHORITATIVELY (status fetch,
+        # not error-message prose — F8) and no-op.
+        if _gateway_sub_is_terminal(subscription.razorpay_subscription_id):
             logger.warning(
                 "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
                 subscription.razorpay_subscription_id,

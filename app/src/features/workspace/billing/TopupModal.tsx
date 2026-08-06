@@ -80,7 +80,14 @@ function featuredPackIndex(packs: TopupPack[]): number {
  * money-path (initiateTopup → Razorpay → verifyTopupPayment) is ported verbatim
  * from the pre-2.0 credits top-up modal; presentation is new DS.
  */
-export function TopupModal({ open, onClose, onSuccess, botId = null, botName = null }: TopupModalProps): ReactElement | null {
+export function TopupModal({
+  open,
+  onClose,
+  onSuccess,
+  onBillingDetailsRequired,
+  botId = null,
+  botName = null,
+}: TopupModalProps): ReactElement | null {
   const { isInr } = useCurrency();
   const [packs, setPacks] = useState<TopupPack[]>([]);
   const [loadingPacks, setLoadingPacks] = useState(false);
