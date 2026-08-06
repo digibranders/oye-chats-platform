@@ -4760,7 +4760,7 @@ def rag_pipeline(
                     )
                     _pivot = _no_info_pivot(_company_name)
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
                     )
                     session.commit()
                     return {
@@ -4804,7 +4804,7 @@ def rag_pipeline(
                     )
                     _pivot = _no_info_pivot(_company_name)
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
                     )
                     session.commit()
                     return {
@@ -5590,7 +5590,7 @@ async def rag_pipeline_stream(
                     yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
                     yield _pivot
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
                     )
                     session.flush()
                     _msg_id = _bot_msg.id
@@ -5627,7 +5627,7 @@ async def rag_pipeline_stream(
                     yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
                     yield _pivot
                     _bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid, is_unanswered=True
                     )
                     session.flush()
                     _msg_id = _bot_msg.id

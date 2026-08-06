@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +14,7 @@ from app.db.repository import (
     get_ratings_summary,
     get_resolution_summary,
     get_top_questions,
+    get_unanswered_questions,
     get_visitor_data,
 )
 from app.db.session import get_session
@@ -178,6 +180,30 @@ def get_top_questions_endpoint(
         raise HTTPException(status_code=500, detail="Failed to load top questions.") from e
 
 
+@router.get("/unanswered-questions")
+def get_unanswered_questions_endpoint(
+    bot_id: int | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict to a trailing window of N days."),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Knowledge gaps: the questions the bot could not answer from its content.
+
+    Each result is a distinct question the visitor asked when retrieval found
+    nothing usable (the no-info pivot), with how often it was asked and when it
+    was last seen - so the customer knows which documents to add.
+    """
+    try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
+        with get_session() as session:
+            return get_unanswered_questions(session, client_id=auth["client_id"], bot_id=bot_id, limit=limit, days=days)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch unanswered questions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load unanswered questions.") from e
+
+
 @router.get("/visitors")
 def get_visitors_endpoint(
     bot_id: int | None = Query(None),
@@ -313,3 +339,203 @@ def get_feedback_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch feedback logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e
+
+
+# ─── Journeys view ───────────────────────────────────────────────────────────
+#
+# Read endpoints backing the Journeys tab under Analytics. Data collection
+# is unconditional (widget always POSTs); these reads are gated by the
+# ``journey_analytics`` plan flag. Free/Starter clients get 402
+# ("upgrade required") and the UI renders an upsell card.
+
+_JOURNEY_PHASES = {"pre", "chat", "post"}
+
+# ``period`` for Journeys is a UTC calendar month expressed as ``YYYY-MM``.
+# The Journeys tab does month-over-month reporting, so bounding by exact
+# calendar month (1st at 00:00 UTC through the last microsecond) is more
+# useful than rolling day windows. Legacy rolling values (``7d``/``30d``/
+# ``90d``) are no longer accepted here — reject at the edge with 422.
+_JOURNEY_PERIOD_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
+_JOURNEY_MIN_YEAR = 2020
+
+
+def _resolve_journey_window(period: str) -> tuple[datetime, datetime]:
+    """Translate a ``YYYY-MM`` period into a UTC ``(since, until)`` window.
+
+    ``until`` for the current month clamps to ``now`` so we don't quote
+    counts from the future; for prior months it lands on the last
+    microsecond of that month. ``since`` is always the 1st of the month
+    at 00:00 UTC.
+    """
+    match = _JOURNEY_PERIOD_RE.match(period)
+    if not match:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid period. Use YYYY-MM (e.g. 2026-08).",
+        )
+    year, month = int(match.group(1)), int(match.group(2))
+    now = datetime.now(UTC)
+    # Reject impossibly-old or future months so the empty case in the UI
+    # is a real "no data" state rather than a resolver quirk.
+    if year < _JOURNEY_MIN_YEAR or (year, month) > (now.year, now.month):
+        raise HTTPException(
+            status_code=422,
+            detail="Period out of range.",
+        )
+    since = datetime(year, month, 1, 0, 0, 0, 0, tzinfo=UTC)
+    # Next month's 1st, then step back one microsecond for the inclusive
+    # upper bound of the requested month. For the current month, clamp
+    # to ``now`` so we don't count into the future.
+    next_month = since.replace(year=year + 1, month=1) if month == 12 else since.replace(month=month + 1)
+    until = min(next_month - timedelta(microseconds=1), now)
+    return since, until
+
+
+def _guard_journey_access(bot_id: int, client_id: int) -> None:
+    """Verify bot ownership AND the journey_analytics plan gate."""
+    from app.services.plan_entitlements_service import is_journey_analytics_enabled_for_bot
+
+    _verify_bot_ownership(bot_id, client_id)
+    with get_session() as session:
+        if not is_journey_analytics_enabled_for_bot(bot_id, session):
+            raise HTTPException(
+                status_code=402,
+                detail="Journeys analytics require a Standard or Professional plan.",
+            )
+
+
+@router.get("/journey/summary")
+def get_journey_summary(
+    bot_id: int = Query(...),
+    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Header-row totals: sessions with journey + per-conversion counts + leads."""
+    try:
+        from app.services.journey_analytics_service import summary_counts
+
+        _guard_journey_access(bot_id, auth["client_id"])
+        since, until = _resolve_journey_window(period)
+        with get_session() as session:
+            return summary_counts(session, bot_id=bot_id, since=since, until=until)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Journey summary failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load journey summary.") from e
+
+
+@router.get("/journey/top-pages")
+def get_journey_top_pages(
+    bot_id: int = Query(...),
+    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    phase: str | None = Query(None, description="pre|chat|post; omit for all"),
+    limit: int = Query(20, ge=1, le=100),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Ranked pages by distinct-session visits, optionally scoped by phase."""
+    try:
+        from app.services.journey_analytics_service import top_pages
+
+        if phase is not None and phase not in _JOURNEY_PHASES:
+            raise HTTPException(status_code=422, detail="Invalid phase. Use pre|chat|post.")
+        _guard_journey_access(bot_id, auth["client_id"])
+        since, until = _resolve_journey_window(period)
+        with get_session() as session:
+            rows = top_pages(session, bot_id=bot_id, since=since, until=until, phase=phase, limit=limit)
+        return {"period": period, "phase": phase, "rows": rows}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Journey top-pages failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load top pages.") from e
+
+
+@router.get("/journey/conversion-paths")
+def get_journey_conversion_paths(
+    bot_id: int = Query(...),
+    conversion_type: str = Query(..., description="meeting_booked|handoff_requested|offline_message_sent"),
+    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    limit: int = Query(10, ge=1, le=50),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Top pre-chat page sequences that preceded a given conversion event."""
+    try:
+        from app.services.journey_analytics_service import (
+            CONVERSION_EVENTS,
+            paths_to_conversion,
+        )
+
+        if conversion_type not in CONVERSION_EVENTS:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid conversion_type. Use one of: meeting_booked, handoff_requested, offline_message_sent.",
+            )
+        _guard_journey_access(bot_id, auth["client_id"])
+        since, until = _resolve_journey_window(period)
+        with get_session() as session:
+            data = paths_to_conversion(
+                session,
+                bot_id=bot_id,
+                conversion_type=conversion_type,
+                since=since,
+                until=until,
+                limit=limit,
+            )
+        return {"period": period, **data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Journey conversion-paths failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load conversion paths.") from e
+
+
+@router.get("/journey/post-chat")
+def get_journey_post_chat(
+    bot_id: int = Query(...),
+    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    limit: int = Query(10, ge=1, le=50),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Where visitors go after the chat closes — first hops + full sequences."""
+    try:
+        from app.services.journey_analytics_service import post_chat_destinations
+
+        _guard_journey_access(bot_id, auth["client_id"])
+        since, until = _resolve_journey_window(period)
+        with get_session() as session:
+            data = post_chat_destinations(session, bot_id=bot_id, since=since, until=until, limit=limit)
+        return {"period": period, **data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Journey post-chat failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load post-chat destinations.") from e
+
+
+@router.get("/journey/pre-chat-sequences")
+def get_journey_pre_chat_sequences(
+    bot_id: int = Query(...),
+    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    limit: int = Query(5, ge=1, le=20),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Top pre-chat page sequences across every session (converted or not).
+
+    Powers the flow-diagram source rows on the Journey1 experiment: rather
+    than a bag of independent source pages, owners see the actual chained
+    Home → About → Contact patterns visitors took before opening chat.
+    """
+    try:
+        from app.services.journey_analytics_service import top_pre_chat_sequences
+
+        _guard_journey_access(bot_id, auth["client_id"])
+        since, until = _resolve_journey_window(period)
+        with get_session() as session:
+            data = top_pre_chat_sequences(session, bot_id=bot_id, since=since, until=until, limit=limit)
+        return {"period": period, **data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Journey pre-chat-sequences failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load pre-chat sequences.") from e

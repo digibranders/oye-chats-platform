@@ -54,18 +54,39 @@ def _sanitize_url(url: str | None, max_len: int = 2000) -> str | None:
 # both entry count and per-field length keeps row size predictable on
 # high-navigation sites (SPA with hundreds of history.pushState calls) and
 # blocks obvious injection (long strings, unexpected schemes).
-_MAX_JOURNEY_ENTRIES = 50
+#
+# The cap is 200 (raised from the original 50) because the array now spans
+# pre-chat + during-chat + post-chat browsing on a persistent same-visitor
+# session, not just "before opening chat". Trim strategy in _merge_journey
+# drops oldest pre-phase entries first so chat/post markers are preserved.
+_MAX_JOURNEY_ENTRIES = 200
 _MAX_JOURNEY_PATH_LEN = 500
 _MAX_JOURNEY_TS_LEN = 40
+
+# Whitelisted phase and event tags for journey entries. Anything outside
+# these sets is dropped by _sanitize_journey — never trust widget input.
+_JOURNEY_PHASES = frozenset({"pre", "chat", "post"})
+_JOURNEY_EVENTS = frozenset(
+    {
+        "chat_opened",
+        "chat_closed",
+        "handoff_requested",
+        "meeting_booked",
+        "offline_message_sent",
+        "lead_captured",
+    }
+)
 
 
 def _sanitize_journey(entries: list | None) -> list[dict] | None:
     """Normalize the widget's ``journey`` array into a bounded list of dicts.
 
-    Accepts what the widget sends today — ``[{"path": "/services", "ts":
-    "2026-07-09T12:00:15Z"}, ...]`` — and drops anything malformed rather
-    than raising. Preserves order (matters for the timeline UI). Returns
-    ``None`` when the input is empty or every entry was rejected.
+    Accepts the widget's payload — ``[{"path": "/services", "ts":
+    "2026-07-09T12:00:15Z", "phase": "pre", "event": "chat_opened"}, ...]``
+    — and drops anything malformed rather than raising. ``phase`` and
+    ``event`` are optional; each is dropped if not in the whitelist.
+    Preserves order (matters for the timeline UI). Returns ``None`` when
+    the input is empty or every entry was rejected.
     """
     if not entries:
         return None
@@ -85,8 +106,76 @@ def _sanitize_journey(entries: list | None) -> list[dict] | None:
             ts_clean = ts.strip()[:_MAX_JOURNEY_TS_LEN]
             if ts_clean:
                 entry["ts"] = ts_clean
+        phase = raw.get("phase")
+        if isinstance(phase, str) and phase in _JOURNEY_PHASES:
+            entry["phase"] = phase
+        event = raw.get("event")
+        if isinstance(event, str) and event in _JOURNEY_EVENTS:
+            entry["event"] = event
         cleaned.append(entry)
     return cleaned or None
+
+
+def _entry_key(entry: dict) -> tuple:
+    """Identity tuple used to dedupe entries across widget resends.
+
+    ``ts`` is stable per entry (widget stamps it once when the entry is
+    created), so ``(path, phase, event, ts)`` is a natural dedup key even
+    when the same journey is POSTed multiple times.
+    """
+    return (
+        entry.get("path"),
+        entry.get("phase"),
+        entry.get("event"),
+        entry.get("ts"),
+    )
+
+
+def _trim_journey(entries: list[dict], max_len: int = _MAX_JOURNEY_ENTRIES) -> list[dict]:
+    """Trim a journey to ``max_len`` entries, preferring to drop pre-phase
+    entries from the head first so ``chat`` and ``post`` markers survive.
+    Falls back to a pure head trim if pre-phase alone can't get us under
+    the cap.
+    """
+    if len(entries) <= max_len:
+        return entries
+    over = len(entries) - max_len
+    result: list[dict] = []
+    dropped = 0
+    for entry in entries:
+        if dropped < over and entry.get("phase") == "pre":
+            dropped += 1
+            continue
+        result.append(entry)
+    if len(result) > max_len:
+        result = result[-max_len:]
+    return result
+
+
+def _merge_journey(existing: list[dict] | None, incoming: list[dict] | None) -> list[dict] | None:
+    """Merge an incoming journey payload with what's already stored.
+
+    The widget sends the full current journey on every update (not a
+    delta), so ``incoming`` is usually a superset of ``existing``. We
+    still union defensively — if the widget lost its localStorage
+    (private tab, storage cleared, cross-device return) it may send a
+    shorter payload that we must not let overwrite our history. Entries
+    are deduped by ``_entry_key``; incoming order is preserved for new
+    entries so timeline chronology stays intact.
+    """
+    if not incoming:
+        return existing or None
+    if not existing:
+        return _trim_journey(list(incoming)) or None
+    seen = {_entry_key(e) for e in existing}
+    merged = list(existing)
+    for entry in incoming:
+        key = _entry_key(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    return _trim_journey(merged) or None
 
 
 def _redact_email(email: str | None) -> str:
@@ -720,12 +809,18 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             if body.utm_params and not chat_session.utm_params:
                 chat_session.utm_params = body.utm_params
 
-            # First non-empty journey wins so an intermittent widget resend
-            # (e.g. tab regain focus) never overwrites the earlier "before
-            # they opened chat" navigation history with just the last hop.
+            # Merge-append: the widget sends the full current journey on
+            # every update (pre-chat, chat markers, post-chat pages), and
+            # we union it with what's stored. Entries dedupe by (path,
+            # phase, event, ts) so widget resends are idempotent. Reassign
+            # the column (not mutate in place) so SQLAlchemy detects the
+            # change on JSONB. Skip the whole branch when the widget sent
+            # no journey — preserves the pre-2.0-widget fast path.
             safe_journey = _sanitize_journey(body.journey)
-            if safe_journey and not chat_session.visitor_journey:
-                chat_session.visitor_journey = safe_journey
+            if safe_journey:
+                merged_journey = _merge_journey(chat_session.visitor_journey, safe_journey)
+                if merged_journey != chat_session.visitor_journey:
+                    chat_session.visitor_journey = merged_journey
 
             # Update visit count from widget
             if body.is_return_visit and chat_session.visit_count <= 1:

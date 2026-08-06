@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import Launcher from './Launcher';
-import { getChatbotSettings, recordPageVisit } from '../services/api';
+import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/api';
+import { readSessionId } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
 import { readWidgetOpen, writeWidgetOpen } from '../services/storage-keys';
 
@@ -224,6 +225,15 @@ const ChatWidget = () => {
     setIsVisible(true);
     lockBodyScroll();
     writeWidgetOpen(true, { shareDomain });
+    // Journey marker — chat_opened. Also flips the phase flag inside
+    // api.js so every subsequent auto-appended pathname is tagged
+    // ``post``. sessionId may not exist yet (visitor opened panel
+    // before first message); markChatEvent tolerates that and the
+    // marker is picked up by the next flush that has one.
+    try {
+      const persistedSessionId = readSessionId(window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY);
+      markChatEvent(persistedSessionId, 'chat_opened');
+    } catch { /* non-critical */ }
     // Allow React to paint widget-hidden state, then trigger open animation
     setTimeout(() => {
       setIsAnimating(true);
@@ -235,6 +245,13 @@ const ChatWidget = () => {
   const closeChat = useCallback(() => {
     setIsAnimating(false); // triggers close animation
     writeWidgetOpen(false, { shareDomain });
+    // Journey marker — chat_closed. Anchored to the current page so
+    // "after-chat destinations" analytics know where the visitor was
+    // when they dismissed the panel.
+    try {
+      const persistedSessionId = readSessionId(window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY);
+      markChatEvent(persistedSessionId, 'chat_closed');
+    } catch { /* non-critical */ }
     closeTimer.current = setTimeout(() => {
       setIsVisible(false); // unmount after animation
       closeTimer.current = null;

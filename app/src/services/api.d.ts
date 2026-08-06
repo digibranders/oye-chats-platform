@@ -25,6 +25,7 @@ import type {
   SelfOperatorResult,
   SourcePagesResult,
   TopQuestion,
+  UnansweredQuestion,
   Webhook,
   WebhookDeliveriesResult,
   Workspace,
@@ -124,9 +125,94 @@ export function updateClientProfile(patch: {
 export function getDashboardStats(botId?: number, days?: number | null): Promise<Record<string, unknown>>;
 export function getActivityStats(botId?: number): Promise<ActivityPoint[]>;
 export function getTopQuestions(botId?: number): Promise<TopQuestion[]>;
+export function getUnansweredQuestions(
+  botId?: number,
+  options?: { limit?: number; days?: number },
+): Promise<UnansweredQuestion[]>;
 export function getRatingsSummary(botId?: number): Promise<Record<string, unknown>>;
 export function getResolutionSummary(botId?: number): Promise<Record<string, unknown>>;
 export function getFeedbackData(botId?: number): Promise<FeedbackItem[]>;
+
+// ── Journey analytics (Standard / Professional gated) ──────────────────────
+// Period is a UTC calendar month, formatted `YYYY-MM` (e.g. `2026-08`).
+// Kept as a plain string for API-layer simplicity; the backend validates
+// the exact shape. Every conversation on the tab uses a value produced
+// by `buildMonthOptions()` in JourneysTab.
+export type JourneyPeriod = string;
+export type JourneyPhase = 'pre' | 'chat' | 'post';
+export type JourneyConversionType =
+  | 'meeting_booked'
+  | 'handoff_requested'
+  | 'offline_message_sent';
+
+export interface JourneySummary {
+  sessions_with_journey: number;
+  meeting_booked: number;
+  handoff_requested: number;
+  offline_message_sent: number;
+  leads_captured: number;
+}
+
+export interface JourneyTopPageRow {
+  path: string;
+  sessions: number;
+  visits: number;
+}
+
+export interface JourneyTopPagesResponse {
+  period: JourneyPeriod;
+  phase: JourneyPhase | null;
+  rows: JourneyTopPageRow[];
+}
+
+export interface JourneyPathRow {
+  sequence: string[];
+  sessions: number;
+  conversion_rate: number;
+}
+
+export interface JourneyConversionPathsResponse {
+  period: JourneyPeriod;
+  conversion_type: JourneyConversionType;
+  total_conversions: number;
+  total_sessions: number;
+  paths: JourneyPathRow[];
+}
+
+export interface JourneyPostChatResponse {
+  period: JourneyPeriod;
+  sessions_with_post_chat_activity: number;
+  first_hops: Array<{ path: string; sessions: number }>;
+  full_sequences: Array<{ sequence: string[]; sessions: number }>;
+}
+
+export function getJourneySummary(botId: number, period?: JourneyPeriod): Promise<JourneySummary>;
+export function getJourneyTopPages(
+  botId: number,
+  options?: { period?: JourneyPeriod; phase?: JourneyPhase | null; limit?: number },
+): Promise<JourneyTopPagesResponse>;
+export function getJourneyConversionPaths(
+  botId: number,
+  conversionType: JourneyConversionType,
+  options?: { period?: JourneyPeriod; limit?: number },
+): Promise<JourneyConversionPathsResponse>;
+export function getJourneyPostChat(
+  botId: number,
+  options?: { period?: JourneyPeriod; limit?: number },
+): Promise<JourneyPostChatResponse>;
+
+export interface JourneyPreChatSequencesResponse {
+  period: JourneyPeriod;
+  total_sessions: number;
+  sessions_with_pre_chat: number;
+  sequences: Array<{ sequence: string[]; sessions: number }>;
+}
+
+export function getJourneyPreChatSequences(
+  botId: number,
+  options: { period: JourneyPeriod; limit?: number },
+): Promise<JourneyPreChatSequencesResponse>;
+
 export function getVisitorsData(botId?: number): Promise<Array<Record<string, unknown>>>;
 export function getChatHistory(
   sessionId: string,

@@ -12,7 +12,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { Button, EmptyState, InsightCard, Skeleton, StatusBadge, cn } from '../../design-system';
+import { Button, EmptyState, IconTile, InsightCard, Skeleton, StatusBadge, cn } from '../../design-system';
 import {
   acceptChat,
   addSelfAsOperator,
@@ -113,9 +113,11 @@ function RailButton({ active, onClick, title, subtitle, badge, right, online }: 
 
 function RailSection({ icon, label, count }: { icon: ReactElement; label: string; count: number }): ReactElement {
   return (
-    <div className="flex items-center gap-2 px-1 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-      <span aria-hidden="true">{icon}</span>
-      {label}
+    <div className="flex items-center gap-2 px-1 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide">
+      <span className="text-[var(--ds-text-subtle)]" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="text-[var(--ds-text)]">{label}</span>
       <span className="text-[var(--ds-text-subtle)]">({count})</span>
     </div>
   );
@@ -514,12 +516,11 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   const availabilityBar = (
     <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-5">
       <div className="flex items-center gap-3">
-        <span
-          className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]"
-          aria-hidden="true"
-        >
-          <Radio size={18} />
-        </span>
+        <IconTile
+          icon={isOnline ? Radio : WifiOff}
+          tone={loading ? 'neutral' : unavailable ? 'warning' : isOnline ? 'success' : 'neutral'}
+          size="md"
+        />
         <div>
           <p className="text-[14px] font-semibold text-[var(--ds-text)]">Your availability</p>
           <p className="text-[13px] text-[var(--ds-text-muted)]">

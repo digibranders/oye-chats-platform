@@ -8,7 +8,6 @@ import {
   RefreshCw,
   Sparkles,
   TriangleAlert,
-  Users,
   Zap,
 } from 'lucide-react';
 import {
@@ -244,7 +243,6 @@ export function AnalyticsPage(): ReactElement {
     return (
       <PageContainer
         title="Analytics"
-        description="How your whole workspace is performing across every AI chatbot."
       >
         <EmptyState
           icon={BarChart3}
@@ -281,30 +279,6 @@ export function AnalyticsPage(): ReactElement {
         <ErrorState message={error ?? 'Something went wrong.'} onRetry={reload} />
       ) : (
         <>
-          {/* Headline workspace totals (all agents, all time). */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard
-              label="Conversations"
-              value={data.totals.totalConversations.toLocaleString()}
-              icon={MessageSquare}
-            />
-            <MetricCard
-              label="Messages"
-              value={data.totals.totalMessages.toLocaleString()}
-              icon={Activity}
-            />
-            <MetricCard
-              label="Active visitors"
-              value={data.totals.activeVisitors.toLocaleString()}
-              icon={Users}
-            />
-            <MetricCard
-              label="Positive feedback"
-              value={`${Math.round(data.totals.positiveFeedbackRate)}%`}
-              icon={Zap}
-            />
-          </div>
-
           {insight && (
             <InsightCard tone={insight.tone} icon={Sparkles} title={insight.title} body={insight.body} />
           )}

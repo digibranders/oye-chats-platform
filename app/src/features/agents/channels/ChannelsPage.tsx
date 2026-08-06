@@ -372,6 +372,7 @@ export function ChannelsPage(): ReactElement {
                 key={channel.id}
                 icon={channel.icon}
                 iconTone="neutral"
+                brand={channel.brand}
                 name={channel.name}
                 description={channel.description}
                 status={<StatusBadge tone="neutral">Coming soon</StatusBadge>}

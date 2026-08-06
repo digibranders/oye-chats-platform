@@ -1,5 +1,6 @@
 import WidgetChatPreview, { type WidgetPreviewSettings } from '../../../components/WidgetChatPreview';
 import { useBotContext } from '../../../context/BotContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { usePreview } from './preview-context';
 
 /**
@@ -12,6 +13,7 @@ import { usePreview } from './preview-context';
 export function WidgetPreview() {
   const { preview, ask } = usePreview();
   const { selectedBot } = useBotContext();
+  const { hasFeature } = useEntitlements();
 
   const settings: WidgetPreviewSettings = {
     bot_name: selectedBot?.name || 'Your agent',
@@ -20,6 +22,9 @@ export function WidgetPreview() {
     orb_color: preview.orbColor,
     primary_color: preview.primaryColor,
     feature_flags: { show_branding: true },
+    // Plan-gated in the real widget (backend bot_routes.py); mirror it here
+    // so onboarding shows visitors' actual experience per plan.
+    live_chat_enabled: hasFeature('live_chat'),
   };
 
   return (

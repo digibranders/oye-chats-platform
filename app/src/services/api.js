@@ -878,6 +878,84 @@ export const getResolutionSummary = async (botId) => {
     }
 };
 
+// ── Journey analytics (paid-tier: Standard / Professional) ──────────────────
+// Backend gates the read side on the `journey_analytics` plan flag and
+// returns HTTP 402 for Free / Starter. The hook layer catches that and
+// switches the UI into an upgrade teaser.
+
+const _journeyQuery = (botId, extras = {}) => {
+    const params = new URLSearchParams();
+    params.set('bot_id', String(botId));
+    for (const [key, value] of Object.entries(extras)) {
+        if (value === undefined || value === null || value === '') continue;
+        params.set(key, String(value));
+    }
+    return params.toString();
+};
+
+export const getJourneySummary = async (botId, period = '30d') => {
+    try {
+        const response = await api.get(`/analytics/journey/summary?${_journeyQuery(botId, { period })}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching journey summary:', error);
+        throw buildApiError(error, 'Failed to load journey summary');
+    }
+};
+
+export const getJourneyTopPages = async (botId, { period = '30d', phase = null, limit = 20 } = {}) => {
+    try {
+        const response = await api.get(
+            `/analytics/journey/top-pages?${_journeyQuery(botId, { period, phase, limit })}`,
+        );
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching journey top pages:', error);
+        throw buildApiError(error, 'Failed to load top pages');
+    }
+};
+
+export const getJourneyConversionPaths = async (botId, conversionType, { period = '30d', limit = 5 } = {}) => {
+    try {
+        const response = await api.get(
+            `/analytics/journey/conversion-paths?${_journeyQuery(botId, {
+                conversion_type: conversionType,
+                period,
+                limit,
+            })}`,
+        );
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching journey conversion paths:', error);
+        throw buildApiError(error, 'Failed to load conversion paths');
+    }
+};
+
+export const getJourneyPreChatSequences = async (botId, { period, limit = 5 } = {}) => {
+    try {
+        const response = await api.get(
+            `/analytics/journey/pre-chat-sequences?${_journeyQuery(botId, { period, limit })}`,
+        );
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching journey pre-chat sequences:', error);
+        throw buildApiError(error, 'Failed to load pre-chat sequences');
+    }
+};
+
+export const getJourneyPostChat = async (botId, { period = '30d', limit = 10 } = {}) => {
+    try {
+        const response = await api.get(
+            `/analytics/journey/post-chat?${_journeyQuery(botId, { period, limit })}`,
+        );
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching journey post-chat:', error);
+        throw buildApiError(error, 'Failed to load post-chat destinations');
+    }
+};
+
+
 /**
  * Fetches the list of visitors/sessions for the admin dashboard.
  * @returns {Promise<Array>} List of visitor session objects
@@ -890,6 +968,30 @@ export const getVisitorsData = async (botId) => {
     } catch (error) {
         console.error('API Error fetching visitors data:', error);
         throw buildApiError(error, 'Failed to load visitor data');
+    }
+};
+
+/**
+ * Fetches the knowledge gaps for a bot: the questions visitors asked that the
+ * AI could not answer from its knowledge base, grouped by question with a count
+ * and last-asked timestamp.
+ * @param {number} botId
+ * @param {{ limit?: number, days?: number }} [options]
+ * @returns {Promise<Array<{ question: string, count: number, last_asked: string | null }>>}
+ */
+export const getUnansweredQuestions = async (botId, { limit, days } = {}) => {
+    try {
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', botId);
+        if (limit != null) params.set('limit', limit);
+        if (days != null) params.set('days', days);
+        const query = params.toString();
+        const url = query ? `/analytics/unanswered-questions?${query}` : '/analytics/unanswered-questions';
+        const response = await api.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching unanswered questions:', error);
+        throw buildApiError(error, 'Failed to load unanswered questions');
     }
 };
 

@@ -1,4 +1,4 @@
-import { Home, Bot, Inbox, Users, BarChart3, Building2, Settings, type LucideIcon } from 'lucide-react';
+import { Home, Bot, Inbox, Users, BarChart3, Building2, Beaker, Settings, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -15,16 +15,18 @@ export interface NavItem {
 }
 
 /**
- * The ONE sidebar. Exactly six primary destinations, per the Admin Platform
- * 2.0 mandate. No Build, no standalone Settings, no duplicated navigation.
- * This is the single source of truth consumed by both the Sidebar and the
- * Command Palette.
+ * The primary sidebar. Sourced from a single list so the Sidebar and the
+ * Command Palette can't drift apart. The Admin Platform 2.0 mandate
+ * specified six primary destinations; the scratch ``Journey1`` slot is
+ * a temporary extra during ongoing experimentation and will be removed
+ * (or promoted) once the design settles.
  */
 export const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: Home, end: true, hint: 'Daily overview' },
   { to: '/agents', label: 'Chatbots', icon: Bot, hint: 'Create, train and manage chatbots' },
   { to: '/inbox', label: 'Support', icon: Inbox, hint: 'Live chat and messages', allowOperator: true },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification', allowOperator: true },
+  { to: '/journey', label: 'Journey', icon: Beaker, hint: 'Visitor journey flow' },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across agents' },
   { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and usage' },
 ];
