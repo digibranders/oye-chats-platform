@@ -19,23 +19,37 @@ export interface QuotaMeterProps {
 /**
  * QuotaMeter - a labeled "used / limit" meter built on the `Progress`
  * primitive (mandate shared component). `limit === -1` renders an
- * "Unlimited" pill instead of a bar. The fill color escalates via a scoped
- * `--ds-accent` override - the `Progress` primitive itself is untouched -
- * to `--ds-warning` at 80% and `--ds-danger` at 100%, so a glance at any
- * usage panel tells you whether an upgrade conversation is coming.
+ * "Unlimited" pill instead of a bar.
+ *
+ * The state is carried primarily by the *fraction* (muted → amber near the
+ * ceiling → red only when genuinely over), with the bar colour following via a
+ * scoped `--ds-accent` override. Being exactly at the limit is amber, not red -
+ * a full plan is not an error - and going over adds an explicit "Over by N"
+ * note so the red reads as a clear signal, never a broken-looking slab.
  */
 export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): ReactElement {
   const isUnlimited = limit === UNLIMITED;
-  const percent = isUnlimited || limit <= 0 ? 0 : Math.min(100, (used / limit) * 100);
-  const fillVar = percent >= 100 ? 'var(--ds-danger)' : percent >= WARNING_THRESHOLD ? 'var(--ds-warning)' : 'var(--ds-accent)';
-  const fillOverride = { '--ds-accent': fillVar } as CSSProperties;
+  const hasLimit = !isUnlimited && limit > 0;
+  const percent = hasLimit ? Math.min(100, (used / limit) * 100) : 0;
+  const over = hasLimit && used > limit;
+  const near = hasLimit && !over && percent >= WARNING_THRESHOLD;
+
+  const stateColor = over ? 'var(--ds-danger)' : near ? 'var(--ds-warning)' : null;
+  const fillOverride = stateColor ? ({ '--ds-accent': stateColor } as CSSProperties) : undefined;
+  const valueTone = over
+    ? 'text-[var(--ds-danger)]'
+    : near
+      ? 'text-[var(--ds-warning)]'
+      : 'text-[var(--ds-text-muted)]';
 
   return (
     <div className={cn('space-y-1.5', className)}>
       <div className="flex items-center justify-between text-[12px]">
         <span className="font-medium text-[var(--ds-text)]">{label}</span>
-        <span className="text-[var(--ds-text-muted)]">
-          {isUnlimited ? `${used.toLocaleString()} used` : `${used.toLocaleString()} / ${limit.toLocaleString()}`}
+        <span className={cn('font-medium tabular-nums', valueTone)}>
+          {isUnlimited
+            ? `${used.toLocaleString()} used`
+            : `${used.toLocaleString()} / ${limit.toLocaleString()}`}
         </span>
       </div>
       {isUnlimited ? (
@@ -44,6 +58,11 @@ export function QuotaMeter({ label, used, limit, className }: QuotaMeterProps): 
         <div style={fillOverride}>
           <Progress value={percent} label={`${label}: ${used} of ${limit} used`} />
         </div>
+      )}
+      {over && (
+        <p className="text-[11px] font-medium text-[var(--ds-danger)]">
+          Over by {(used - limit).toLocaleString()}
+        </p>
       )}
     </div>
   );

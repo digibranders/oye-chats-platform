@@ -204,7 +204,9 @@ export function removeSelfAsOperator(): Promise<boolean>;
 
 // ── Billing / subscription ───────────────────────────────────────────────────
 export function getCurrentSubscription(botId?: number | null): Promise<Record<string, unknown>>;
+export function getPaymentRecovery(botId?: number | null): Promise<Record<string, unknown>>;
 export function getSubscriptionPlans(): Promise<Array<Record<string, unknown>>>;
+export function getActivePromotion(): Promise<Record<string, unknown>>;
 export function getSubscriptionUsage(): Promise<Record<string, unknown>>;
 export function getInvoices(botId?: number | null): Promise<Array<Record<string, unknown>>>;
 export function getBillingDetails(): Promise<Record<string, unknown>>;
@@ -225,14 +227,17 @@ export function getCheckoutQuote(
   billingCountry?: string | null,
 ): Promise<Record<string, unknown>>;
 /** Change plan on an existing subscription → `{ status | provider, … }` (switched / downgrade_scheduled / checkout). */
-export function changePlan(planId: number, billingCycle?: string | null): Promise<Record<string, unknown>>;
+export function changePlan(
+  planId: number,
+  billingCycle?: string | null,
+  botId?: number | null,
+): Promise<Record<string, unknown>>;
 /** Start the plan's configured free trial (no card). */
 export function startTrial(planSlug: string): Promise<Record<string, unknown>>;
 export function cancelScheduledChange(): Promise<Record<string, unknown>>;
 export function cancelSubscription(reason?: string | null, botId?: number | null): Promise<Record<string, unknown>>;
 export function resumeSubscription(botId?: number | null): Promise<Record<string, unknown>>;
 /** Dunning state for a past-due subscription → `{ status, short_url, grace_ends_at, … }`. */
-export function getPaymentRecovery(botId?: number | null): Promise<Record<string, unknown>>;
 export function getPaymentMethods(opts?: { refresh?: boolean }): Promise<Record<string, unknown>[]>;
 export function deletePaymentMethod(tokenId: string): Promise<Record<string, unknown>>;
 /** Server-verify the Razorpay subscription Checkout callback signature. */

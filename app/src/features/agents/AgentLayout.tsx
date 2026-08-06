@@ -2,7 +2,7 @@ import { type ReactElement } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { Bot as BotIcon, Lock } from 'lucide-react';
 import { AgentProvider, useAgent } from '../../context/AgentContext';
-import { Skeleton, cn } from '../../design-system';
+import { BotAvatar, Skeleton, cn } from '../../design-system';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import type { UpgradeIntentKey } from '../../context/upgradeIntents';
@@ -89,26 +89,30 @@ function AgentShell(): ReactElement {
     <div className="flex min-h-full flex-col bg-[var(--ds-bg-canvas)] text-[var(--ds-text)]">
       {/* Header - who am I configuring? */}
       <header className="border-b border-[var(--ds-border)] pt-2">
-        <div className="flex items-center gap-3">
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]"
-            aria-hidden="true"
-          >
-            <BotIcon size={18} />
-          </div>
+        <div className="flex items-center gap-2.5">
+          {agent ? (
+            <BotAvatar bot={agent} size={34} radius="lg" />
+          ) : (
+            <div
+              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]"
+              aria-hidden="true"
+            >
+              <BotIcon size={17} />
+            </div>
+          )}
           {loading && !agent ? (
-            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-5 w-40" />
           ) : agent ? (
             <div className="min-w-0">
-              <h1 className="truncate text-lg font-bold tracking-tight text-[var(--ds-text)]">
+              <h1 className="truncate text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
                 {agent.name}
               </h1>
               {agent.website ? (
-                <p className="truncate text-[13px] text-[var(--ds-text-subtle)]">{agent.website}</p>
+                <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">{agent.website}</p>
               ) : null}
             </div>
           ) : (
-            <h1 className="text-lg font-bold tracking-tight text-[var(--ds-text)]">
+            <h1 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
               {error ? 'Couldn’t load this agent' : 'Agent not found'}
             </h1>
           )}

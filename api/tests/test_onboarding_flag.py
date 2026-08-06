@@ -54,10 +54,19 @@ def _register(db, *, email: str) -> TestClient:
 
 
 def test_registered_client_starts_unverified_and_onboarding_incomplete(db):
+    from unittest.mock import patch
+
     from app.api import auth_routes
 
     email = "onboarding-fresh@example.com"
-    with _patch(auth_routes, db):
+    # Force the dev-only auto-verify flag OFF so this asserts the real
+    # (production) path: a fresh signup requires email verification. Registration
+    # stamps ``is_verified = DEV_AUTO_VERIFY_EMAIL`` (auth_routes.register), which
+    # is truthy on local machines whose .env sets ``DEV_AUTO_VERIFY_EMAIL=true`` —
+    # without this pin the assertion below is non-deterministic across dev envs.
+    # The route imports the flag from ``app.config`` at call time, so patching the
+    # module attribute is what the handler actually reads.
+    with patch("app.config.DEV_AUTO_VERIFY_EMAIL", False), _patch(auth_routes, db):
         _register(db, email=email)
 
     client = db.execute(_select_client(email)).scalars().first()

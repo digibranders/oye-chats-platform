@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react';
 import { SectionHeader } from '../../../design-system';
-import type { PlanView } from '../billingModel';
+import type { PlanView, PromotionView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 import { CycleToggle } from './PlanMatrix';
 import { PlanCards } from './PlanCards';
@@ -16,6 +16,8 @@ export interface PlansPanelProps {
   currentStatus?: string | null;
   /** Trial end date (ISO) - shown on the trialing plan's own card. */
   trialEnd?: string | null;
+  /** Active launch promotion - marks eligible cards "Free for N months". */
+  promotion?: PromotionView | null;
 }
 
 /**
@@ -34,6 +36,7 @@ export function PlansPanel({
   onSelect,
   currentStatus = null,
   trialEnd = null,
+  promotion = null,
 }: PlansPanelProps): ReactElement {
   const [compareOpen, setCompareOpen] = useState(false);
   const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
@@ -53,6 +56,7 @@ export function PlansPanel({
         onSelect={onSelect}
         currentStatus={currentStatus}
         trialEnd={trialEnd}
+        promotion={promotion}
       />
 
       {/* Full feature-by-feature breakdown, in-app and one click away. */}

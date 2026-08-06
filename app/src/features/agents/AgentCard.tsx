@@ -8,7 +8,7 @@
  * primary tile.
  */
 import { type ReactElement } from 'react';
-import { AgentCard as AgentCardBase } from '../../design-system';
+import { AgentCard as AgentCardBase, BotAvatar } from '../../design-system';
 import { type Bot } from '../../types/domain';
 import { getAgentMetrics, getAgentStatus } from './agent-status';
 
@@ -45,7 +45,7 @@ export function AgentCard({ bot }: AgentCardProps): ReactElement {
         name={bot.name}
         status={status}
         metrics={getAgentMetrics(bot)}
-        avatar={bot.bot_logo ?? undefined}
+        avatarSlot={<BotAvatar bot={bot} size={40} radius="lg" />}
         to={`/agents/${bot.id}/overview`}
       />
       {(maskedKey || created) && (

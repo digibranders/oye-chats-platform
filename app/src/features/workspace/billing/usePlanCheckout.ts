@@ -27,15 +27,30 @@ import {
   startTrial,
   verifyRazorpaySubscription,
 } from '../../../services/api';
-import type { PlanView } from '../billingModel';
+import { promotionAppliesToPlan, type PlanView, type PromotionView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 
 export interface PlanCheckoutContext {
   currentPlanSlug: string;
   currentSubscriptionStatus: string | null;
   hasActiveSubscription: boolean;
+  /**
+   * The bot whose subscription the Billing view is scoped to (the agent
+   * switcher selection). Threaded into change-plan so an upgrade/downgrade
+   * mutates the SELECTED bot's subscription, not the account's highest-priced
+   * one. `null` = the account-level ("All agents") view.
+   */
+  botId?: number | null;
   /** True once the client has consumed their lifetime free trial - closes the trial path. */
   trialUsed: boolean;
+  /**
+   * Active launch promotion the client qualifies for, if any. When it applies to
+   * the selected plan, the money-path is forced through CHECKOUT (where the
+   * deferred free-period is realised) rather than change-plan — otherwise a
+   * free-tier signup (which holds an active Free sub) would route to change-plan
+   * and silently skip the promo it was shown.
+   */
+  promotion?: PromotionView | null;
   /** Fired with a human-readable message after a successful mutation. */
   onSuccess: (message: string) => void;
   /** Fired to dismiss the surface (drawer close) after success. */
@@ -83,6 +98,8 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     currentSubscriptionStatus,
     hasActiveSubscription,
     trialUsed,
+    promotion,
+    botId = null,
     onSuccess,
     onDone,
     onBillingDetailsRequired,
@@ -108,7 +125,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           setNotice('');
           setSubmitting(true);
           try {
-            await changePlan(plan.id, billingCycle);
+            await changePlan(plan.id, billingCycle, botId);
             onSuccess('You’ll move to Free at the end of your current billing period.');
             onDone();
           } catch (err: unknown) {
@@ -122,8 +139,16 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         return;
       }
 
+      // A promo-eligible selection runs the CHECKOUT money-path so the deferred
+      // free-period (start_at) is applied. Used to (a) suppress the auto-trial
+      // path — the 3-month promo beats a 7-day trial and is what the customer
+      // was shown — and (b) force checkout over change-plan below. Monthly-only:
+      // annual + promo would bill a full year after the free period, so the
+      // backend never applies it there either.
+      const promoApplies = billingCycle === 'monthly' && promotionAppliesToPlan(promotion ?? null, plan);
+
       const trialEligible = isTrialEligible(plan, currentPlanSlug, currentSubscriptionStatus, trialUsed);
-      const takeTrialPath = actionKind === 'trial' || (actionKind === 'auto' && trialEligible);
+      const takeTrialPath = actionKind === 'trial' || (actionKind === 'auto' && trialEligible && !promoApplies);
       if (takeTrialPath) {
         setError('');
         setNotice('');
@@ -143,8 +168,18 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       setError('');
       setSubmitting(true);
       try {
-        const res = (hasActiveSubscription
-          ? await changePlan(plan.id, billingCycle)
+        // Routing:
+        // - Promo → checkout, always, so the deferred free-period (start_at) is
+        //   applied (a free-tier signup holds an active Free sub, which would
+        //   otherwise route to change-plan and skip the promo).
+        // - Per-agent selection (botId set) → change-plan, so a downgraded bot
+        //   is revived IN PLACE via change_plan Branch 3 (same bot_key/embed,
+        //   its previous knowledge reactivated), and an active bot upgrades as
+        //   before.
+        // - Account-level with an active sub → change-plan; a fresh account-level
+        //   purchase → checkout.
+        const res = ((botId != null || hasActiveSubscription) && !promoApplies
+          ? await changePlan(plan.id, billingCycle, botId)
           : await createCheckoutSession(plan.id, billingCycle, acctCountry)) as Record<string, unknown>;
 
         const provider = String(res?.provider || '').toLowerCase();
@@ -271,6 +306,23 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           );
           return;
         }
+        // Knowledge-base overflow — same hard-block contract as seats: the
+        // downgrade is refused until the customer trims uploaded documents to
+        // the target plan's allowance. Point them at the Knowledge base.
+        if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'document_overflow') {
+          const d = detail as {
+            message?: string;
+            excess?: number;
+            current_documents?: number;
+            allowed_documents?: number;
+          };
+          const excess = d.excess || (Number(d.current_documents) - Number(d.allowed_documents));
+          setError(
+            d.message ||
+              `You have ${d.current_documents} uploaded document(s) but ${plan.name} includes ${d.allowed_documents}. Delete ${excess} document(s) from your Knowledge base before downgrading.`,
+          );
+          return;
+        }
         setError(err instanceof Error ? err.message : 'Could not start checkout.');
       } finally {
         setSubmitting(false);
@@ -283,6 +335,8 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       onBillingDetailsRequired,
       hasActiveSubscription,
       trialUsed,
+      promotion,
+      botId,
       onSuccess,
       onDone,
     ],

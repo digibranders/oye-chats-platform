@@ -22,6 +22,9 @@ interface AgentCardBaseProps {
   metrics?: AgentCardMetric[];
   /** Avatar / logo image URL. Falls back to the name's initial. */
   avatar?: string;
+  /** Pre-rendered avatar node (e.g. `<BotAvatar>`). Overrides `avatar` and the
+   *  initial fallback when provided, so the card shows the agent's real mark. */
+  avatarSlot?: ReactNode;
   className?: string;
 }
 
@@ -44,28 +47,31 @@ export function AgentCard({
   status,
   metrics,
   avatar,
+  avatarSlot,
   className,
   ...target
 }: AgentCardProps) {
   const inner = (
     <>
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--ds-bg-sunken)] text-[15px] font-semibold text-[var(--ds-text-muted)]">
-          {avatar ? (
-            <img src={avatar} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <span aria-hidden="true">{initial(name)}</span>
-          )}
-        </span>
-        <div className="min-w-0 flex-1">
-          <span className="block truncate text-[14px] font-semibold text-[var(--ds-text)]">
+      <div className="flex items-center gap-3">
+        {avatarSlot ? (
+          avatarSlot
+        ) : (
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--ds-bg-sunken)] text-[15px] font-semibold text-[var(--ds-text-muted)]">
+            {avatar ? (
+              <img src={avatar} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span aria-hidden="true">{initial(name)}</span>
+            )}
+          </span>
+        )}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-[14px] font-semibold text-[var(--ds-text)]">
             {name}
           </span>
-          <span className="mt-1 inline-flex">
-            <StatusBadge tone={status.tone} dot>
-              {status.label}
-            </StatusBadge>
-          </span>
+          <StatusBadge tone={status.tone} dot className="shrink-0">
+            {status.label}
+          </StatusBadge>
         </div>
       </div>
       {metrics && metrics.length > 0 && (

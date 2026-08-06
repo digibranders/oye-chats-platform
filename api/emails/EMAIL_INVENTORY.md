@@ -48,7 +48,7 @@ exist for backward-compat and the super-admin catalogue, but nothing sends throu
 
 ---
 
-## 2. Email Catalogue (25 distinct emails)
+## 2. Email Catalogue (26 distinct emails)
 
 Grouped by category. All emails render raw HTML in code (see above). Any `#NN` is the legacy Brevo template ID for reference only — it is **not** used to send.
 
@@ -215,6 +215,16 @@ Grouped by category. All emails render raw HTML in code (see above). Any `#NN` i
 | Metered | No |
 | Context | `recovery_url` is optional — the gateway may be unreachable or the mandate terminal, in which case it falls back to prose rather than rendering a dead button |
 
+#### C8. Launch-promo pre-charge reminder
+| | |
+|---|---|
+| Function | `send_promo_precharge_reminder_email(to_email, name, plan_name, charge_date, amount_display)` |
+| Subject | `Your free months are almost up` |
+| Body | Heads-up that the launch-offer free period is ending and the first real charge lands on `charge_date`; cancel-before or update-card path |
+| Trigger | `task_promo_precharge_reminders` cron — **daily 09:15** — ~10 days before `promo_free_until` (marker `pre_charge`) |
+| Metered | No |
+| Context | Fires once per promo subscription; `amount_display` is the plan's monthly price that resumes after the free window |
+
 ### D. Lead / Qualification / Live Chat
 
 #### D1. Qualified lead alert
@@ -331,7 +341,7 @@ From `api/app/worker/settings.py` (`cron_jobs`) — server timezone:
 
 ## 4. Summary
 
-- **25 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (7), Lead/Live-chat (6), Affiliate (2), Team (1).
+- **26 distinct emails** across 6 categories: Auth (4), Trial lifecycle (5), Billing (8), Lead/Live-chat (6), Affiliate (2), Team (1).
 - **All 19 render raw HTML in code** from the shared design system (`app/services/email_design.py`); no Brevo saved templates are used to send. Legacy template IDs 57–63 remain for reference only.
 - **Audiences:** customer/client, operator, and website **visitor** (transcript, visitor confirmation, missed callback).
 - **Attachments:** only invoices (C1) attach a file (the PDF).

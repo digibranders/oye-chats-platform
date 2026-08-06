@@ -52,15 +52,15 @@ export function AgentSnapshotCards({
   const brandTone = details?.brand_tone || agent.brand_tone || null;
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {/* 1. Knowledge Base Card */}
-      <Card className="flex flex-col justify-between p-6">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
+      <Card className="flex flex-col justify-between p-4">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
             <SectionHeader
               title={
-                <span className="flex items-center gap-2 text-base font-bold text-[var(--ds-text)]">
-                  <BookOpen size={18} className="text-[var(--ds-accent)]" aria-hidden="true" />
+                <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-text)]">
+                  <BookOpen size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
                   Knowledge base
                 </span>
               }
@@ -71,11 +71,11 @@ export function AgentSnapshotCards({
             </StatusBadge>
           </div>
 
-          <div className="rounded-xl bg-[var(--ds-surface-elevated)] p-4 ring-1 ring-[var(--ds-border)]">
-            <div className="text-2xl font-bold text-[var(--ds-text)]">
+          <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
+            <div className="text-lg font-bold text-[var(--ds-text)]">
               {chunkCount > 0 ? `${chunkCount.toLocaleString()} passages` : 'Not trained yet'}
             </div>
-            <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
+            <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
               {chunkCount > 0
                 ? 'Indexed and ready for visitor questions.'
                 : 'Add website links or documents to start training.'}
@@ -83,38 +83,38 @@ export function AgentSnapshotCards({
           </div>
         </div>
 
-        <div className="mt-6 border-t border-[var(--ds-border)] pt-4">
+        <div className="mt-4 border-t border-[var(--ds-border)] pt-3">
           <Link
             to={`${agentBasePath}/knowledge`}
-            className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
           >
             <span>Manage knowledge</span>
-            <ArrowUpRight size={14} aria-hidden="true" />
+            <ArrowUpRight size={13} aria-hidden="true" />
           </Link>
         </div>
       </Card>
 
       {/* 2. Channels Card */}
-      <Card className="flex flex-col justify-between p-6">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
+      <Card className="flex flex-col justify-between p-4">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
             <SectionHeader
               title={
-                <span className="flex items-center gap-2 text-base font-bold text-[var(--ds-text)]">
-                  <Globe size={18} className="text-[var(--ds-accent)]" aria-hidden="true" />
+                <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-text)]">
+                  <Globe size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
                   Deployment channels
                 </span>
               }
               description="Active channels and website widget."
             />
             <StatusBadge tone={isInstalled ? 'success' : 'neutral'} dot>
-              {isInstalled ? 'Live on website' : 'Not installed'}
+              {isInstalled ? 'Live' : 'Not installed'}
             </StatusBadge>
           </div>
 
-          <div className="rounded-xl bg-[var(--ds-surface-elevated)] p-4 ring-1 ring-[var(--ds-border)]">
-            <div className="text-sm font-semibold text-[var(--ds-text)]">Website Chat Widget</div>
-            <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
+          <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
+            <div className="text-[13px] font-semibold text-[var(--ds-text)]">Website Chat Widget</div>
+            <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
               {isInstalled
                 ? agent.website
                   ? `Active on ${agent.website.replace(/^https?:\/\//, '')}`
@@ -124,61 +124,61 @@ export function AgentSnapshotCards({
           </div>
         </div>
 
-        <div className="mt-6 border-t border-[var(--ds-border)] pt-4">
+        <div className="mt-4 border-t border-[var(--ds-border)] pt-3">
           <Link
             to={`${agentBasePath}/channels`}
-            className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
           >
             <span>Manage channels</span>
-            <ArrowUpRight size={14} aria-hidden="true" />
+            <ArrowUpRight size={13} aria-hidden="true" />
           </Link>
         </div>
       </Card>
 
       {/* 3. Experience Card */}
-      <Card className="flex flex-col justify-between p-6">
-        <div className="space-y-4">
+      <Card className="flex flex-col justify-between p-4">
+        <div className="space-y-3">
           <SectionHeader
             title={
-              <span className="flex items-center gap-2 text-base font-bold text-[var(--ds-text)]">
-                <Sparkles size={18} className="text-[var(--ds-accent)]" aria-hidden="true" />
+              <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-text)]">
+                <Sparkles size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
                 AI personality & experience
               </span>
             }
             description="Brand tone, styling, and behavior."
           />
 
-          <div className="rounded-xl bg-[var(--ds-surface-elevated)] p-4 ring-1 ring-[var(--ds-border)]">
-            <div className="text-xs font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
+          <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
+            <div className="text-[10px] font-medium uppercase tracking-wider text-[var(--ds-text-subtle)]">
               Brand Tone
             </div>
-            <div className="mt-1 text-base font-semibold text-[var(--ds-text)]">
+            <div className="mt-0.5 text-[13px] font-semibold text-[var(--ds-text)]">
               {brandTone || 'Configured in Experience'}
             </div>
-            <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
+            <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">
               Defines response style and conversation guardrails.
             </p>
           </div>
         </div>
 
-        <div className="mt-6 border-t border-[var(--ds-border)] pt-4">
+        <div className="mt-4 border-t border-[var(--ds-border)] pt-3">
           <Link
             to={`${agentBasePath}/experience`}
-            className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
           >
             <span>Configure experience</span>
-            <ArrowUpRight size={14} aria-hidden="true" />
+            <ArrowUpRight size={13} aria-hidden="true" />
           </Link>
         </div>
       </Card>
 
       {/* 4. Performance Card */}
-      <Card className="flex flex-col justify-between p-6">
-        <div className="space-y-4">
+      <Card className="flex flex-col justify-between p-4">
+        <div className="space-y-3">
           <SectionHeader
             title={
-              <span className="flex items-center gap-2 text-base font-bold text-[var(--ds-text)]">
-                <TrendingUp size={18} className="text-[var(--ds-accent)]" aria-hidden="true" />
+              <span className="flex items-center gap-2 text-[13px] font-semibold text-[var(--ds-text)]">
+                <TrendingUp size={15} className="text-[var(--ds-accent)]" aria-hidden="true" />
                 7-day performance
               </span>
             }
@@ -186,9 +186,9 @@ export function AgentSnapshotCards({
           />
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-[var(--ds-surface-elevated)] p-3.5 ring-1 ring-[var(--ds-border)]">
-              <div className="text-xs font-medium text-[var(--ds-text-subtle)]">Resolution rate</div>
-              <div className="mt-1 text-xl font-bold text-[var(--ds-text)]">
+            <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
+              <div className="text-[11px] font-medium text-[var(--ds-text-subtle)]">Resolution rate</div>
+              <div className="mt-0.5 text-lg font-bold text-[var(--ds-text)]">
                 {stats?.resolutionRate === null || stats?.resolutionRate === undefined
                   ? '-'
                   : `${stats.resolutionRate}%`}
@@ -200,9 +200,9 @@ export function AgentSnapshotCards({
               </p>
             </div>
 
-            <div className="rounded-xl bg-[var(--ds-surface-elevated)] p-3.5 ring-1 ring-[var(--ds-border)]">
-              <div className="text-xs font-medium text-[var(--ds-text-subtle)]">Average rating</div>
-              <div className="mt-1 text-xl font-bold text-[var(--ds-text)]">
+            <div className="rounded-lg bg-[var(--ds-surface-elevated)] p-3 ring-1 ring-[var(--ds-border)]">
+              <div className="text-[11px] font-medium text-[var(--ds-text-subtle)]">Average rating</div>
+              <div className="mt-0.5 text-lg font-bold text-[var(--ds-text)]">
                 {stats?.averageRating === null || stats?.averageRating === undefined
                   ? '-'
                   : `${stats.averageRating} / 5`}
@@ -216,19 +216,19 @@ export function AgentSnapshotCards({
           </div>
 
           {activity.length > 0 && (
-            <div className="pt-2">
+            <div className="pt-1">
               <ActivityTrend points={activity} />
             </div>
           )}
         </div>
 
-        <div className="mt-6 border-t border-[var(--ds-border)] pt-4">
+        <div className="mt-4 border-t border-[var(--ds-border)] pt-3">
           <Link
             to={`${agentBasePath}/analytics`}
-            className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ds-accent)] transition-colors hover:text-[var(--ds-accent-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ds-ring)]"
           >
             <span>View analytics</span>
-            <ArrowUpRight size={14} aria-hidden="true" />
+            <ArrowUpRight size={13} aria-hidden="true" />
           </Link>
         </div>
       </Card>

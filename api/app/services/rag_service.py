@@ -4853,7 +4853,14 @@ def rag_pipeline(
             # bot's config but new chats stop running qualification —
             # historical BANT signals remain visible in Insights. Deny by
             # default on entitlements lookup failure.
-            plan_allows_bant = plan_entitlements_service.is_bant_enabled_for_plan(cid, session) if cid else False
+            # Per-bot gate: BANT follows THIS bot's own subscription (falling
+            # back to the account plan), so a bot downgraded to Starter stops
+            # qualifying even when a sibling bot is still on a BANT tier.
+            plan_allows_bant = (
+                plan_entitlements_service.is_bant_enabled_for_bot(bot.id, session)
+                if bot is not None and getattr(bot, "id", None) is not None
+                else False
+            )
             is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
@@ -5658,7 +5665,14 @@ async def rag_pipeline_stream(
 
             # BANT is plan-gated (Standard / Professional) — see the mirror
             # gate on the non-streaming path above for the full rationale.
-            plan_allows_bant = plan_entitlements_service.is_bant_enabled_for_plan(cid, session) if cid else False
+            # Per-bot gate: BANT follows THIS bot's own subscription (falling
+            # back to the account plan), so a bot downgraded to Starter stops
+            # qualifying even when a sibling bot is still on a BANT tier.
+            plan_allows_bant = (
+                plan_entitlements_service.is_bant_enabled_for_bot(bot.id, session)
+                if bot is not None and getattr(bot, "id", None) is not None
+                else False
+            )
             is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 

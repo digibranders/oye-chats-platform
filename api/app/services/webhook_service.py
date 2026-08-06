@@ -66,6 +66,28 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
         return
 
     with get_session() as session:
+        # Plan gate (deny-by-default): outbound webhooks are a paid feature.
+        # The create-time gate in ``webhook_routes`` only blocks NEW
+        # registrations — it never revokes existing rows. Without this
+        # delivery-time check, a ``Webhook`` registered on a paid tier keeps
+        # firing forever after the customer downgrades to a tier that lacks
+        # ``webhooks`` (e.g. Starter). Resolve the owning client and consult
+        # LIVE entitlements (60s cache) so the flip takes effect shortly after
+        # the downgrade cuts over. Fails closed: a resolver error drops the
+        # dispatch rather than leaking the paid feature.
+        from app.services import plan_entitlements_service
+
+        # Per-bot gate: outbound webhooks follow THIS bot's own subscription
+        # (with account fallback). An unknown/deleted bot resolves to the Free
+        # fallback and is therefore denied — deny-by-default.
+        if not plan_entitlements_service.get_bot_entitlements(bot_id, session).has_feature("webhooks"):
+            logger.info(
+                "fire_webhook: bot %s plan lacks 'webhooks' — skipping %s dispatch",
+                bot_id,
+                event_type,
+            )
+            return
+
         webhooks = (
             session.execute(
                 select(Webhook).where(
