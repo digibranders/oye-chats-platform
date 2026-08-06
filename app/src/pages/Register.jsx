@@ -327,6 +327,7 @@ export default function Register() {
             <GoogleAuthButton
               label="Sign up with Google"
               mode="register"
+              promoCode={promoCode}
               // Same precedence as Login.jsx: honor an explicit ``next``
               // (invite airlock, push-notification round-trip) first, fall
               // back to the affiliate-invite deep link, then to root.

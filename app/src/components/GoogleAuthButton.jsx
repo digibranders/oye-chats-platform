@@ -67,6 +67,12 @@ export default function GoogleAuthButton({
     label = 'Continue with Google',
     next = '/',
     mode = 'login',
+    // Campaign / affiliate codes captured by the page (?code=, ?ref=). The
+    // OAuth dance is a full-page round trip through Google, so these must
+    // ride the backend's signed state or the attribution is lost by the
+    // time the callback creates the account.
+    promoCode = '',
+    referralCode = '',
     className,
     tabIndex,
     onBlockedClick,
@@ -96,6 +102,8 @@ export default function GoogleAuthButton({
         // top level so Google's redirect lands back on a real URL the
         // router can interpret.
         const params = new URLSearchParams({ next, mode });
+        if (promoCode) params.set('promo_code', promoCode);
+        if (referralCode) params.set('referral_code', referralCode);
         window.location.href = `${API_BASE_URL}/auth/google/login?${params.toString()}`;
     };
 
