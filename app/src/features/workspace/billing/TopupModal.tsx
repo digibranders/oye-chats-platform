@@ -3,7 +3,7 @@ import { ExternalLink, Loader2, Zap } from 'lucide-react';
 import { Modal, cn } from '../../../design-system';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
-import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../../services/api';
+import { getTopupPacks, initiateTopup, verifyTopupPayment, recordBillingEvent } from '../../../services/api';
 
 interface TopupPack {
   /** INR charge amount (major unit, rupees) - the canonical price on the Razorpay rail. */
@@ -166,8 +166,12 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
       // modal's ondismiss (src/lib/razorpay.js) — say so, or returning to the
       // app reads as "nothing happened / did my payment go through?".
       if ((err as { code?: string })?.code === 'dismissed') {
+        void recordBillingEvent('checkout_abandoned', 'topup', { amount });
         setNotice('Payment cancelled - you were not charged.');
         return;
+      }
+      if ((err as { code?: string })?.code === 'payment_failed') {
+        void recordBillingEvent('payment_failed', 'topup', { amount });
       }
       const detail =
         (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data

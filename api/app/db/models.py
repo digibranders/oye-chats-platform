@@ -2218,6 +2218,27 @@ class ReferralConversion(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class BillingFunnelEvent(Base):
+    """One detected drop-off in the payment funnel (Wave 3.0).
+
+    The app already detects the customer closing the Razorpay sheet
+    (``modal.ondismiss``) and gateway declines (``payment.failed``); this makes
+    those signals operator-visible. Telemetry, not money: nothing downstream
+    depends on these rows and they are safe to prune.
+    """
+
+    __tablename__ = "billing_funnel_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    # checkout_abandoned (customer closed the sheet) | payment_failed (gateway decline)
+    event = Column(String(24), nullable=False)
+    # plan | topup | seat | resume — which purchase surface opened the sheet
+    surface = Column(String(12), nullable=False)
+    meta = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 class PlatformFeedback(Base):
     """
     Free-text feedback submitted by admin dashboard users about the OyeChats

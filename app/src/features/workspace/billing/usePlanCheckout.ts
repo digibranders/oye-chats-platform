@@ -26,6 +26,7 @@ import {
   createCheckoutSession,
   startTrial,
   verifyRazorpaySubscription,
+  recordBillingEvent,
 } from '../../../services/api';
 import { promotionAppliesToPlan, type PlanView, type PromotionView } from '../billingModel';
 import type { BillingCycle } from './planMath';
@@ -213,8 +214,12 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
             });
           } catch (cbErr: unknown) {
             if ((cbErr as { code?: string })?.code === 'dismissed') {
+              void recordBillingEvent('checkout_abandoned', 'plan', { plan_id: plan.id });
               setNotice('Payment cancelled - you have not been charged.');
               return;
+            }
+            if ((cbErr as { code?: string })?.code === 'payment_failed') {
+              void recordBillingEvent('payment_failed', 'plan', { plan_id: plan.id });
             }
             throw cbErr;
           }

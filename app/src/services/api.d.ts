@@ -205,6 +205,11 @@ export function removeSelfAsOperator(): Promise<boolean>;
 // ── Billing / subscription ───────────────────────────────────────────────────
 export function getCurrentSubscription(botId?: number | null): Promise<Record<string, unknown>>;
 export function getPaymentRecovery(botId?: number | null): Promise<Record<string, unknown>>;
+export function recordBillingEvent(
+  event: 'checkout_abandoned' | 'payment_failed',
+  surface: 'plan' | 'topup' | 'seat' | 'resume',
+  meta?: Record<string, unknown> | null,
+): Promise<unknown>;
 export function getSubscriptionPlans(): Promise<Array<Record<string, unknown>>>;
 export function getActivePromotion(): Promise<Record<string, unknown>>;
 export function getSubscriptionUsage(): Promise<Record<string, unknown>>;

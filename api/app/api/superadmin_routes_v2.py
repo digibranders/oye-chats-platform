@@ -302,6 +302,53 @@ def override_billing_country(
         return {"billing_country": country}
 
 
+@router.get("/billing-funnel")
+def billing_funnel(
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=50, ge=1, le=200),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Payment-funnel drop-offs: who opened a Razorpay sheet and bailed (or
+    got declined), aggregated per surface for the window. Read-only —
+    readonly-role superadmins can see it."""
+    from app.db.models import BillingFunnelEvent
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    with get_session() as session:
+        counts = [
+            {"surface": surface, "event": event, "count": int(count)}
+            for surface, event, count in session.execute(
+                select(
+                    BillingFunnelEvent.surface,
+                    BillingFunnelEvent.event,
+                    func.count(BillingFunnelEvent.id),
+                )
+                .where(BillingFunnelEvent.created_at >= since)
+                .group_by(BillingFunnelEvent.surface, BillingFunnelEvent.event)
+                .order_by(func.count(BillingFunnelEvent.id).desc())
+            ).all()
+        ]
+        recent = [
+            {
+                "id": row.id,
+                "client_id": row.client_id,
+                "client_email": email,
+                "event": row.event,
+                "surface": row.surface,
+                "meta": row.meta,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row, email in session.execute(
+                select(BillingFunnelEvent, Client.email)
+                .join(Client, Client.id == BillingFunnelEvent.client_id)
+                .where(BillingFunnelEvent.created_at >= since)
+                .order_by(BillingFunnelEvent.created_at.desc(), BillingFunnelEvent.id.desc())
+                .limit(limit)
+            ).all()
+        ]
+    return {"days": days, "counts": counts, "recent": recent}
+
+
 @router.post("/clients/{client_id}/credits")
 def grant_credits(
     client_id: int,

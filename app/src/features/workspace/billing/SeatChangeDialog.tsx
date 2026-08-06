@@ -2,7 +2,7 @@ import { useState, type ReactElement } from 'react';
 import { AlertCircle, Minus, Plus } from 'lucide-react';
 import { Button, Modal } from '../../../design-system';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
-import { changeOperatorSeats, verifyRazorpaySubscription } from '../../../services/api';
+import { changeOperatorSeats, recordBillingEvent, verifyRazorpaySubscription } from '../../../services/api';
 
 export interface SeatChangeDialogProps {
   open: boolean;
@@ -64,8 +64,12 @@ export function SeatChangeDialog({
           });
         } catch (err: unknown) {
           if ((err as { code?: string })?.code === 'dismissed') {
+            void recordBillingEvent('checkout_abandoned', 'seat', { delta });
             setNotice('Seat purchase cancelled - you were not charged.');
             return;
+          }
+          if ((err as { code?: string })?.code === 'payment_failed') {
+            void recordBillingEvent('payment_failed', 'seat', { delta });
           }
           throw err;
         }

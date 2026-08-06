@@ -6,12 +6,14 @@ subscription cancellation. Razorpay webhook handling lives in
 ``webhook_billing_routes``; all billing logic is in ``razorpay_service``.
 """
 
+import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -1030,6 +1032,50 @@ def update_billing_details(
         ):
             setattr(client, attr, getattr(row, attr))
     return _billing_details_dict(client)
+
+
+# ── Payment-funnel telemetry (Wave 3.0) ──────────────────────────────────────
+
+
+class BillingFunnelEventBody(BaseModel):
+    """Fire-and-forget drop-off signal from the app's Razorpay wrapper."""
+
+    event: Literal["checkout_abandoned", "payment_failed"]
+    surface: Literal["plan", "topup", "seat", "resume"]
+    meta: dict | None = None
+
+    @field_validator("meta")
+    @classmethod
+    def _bound_meta(cls, v: dict | None) -> dict | None:
+        # Telemetry, not a dumping ground: bound the payload so a buggy (or
+        # hostile) client can't grow the table with megabyte blobs.
+        if v is not None and len(json.dumps(v)) > 2048:
+            raise ValueError("meta too large")
+        return v
+
+
+@router.post(
+    "/billing-events",
+    status_code=204,
+    dependencies=[Depends(money_route_limit("60/minute"))],
+)
+def record_billing_funnel_event(body: BillingFunnelEventBody, client: Client = Depends(get_current_client)):
+    """Record a detected payment-funnel drop-off (customer closed the Razorpay
+    sheet, or the gateway declined). Telemetry only — nothing downstream
+    depends on these rows, so the write is simple and unconditional; the app
+    calls this fire-and-forget and ignores failures."""
+    from app.db.models import BillingFunnelEvent
+
+    with get_session() as session:
+        session.add(
+            BillingFunnelEvent(
+                client_id=client.id,
+                event=body.event,
+                surface=body.surface,
+                meta=body.meta,
+            )
+        )
+        session.commit()
 
 
 # ── Checkout & Billing Portal ──

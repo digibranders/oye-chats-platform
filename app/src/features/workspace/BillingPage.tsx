@@ -40,6 +40,7 @@ import {
   getInvoices,
   resumeSubscription,
   verifyRazorpaySubscription,
+  recordBillingEvent,
 } from '../../services/api';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { pollUntil } from '../../lib/pollUntil';
@@ -287,10 +288,14 @@ export function BillingPage(): ReactElement {
           });
         } catch (cbErr: unknown) {
           if ((cbErr as { code?: string })?.code === 'dismissed') {
+            void recordBillingEvent('checkout_abandoned', 'resume');
             setLifecycleError(
               'Reactivation cancelled - your plan still ends on the date shown above.',
             );
             return;
+          }
+          if ((cbErr as { code?: string })?.code === 'payment_failed') {
+            void recordBillingEvent('payment_failed', 'resume');
           }
           throw cbErr;
         }

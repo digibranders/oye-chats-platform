@@ -271,10 +271,10 @@ def _reset_rate_limiter():
     seeing 429s. Prod uses Redis storage — this touches only the test
     process's in-memory counters.
     """
+    import contextlib
+
     from app.core.rate_limit import limiter
 
-    try:
+    with contextlib.suppress(Exception):
         limiter.reset()
-    except Exception:
-        pass
     yield
