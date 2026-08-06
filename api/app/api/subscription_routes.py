@@ -28,6 +28,7 @@ from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount, resolve_billing_context, seat_price
+from app.core.rate_limit import money_route_limit
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service, plan_entitlements_service, razorpay_customer_service
@@ -517,7 +518,7 @@ class VerifyRazorpaySubscriptionRequest(BaseModel):
     razorpay_signature: str
 
 
-@router.post("/verify-razorpay-subscription")
+@router.post("/verify-razorpay-subscription", dependencies=[Depends(money_route_limit("30/minute"))])
 def verify_razorpay_subscription(
     payload: VerifyRazorpaySubscriptionRequest,
     client: Client = Depends(get_current_client),
@@ -1495,7 +1496,7 @@ def _require_precharge_gates(
     return country
 
 
-@router.post("/checkout")
+@router.post("/checkout", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
 def create_checkout(
     request: CheckoutRequest,
     http_request: Request,
@@ -1747,7 +1748,7 @@ class ChangePlanRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/change-plan")
+@router.post("/change-plan", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
 def change_plan(
     request: ChangePlanRequest,
     http_request: Request,
@@ -2224,7 +2225,7 @@ class ResumeSubscriptionRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/resume")
+@router.post("/resume", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
 def resume_subscription(
     http_request: Request,
     request: ResumeSubscriptionRequest = ResumeSubscriptionRequest(),
@@ -2464,7 +2465,7 @@ class SeatChangeRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/seats")
+@router.post("/seats", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
 def change_seat_count(
     request: SeatChangeRequest,
     http_request: Request,
@@ -2964,7 +2965,7 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
         )
 
 
-@credits_router.post("/topup")
+@credits_router.post("/topup", dependencies=[Depends(money_route_limit("10/minute", "50/day"))])
 def initiate_topup(
     request: TopupRequest,
     http_request: Request,
@@ -3094,7 +3095,7 @@ class TopupVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
-@credits_router.post("/topup/verify")
+@credits_router.post("/topup/verify", dependencies=[Depends(money_route_limit("30/minute"))])
 def verify_topup_payment(
     body: TopupVerifyRequest,
     client: Client = Depends(get_current_client),
