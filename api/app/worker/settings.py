@@ -49,6 +49,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_process_webhook_retries,
     task_promo_precharge_reminders,
     task_promote_scheduled_downgrades,
+    task_prune_processed_webhooks,
     task_prune_stale_events,
     task_reconcile_orphaned_seat_addons,
     task_reembed_document,
@@ -198,6 +199,9 @@ class WorkerSettings:
         cron(task_promote_scheduled_downgrades, hour=0, minute=7),
         cron(task_expire_old_topups, hour=0, minute=10),
         cron(task_delete_expired_trial_data, hour=0, minute=20),
+        # Replay-dedup hygiene: prune processed_webhooks rows past any realistic
+        # Razorpay retry horizon (weekly, quiet hours).
+        cron(task_prune_processed_webhooks, weekday=0, hour=1, minute=30),
         cron(task_expire_trials, minute=15),
         cron(task_trial_reminder_emails, hour=9, minute=0),
         # Launch-promo pre-charge reminder — a working-hours send ~10 days before

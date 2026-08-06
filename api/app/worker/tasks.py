@@ -390,6 +390,50 @@ async def task_process_webhook_retries(ctx: dict) -> int:
 # ── Credit lifecycle ────────────────────────────────────────────────────────
 
 
+async def task_prune_processed_webhooks(ctx: dict) -> int:
+    """Cron: prune processed_webhooks rows older than 180 days.
+
+    The table exists for replay dedup; Razorpay's own retry horizon is days,
+    not months, so half-a-year-old rows dedup nothing and only grow the table
+    (and its two unique indexes) forever. Safe now that the payload-digest key
+    gives the money handlers a second layer for anything genuinely replayed
+    later. Batched DELETE so a first run over years of backlog cannot hold a
+    long transaction.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete, select
+
+    from app.db.models import ProcessedWebhook
+    from app.db.session import get_session
+
+    def _run() -> int:
+        cutoff = datetime.now(UTC) - timedelta(days=180)
+        total = 0
+        with get_session() as session:
+            while True:
+                batch_ids = (
+                    session.execute(
+                        select(ProcessedWebhook.event_id).where(ProcessedWebhook.processed_at < cutoff).limit(5000)
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not batch_ids:
+                    break
+                session.execute(delete(ProcessedWebhook).where(ProcessedWebhook.event_id.in_(batch_ids)))
+                session.commit()
+                total += len(batch_ids)
+        return total
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_prune_processed_webhooks: pruned %d rows older than 180d", count)
+    return count
+
+
 async def task_renew_due_subscriptions(ctx: dict) -> int:
     """Cron task: grant the new month's plan credits for subscriptions whose
     current_period_end has been reached, then roll the period forward.
@@ -2110,8 +2154,7 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
             # silently never receive their tax invoice. Re-attempt delivery for
             # rendered-but-unmailed documents. Snapshots with no email address
             # are excluded in SQL so they can't starve the batch (they surface
-            # via reconciliation_anomalies instead). The PDF is re-rendered for
-            # the attachment — the bytes are not stored, only their R2 URL.
+            # via reconciliation_anomalies instead).
             if config.INVOICE_EMAILS_ENABLED:
                 unmailed = (
                     session.execute(
@@ -2129,14 +2172,45 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     .all()
                 )
                 for invoice in unmailed:
+                    # M-5: CLAIM the send first via guarded UPDATE. A slow
+                    # sweep can overlap the next cron tick on the same unmailed
+                    # set; both used to select this row and both sent — the
+                    # customer got their invoice twice. Only the run that wins
+                    # the NULL→now transition sends; a failed send un-claims so
+                    # the next sweep retries.
+                    claimed = session.execute(
+                        sa_update(InvoiceModel)
+                        .where(InvoiceModel.id == invoice.id, InvoiceModel.emailed_at.is_(None))
+                        .values(emailed_at=_utcnow())
+                    ).rowcount
+                    session.commit()
+                    if not claimed:
+                        continue
                     try:
-                        pdf = _render_invoice_pdf(invoice)
+                        # L-8: attach the STORED R2 bytes — the customer must
+                        # receive the exact document that was published (a
+                        # re-render can differ if templates changed since).
+                        # Re-render only when the stored object is unreadable.
+                        try:
+                            from app.services.r2_service import get_object as _r2_get_object
+
+                            body, _ct = _r2_get_object(_invoice_pdf_key(invoice.invoice_number))
+                            pdf = body.read()
+                        except Exception:
+                            logger.warning(
+                                "task_render_invoice_pdfs: stored PDF unreadable for invoice %s — re-rendering",
+                                invoice.id,
+                            )
+                            pdf = _render_invoice_pdf(invoice)
                         _send_invoice_email(invoice.buyer_snapshot["email"], invoice, invoice.pdf_url, pdf_bytes=pdf)
-                        invoice.emailed_at = _utcnow()
-                        session.commit()
                         logger.info("task_render_invoice_pdfs: recovered email for invoice %s", invoice.id)
                     except Exception:  # noqa: BLE001 — retried next sweep; alerted daily via emails_pending
                         session.rollback()
+                        # Un-claim so the next sweep retries the send.
+                        session.execute(
+                            sa_update(InvoiceModel).where(InvoiceModel.id == invoice.id).values(emailed_at=None)
+                        )
+                        session.commit()
                         logger.exception("task_render_invoice_pdfs: recovery email failed for invoice %s", invoice.id)
         return done
 

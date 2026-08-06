@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
@@ -1838,9 +1839,21 @@ class ProcessedWebhook(Base):
     """
 
     __tablename__ = "processed_webhooks"
+    # Second dedup key (M-2): the HMAC covers only the BODY, the event id is a
+    # header — a replayed signed body with a fresh id passes both checks
+    # without this. Partial-unique (NULLs exempt) for legacy rows.
+    __table_args__ = (
+        Index(
+            "uq_processed_webhooks_payload_digest",
+            "payload_digest",
+            unique=True,
+            postgresql_where=text("payload_digest IS NOT NULL"),
+        ),
+    )
 
     event_id = Column(Text, primary_key=True)
     provider = Column(Text, nullable=False, index=True)  # 'razorpay'
+    payload_digest = Column(Text, nullable=True)
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

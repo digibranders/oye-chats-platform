@@ -1365,7 +1365,7 @@ def verify_webhook_signature(*, payload: bytes, signature: str) -> None:
         raise SignatureMismatch("Razorpay webhook signature mismatch")
 
 
-def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
+def _record_or_skip_event(session: Session, event_id: str | None, payload_digest: str | None = None) -> bool:
     """Insert an event id into ``processed_webhooks`` or report it as a replay.
 
     ``x-razorpay-event-id`` is present on every modern Razorpay webhook
@@ -1387,10 +1387,17 @@ def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
         return False
     from sqlalchemy.dialects.postgresql import insert
 
+    # M-2: dedup on BOTH keys. The HMAC covers only the body; the event id is
+    # a header — a replayed signed body with a FRESH header id passes the
+    # signature and the event-id dedup, and would double-process (double
+    # grants, duplicate invoices). Distinct real events never share an exact
+    # body (unique payment/subscription ids + timestamps inside), so a digest
+    # collision IS a replay. Bare on_conflict_do_nothing (no index_elements)
+    # swallows a conflict on EITHER unique constraint; rowcount 0 → replay.
     stmt = (
         insert(ProcessedWebhook)
-        .values(event_id=event_id, provider="razorpay")
-        .on_conflict_do_nothing(index_elements=["event_id"])
+        .values(event_id=event_id, provider="razorpay", payload_digest=payload_digest)
+        .on_conflict_do_nothing()
     )
     result = session.execute(stmt)
     session.flush()
@@ -1474,7 +1481,9 @@ def _handle_seat_addon_event(
     return f"Seat add-on event {event_name} handled"
 
 
-def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str | None) -> str:
+def handle_webhook_event(
+    session: Session, event: dict[str, Any], event_id: str | None, payload_digest: str | None = None
+) -> str:
     """Dispatch a verified Razorpay webhook event to the right handler.
 
     The dispatch table is intentionally small. Razorpay supports more events,
@@ -1497,7 +1506,7 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
     * ``order.paid``              → backup path for top-ups (some flows emit
                                     this instead of payment.captured)
     """
-    if not _record_or_skip_event(session, event_id):
+    if not _record_or_skip_event(session, event_id, payload_digest):
         return f"Duplicate event {event_id} skipped"
 
     event_name = event.get("event", "")

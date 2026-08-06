@@ -194,8 +194,11 @@ def _process_razorpay_webhook(
         return {"status": "error", "event": event_type, "message": str(exc)}
 
     try:
+        import hashlib
+
+        payload_digest = hashlib.sha256(raw_payload).hexdigest()
         with get_session() as session:
-            result = razorpay_service.handle_webhook_event(session, event, event_id)
+            result = razorpay_service.handle_webhook_event(session, event, event_id, payload_digest)
             session.commit()
             logger.info("Razorpay webhook processed: %s → %s", event_type, result)
         # Post-commit: nudge the PDF renderer so invoices/credit notes created

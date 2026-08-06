@@ -97,4 +97,3 @@ def test_final_exhaustion_logs_at_error(db, monkeypatch, caplog):
         webhook_service._deliver_webhook(hook.id, "lead.created", {"k": "v"}, attempt=webhook_service._MAX_RETRIES)
 
     assert any("EXHAUSTED" in rec.message for rec in caplog.records)
-
