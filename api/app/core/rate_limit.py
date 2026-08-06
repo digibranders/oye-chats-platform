@@ -90,9 +90,16 @@ def money_route_limit(scope: str, *limit_strings: str):
         key = key_from_api_key(request)
         for item in parsed:
             if not limiter.limiter.hit(item, "money", scope, key):
+                # Retry-After mirrors slowapi's own handler: the window reset
+                # tells a well-behaved client exactly how long to back off.
+                reset_at, _remaining = limiter.limiter.get_window_stats(item, "money", scope, key)
+                import time as _time
+
+                retry_after = max(1, int(reset_at - _time.time()))
                 raise HTTPException(
                     status_code=429,
                     detail="Too many billing requests — please wait a moment and try again.",
+                    headers={"Retry-After": str(retry_after)},
                 )
 
     return _dep

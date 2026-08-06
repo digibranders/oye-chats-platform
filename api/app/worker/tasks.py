@@ -445,6 +445,17 @@ async def task_prune_processed_webhooks(ctx: dict) -> int:
                 session.commit()
                 total += len(batch_ids)
 
+            # Reconciliation run reports: keep 180 days — enough to answer
+            # "when did this delta first appear", nothing depends on them.
+            from app.db.models import ReconciliationRun
+
+            recon_cutoff = datetime.now(UTC) - timedelta(days=180)
+            recon_deleted = session.execute(
+                delete(ReconciliationRun).where(ReconciliationRun.ran_at < recon_cutoff)
+            ).rowcount
+            session.commit()
+            total += int(recon_deleted or 0)
+
             # Funnel telemetry ages out too (90d — the superadmin view caps
             # its window at 90). Same batched pattern; prunable by design.
             from app.db.models import BillingFunnelEvent

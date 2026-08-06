@@ -282,3 +282,105 @@ def test_delta_lists_are_capped(db):
     bucket = report["deltas"]["captured_payment_without_invoice"]
     assert len(bucket) == 101
     assert bucket[-1] == "... and 50 more"
+
+
+# ── Cron wrapper + SDK fetchers ──────────────────────────────────────────────
+
+
+def test_cron_wrapper_runs_the_reconciliation(db, monkeypatch):
+    import asyncio
+    from contextlib import contextmanager
+
+    from app.worker import tasks as worker_tasks
+
+    @contextmanager
+    def _cm():
+        yield db
+
+    import app.db.session as db_session_module
+
+    monkeypatch.setattr(db_session_module, "get_session", _cm)
+
+    import app.services.gateway_reconciliation as recon
+
+    monkeypatch.setattr(
+        recon,
+        "_fetch_captured_payments_sdk",
+        lambda window_from, window_to: [
+            {"id": "pay_recon_cron", "status": "captured", "amount": 100, "notes": {"oyechats_client_id": "1"}}
+        ],
+    )
+    monkeypatch.setattr(recon, "_fetch_gateway_subscriptions_sdk", lambda: [])
+
+    deltas = asyncio.run(worker_tasks.task_gateway_reconciliation({}))
+    assert deltas == 1  # the ghost payment above
+    assert db.query(ReconciliationRun).count() >= 1
+
+
+class _FakeCollection:
+    def __init__(self, pages):
+        self._pages = pages
+        self.calls = []
+
+    def all(self, params):
+        self.calls.append(dict(params))
+        skip = params.get("skip", 0)
+        count = params.get("count", 100)
+        page = skip // count
+        items = self._pages[page] if page < len(self._pages) else []
+        return {"items": items}
+
+
+def test_sdk_payment_fetcher_paginates_and_filters_captured(monkeypatch):
+    from datetime import UTC, datetime
+
+    import app.services.gateway_reconciliation as recon
+
+    page1 = [{"id": f"pay_{i}", "status": "captured"} for i in range(100)]
+    page2 = [{"id": "pay_authorized", "status": "authorized"}, {"id": "pay_last", "status": "captured"}]
+    fake_payments = _FakeCollection([page1, page2])
+
+    class _FakeClient:
+        payment = fake_payments
+
+    monkeypatch.setattr("app.services.razorpay_service._get_razorpay", lambda: _FakeClient())
+
+    window_to = datetime.now(UTC)
+    window_from = window_to
+    items = recon._fetch_captured_payments_sdk(window_from, window_to)
+
+    assert len(items) == 101  # authorized filtered out
+    assert all(p["status"] == "captured" for p in items)
+    assert len(fake_payments.calls) == 2  # stopped after the short page
+    assert fake_payments.calls[0]["from"] == int(window_from.timestamp())
+    assert fake_payments.calls[1]["skip"] == 100
+
+
+def test_sdk_subscription_fetcher_paginates(monkeypatch):
+    import app.services.gateway_reconciliation as recon
+
+    page1 = [{"id": f"sub_{i}", "status": "active"} for i in range(100)]
+    page2 = [{"id": "sub_tail", "status": "cancelled"}]
+    fake_subs = _FakeCollection([page1, page2])
+
+    class _FakeClient:
+        subscription = fake_subs
+
+    monkeypatch.setattr("app.services.razorpay_service._get_razorpay", lambda: _FakeClient())
+
+    items = recon._fetch_gateway_subscriptions_sdk()
+    assert len(items) == 101
+    assert len(fake_subs.calls) == 2
+
+
+def test_subscriptions_fetch_failure_is_reported_not_raised(db):
+    def _boom():
+        raise RuntimeError("gateway 503")
+
+    report = run_gateway_reconciliation(
+        db,
+        fetch_captured_payments=lambda window_from, window_to: [],
+        fetch_gateway_subscriptions=_boom,
+    )
+    assert "subscriptions_fetch_failed" in report["deltas"]
+    assert report["delta_count"] >= 1
