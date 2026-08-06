@@ -8,7 +8,7 @@ import {
   Lock,
   RefreshCw,
 } from 'lucide-react';
-import { Button, Card, Skeleton, cn } from '../../../design-system';
+import { Button, Card, IconTile, Skeleton, cn } from '../../../design-system';
 import { fetchRecrawlStatus, setAutoRecrawl, type RecrawlStatus } from './recrawl-api';
 
 export interface AutoRecrawlCardProps {
@@ -135,9 +135,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
       <div className="space-y-5 p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-              <RefreshCw size={18} aria-hidden="true" />
-            </span>
+            <IconTile icon={RefreshCw} tone="accent" size="md" />
             <div>
               <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">Auto-retrain</h3>
               <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">

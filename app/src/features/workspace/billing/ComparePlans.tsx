@@ -1,6 +1,6 @@
 import { type ReactElement, useId } from 'react';
 import { ChevronDown, Table2 } from 'lucide-react';
-import { cn } from '../../../design-system';
+import { cn, IconTile } from '../../../design-system';
 import type { PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 import { PlanMatrix } from './PlanMatrix';
@@ -51,9 +51,7 @@ export function ComparePlans({
         className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)_inset]"
       >
         <span className="flex items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-            <Table2 size={17} aria-hidden="true" />
-          </span>
+          <IconTile icon={Table2} tone="accent" size="md" />
           <span className="min-w-0">
             <span className="block text-[14px] font-semibold text-[var(--ds-text)]">
               Compare every feature side by side

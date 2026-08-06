@@ -416,6 +416,52 @@ def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session)
     return entitlements.plan_slug in LEAD_SOURCE_ATTRIBUTION_SLUGS
 
 
+# Journey Analytics — the Journeys view under Analytics (top pages, paths
+# that convert, post-chat destinations). Widget always collects the raw
+# journey data regardless of plan (an upgrade should surface immediate
+# history); this gate controls only whether the READ endpoints under
+# /analytics/journeys/* return data. Same paid-tier set as lead source
+# attribution.
+JOURNEY_ANALYTICS_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
+
+
+def is_journey_analytics_enabled(client_id: int, db_session: Session) -> bool:
+    """True iff this client's active plan includes the Journeys analytics view.
+
+    Read-side gate for /analytics/journeys/*. Widget-side collection is
+    unconditional. Denies on any resolver error.
+    """
+    try:
+        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "journey_analytics: entitlements lookup failed for client=%s — denying",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in JOURNEY_ANALYTICS_SLUGS
+
+
+def is_journey_analytics_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot includes the Journeys analytics view.
+
+    Per-bot companion to :func:`is_journey_analytics_enabled`. The Journeys
+    view is scoped per-bot, so gating follows the bot's own subscription
+    (account fallback) — mirrors the lead source attribution model.
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "journey_analytics: entitlements lookup failed for bot=%s — denying",
+            bot_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in JOURNEY_ANALYTICS_SLUGS
+
+
 def is_leads_dashboard_enabled(client_id: int, db_session: Session) -> bool:
     """True iff this client can open the Leads dashboard at all.
 

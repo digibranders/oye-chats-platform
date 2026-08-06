@@ -391,43 +391,62 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                         )}
                     </div>
 
-                    {/* Privacy notice */}
-                    <p className="text-[10px] text-gray-400 leading-snug mt-2 px-1">
-                        This chat may be monitored and recorded according to our{' '}
-                        <a
-                            href="https://www.oyechats.com/legal/privacy"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-semibold underline text-gray-500 hover:text-gray-700 transition-colors"
-                        >
-                            Privacy Policy
-                        </a>
-                        .
-                    </p>
-
-                    {/* Action bar - handoff / meeting icons + branding */}
-                    <div className="flex items-center justify-between gap-3 mt-3.5 pt-1 px-1">
-                        <div className="flex items-center gap-3 min-w-0">
+                    {/* Footer action bar - mirrors the real widget's ChatInput
+                        (3-col grid: left icons, centered Privacy Policy, right
+                        branding). Kept in exact parity so what admins see here
+                        matches what visitors actually see - including the
+                        Free-plan gate that hides the headphones icon when
+                        `live_chat_enabled` is off. */}
+                    {/* auto | 1fr | auto keeps "Powered by OyeChats" hugging
+                        the right (never overflows its cell) while Privacy
+                        Policy centers in the remaining flex space. Equal
+                        cols-3 caused a congested look in narrow widget widths
+                        because the right cell overflowed and compressed the
+                        center. */}
+                    <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 mt-3.5 pt-1 px-1">
+                        <div className="flex items-center gap-3 min-w-0 justify-self-start">
                             {settings.live_chat_enabled && liveChatAllowed && (
-                                <span className="flex items-center gap-1 text-[11px]" style={{ color: '#9ca3af' }} title="Live chat">
+                                <span
+                                    className="flex items-center gap-1 text-[11px]"
+                                    style={{ color: '#9ca3af' }}
+                                    title="Live chat"
+                                    aria-label="Live chat"
+                                >
                                     <Headphones size={12} />
                                 </span>
                             )}
                             {settings.meeting_booking_enabled && (
-                                <span className="flex items-center gap-1 text-[11px] text-gray-400" title="Book a meeting">
+                                <span
+                                    className="flex items-center gap-1 text-[11px] text-gray-400"
+                                    title="Book a meeting"
+                                    aria-label="Book a meeting"
+                                >
                                     <CalendarDays size={12} />
                                 </span>
                             )}
                         </div>
-                        {settings.feature_flags?.show_branding !== false && (
+                        <p className="text-[10px] text-gray-400 leading-snug text-center justify-self-center">
+                            <a
+                                href="https://www.oyechats.com/legal/privacy"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-semibold text-gray-300 hover:text-gray-400 transition-colors"
+                            >
+                                Privacy Policy
+                            </a>
+                        </p>
+                        {settings.feature_flags?.show_branding !== false ? (
                             <a
                                 href="https://www.oyechats.com"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
+                                className="whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
                             >
-                                Powered by OyeChats
+                                Powered by{' '}
+                                <span style={{ color: 'rgb(49% 23% 93%)' }}>OyeChats</span>
                             </a>
+                        ) : (
+                            <span className="justify-self-end" />
                         )}
                     </div>
                 </div>

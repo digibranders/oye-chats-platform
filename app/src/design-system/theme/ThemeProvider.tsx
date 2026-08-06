@@ -8,18 +8,25 @@ import {
 } from 'react';
 import {
   ThemeContext,
+  type Contrast,
   type EventOrOrigin,
   type ResolvedTheme,
   type Theme,
 } from './theme-context';
 
 const STORAGE_KEY = 'oc_theme';
+const CONTRAST_STORAGE_KEY = 'oc_contrast';
 const MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
 function readStoredTheme(): Theme {
   if (typeof localStorage === 'undefined') return 'system';
   const stored = localStorage.getItem(STORAGE_KEY);
   return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+}
+
+function readStoredContrast(): Contrast {
+  if (typeof localStorage === 'undefined') return 'default';
+  return localStorage.getItem(CONTRAST_STORAGE_KEY) === 'high' ? 'high' : 'default';
 }
 
 // The OS color-scheme preference as an external store, so `resolvedTheme` can
@@ -46,6 +53,15 @@ function applyTheme(resolved: ResolvedTheme): void {
   root.style.colorScheme = resolved;
 }
 
+function applyContrast(contrast: Contrast): void {
+  const root = document.documentElement;
+  if (contrast === 'high') {
+    root.setAttribute('data-contrast', 'high');
+  } else {
+    root.removeAttribute('data-contrast');
+  }
+}
+
 function extractOrigin(eventOrOrigin?: EventOrOrigin): { x: number; y: number } {
   if (!eventOrOrigin) {
     // Default to top-right corner near the topbar theme toggle button
@@ -67,12 +83,23 @@ function extractOrigin(eventOrOrigin?: EventOrOrigin): { x: number; y: number } 
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readStoredTheme);
+  const [contrast, setContrastState] = useState<Contrast>(readStoredContrast);
   const systemTheme = useSyncExternalStore(subscribeSystem, getSystemSnapshot, getServerSnapshot);
   const resolvedTheme: ResolvedTheme = theme === 'system' ? systemTheme : theme;
 
   useEffect(() => {
     applyTheme(resolvedTheme);
   }, [resolvedTheme]);
+
+  useEffect(() => {
+    applyContrast(contrast);
+  }, [contrast]);
+
+  const setContrast = useCallback((next: Contrast): void => {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(CONTRAST_STORAGE_KEY, next);
+    setContrastState(next);
+    applyContrast(next);
+  }, []);
 
   const setTheme = useCallback(
     (next: Theme, eventOrOrigin?: EventOrOrigin) => {
@@ -152,8 +179,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ theme, resolvedTheme, setTheme, toggle }),
-    [theme, resolvedTheme, setTheme, toggle],
+    () => ({ theme, resolvedTheme, setTheme, toggle, contrast, setContrast }),
+    [theme, resolvedTheme, setTheme, toggle, contrast, setContrast],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

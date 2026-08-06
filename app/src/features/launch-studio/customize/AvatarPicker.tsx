@@ -1,4 +1,4 @@
-import { Bot, ImagePlus, Loader2, Sparkles, Trash2, Upload } from 'lucide-react';
+import { Bot, Check, ImagePlus, Loader2, Sparkles, Trash2, Upload } from 'lucide-react';
 import { cn } from '../../../design-system';
 import PremiumOrb from '../../../components/PremiumOrb';
 import { ColorField } from './ColorField';
@@ -100,13 +100,26 @@ export function AvatarPicker({
               onClick={() => onChangeType(key)}
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+                'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
                 active
-                  ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                  ? // Selected: accent tint + accent-color border so it reads
+                    // unmistakably in both light AND dark (the old white-on-
+                    // sunken style was near-invisible in dark). The trailing
+                    // check icon removes any doubt about which tab is on.
+                    'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)] shadow-[inset_0_0_0_1px_var(--ds-accent)]'
                   : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
               )}
             >
-              <Icon size={14} />
+              <Icon size={14} aria-hidden="true" />
               {label}
+              {active && (
+                <Check
+                  size={14}
+                  strokeWidth={3}
+                  className="ml-0.5 text-[var(--ds-accent)]"
+                  aria-hidden="true"
+                />
+              )}
             </button>
           );
         })}

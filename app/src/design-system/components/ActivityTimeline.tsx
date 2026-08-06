@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { IconTile } from './IconTile';
 
 export type ActivityTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';
 
@@ -31,15 +32,6 @@ export interface ActivityTimelineProps {
   className?: string;
 }
 
-const toneStyles: Record<ActivityTone, string> = {
-  neutral: 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]',
-  accent: 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]',
-  success: 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]',
-  warning: 'bg-[var(--ds-warning-soft)] text-[var(--ds-warning)]',
-  danger: 'bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]',
-  info: 'bg-[var(--ds-info-soft)] text-[var(--ds-info)]',
-};
-
 /**
  * ActivityTimeline - a vertical feed of recent events (mandate shared
  * component). Each item has a tinted marker, a title, optional detail, and a
@@ -49,19 +41,11 @@ export function ActivityTimeline({ items, className }: ActivityTimelineProps) {
   return (
     <ol className={cn('flex flex-col', className)}>
       {items.map((item, index) => {
-        const Icon = item.icon;
         const isLast = index === items.length - 1;
         return (
           <li key={item.id ?? index} className="flex gap-3">
             <div className="flex flex-col items-center">
-              <span
-                className={cn(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                  toneStyles[item.tone ?? 'neutral'],
-                )}
-              >
-                <Icon size={15} aria-hidden="true" />
-              </span>
+              <IconTile icon={item.icon} tone={item.tone ?? 'neutral'} size="sm" shape="circle" />
               {!isLast && <span className="mt-1 w-px flex-1 bg-[var(--ds-border)]" />}
             </div>
             <div className={cn('min-w-0 flex-1', isLast ? 'pb-0' : 'pb-5')}>

@@ -21,6 +21,7 @@ import { AdvancedPage } from '../features/agents/advanced/AdvancedPage';
 import { InboxPage } from '../features/inbox/InboxPage';
 import { LeadsPage } from '../features/leads/LeadsPage';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
+import { JourneyPage } from '../features/analytics/JourneyPage';
 import { WorkspaceLayout } from '../features/workspace/WorkspaceLayout';
 import { GeneralPage } from '../features/workspace/GeneralPage';
 import { MembersPage } from '../features/workspace/MembersPage';
@@ -125,6 +126,7 @@ export const router = createBrowserRouter([
                   // ── Operations ─────────────────────────────────────────────
                   { path: 'inbox', handle: { crumb: 'Inbox' }, element: <InboxPage /> },
                   { path: 'leads', handle: { crumb: 'Leads' }, element: <LeadsPage /> },
+                  { path: 'journey', handle: { crumb: 'Journey' }, element: <JourneyPage /> },
                   { path: 'analytics', handle: { crumb: 'Analytics' }, element: <AnalyticsPage /> },
 
                   // ── Workspace ──────────────────────────────────────────────

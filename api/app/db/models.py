@@ -995,6 +995,12 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)  # user|bot|operator|system
     content = Column(Text, nullable=False)
     feedback = Column(Integer, nullable=True)
+    # True on a bot turn that could NOT be answered from the knowledge base
+    # (the "no-info pivot": relevance gate fired on an on-scope question, or
+    # retrieval returned nothing). Powers the Knowledge-gaps analytics — each
+    # flagged bot message is paired with its preceding user question. Indexed
+    # because the analytics query filters on it.
+    is_unanswered = Column(Boolean, default=False, server_default="false", nullable=False, index=True)
     trace_id = Column(String(255), nullable=True)  # Langfuse trace ID for feedback linking
     # Media-card payloads emitted alongside a bot answer. The sentinels
     # ([YOUTUBE_CARD:…] / [DOWNLOAD_CARD:…]) are stripped from ``content`` at

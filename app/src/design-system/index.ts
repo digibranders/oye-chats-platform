@@ -7,7 +7,7 @@
 // Theme
 export { ThemeProvider } from './theme/ThemeProvider';
 export { useTheme } from './theme/theme-context';
-export type { Theme, ResolvedTheme, ThemeContextValue } from './theme/theme-context';
+export type { Theme, ResolvedTheme, Contrast, ThemeContextValue } from './theme/theme-context';
 
 // Utilities
 export { cn } from './lib/cn';
@@ -56,6 +56,9 @@ export type { ProgressStepperProps, StepperItem } from './components/ProgressSte
 // Composite components - Admin 2.0 page kit
 export { MetricCard } from './components/MetricCard';
 export type { MetricCardProps, MetricTrend } from './components/MetricCard';
+export { IconTile } from './components/IconTile';
+export type { IconTileProps, IconTileTone, IconTileSize, TileIcon } from './components/IconTile';
+export { WhatsAppGlyph, MessengerGlyph } from './icons/brand';
 export { InsightCard } from './components/InsightCard';
 export type { InsightCardProps, InsightTone } from './components/InsightCard';
 export { ActionCard } from './components/ActionCard';

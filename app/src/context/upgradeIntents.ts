@@ -28,6 +28,7 @@ export type UpgradeIntentKey =
   | 'add_canned_response'
   | 'view_support'
   | 'view_leads'
+  | 'view_journeys'
   | 'leads_form'
   | 'view_team'
   | 'view_qualification'
@@ -151,6 +152,18 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
       'BANT scoring & conversation qualification',
     ],
     recommendedPlan: 'Starter',
+  }),
+  view_journeys: () => ({
+    eyebrow: 'Journey analytics is a Standard feature',
+    title: 'See the path visitors take to convert',
+    description:
+      'Upgrade to trace every visitor’s page journey — before the chat, during, and after — and rank the routes that produce demos, handoffs, and offline messages.',
+    highlights: [
+      'Top pages, split by pre-chat, in-chat, and post-chat',
+      'Which content journeys lead to each conversion type',
+      'Where visitors go after they close the chat',
+    ],
+    recommendedPlan: 'Standard',
   }),
   leads_form: () => ({
     eyebrow: 'Lead capture form is a paid feature',

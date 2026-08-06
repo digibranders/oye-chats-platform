@@ -21,7 +21,6 @@ import {
   FeedbackBanner,
   Input,
   LockedFeatureCard,
-  MetricCard,
   Modal,
   PageContainer,
   QuotaMeter,
@@ -318,8 +317,6 @@ export function MembersPage(): ReactElement {
     return botOperators.find((operator) => operator.linked_client_id === data.currentUserId) ?? null;
   }, [data, botOperators]);
   const showSelfCta = canManage && !!selectedBotId && data?.currentUserId != null && !selfOperator;
-
-  const onlineCount = botOperators.filter((operator) => operator.is_online).length;
 
   // ── Free-plan gate ───────────────────────────────────────────────────────
   // Placed after every hook call (rules-of-hooks requires hooks to run
@@ -658,14 +655,6 @@ export function MembersPage(): ReactElement {
 
       {phase.status === 'ready' && (
         <>
-          {/* Metrics - a quick read on team size and availability. */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard label="Operators" value={botOperators.length} icon={Users} />
-            <MetricCard label="Online now" value={onlineCount} icon={Headphones} />
-            <MetricCard label="Pending invites" value={botInvites.length} icon={Mail} />
-            <MetricCard label="Departments" value={departments.length} icon={Building2} />
-          </div>
-
           <Tabs
             ariaLabel="Operators sections"
             value={tab}

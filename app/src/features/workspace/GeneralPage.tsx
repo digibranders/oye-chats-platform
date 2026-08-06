@@ -13,6 +13,7 @@ import {
   Button,
   Card,
   EmptyState,
+  IconTile,
   Input,
   Modal,
   PageContainer,
@@ -255,12 +256,7 @@ export function GeneralPage(): ReactElement {
               {!isEditing ? (
                 <>
                   <div className="flex items-center gap-4">
-                    <span
-                      aria-hidden="true"
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]"
-                    >
-                      <Building2 size={22} />
-                    </span>
+                    <IconTile icon={Building2} tone="accent" size="lg" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[15px] font-semibold text-[var(--ds-text)]">
                         {currentWorkspaceName ?? user.company_name ?? user.name ?? 'Your workspace'}

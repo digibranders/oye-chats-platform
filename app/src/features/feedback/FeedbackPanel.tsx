@@ -12,7 +12,6 @@ import {
   normalizeQuestionKey,
 } from './feedback-helpers';
 import { FeedbackList } from './FeedbackList';
-import { FeedbackSummaryBar } from './FeedbackSummaryBar';
 import { FeedbackTrendChart } from './FeedbackTrendChart';
 import { TopDownvotedQuestions } from './TopDownvotedQuestions';
 import { type DateRange, type FeedbackFilter } from './types';
@@ -209,8 +208,6 @@ export function FeedbackPanel({ agentId }: FeedbackPanelProps): ReactElement {
           Export CSV
         </Button>
       </div>
-
-      <FeedbackSummaryBar stats={stats} />
 
       {(trend.length > 1 || topDownvoted.length > 0) && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

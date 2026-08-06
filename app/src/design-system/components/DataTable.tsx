@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode } from 'react';
+import { type KeyboardEvent, type ReactNode, useState } from 'react';
 import { cn } from '../lib/cn';
 
 export type ColumnAlign = 'left' | 'center' | 'right';
@@ -34,6 +34,9 @@ export interface DataTableProps<T> {
   onRowClick?: (row: T, index: number) => void;
   /** Accessible name / summary for the table. */
   caption?: string;
+  /** When set, paginate to this many rows per page and render a pager footer.
+   *  Omit for the default behavior (render every row, no pager). */
+  pageSize?: number;
   className?: string;
 }
 
@@ -56,9 +59,33 @@ export function DataTable<T>({
   empty,
   onRowClick,
   caption,
+  pageSize,
   className,
 }: DataTableProps<T>) {
   const interactive = Boolean(onRowClick);
+
+  // Opt-in pagination. When `pageSize` is set, only that many rows render and a
+  // pager footer appears; otherwise every row renders (default behavior).
+  const paginated = typeof pageSize === 'number' && pageSize > 0;
+  const total = rows.length;
+  const pageCount = paginated ? Math.max(1, Math.ceil(total / (pageSize as number))) : 1;
+  const [page, setPage] = useState(0);
+  // Filters/search shrink `rows`; snap back to the first page when the row set
+  // or page size changes. Done by adjusting state during render (the sanctioned
+  // React pattern) rather than in an effect, so the pager never strands on an
+  // out-of-range page after a filter narrows the results.
+  const resetKey = `${total}:${pageSize ?? ''}`;
+  const [seenResetKey, setSeenResetKey] = useState(resetKey);
+  if (resetKey !== seenResetKey) {
+    setSeenResetKey(resetKey);
+    setPage(0);
+  }
+  const safePage = Math.min(page, pageCount - 1);
+  const visibleRows = paginated
+    ? rows.slice(safePage * (pageSize as number), safePage * (pageSize as number) + (pageSize as number))
+    : rows;
+  const rangeStart = total === 0 ? 0 : safePage * (pageSize as number) + 1;
+  const rangeEnd = paginated ? Math.min((safePage + 1) * (pageSize as number), total) : total;
 
   function handleKeyDown(event: KeyboardEvent<HTMLTableRowElement>, row: T, index: number): void {
     if (!onRowClick) return;
@@ -71,10 +98,11 @@ export function DataTable<T>({
   return (
     <div
       className={cn(
-        'w-full overflow-x-auto rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]',
+        'w-full rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]',
         className,
       )}
     >
+      <div className="w-full overflow-x-auto">
       <table className="w-full border-collapse text-left text-[13px]">
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead>
@@ -104,7 +132,7 @@ export function DataTable<T>({
               </td>
             </tr>
           ) : (
-            rows.map((row, index) => (
+            visibleRows.map((row, index) => (
               <tr
                 key={rowKey ? rowKey(row, index) : index}
                 onClick={onRowClick ? () => onRowClick(row, index) : undefined}
@@ -136,6 +164,35 @@ export function DataTable<T>({
           )}
         </tbody>
       </table>
+      </div>
+      {paginated && total > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--ds-border)] px-4 py-2.5 text-[12px] text-[var(--ds-text-muted)]">
+          <span>
+            {rangeStart}&ndash;{rangeEnd} of {total}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={safePage <= 0}
+              className="rounded-md px-2.5 py-1 font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span className="px-1 tabular-nums text-[var(--ds-text-subtle)]">
+              {safePage + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={safePage >= pageCount - 1}
+              className="rounded-md px-2.5 py-1 font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

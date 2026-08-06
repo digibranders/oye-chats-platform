@@ -421,6 +421,17 @@ export interface TopQuestion {
   count: number;
 }
 
+/**
+ * A knowledge gap: a question visitors asked that the AI could not answer from
+ * its knowledge base, grouped by question. From getUnansweredQuestions.
+ */
+export interface UnansweredQuestion {
+  question: string;
+  count: number;
+  /** ISO timestamp of the most recent time this gap was hit, or null. */
+  last_asked: string | null;
+}
+
 export type CrawlStatus =
   | 'idle'
   | 'running'

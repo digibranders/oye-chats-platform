@@ -139,3 +139,56 @@
 
   --ds-overlay: rgba(0, 0, 0, 0.6);
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   High-contrast palette - the SECOND appearance axis (`data-contrast="high"`
+   on <html>, driven by the ThemeProvider). Only the readability-critical
+   tokens are overridden: body text is pushed to WCAG AAA (>=7:1), the pale
+   "subtle" greys that fail even AA are darkened, borders cross the 3:1 UI
+   threshold so structure is visible, and focus/active states are intensified.
+   Backgrounds, radii, spacing, and motion are inherited from the base theme.
+
+   Light and dark are kept mutually exclusive (`:not(.dark)` vs `.dark`) so a
+   single `data-contrast` attribute cannot double-apply.
+   ────────────────────────────────────────────────────────────────────────── */
+:root[data-contrast='high']:not(.dark) {
+  --ds-border: #6f6f6b;         /* ~3.6:1 on white - visible structure (was #e7e5de) */
+  --ds-border-strong: #3f3f46;
+
+  --ds-text: #000000;           /* maximal */
+  --ds-text-muted: #3f3f46;     /* ~10.8:1 on white - AAA */
+  --ds-text-subtle: #52525b;    /* ~7.5:1 on white - AAA (was #a1a1aa, failed AA) */
+
+  --ds-bg-hover: #e7e5de;       /* perceptible hover against paper */
+
+  --ds-accent-hover: #5B21B6;
+  --ds-accent-soft: rgba(124, 58, 237, 0.14);
+  --ds-accent-text: #4c1d95;    /* ~10:1 on white */
+  --ds-ring: #4c1d95;
+
+  --ds-success: #047857;
+  --ds-warning: #b45309;
+  --ds-danger: #be123c;
+  --ds-info: #075985;
+}
+
+.dark[data-contrast='high'] {
+  --ds-border: #5c5c62;         /* ~3.4:1 on #0a0a0a (was #27272a) */
+  --ds-border-strong: #7a7a80;
+
+  --ds-text: #ffffff;           /* maximal */
+  --ds-text-muted: #d4d4d8;     /* very high on near-black */
+  --ds-text-subtle: #a1a1aa;    /* ~7:1 on #0a0a0a - AAA (was #71717a) */
+
+  --ds-bg-hover: rgba(255, 255, 255, 0.14);
+
+  --ds-accent-hover: #A78BFA;
+  --ds-accent-soft: rgba(139, 92, 246, 0.24);
+  --ds-accent-text: #C4B5FD;
+  --ds-ring: #C4B5FD;
+
+  --ds-success: #34d399;
+  --ds-warning: #fbbf24;
+  --ds-danger: #fb7185;
+  --ds-info: #7dd3fc;
+}

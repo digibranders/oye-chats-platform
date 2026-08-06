@@ -323,6 +323,128 @@ class TestBehavioralSignals:
         assert response.json()["behavioral_score"] == 25
 
 
+# ── Journey merge + sanitize ─────────────────────────────────────────────────
+
+
+class TestJourneySanitize:
+    def test_accepts_phase_and_event_in_whitelist(self):
+        from app.api.chat_routes import _sanitize_journey
+
+        out = _sanitize_journey(
+            [
+                {"path": "/pricing", "ts": "2026-08-06T10:00:00Z", "phase": "pre"},
+                {"path": "/pricing", "ts": "2026-08-06T10:01:00Z", "phase": "chat", "event": "chat_opened"},
+            ]
+        )
+        assert out == [
+            {"path": "/pricing", "ts": "2026-08-06T10:00:00Z", "phase": "pre"},
+            {"path": "/pricing", "ts": "2026-08-06T10:01:00Z", "phase": "chat", "event": "chat_opened"},
+        ]
+
+    def test_drops_unknown_phase_and_event(self):
+        from app.api.chat_routes import _sanitize_journey
+
+        out = _sanitize_journey(
+            [
+                {"path": "/x", "phase": "bogus", "event": "not_a_real_event"},
+            ]
+        )
+        # Row survives, but phase/event are stripped
+        assert out == [{"path": "/x"}]
+
+    def test_drops_non_string_phase_event(self):
+        from app.api.chat_routes import _sanitize_journey
+
+        out = _sanitize_journey([{"path": "/x", "phase": 42, "event": {"nope": True}}])
+        assert out == [{"path": "/x"}]
+
+
+class TestJourneyMerge:
+    def test_empty_existing_uses_incoming(self):
+        from app.api.chat_routes import _merge_journey
+
+        incoming = [{"path": "/a", "phase": "pre", "ts": "t1"}]
+        assert _merge_journey(None, incoming) == incoming
+        assert _merge_journey([], incoming) == incoming
+
+    def test_empty_incoming_preserves_existing(self):
+        from app.api.chat_routes import _merge_journey
+
+        existing = [{"path": "/a", "phase": "pre", "ts": "t1"}]
+        assert _merge_journey(existing, None) == existing
+        assert _merge_journey(existing, []) == existing
+
+    def test_widget_resend_is_idempotent(self):
+        """Widget sends the FULL journey on every update; same payload
+        twice must not duplicate rows."""
+        from app.api.chat_routes import _merge_journey
+
+        journey = [
+            {"path": "/a", "phase": "pre", "ts": "t1"},
+            {"path": "/b", "phase": "pre", "ts": "t2"},
+        ]
+        merged = _merge_journey(journey, journey)
+        assert merged == journey
+
+    def test_merge_appends_new_entries(self):
+        from app.api.chat_routes import _merge_journey
+
+        existing = [{"path": "/a", "phase": "pre", "ts": "t1"}]
+        incoming = [
+            {"path": "/a", "phase": "pre", "ts": "t1"},
+            {"path": "/b", "phase": "chat", "event": "chat_opened", "ts": "t2"},
+            {"path": "/c", "phase": "post", "ts": "t3"},
+        ]
+        merged = _merge_journey(existing, incoming)
+        assert merged == [
+            {"path": "/a", "phase": "pre", "ts": "t1"},
+            {"path": "/b", "phase": "chat", "event": "chat_opened", "ts": "t2"},
+            {"path": "/c", "phase": "post", "ts": "t3"},
+        ]
+
+    def test_merge_keeps_existing_when_widget_lost_state(self):
+        """Private tab / cleared storage → widget sends a shorter journey.
+        We must not lose the history we already stored."""
+        from app.api.chat_routes import _merge_journey
+
+        existing = [
+            {"path": "/a", "phase": "pre", "ts": "t1"},
+            {"path": "/b", "phase": "pre", "ts": "t2"},
+        ]
+        incoming = [{"path": "/c", "phase": "pre", "ts": "t3"}]  # fresh widget
+        merged = _merge_journey(existing, incoming)
+        assert merged == [
+            {"path": "/a", "phase": "pre", "ts": "t1"},
+            {"path": "/b", "phase": "pre", "ts": "t2"},
+            {"path": "/c", "phase": "pre", "ts": "t3"},
+        ]
+
+    def test_trim_drops_pre_phase_first(self):
+        """When over cap, oldest pre-phase entries go first so chat/post
+        markers survive."""
+        from app.api.chat_routes import _trim_journey
+
+        entries = (
+            [{"path": f"/pre-{i}", "phase": "pre", "ts": f"p{i}"} for i in range(198)]
+            + [{"path": "/opened", "phase": "chat", "event": "chat_opened", "ts": "c1"}]
+            + [{"path": "/after1", "phase": "post", "ts": "p1"}]
+            + [{"path": "/after2", "phase": "post", "ts": "p2"}]
+            + [{"path": "/after3", "phase": "post", "ts": "p3"}]
+        )
+        assert len(entries) == 202
+        trimmed = _trim_journey(entries)
+        assert len(trimmed) == 200
+        assert any(e.get("event") == "chat_opened" for e in trimmed)
+        # All 3 post entries survive
+        assert sum(1 for e in trimmed if e.get("phase") == "post") == 3
+
+    def test_trim_no_op_under_cap(self):
+        from app.api.chat_routes import _trim_journey
+
+        entries = [{"path": "/a", "phase": "pre"}] * 10
+        assert _trim_journey(entries) == entries
+
+
 # ── Transcript ───────────────────────────────────────────────────────────────
 
 

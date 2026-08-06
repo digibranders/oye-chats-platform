@@ -1,6 +1,7 @@
 import { type ReactElement, useState } from 'react';
 import WidgetChatPreview, { type WidgetPreviewSettings } from '../../../components/WidgetChatPreview';
 import { cn } from '../../../design-system';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { type ExperienceDraft } from './types';
 
 export interface ExperiencePreviewProps {
@@ -30,6 +31,11 @@ const STATE_TABS: { key: PreviewState; label: string }[] = [
  */
 export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps): ReactElement {
   const [state, setState] = useState<PreviewState>('chat');
+  const { hasFeature } = useEntitlements();
+  // Mirror the backend's widget /settings gate (bot_routes.py): the headphones
+  // icon is plan-gated. On Free `hasFeature('live_chat')` is false so it
+  // hides; on Starter+ it renders - exactly what visitors will see.
+  const planIncludesLiveChat = hasFeature('live_chat');
   const suggestions = draft.quickActions.map((s) => s.trim()).filter((s) => s.length > 0);
 
   const settings: WidgetPreviewSettings = {
@@ -47,6 +53,7 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
       input_placeholder: draft.inputPlaceholder,
     },
     feature_flags: { show_branding: draft.showBranding },
+    live_chat_enabled: planIncludesLiveChat,
   };
 
   return (
