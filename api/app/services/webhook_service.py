@@ -269,6 +269,19 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
                 delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
                 next_retry_at = datetime.fromtimestamp(time.time() + delay, UTC)
 
+        # L-4: the LAST attempt failing is the moment a customer integration
+        # goes permanently dark for this event — say so at ERROR (Sentry picks
+        # it up) instead of burying it as one more attempt row.
+        if delivered_at is None and next_retry_at is None and attempt >= _MAX_RETRIES:
+            logger.error(
+                "Webhook delivery EXHAUSTED after %d attempts: webhook %s event %s last_status=%s — "
+                "the customer endpoint never accepted this event and no further retries will run",
+                attempt,
+                webhook.id,
+                event_type,
+                status_code,
+            )
+
         session.add(
             WebhookDelivery(
                 webhook_id=webhook.id,
@@ -285,31 +298,55 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
 
 
 def process_pending_retries() -> int:
-    """Process pending webhook retries that are due now."""
+    """Process pending webhook retries that are due now.
+
+    ``FOR UPDATE SKIP LOCKED`` (M-4): the ARQ cron and any legacy in-process
+    poller can sweep concurrently; without row locks both would enqueue the
+    same delivery and the customer receives duplicates. SKIP LOCKED lets
+    concurrent sweepers partition the due set instead of double-claiming it.
+
+    The ``next_retry_at`` marker is cleared ONLY after the enqueue call
+    returns (M-1): clearing first meant a Redis hiccup lost the retry forever
+    — the marker is the sole record that a redelivery is owed. On enqueue
+    failure the row keeps its marker and the next sweep retries it.
+    """
     now = datetime.now(UTC)
+    queued = 0
     with get_session() as session:
         pending = (
             session.execute(
-                select(WebhookDelivery).where(
+                select(WebhookDelivery)
+                .where(
                     WebhookDelivery.next_retry_at.is_not(None),
                     WebhookDelivery.next_retry_at <= now,
                     WebhookDelivery.delivered_at.is_(None),
                     WebhookDelivery.attempt < _MAX_RETRIES,
                 )
+                .with_for_update(skip_locked=True)
             )
             .scalars()
             .all()
         )
 
         for delivery in pending:
-            queue_webhook_delivery(
-                delivery.webhook_id, delivery.event_type, delivery.payload, attempt=delivery.attempt + 1
-            )
+            try:
+                queue_webhook_delivery(
+                    delivery.webhook_id, delivery.event_type, delivery.payload, attempt=delivery.attempt + 1
+                )
+            except Exception:
+                logger.exception(
+                    "Webhook retry enqueue failed for delivery %s (webhook %s) — keeping next_retry_at "
+                    "so the next sweep re-claims it",
+                    delivery.id,
+                    delivery.webhook_id,
+                )
+                continue
             delivery.next_retry_at = None
+            queued += 1
 
         if pending:
             session.commit()
-        return len(pending)
+        return queued
 
 
 def _retry_worker_loop() -> None:
