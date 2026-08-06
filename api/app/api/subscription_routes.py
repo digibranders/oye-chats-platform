@@ -3038,7 +3038,10 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     display-only figure and is accepted only as a last-resort legacy fallback.
     """
     for pack in packs:
-        if int(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0) == requested_amount:
+        # round(), not int(): pack prices come from operator-edited JSON in
+        # pricing_config and can arrive as floats — int() truncation turned a
+        # "1599.99" pack into 1599 and silently failed every match.
+        if int(round(float(pack.get("inr") or pack.get("amount") or pack.get("usd") or 0))) == requested_amount:
             return pack
     return None
 
@@ -3143,6 +3146,26 @@ def initiate_topup(
     with get_session() as session:
         provider = _resolve_provider()
 
+        # topup_allowed is a PLAN feature and was only ever enforced by the
+        # frontend hiding the button (Wave 4b): calling the API directly let a
+        # Free account buy credits the plan matrix says it can't have. All
+        # paid tiers carry the flag; Free does not.
+        from app.services import plan_entitlements_service
+
+        ents = plan_entitlements_service.get_entitlements(client.id, session)
+        if not ents.has_feature("topup_allowed"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "topup_not_allowed",
+                    "plan_slug": ents.plan_slug,
+                    "message": (
+                        f"Credit top-ups aren't available on the {ents.plan_name} plan — "
+                        "upgrade to a paid plan to buy extra credits."
+                    ),
+                },
+            )
+
         # Persist the confirmed country for invoice place-of-supply, mirroring
         # create_checkout. A GSTIN pins the country to IN, so never let a
         # top-up flip it. Only write when the caller explicitly confirmed a
@@ -3205,6 +3228,12 @@ def initiate_topup(
                 # Checkout needs this to tokenise a card (customer_id + save=1).
                 result["customer_id"] = customer_id
             return result
+
+        # Unreachable while _resolve_provider only knows Razorpay — but a
+        # future provider slipping past that guard used to fall off the end of
+        # this function and return an implicit 200 with a null body, which the
+        # frontend would open as a broken checkout. Fail loudly instead.
+        raise HTTPException(status_code=503, detail=f"Top-ups are not supported on provider '{provider}'.")
 
 
 class TopupVerifyRequest(BaseModel):

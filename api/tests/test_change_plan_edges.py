@@ -188,9 +188,7 @@ def test_annual_to_monthly_on_same_plan_schedules_downgrade(db, monkeypatch):
     plan = _plan(db, slug="edges-cycle2")
     _active_sub(db, client, plan, cycle="annual")
     cutover = datetime.now(UTC) + timedelta(days=20)
-    with patch(
-        "app.services.transition_service.schedule_paid_downgrade", return_value=cutover
-    ) as schedule:
+    with patch("app.services.transition_service.schedule_paid_downgrade", return_value=cutover) as schedule:
         res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "downgrade_scheduled"

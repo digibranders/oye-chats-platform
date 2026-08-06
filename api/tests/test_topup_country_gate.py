@@ -114,6 +114,33 @@ def test_topup_proceeds_for_domestic_billing_country(db):
     from app.api import subscription_routes
 
     client = _make_client(db, email="topup-gate-in@e.com")
+    # Wave 4b: topups are plan-gated (topup_allowed). This test is about the
+    # COUNTRY gate, so give the buyer a paid plan that allows topups.
+    from app.db.models import Plan, Subscription
+
+    plan = Plan(
+        name="Starter",
+        slug="starter-topup-gate",
+        monthly_price_cents=44900,
+        annual_price_cents=449000,
+        credits_per_month=3000,
+        included_operator_seats=1,
+        is_active=True,
+        features={"topup_allowed": True},
+    )
+    db.add(plan)
+    db.flush()
+    db.add(
+        Subscription(
+            client_id=client.id,
+            plan_id=plan.id,
+            status="active",
+            billing_cycle="monthly",
+            operator_quantity=1,
+            payment_provider="razorpay",
+            razorpay_subscription_id="sub_topup_gate_in",
+        )
+    )
     db.commit()
 
     api = _api(db, client)

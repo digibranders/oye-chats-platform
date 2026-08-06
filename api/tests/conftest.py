@@ -278,3 +278,25 @@ def _reset_rate_limiter():
     with contextlib.suppress(Exception):
         limiter.reset()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_entitlements_cache():
+    """Flush the Redis entitlements cache before every test.
+
+    The cache is keyed by client_id and the DB is truncated between tests, so
+    ids are reused — without this, one test's Free-plan entitlements poison a
+    later test's freshly built paid client (the Wave 4b topup gate surfaced
+    exactly that as an order-dependent failure).
+    """
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from app.core.cache import get_redis
+
+        client = get_redis()
+        if client is not None:
+            keys = list(client.scan_iter(match="*entitlements:*", count=500))
+            if keys:
+                client.delete(*keys)
+    yield
