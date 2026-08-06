@@ -100,6 +100,8 @@ def issue_state_token(
     *,
     next_path: str = "/",
     mode: str = "login",
+    promo_code: str | None = None,
+    referral_code: str | None = None,
 ) -> str:
     """Return a tamper-evident state token for the OAuth round trip.
 
@@ -113,6 +115,12 @@ def issue_state_token(
     * ``mode`` — ``"login"`` or ``"register"``, purely for telemetry; the
       backend behaviour is identical.
     * ``ts`` — issuance time, enforced against ``STATE_MAX_AGE_SECONDS``.
+    * ``promo`` / ``ref`` — optional campaign/affiliate codes captured on the
+      register page. The OAuth dance is a full-page round trip through
+      Google, so any attribution the page knew about is otherwise LOST by
+      the time the callback creates the account — this is the only carrier.
+      Signed with the rest of the payload, so a user can't self-grant a
+      code the page never had.
 
     The token is signed with HMAC-SHA256 using ``OAUTH_STATE_SECRET`` and
     delivered as a single opaque string (payload.signature). The route
@@ -126,6 +134,10 @@ def issue_state_token(
         "mode": mode,
         "ts": int(time.time()),
     }
+    if promo_code and promo_code.strip():
+        payload["promo"] = promo_code.strip()[:64]
+    if referral_code and referral_code.strip():
+        payload["ref"] = referral_code.strip()[:64]
     body = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     sig = _b64url_encode(hmac.new(OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
     return f"{body}.{sig}"

@@ -120,7 +120,13 @@ def _safe_next_path(raw: str | None) -> str:
 
 @router.get("/login")
 @limiter.limit("20/minute")
-def google_login(request: Request, next: str | None = None, mode: str = "login"):
+def google_login(
+    request: Request,
+    next: str | None = None,
+    mode: str = "login",
+    promo_code: str | None = None,
+    referral_code: str | None = None,
+):
     """Kick off the Google OAuth flow.
 
     Issues the state cookie and 302-redirects to Google's consent screen.
@@ -138,7 +144,11 @@ def google_login(request: Request, next: str | None = None, mode: str = "login")
     if mode not in ("login", "register"):
         mode = "login"
 
-    state_token = issue_state_token(next_path=next_path, mode=mode)
+    # Campaign/affiliate codes from the register page ride the SIGNED state —
+    # the full-page Google round trip would otherwise lose them, which is
+    # exactly how a promo-link signup via "Continue with Google" ended up
+    # with no promotion attributed.
+    state_token = issue_state_token(next_path=next_path, mode=mode, promo_code=promo_code, referral_code=referral_code)
 
     try:
         authorize_url = build_authorize_url(state_token)
@@ -232,6 +242,32 @@ def google_callback(
     except Exception as exc:  # pragma: no cover — defensive
         logger.exception("google_oauth_resolve_failed: %s", exc)
         return _error_redirect("oauth_internal_error", next_path=next_path)
+
+    # First-touch attribution for accounts CREATED by this OAuth flow. The
+    # register page's password path does the same two stamps; without this,
+    # a campaign-link signup that chose "Continue with Google" silently lost
+    # its promotion/referral. Existing accounts are never re-attributed
+    # (first-touch), and both stamps are best-effort — attribution must
+    # never break a successful sign-in.
+    if is_new:
+        promo_code = (state_payload.get("promo") or "").strip()
+        referral_code = (state_payload.get("ref") or "").strip()
+        if promo_code or referral_code:
+            try:
+                from app.db.session import get_session
+
+                with get_session() as session:
+                    if referral_code:
+                        from app.services.affiliate_service import attribute_signup
+
+                        attribute_signup(session, client.id, referral_code)
+                    if promo_code:
+                        from app.services.promotion_service import attribute_signup_code
+
+                        attribute_signup_code(session, client.id, promo_code)
+                    session.commit()
+            except Exception as attr_err:  # noqa: BLE001 — never block the sign-in
+                logger.warning("google_oauth_attribution_failed client=%s: %s", client.id, attr_err)
 
     return _success_redirect(
         client.api_key,
