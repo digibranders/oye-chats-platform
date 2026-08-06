@@ -45,6 +45,15 @@ class Client(Base):
     # both directions — durable GST/FEMA review trail, not just a WARN log.
     geo_mismatch_at = Column(DateTime(timezone=True), nullable=True)
     geo_mismatch_detail = Column(String(500), nullable=True)
+    # In-flight FIRST checkout (H1 pattern): a sequential re-submit reuses this
+    # gateway subscription instead of minting a second authorizable mandate.
+    # Gateway state (rebuild_upgrade_checkout) decides staleness, not a TTL;
+    # cleared by the activation webhook. Upgrade/resume park theirs on the
+    # Subscription row; a first checkout has no row yet, hence here.
+    pending_checkout_subscription_id = Column(String, nullable=True)
+    pending_checkout_plan_id = Column(Integer, nullable=True)
+    pending_checkout_cycle = Column(String(8), nullable=True)
+    pending_checkout_at = Column(DateTime(timezone=True), nullable=True)
     # Razorpay Customer id — the identity anchor for saved payment instruments.
     # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without
     # this there is no saved-card capability at all.
@@ -2192,6 +2201,10 @@ class ReferralConversion(Base):
     """
 
     __tablename__ = "referral_conversions"
+    # One conversion per client, ever: the insert happens in the
+    # subscription.charged webhook (which fires every cycle), and this
+    # constraint is what makes replays and later cycles no-ops.
+    __table_args__ = (UniqueConstraint("client_id", name="uq_referral_conversions_client"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)

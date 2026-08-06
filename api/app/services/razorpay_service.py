@@ -1969,6 +1969,42 @@ def _entity_future_start(sub_entity: dict[str, Any]) -> datetime | None:
     return start if start > datetime.now(UTC) else None
 
 
+def _record_referral_conversion_from_notes(session: Session, client_id: int, notes: dict[str, Any]) -> None:
+    """Insert the ReferralConversion carried in the checkout notes, once ever.
+
+    Checkout parks the attribution snapshot (code / affiliate / bps, frozen at
+    subscribe time) in the subscription notes; THIS records it — at
+    ``subscription.charged``, i.e. actual money — so an abandoned checkout can
+    never accrue the affiliate a conversion. Fires on every cycle; the
+    unique-per-client constraint makes everything after the first payment a
+    no-op. Best-effort: a malformed note must never fail the payment handler.
+    """
+    raw_code_id = notes.get("oyechats_ref_code_id")
+    if not raw_code_id:
+        return
+    try:
+        values = {
+            "client_id": client_id,
+            "referral_code_id": int(raw_code_id),
+            "affiliate_id": int(notes.get("oyechats_ref_affiliate_id") or 0) or None,
+            "commission_bps": int(notes.get("oyechats_ref_commission_bps") or 0),
+            "customer_discount_bps": int(notes.get("oyechats_ref_discount_bps") or 0),
+        }
+    except (TypeError, ValueError):
+        logger.warning("Unparseable referral snapshot in notes for client %s: %r — skipping", client_id, notes)
+        return
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.db.models import ReferralConversion
+
+    session.execute(
+        pg_insert(ReferralConversion.__table__)
+        .values(**values)
+        .on_conflict_do_nothing(constraint="uq_referral_conversions_client")
+    )
+
+
 def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
     """Mandate authorised, billing not started — two deferred-start cases meet here.
 
@@ -2307,6 +2343,16 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         )
         session.add(local)
         session.flush()
+
+        # The first-checkout H1 marker points at an in-flight authorizable sub;
+        # this activation consumes it, so clear it (a stale marker would make a
+        # later /checkout try to reuse an already-activated subscription).
+        client_row = session.get(Client, client_id)
+        if client_row is not None and client_row.pending_checkout_subscription_id == razorpay_sub_id:
+            client_row.pending_checkout_subscription_id = None
+            client_row.pending_checkout_plan_id = None
+            client_row.pending_checkout_cycle = None
+            client_row.pending_checkout_at = None
 
         if funded_bot_id is not None:
             # Bot-scoped activation (per-bot new bot, resume, or revive-in-place).
@@ -2737,6 +2783,12 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     new_period_end = (
         datetime.fromtimestamp(sub_entity["current_end"], tz=UTC) if sub_entity.get("current_end") else None
     )
+
+    # First real payment on an attributed signup → record the referral
+    # conversion from the snapshot checkout parked in the notes (Wave 1.4).
+    # Unique-per-client, so every later cycle and replay is a no-op — and an
+    # abandoned checkout (this event never fires) accrues nothing.
+    _record_referral_conversion_from_notes(session, local.client_id, sub_entity.get("notes") or {})
 
     # Record the invoice if a payment entity was included. Flushed so its id can
     # link the period grant for precise refund clawback (C2 / NV5).

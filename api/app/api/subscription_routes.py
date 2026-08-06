@@ -1502,8 +1502,45 @@ def create_checkout(
                 row.billing_country = confirmed_country
                 client.billing_country = confirmed_country
 
-        from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
+
+        # Finding H1, first-checkout edition: a sequential re-submit (double
+        # click, second tab, re-opened modal) must reuse the in-flight
+        # authorizable subscription, not mint a sibling mandate. Placed BEFORE
+        # the promo/discount work so a reuse never burns a second promo slot.
+        # Gateway state decides staleness: rebuild_upgrade_checkout returns the
+        # payload only while the pending sub is still authorizable.
+        client_row = session.get(Client, client.id)
+        if (
+            client_row is not None
+            and client_row.pending_checkout_subscription_id
+            and client_row.pending_checkout_plan_id == plan.id
+            and (client_row.pending_checkout_cycle or "monthly") == request.billing_cycle
+        ):
+            reused = razorpay_service.rebuild_upgrade_checkout(
+                client_row.pending_checkout_subscription_id, client, plan, request.billing_cycle
+            )
+            if reused is not None:
+                reused.setdefault("provider", "razorpay")
+                logger.info(
+                    "Reusing pending first-checkout %s for client %s (plan %s)",
+                    client_row.pending_checkout_subscription_id,
+                    client.id,
+                    plan.id,
+                )
+                session.commit()
+                return reused
+            # Dead at the gateway — clear and fall through to a fresh mint.
+            logger.info(
+                "Pending first-checkout %s for client %s is dead; re-minting",
+                client_row.pending_checkout_subscription_id,
+                client.id,
+            )
+            client_row.pending_checkout_subscription_id = None
+            client_row.pending_checkout_plan_id = None
+            client_row.pending_checkout_cycle = None
+            client_row.pending_checkout_at = None
+            session.flush()
 
         # Only resolve/apply the referral discount on a provider that can realise
         # it (N4). Today only Razorpay is live; gating here means that if the
@@ -1555,6 +1592,27 @@ def create_checkout(
         except razorpay_customer_service.RazorpayCustomerError:
             logger.warning("checkout: could not ensure Razorpay customer for client %s", client.id)
 
+        # Park the referral snapshot in the subscription notes instead of
+        # inserting a ReferralConversion here (Wave 1.4). Recording at
+        # checkout-create credited the affiliate for ABANDONED checkouts —
+        # mandates never authorised, money never moved. The
+        # ``subscription.charged`` handler now records the conversion from
+        # these notes on the first real payment (unique-per-client, so replays
+        # and later cycles no-op). Snapshot terms still freeze at subscribe
+        # time — they travel in the immutable notes. Covers ANY attributed
+        # code, not just discount-bearing ones (finding MED-2 preserved).
+        conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
+        extra_notes: dict[str, str] = dict(promo_extra_notes or {})
+        if conv_meta:
+            extra_notes.update(
+                {
+                    "oyechats_ref_code_id": str(conv_meta["referral_code_id"]),
+                    "oyechats_ref_affiliate_id": str(conv_meta["affiliate_id"]),
+                    "oyechats_ref_commission_bps": str(conv_meta["affiliate_commission_bps"]),
+                    "oyechats_ref_discount_bps": str(conv_meta["discount_bps"]),
+                }
+            )
+
         try:
             result = razorpay_service.create_subscription(
                 session,
@@ -1563,30 +1621,20 @@ def create_checkout(
                 request.billing_cycle,
                 discount_bps=discount_bps,
                 start_at=promo_start_at,
-                extra_notes=promo_extra_notes,
+                extra_notes=extra_notes or None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        # Record the referral conversion for ANY attributed code, not just
-        # discount-bearing ones (finding MED-2): a commission-only code earns the
-        # affiliate a pool cut with no customer discount, and is a real
-        # conversion the super-admin view must not miss. ``disc_meta`` is None for
-        # those, so resolve the snapshot independently of the discount.
-        conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
-        if conv_meta:
-            session.add(
-                ReferralConversion(
-                    client_id=client.id,
-                    referral_code_id=int(conv_meta["referral_code_id"]),
-                    # Snapshot the affiliate so payout reconciliation can attribute
-                    # the conversion without re-joining the mutable code row (N6).
-                    affiliate_id=int(conv_meta["affiliate_id"]),
-                    commission_bps=int(conv_meta["affiliate_commission_bps"]),
-                    customer_discount_bps=int(conv_meta["discount_bps"]),
-                )
-            )
+
+        # Record the in-flight checkout for the H1 reuse above. Cleared by the
+        # activation webhook once the customer authorises.
+        if client_row is not None:
+            client_row.pending_checkout_subscription_id = result.get("subscription_id")
+            client_row.pending_checkout_plan_id = plan.id
+            client_row.pending_checkout_cycle = request.billing_cycle
+            client_row.pending_checkout_at = datetime.now(UTC)
         session.commit()
         if isinstance(result, dict) and customer_id:
             # Checkout needs this to tokenise a card (customer_id + save=1).

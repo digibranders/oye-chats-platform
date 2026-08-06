@@ -93,6 +93,9 @@ def test_change_plan_to_paid_requires_billing_identity(db, monkeypatch):
 def test_change_plan_intl_pending_for_stored_foreign_country(db, monkeypatch):
     # Stored foreign country + intl rail off → the same intl_usd_pending 409
     # contract as /checkout, raised at the route gate before the mint.
+    # Pin the flag OFF: this asserts the flag-off contract and must not
+    # inherit whatever the local .env / CI environment says.
+    monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", False)
     identity = dict(_COMPLETE_IDENTITY, billing_country="US", billing_state_code=None)
     api, _ = _mk(db, monkeypatch, **identity)
     plan = _plan(db)
