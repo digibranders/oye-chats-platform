@@ -2192,7 +2192,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                     # re-mints with re-authorization, so nothing is granted free.
                     carried_extra_seats = max(carried_extra_seats, int(old.seat_addon_pending_quantity))
                     old.seat_addon_pending_quantity = None
-                if starts_in_future:
+                if starts_in_future and not is_promo:
                     # The customer paid through ``old.current_period_end`` and the
                     # new mandate does not bill until then. Carry the period and
                     # the grant marker onto the replacement so entitlement is
@@ -2202,6 +2202,14 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                     # allowance they already own, and the "resets on" date would
                     # jump backwards — the exact loss the deferred start exists
                     # to avoid.
+                    #
+                    # A PROMO sub also starts in the future but must NOT inherit
+                    # anything from a swept sibling (a trial or comped row): a
+                    # carried period makes the renewal cron chase the promo row
+                    # daily once the old period lapses, and a carried grant
+                    # marker within the 4-day period-key tolerance would no-op
+                    # the promo's own month-1 grant — the free window opens a
+                    # fresh entitlement, it continues nothing.
                     carried_period_start = carried_period_start or old.current_period_start
                     carried_period_end = carried_period_end or old.current_period_end
                     carried_grant_marker = carried_grant_marker or old.last_granted_period_end
@@ -2314,11 +2322,17 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 session.flush()
 
         # Bot-scoped grant + early return: new per-bot purchase or an immediate
-        # revive. A deferred-start per-bot RESUME must NOT take this branch —
-        # the customer already paid through ``start_at``, so it falls through to
-        # the account-level section whose future-start arm grants nothing and
-        # carries the old period instead.
-        if funded_bot_id is not None and (not starts_in_future or is_promo):
+        # revive ONLY. A per-bot RESUME (deferred or immediate) must NOT take
+        # this branch: the deferred one falls through to the future-start arm
+        # (grants nothing, carries the old period), and the IMMEDIATE one — a
+        # mandate already dead with no paid time left — falls through so
+        # ``apply_pending_proration`` re-grants the rollover snapshot the route
+        # parked in ``upgrade_credit_pending_cents`` and the deferred
+        # gateway-cancel loop still runs; early-returning here would let the
+        # grant's reset destroy that snapshot. (New-bot never swept anything and
+        # a revived bot's superseded rows carry no live mandate, so skipping the
+        # loop is safe for exactly these two shapes.)
+        if funded_bot_id is not None and (mints_new_bot or is_revive) and not starts_in_future:
             # Finding H-A: grant through the period-marker helper (not the raw
             # ``grant_for_subscription``) so ``last_granted_period_end`` is set
             # exactly like the account-level path below. A UPI ``activated`` can
