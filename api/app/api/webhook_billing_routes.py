@@ -103,6 +103,12 @@ async def razorpay_webhook(request: Request):
     makes the eventual successful retry a no-op. The flag can be turned off to
     fall back to the legacy 200-on-error behaviour, but the event is still
     dead-lettered either way.
+
+    Only the body read is async; the ENTIRE processing stack (HMAC, dispatch,
+    DB writes, invoice work) is synchronous and runs in Starlette's threadpool
+    via ``run_in_threadpool`` (P1-4). Running it inline on the event loop
+    stalled every concurrent request — including /health — for the duration of
+    each webhook's DB/gateway round-trips.
     """
     if not RAZORPAY_WEBHOOK_SECRET:
         logger.error("RAZORPAY_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
@@ -114,7 +120,28 @@ async def razorpay_webhook(request: Request):
     raw_payload = await request.body()
     signature = request.headers.get("x-razorpay-signature", "")
     event_id = request.headers.get("x-razorpay-event-id")
+    # Headers worth keeping for replay/debug (not the whole set) — reused by both
+    # the missing-id and processing-error dead-letter paths.
+    replay_headers = {
+        k: request.headers.get(k)
+        for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
+        if request.headers.get(k) is not None
+    }
 
+    from starlette.concurrency import run_in_threadpool
+
+    return await run_in_threadpool(_process_razorpay_webhook, raw_payload, signature, event_id, replay_headers)
+
+
+def _process_razorpay_webhook(
+    raw_payload: bytes,
+    signature: str,
+    event_id: str | None,
+    replay_headers: dict[str, str],
+):
+    """The synchronous webhook pipeline — runs in the threadpool, never on the
+    event loop. ``HTTPException`` raised here propagates through
+    ``run_in_threadpool`` exactly like an inline raise."""
     # L5 — alert on event-id-less deliveries. A missing X-Razorpay-Event-Id means
     # idempotency dedup can't key on it; in bulk it usually signals a dashboard
     # misconfiguration that would silently drop billing events. Surface loudly.
@@ -142,14 +169,6 @@ async def razorpay_webhook(request: Request):
 
     event_type = event.get("event", "unknown")
     logger.info("Razorpay webhook received: %s | id=%s", event_type, event_id or "N/A")
-
-    # Headers worth keeping for replay/debug (not the whole set) — reused by both
-    # the missing-id and processing-error dead-letter paths below.
-    replay_headers = {
-        k: request.headers.get(k)
-        for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
-        if request.headers.get(k) is not None
-    }
 
     # Finding #4: a delivery with no X-Razorpay-Event-Id cannot be idempotency-
     # deduped, and the dispatcher would treat a null id as a "duplicate" and

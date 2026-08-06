@@ -372,10 +372,16 @@ async def task_process_webhook_retries(ctx: dict) -> int:
     """Cron task: poll for due webhook retries and re-enqueue them.
 
     Replaces the old daemon thread retry worker. Runs every 30s via ARQ cron.
+    ``process_pending_retries`` is synchronous (DB + HTTP), so it runs in an
+    executor (L-1) — inline it blocked the worker's event loop and delayed
+    every other queued job for the duration of the sweep.
     """
+    import asyncio
+
     from app.services.webhook_service import process_pending_retries
 
-    count = process_pending_retries()
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, process_pending_retries)
     if count:
         logger.info("task_process_webhook_retries: re-queued %d retries", count)
     return count
