@@ -19,6 +19,53 @@ to call from anywhere (routes, services, tests).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BillingContext:
+    """The resolved billing identity a quote or charge acts on.
+
+    ``source`` records WHICH signal won, so callers can gate on trust level:
+    ``request`` (confirmed this call) and ``stored`` (on the account) are
+    charge-grade; ``detected`` (IP geo) is display-grade only; ``unresolved``
+    means no signal at all.
+    """
+
+    country: str | None
+    currency: str  # "INR" | "USD"
+    source: str  # "request" | "stored" | "detected" | "unresolved"
+
+
+def resolve_billing_context(
+    *,
+    stored_country: str | None,
+    request_country: str | None = None,
+    detected_country: str | None = None,
+) -> BillingContext:
+    """The ONE resolution order for every billing surface (blueprint §2).
+
+    ``request_country`` (this call's explicit confirmation) → ``stored_country``
+    (the account's tax fact) → ``detected_country`` (IP geo, display-grade) →
+    unresolved. Currency always maps through :func:`charge_currency`, so an
+    unresolved buyer is domestic/INR — matching every legacy account (NULL
+    country, INR mandate) — instead of one surface guessing USD while another
+    charges rupees.
+
+    Pure and HTTP-free: routes translate trust rules into status codes (e.g.
+    a charge path refusing to act on a ``detected`` foreign signal). Quote and
+    charge calling THIS one function is what makes divergence impossible.
+    """
+    for raw, source in (
+        (request_country, "request"),
+        (stored_country, "stored"),
+        (detected_country, "detected"),
+    ):
+        country = (raw or "").strip().upper() or None
+        if country:
+            return BillingContext(country=country, currency=charge_currency(country), source=source)
+    return BillingContext(country=None, currency=charge_currency(None), source="unresolved")
+
 
 def display_price(
     *,

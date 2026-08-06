@@ -27,7 +27,7 @@ from app.config import (
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
-from app.core.pricing import format_amount, seat_price
+from app.core.pricing import format_amount, resolve_billing_context, seat_price
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service, plan_entitlements_service, razorpay_customer_service
@@ -1096,24 +1096,30 @@ def checkout_quote(
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
 
-        # The confirmed billing_country (from the checkout country-confirmation
-        # step) overrides IP geo so an Indian resident mis-detected abroad is
-        # never routed to USD — and vice-versa (FEMA-safe).
-        detected = resolve_country(request)
-        # Explicit param (this checkout) wins, then the account's saved country,
-        # then IP geo — so the quote matches what the rest of the app shows.
-        confirmed = (billing_country or "").strip().upper() or (client.billing_country or "").strip().upper() or None
-        country = confirmed or detected
-        is_domestic = country == "IN"
+        # ONE resolution order shared with the charge path (Wave 1.2):
+        # explicit param (this checkout's country-confirmation) → the account's
+        # saved country → IP geo (display-grade) → unresolved. The confirmed
+        # country overrides IP so an Indian resident mis-detected abroad is
+        # never routed to USD — and vice-versa (FEMA-safe). An UNRESOLVED buyer
+        # is domestic, matching charge_currency's rule for every legacy account
+        # (NULL country, INR mandate) — previously this quote treated unknown
+        # as foreign and dead-ended a brand-new customer at Contact-sales
+        # whenever the geo lookup failed.
+        ctx = resolve_billing_context(
+            stored_country=client.billing_country,
+            request_country=billing_country,
+            detected_country=resolve_country(request),
+        )
+        country = ctx.country
+        is_domestic = ctx.currency == "INR"
 
         # INR price is the canonical amount — use it as the free-plan test so a
         # missing USD column on a foreign quote can't misread a paid plan as free.
         inr_minor = _amount_for_cycle(plan, billing_cycle)
+        currency = ctx.currency
         if is_domestic:
-            currency = "INR"
             amount_minor = inr_minor
         else:
-            currency = "USD"
             usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
             amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
@@ -1132,6 +1138,7 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": None,
                 "reason": "free_plan",
+                "source": ctx.source,
             }
 
         # Foreign buyer, paid plan: charge on the USD rail only when the account
@@ -1158,6 +1165,7 @@ def checkout_quote(
                 "methods": list(_RAZORPAY_METHODS_USD),
                 "checkout_supported": True,
                 "contact_sales": None,
+                "source": ctx.source,
             }
 
         # Foreign buyer we cannot charge yet (international payments off, or no
@@ -1175,6 +1183,7 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": "developer@oyechats.com",
                 "reason": "intl_usd_pending",
+                "source": ctx.source,
             }
 
         # Domestic paid plan: the live INR rail.
@@ -1188,6 +1197,7 @@ def checkout_quote(
             "methods": list(_RAZORPAY_METHODS_INR),
             "checkout_supported": True,
             "contact_sales": None,
+            "source": ctx.source,
         }
 
 
@@ -1309,19 +1319,55 @@ def _resolve_confirmed_billing_country_or_409(
     the ``intl_usd_pending`` contract the frontend already renders as a
     Contact-sales CTA.
 
-    Resolution order mirrors ``checkout_quote``: explicit per-request confirmation
-    wins, then the account's stored country, then the domestic default (IN) for
-    backward-compat callers that omit it. The server-side IP geo signal is
-    cross-checked (not hard-enforced — see ``_geo_mismatch_detail``) and a
-    domestic claim that contradicts a specific foreign detection is logged as a
-    GST/FEMA audit signal.
+    Resolution is ``resolve_billing_context`` — the SAME order the quote uses
+    (request-confirmed → stored → detected) — with the charge path's trust
+    rules layered on top (Wave 1.2):
 
-    Extracted from ``create_checkout`` so ``initiate_topup`` cannot drift from
-    the same gate (the bug this closes: top-ups had no gate at all).
+    * The ``detected`` (IP geo) signal is never *charged on*. But when it is
+      the ONLY signal and it says foreign, the old behavior — silently
+      defaulting to IN and minting an INR mandate a USD quote never promised —
+      is replaced by a 409 ``billing_country_required``: the customer confirms
+      their country and checkout proceeds on the right rail.
+    * A GSTIN on record with a confirmed non-IN country is a contradiction (a
+      domestic GST registration cannot bill on the export rail) → 422, checked
+      BEFORE the intl kill switch so the flag being off cannot mask it.
+    * Unresolved with no foreign signal stays the domestic default (every
+      legacy account: NULL country, INR mandate).
+
+    The geo cross-check stays advisory (see ``_geo_mismatch_detail``) — a
+    charge-grade country that contradicts the IP signal is flagged, not
+    blocked.
     """
-    confirmed_country = (request_country or client.billing_country or "IN").strip().upper()
-
+    ctx = resolve_billing_context(
+        stored_country=client.billing_country,
+        request_country=request_country,
+        detected_country=None,  # IP geo is display-grade; never charge on it
+    )
     detected_country = resolve_country(http_request)
+
+    if ctx.source == "unresolved" and detected_country not in (None, "IN"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "billing_country_required",
+                "message": (
+                    "Please confirm your billing country before checkout — "
+                    "it determines the currency you are charged in."
+                ),
+            },
+        )
+
+    confirmed_country = ctx.country or "IN"
+
+    if confirmed_country != "IN" and (client.gstin or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Your account has an Indian GSTIN on record, which requires domestic (IN) billing. "
+                "Clear the GSTIN from your billing details before billing from another country."
+            ),
+        )
+
     mismatch = _geo_mismatch_detail(confirmed_country, detected_country)
     if mismatch:
         _flag_geo_mismatch_standalone(client.id, mismatch)
@@ -2535,8 +2581,13 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             "document_upload": int(pricing.get("credit_cost.document_upload", 3) or 0),
         }
 
-        country = resolve_country(http_request)
-        currency_code = "INR" if country == "IN" else "USD"
+        # Stored country first, IP geo as display fallback (Wave 1.2) — the
+        # old IP-only rule rendered $ on a rupee account whenever the geo
+        # lookup failed, and ignored the account's own tax fact entirely.
+        currency_code = resolve_billing_context(
+            stored_country=client.billing_country,
+            detected_country=resolve_country(http_request),
+        ).currency
         currency_symbol = "₹" if currency_code == "INR" else "$"
 
         next_reset = effective_resets_at(sub)
