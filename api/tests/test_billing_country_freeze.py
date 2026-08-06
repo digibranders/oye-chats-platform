@@ -56,6 +56,9 @@ def _mk(db, monkeypatch, **client_kw):
     db.add(client)
     db.flush()
     monkeypatch.setattr(subscription_routes, "get_session", lambda: _ctx(db))
+    # CI has no Razorpay keys (local .env does): pin the provider gate ON so
+    # these tests exercise the billing logic, not the deploy environment.
+    monkeypatch.setattr(subscription_routes, "RAZORPAY_ENABLED", True)
     monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: None)
     app = FastAPI()
     app.include_router(subscription_routes.router)
