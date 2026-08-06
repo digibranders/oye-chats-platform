@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import { Button, Input, Modal, cn } from '../../../design-system';
+import { Button, Input, Modal, Select, cn } from '../../../design-system';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { getBillingDetails, updateBillingDetails } from '../../../services/api';
 import {
@@ -13,7 +13,8 @@ import {
   type BillingDetailsForm,
   type BillingDetailsRaw,
 } from './billingDetailsForm';
-import { gstStateName, isValidGstin } from './gstin';
+import { GST_STATE_OPTIONS, gstStateFromPin, gstStateName, isValidGstin } from './gstin';
+import { COUNTRY_OPTIONS } from './countries';
 
 /** Red border + ring applied to an input whose value failed validation. */
 const INVALID_INPUT_CLASS =
@@ -110,7 +111,6 @@ export function BillingDetailsModal({
   // the state that will be printed on the invoice, before they ever save.
   const gstinStateName =
     gstinSet && isValidGstin(form.gstin) ? gstStateName(form.gstin.slice(0, 2)) : null;
-  const manualStateName = !gstinSet && !foreign ? gstStateName(form.billing_state_code.trim()) : null;
 
   async function handleSave(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -209,19 +209,20 @@ export function BillingDetailsModal({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="Country"
-              hint="ISO-2 code - drives your billing currency."
+              hint="Drives your billing currency and how your invoice is taxed."
               error={errors.billing_country}
             >
-              <Input
+              <Select
                 value={form.billing_country}
-                onChange={(e) => {
-                  setForm((prev) => ({ ...prev, billing_country: e.target.value.toUpperCase() }));
+                onChange={(code) => {
+                  setForm((prev) => ({ ...prev, billing_country: code }));
                   if (errors.billing_country) clearError('billing_country');
                 }}
-                placeholder="IN"
-                maxLength={2}
+                options={COUNTRY_OPTIONS}
+                placeholder="Select your country"
+                searchable
+                aria-label="Country"
                 aria-invalid={errors.billing_country ? true : undefined}
-                className={cn('uppercase', errors.billing_country && INVALID_INPUT_CLASS)}
               />
             </Field>
             <Field
@@ -257,24 +258,47 @@ export function BillingDetailsModal({
               <Input value={form.city} onChange={setField('city')} placeholder="City" />
             </Field>
             <Field label="Postal code">
-              <Input value={form.postal_code} onChange={setField('postal_code')} placeholder="ZIP / PIN" />
+              <Input
+                value={form.postal_code}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setForm((prev) => {
+                    // A complete Indian PIN identifies the GST state — fill it
+                    // in so the customer never has to know their state CODE.
+                    // Only when the country is (or defaults to) India, and only
+                    // as an autofill: the State dropdown stays editable.
+                    const detected =
+                      (prev.billing_country || 'IN') === 'IN' ? gstStateFromPin(value) : null;
+                    return {
+                      ...prev,
+                      postal_code: value,
+                      ...(detected ? { billing_state_code: detected } : {}),
+                    };
+                  });
+                  if (errors.billing_state_code) clearError('billing_state_code');
+                }}
+                placeholder="ZIP / PIN"
+              />
             </Field>
           </div>
 
           {!gstinSet && !foreign && (
             <Field
               label="State"
-              hint={
-                manualStateName ? `${manualStateName}.` : 'GST state code - only needed when no GSTIN is set.'
-              }
+              hint="Auto-filled from your PIN code - used as the place of supply on your invoice."
               error={errors.billing_state_code}
             >
-              <Input
+              <Select
                 value={form.billing_state_code}
-                onChange={setField('billing_state_code')}
-                placeholder="e.g. 27 (Maharashtra)"
+                onChange={(code) => {
+                  setForm((prev) => ({ ...prev, billing_state_code: code }));
+                  if (errors.billing_state_code) clearError('billing_state_code');
+                }}
+                options={GST_STATE_OPTIONS}
+                placeholder="Select your state"
+                searchable
+                aria-label="State"
                 aria-invalid={errors.billing_state_code ? true : undefined}
-                className={cn(errors.billing_state_code && INVALID_INPUT_CLASS)}
               />
             </Field>
           )}
