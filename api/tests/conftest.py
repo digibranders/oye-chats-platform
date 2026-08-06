@@ -259,3 +259,22 @@ def auth_override_client_or_operator(mock_client):
 def auth_override_bot(mock_bot):
     """Returns a dependency override dict for bot auth."""
     return {get_current_bot: lambda: mock_bot}
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Zero the shared rate-limit storage before every test.
+
+    Wave 3.2 put per-client ceilings on the money routes; test files reuse a
+    handful of api_keys across dozens of requests, so without a reset the
+    in-memory counters bleed across tests and unrelated assertions start
+    seeing 429s. Prod uses Redis storage — this touches only the test
+    process's in-memory counters.
+    """
+    import contextlib
+
+    from app.core.rate_limit import limiter
+
+    with contextlib.suppress(Exception):
+        limiter.reset()
+    yield

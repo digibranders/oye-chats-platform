@@ -30,7 +30,18 @@ def _make_sub(plan, operator_quantity):
     return SimpleNamespace(
         id=10,
         client_id=1,
-        client=SimpleNamespace(id=1, name="Test", email="test@example.com"),
+        client=SimpleNamespace(
+            id=1,
+            name="Test",
+            email="test@example.com",
+            # Bare unregistered domestic buyer: the pre-charge gate must pass
+            # (Rule 46(f) requires nothing below the threshold).
+            billing_country=None,
+            gstin=None,
+            legal_name=None,
+            billing_address=None,
+            billing_state_code=None,
+        ),
         plan=plan,
         operator_quantity=operator_quantity,
         razorpay_subscription_id=None,
@@ -41,7 +52,14 @@ def _make_sub(plan, operator_quantity):
 
 def _run(sub, delta, mock_db_session, mock_get_session):
     request = SeatChangeRequest(delta=delta, bot_id=None)
-    client = SimpleNamespace(id=1)
+    client = SimpleNamespace(
+        id=1,
+        billing_country=None,
+        gstin=None,
+        legal_name=None,
+        billing_address=None,
+        billing_state_code=None,
+    )
     with (
         patch("app.api.subscription_routes.get_session", mock_get_session),
         patch("app.api.subscription_routes.lock_client_for_billing", MagicMock()),
@@ -53,7 +71,7 @@ def _run(sub, delta, mock_db_session, mock_get_session):
             sub_arg.seat_addon_quantity = extra_seats
 
         mock_edit_addon.side_effect = _apply
-        return change_seat_count(request, client)
+        return change_seat_count(request, http_request=None, client=client)
 
 
 def _run_addon(sub, delta, mock_get_session):
@@ -65,7 +83,14 @@ def _run_addon(sub, delta, mock_get_session):
     must route through a SEPARATE add-on subscription, never the main plan.
     """
     request = SeatChangeRequest(delta=delta, bot_id=None)
-    client = SimpleNamespace(id=1)
+    client = SimpleNamespace(
+        id=1,
+        billing_country=None,
+        gstin=None,
+        legal_name=None,
+        billing_address=None,
+        billing_state_code=None,
+    )
 
     def _explode(*_args, **_kwargs):
         raise AssertionError("update_subscription_quantity must NOT be called for seat changes (P0-3)")
@@ -83,7 +108,7 @@ def _run_addon(sub, delta, mock_get_session):
     ):
         mock_edit_main.side_effect = _explode
         mock_addon.side_effect = _fake_addon
-        result = change_seat_count(request, client)
+        result = change_seat_count(request, http_request=None, client=client)
         return result, mock_edit_main, mock_addon
 
 

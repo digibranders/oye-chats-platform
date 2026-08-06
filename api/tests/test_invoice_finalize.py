@@ -80,6 +80,9 @@ def test_inter_state_uses_igst(db, enabled):
 def test_export_with_lut_zero_rated(db, enabled):
     _seller(db, lut_active=True, lut_number="LUT-2026-1")
     c = _client(db, "fin-export@test.example", billing_country="US")
+    # Wave 1.1 export backstop: corroborate with a genuine foreign-currency charge.
+    db.add(Invoice(client_id=c.id, amount_cents=1900, currency="usd", status="paid", inr_amount_minor=160000))
+    db.flush()
     inv = _invoice(db, c.id)
     invoice_service.finalize_invoice(db, inv)
     assert inv.total_tax_minor == 0

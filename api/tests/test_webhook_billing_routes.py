@@ -259,3 +259,27 @@ def test_missing_secret_returns_503():
         resp = _post(_make_client())
 
     assert resp.status_code == 503
+
+
+def test_route_passes_the_payload_digest_to_the_dispatcher():
+    # M-2 wiring: dropping the digest argument from the route call would leave
+    # the replay fix dead in prod while every other test stays green. Pin it.
+    import hashlib
+
+    from app.api import webhook_billing_routes
+    from app.services import razorpay_service
+
+    body = b'{"event":"payment.captured"}'
+    mock_session = MagicMock()
+    with (
+        patch.object(webhook_billing_routes, "RAZORPAY_WEBHOOK_SECRET", "whsec"),
+        patch.object(webhook_billing_routes, "get_session", lambda: _fake_session_cm(mock_session)),
+        patch.object(razorpay_service, "verify_webhook_signature", lambda **_: None),
+        patch.object(razorpay_service, "handle_webhook_event", return_value="ok") as dispatch,
+    ):
+        resp = _post(_make_client(), body=body)
+
+    assert resp.status_code == 200
+    args = dispatch.call_args.args
+    assert args[2] == "evt_test_1"
+    assert args[3] == hashlib.sha256(body).hexdigest()

@@ -104,6 +104,11 @@ def _issued(db, email, **buyer_fields):
     buyer = Client(name="B", email=email, api_key=f"k-{email}", **buyer_fields)
     db.add(buyer)
     db.flush()
+    if (buyer_fields.get("billing_country") or "IN") != "IN":
+        # Wave 1.1 export backstop: an INR-settled export only finalizes for
+        # accounts with a genuine foreign-currency charge history — corroborate.
+        db.add(Invoice(client_id=buyer.id, amount_cents=1900, currency="usd", status="paid", inr_amount_minor=160000))
+        db.flush()
     inv = Invoice(
         client_id=buyer.id,
         amount_cents=399900,

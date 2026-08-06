@@ -140,3 +140,48 @@ def test_emails_pending_empty_in_shadow_mode(db, env, monkeypatch):
     _mk_rendered_unmailed(db, "rec-9@test.example", "DB/26-27/000109", issued_ago=timedelta(hours=2))
     anomalies = invoice_reports.reconciliation_anomalies(db)
     assert anomalies["emails_pending"] == []
+
+
+def test_stale_claim_from_crashed_worker_is_reswept(db, env):
+    # A worker that crashed between claim-commit and send (deploys restart the
+    # worker) leaves email_claimed_at set with emailed_at NULL. The claim must
+    # go stale (>1h) and the invoice must be re-swept — the first M-5 cut
+    # claimed via emailed_at itself and lost the document forever.
+    inv = _mk_rendered_unmailed(db, "stale-claim@test.example", "INV/25-26/9001")
+    inv.email_claimed_at = datetime.now(UTC) - timedelta(hours=2)
+    db.commit()
+
+    asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
+    db.refresh(inv)
+    assert inv.emailed_at is not None  # delivered
+    assert inv.email_claimed_at is None
+    assert [number for _to, number, _pdf in env["emails"]] == ["INV/25-26/9001"]
+
+
+def test_fresh_claim_is_left_for_the_owning_sweep(db, env):
+    # A LIVE claim belongs to a concurrent sweep — this run must not
+    # double-send.
+    inv = _mk_rendered_unmailed(db, "fresh-claim@test.example", "INV/25-26/9002")
+    inv.email_claimed_at = datetime.now(UTC) - timedelta(minutes=5)
+    db.commit()
+
+    asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
+    db.refresh(inv)
+    assert inv.emailed_at is None
+    assert env["emails"] == []
+
+
+def test_delivery_stamps_emailed_at_only_after_send_returns(db, env, monkeypatch):
+    # emailed_at means DELIVERED again: a send that raises must leave it NULL
+    # (visible to the emails_pending alert) with only the claim released.
+    inv = _mk_rendered_unmailed(db, "post-send@test.example", "INV/25-26/9003")
+    db.commit()
+
+    def _boom(to, invoice, url, pdf_bytes=None):
+        raise RuntimeError("brevo down")
+
+    monkeypatch.setattr(worker_tasks, "_send_invoice_email", _boom)
+    asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
+    db.refresh(inv)
+    assert inv.emailed_at is None
+    assert inv.email_claimed_at is None  # released for the next sweep

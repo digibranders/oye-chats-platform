@@ -1365,7 +1365,7 @@ def verify_webhook_signature(*, payload: bytes, signature: str) -> None:
         raise SignatureMismatch("Razorpay webhook signature mismatch")
 
 
-def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
+def _record_or_skip_event(session: Session, event_id: str | None, payload_digest: str | None = None) -> bool:
     """Insert an event id into ``processed_webhooks`` or report it as a replay.
 
     ``x-razorpay-event-id`` is present on every modern Razorpay webhook
@@ -1387,10 +1387,17 @@ def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
         return False
     from sqlalchemy.dialects.postgresql import insert
 
+    # M-2: dedup on BOTH keys. The HMAC covers only the body; the event id is
+    # a header — a replayed signed body with a FRESH header id passes the
+    # signature and the event-id dedup, and would double-process (double
+    # grants, duplicate invoices). Distinct real events never share an exact
+    # body (unique payment/subscription ids + timestamps inside), so a digest
+    # collision IS a replay. Bare on_conflict_do_nothing (no index_elements)
+    # swallows a conflict on EITHER unique constraint; rowcount 0 → replay.
     stmt = (
         insert(ProcessedWebhook)
-        .values(event_id=event_id, provider="razorpay")
-        .on_conflict_do_nothing(index_elements=["event_id"])
+        .values(event_id=event_id, provider="razorpay", payload_digest=payload_digest)
+        .on_conflict_do_nothing()
     )
     result = session.execute(stmt)
     session.flush()
@@ -1474,7 +1481,9 @@ def _handle_seat_addon_event(
     return f"Seat add-on event {event_name} handled"
 
 
-def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str | None) -> str:
+def handle_webhook_event(
+    session: Session, event: dict[str, Any], event_id: str | None, payload_digest: str | None = None
+) -> str:
     """Dispatch a verified Razorpay webhook event to the right handler.
 
     The dispatch table is intentionally small. Razorpay supports more events,
@@ -1497,7 +1506,7 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
     * ``order.paid``              → backup path for top-ups (some flows emit
                                     this instead of payment.captured)
     """
-    if not _record_or_skip_event(session, event_id):
+    if not _record_or_skip_event(session, event_id, payload_digest):
         return f"Duplicate event {event_id} skipped"
 
     event_name = event.get("event", "")
@@ -1969,6 +1978,59 @@ def _entity_future_start(sub_entity: dict[str, Any]) -> datetime | None:
     return start if start > datetime.now(UTC) else None
 
 
+def _record_referral_conversion_from_notes(session: Session, client_id: int, notes: dict[str, Any]) -> None:
+    """Insert the ReferralConversion carried in the checkout notes, once ever.
+
+    Checkout parks the attribution snapshot (code / affiliate / bps, frozen at
+    subscribe time) in the subscription notes; THIS records it — at
+    ``subscription.charged``, i.e. actual money — so an abandoned checkout can
+    never accrue the affiliate a conversion. Fires on every cycle; the
+    unique-per-client constraint makes everything after the first payment a
+    no-op. Best-effort: a malformed note must never fail the payment handler.
+    """
+    raw_code_id = notes.get("oyechats_ref_code_id")
+    if not raw_code_id:
+        return
+    try:
+        values = {
+            "client_id": client_id,
+            "referral_code_id": int(raw_code_id),
+            "affiliate_id": int(notes.get("oyechats_ref_affiliate_id") or 0) or None,
+            "commission_bps": int(notes.get("oyechats_ref_commission_bps") or 0),
+            "customer_discount_bps": int(notes.get("oyechats_ref_discount_bps") or 0),
+        }
+    except (TypeError, ValueError):
+        logger.warning("Unparseable referral snapshot in notes for client %s: %r — skipping", client_id, notes)
+        return
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.db.models import ReferralConversion
+
+    # SAVEPOINT-guarded: ON CONFLICT only suppresses the unique constraint —
+    # a dangling snapshot (affiliates/codes are hard-deletable; SET NULL fixes
+    # rows but not ids frozen in gateway notes) raises an FK IntegrityError
+    # that would poison the surrounding transaction and dead-letter the
+    # ENTIRE subscription.charged event on every Razorpay retry: customer
+    # pays, gets no credits and no invoice. A lost conversion is recoverable;
+    # a dead payment webhook is not.
+    try:
+        with session.begin_nested():
+            session.execute(
+                pg_insert(ReferralConversion.__table__)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_referral_conversions_client")
+            )
+    except Exception:
+        logger.warning(
+            "Referral conversion insert failed for client %s (stale snapshot %r) — skipping; "
+            "the payment handler must not fail on attribution bookkeeping.",
+            client_id,
+            values,
+            exc_info=True,
+        )
+
+
 def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]) -> str:
     """Mandate authorised, billing not started — two deferred-start cases meet here.
 
@@ -2307,6 +2369,16 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         )
         session.add(local)
         session.flush()
+
+        # The first-checkout H1 marker points at an in-flight authorizable sub;
+        # this activation consumes it, so clear it (a stale marker would make a
+        # later /checkout try to reuse an already-activated subscription).
+        client_row = session.get(Client, client_id)
+        if client_row is not None and client_row.pending_checkout_subscription_id == razorpay_sub_id:
+            client_row.pending_checkout_subscription_id = None
+            client_row.pending_checkout_plan_id = None
+            client_row.pending_checkout_cycle = None
+            client_row.pending_checkout_at = None
 
         if funded_bot_id is not None:
             # Bot-scoped activation (per-bot new bot, resume, or revive-in-place).
@@ -2737,6 +2809,12 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     new_period_end = (
         datetime.fromtimestamp(sub_entity["current_end"], tz=UTC) if sub_entity.get("current_end") else None
     )
+
+    # First real payment on an attributed signup → record the referral
+    # conversion from the snapshot checkout parked in the notes (Wave 1.4).
+    # Unique-per-client, so every later cycle and replay is a no-op — and an
+    # abandoned checkout (this event never fires) accrues nothing.
+    _record_referral_conversion_from_notes(session, local.client_id, sub_entity.get("notes") or {})
 
     # Record the invoice if a payment entity was included. Flushed so its id can
     # link the period grant for precise refund clawback (C2 / NV5).

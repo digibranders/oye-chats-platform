@@ -2293,6 +2293,21 @@ export const getCheckoutQuote = async (planId, billingCycle = 'monthly', billing
     }
 };
 
+/**
+ * Fire-and-forget payment-funnel telemetry: the customer closed the Razorpay
+ * sheet ('checkout_abandoned') or the gateway declined ('payment_failed').
+ * Never throws — losing a telemetry event must not affect the checkout UX.
+ */
+export const recordBillingEvent = (event, surface, meta) => {
+    try {
+        return api
+            .post('/subscriptions/billing-events', { event, surface, meta: meta ?? null })
+            .catch(() => undefined);
+    } catch {
+        return Promise.resolve(undefined);
+    }
+};
+
 export const createCheckoutSession = async (planId, billingCycle = 'monthly', billingCountry = null) => {
     try {
         const response = await api.post('/subscriptions/checkout', {

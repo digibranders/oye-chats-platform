@@ -18,6 +18,7 @@ export interface CurrencyValue {
   /** Format a minor-unit amount in the account's display currency. */
   format: (minor: number) => string;
   /** Optimistic local currency/country override (re-confirmed by /geo next load). */
+  countrySource: 'stored' | 'detected' | 'user' | null;
   setCountry: (next: string | null) => void;
 }
 

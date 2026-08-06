@@ -253,6 +253,132 @@ class CreditsGrant(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class BillingCountryOverride(BaseModel):
+    country: str = Field(min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/clients/{client_id}/billing-country")
+def override_billing_country(
+    client_id: int,
+    body: BillingCountryOverride,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Relocate an account's billing country — the ONLY path while a mandate is live.
+
+    ``PUT /billing-details`` freezes ``billing_country`` under a live Razorpay
+    mandate (it is the tax-classification fact for every invoice — P0-2), so a
+    genuine relocation is an ops action: verify the customer, re-point the
+    mandate to the new rail, then record the new country here with a reason.
+    Audit-logged; the same GSTIN⇒IN consistency rule as the customer route
+    applies (a domestic GST registration cannot bill from abroad).
+    """
+    _require_write(admin)
+    country = body.country.strip().upper()
+    with get_session() as session:
+        client = session.get(Client, client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Account not found")
+        if client.gstin and country != "IN":
+            raise HTTPException(
+                status_code=422,
+                detail="Account has a GSTIN on record — clear it before moving billing_country off IN.",
+            )
+        before = {"billing_country": client.billing_country}
+        client.billing_country = country
+        session.flush()
+        record_audit(
+            session,
+            actor=admin,
+            action="client.billing_country.override",
+            target_type="client",
+            target_id=client_id,
+            before=before,
+            after={"billing_country": country, "reason": body.reason},
+            request=request,
+        )
+        session.commit()
+        return {"billing_country": country}
+
+
+@router.get("/reconciliation/gateway")
+def gateway_reconciliation_runs(
+    limit: int = Query(default=7, ge=1, le=60),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Latest gateway-reconciliation runs (blueprint §7). Read-only; the
+    newest run's ``report.deltas`` names exactly what disagrees between
+    Razorpay and local money state — an empty list means the daily safety net
+    ran and found nothing."""
+    from app.db.models import ReconciliationRun
+
+    with get_session() as session:
+        rows = (
+            session.execute(select(ReconciliationRun).order_by(ReconciliationRun.ran_at.desc()).limit(limit))
+            .scalars()
+            .all()
+        )
+        return {
+            "runs": [
+                {
+                    "id": row.id,
+                    "ran_at": row.ran_at.isoformat() if row.ran_at else None,
+                    "delta_count": row.delta_count,
+                    "report": row.report,
+                }
+                for row in rows
+            ]
+        }
+
+
+@router.get("/billing-funnel")
+def billing_funnel(
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=50, ge=1, le=200),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Payment-funnel drop-offs: who opened a Razorpay sheet and bailed (or
+    got declined), aggregated per surface for the window. Read-only —
+    readonly-role superadmins can see it."""
+    from app.db.models import BillingFunnelEvent
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    with get_session() as session:
+        counts = [
+            {"surface": surface, "event": event, "count": int(count)}
+            for surface, event, count in session.execute(
+                select(
+                    BillingFunnelEvent.surface,
+                    BillingFunnelEvent.event,
+                    func.count(BillingFunnelEvent.id),
+                )
+                .where(BillingFunnelEvent.created_at >= since)
+                .group_by(BillingFunnelEvent.surface, BillingFunnelEvent.event)
+                .order_by(func.count(BillingFunnelEvent.id).desc())
+            ).all()
+        ]
+        recent = [
+            {
+                "id": row.id,
+                "client_id": row.client_id,
+                "client_email": email,
+                "event": row.event,
+                "surface": row.surface,
+                "meta": row.meta,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row, email in session.execute(
+                select(BillingFunnelEvent, Client.email)
+                .join(Client, Client.id == BillingFunnelEvent.client_id)
+                .where(BillingFunnelEvent.created_at >= since)
+                .order_by(BillingFunnelEvent.created_at.desc(), BillingFunnelEvent.id.desc())
+                .limit(limit)
+            ).all()
+        ]
+    return {"days": days, "counts": counts, "recent": recent}
+
+
 @router.post("/clients/{client_id}/credits")
 def grant_credits(
     client_id: int,

@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
@@ -41,6 +42,22 @@ class Client(Base):
     billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
     billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
     billing_email = Column(String, nullable=True)  # falls back to login email
+    # Newest billing-geo contradiction (claimed country vs server-side IP geo),
+    # both directions — durable GST/FEMA review trail, not just a WARN log.
+    geo_mismatch_at = Column(DateTime(timezone=True), nullable=True)
+    geo_mismatch_detail = Column(String(500), nullable=True)
+    # In-flight FIRST checkout (H1 pattern): a sequential re-submit reuses this
+    # gateway subscription instead of minting a second authorizable mandate.
+    # Gateway state (rebuild_upgrade_checkout) decides staleness, not a TTL;
+    # cleared by the activation webhook. Upgrade/resume park theirs on the
+    # Subscription row; a first checkout has no row yet, hence here.
+    pending_checkout_subscription_id = Column(String, nullable=True)
+    pending_checkout_plan_id = Column(Integer, nullable=True)
+    pending_checkout_cycle = Column(String(8), nullable=True)
+    # The confirmed country the pending sub was minted under — part of the
+    # reuse key so a country change never reuses a wrong-rail checkout.
+    pending_checkout_country = Column(String(2), nullable=True)
+    pending_checkout_at = Column(DateTime(timezone=True), nullable=True)
     # Razorpay Customer id — the identity anchor for saved payment instruments.
     # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without
     # this there is no saved-card capability at all.
@@ -1578,6 +1595,10 @@ class Invoice(Base):
     # auto-emails when NULL, so an admin "regenerate PDF" can never re-email
     # the customer; superadmin resend updates it.
     emailed_at = Column(DateTime(timezone=True), nullable=True)
+    # Recovery-sweep claim marker (NOT delivery). ``emailed_at`` means the send
+    # RETURNED; this is stamped before the attempt so overlapping sweeps can't
+    # double-send, and a stale claim (crashed worker) is re-swept after 1h.
+    email_claimed_at = Column(DateTime(timezone=True), nullable=True)
     # E-invoicing (IRP) — unused until the ₹5cr B2B threshold applies.
     irn = Column(String, nullable=True)
     signed_qr = Column(Text, nullable=True)
@@ -1604,6 +1625,7 @@ _INVOICE_FROZEN_EXEMPT = frozenset(
         "pdf_url",
         "invoice_url",
         "emailed_at",
+        "email_claimed_at",
         "status",
         "refunded_minor",
         "irn",
@@ -1822,9 +1844,21 @@ class ProcessedWebhook(Base):
     """
 
     __tablename__ = "processed_webhooks"
+    # Second dedup key (M-2): the HMAC covers only the BODY, the event id is a
+    # header — a replayed signed body with a fresh id passes both checks
+    # without this. Partial-unique (NULLs exempt) for legacy rows.
+    __table_args__ = (
+        Index(
+            "uq_processed_webhooks_payload_digest",
+            "payload_digest",
+            unique=True,
+            postgresql_where=text("payload_digest IS NOT NULL"),
+        ),
+    )
 
     event_id = Column(Text, primary_key=True)
     provider = Column(Text, nullable=False, index=True)  # 'razorpay'
+    payload_digest = Column(Text, nullable=True)
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -2188,6 +2222,10 @@ class ReferralConversion(Base):
     """
 
     __tablename__ = "referral_conversions"
+    # One conversion per client, ever: the insert happens in the
+    # subscription.charged webhook (which fires every cycle), and this
+    # constraint is what makes replays and later cycles no-ops.
+    __table_args__ = (UniqueConstraint("client_id", name="uq_referral_conversions_client"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -2196,6 +2234,45 @@ class ReferralConversion(Base):
     commission_bps = Column(Integer, nullable=False)
     customer_discount_bps = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReconciliationRun(Base):
+    """One run of the daily gateway reconciliation (blueprint §7, Wave 3.5).
+
+    ``report`` holds the structured deltas so the superadmin surface can show
+    the latest run; the cron also ERROR-logs any delta for Sentry. Report
+    data, not money — rows are prunable.
+    """
+
+    __tablename__ = "reconciliation_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ran_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    window_from = Column(DateTime(timezone=True), nullable=False)
+    window_to = Column(DateTime(timezone=True), nullable=False)
+    delta_count = Column(Integer, nullable=False, server_default="0", default=0)
+    report = Column(JSONB, nullable=False)
+
+
+class BillingFunnelEvent(Base):
+    """One detected drop-off in the payment funnel (Wave 3.0).
+
+    The app already detects the customer closing the Razorpay sheet
+    (``modal.ondismiss``) and gateway declines (``payment.failed``); this makes
+    those signals operator-visible. Telemetry, not money: nothing downstream
+    depends on these rows and they are safe to prune.
+    """
+
+    __tablename__ = "billing_funnel_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    # checkout_abandoned (customer closed the sheet) | payment_failed (gateway decline)
+    event = Column(String(24), nullable=False)
+    # plan | topup | seat | resume — which purchase surface opened the sheet
+    surface = Column(String(12), nullable=False)
+    meta = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
 
 class PlatformFeedback(Base):

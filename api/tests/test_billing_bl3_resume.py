@@ -46,7 +46,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def _make_client(db, *, email: str) -> Client:
-    client = Client(name="c", email=email, api_key=email, hashed_password="h")
+    client = Client(
+        name="c",
+        email=email,
+        api_key=email,
+        hashed_password="h",
+        # Wave 1.3: /resume Mode 2 now runs the shared pre-charge gates, so
+        # the fixture carries a complete Rule 46 buyer identity.
+        legal_name="C Pvt Ltd",
+        billing_address={"line1": "1 Lane", "city": "Mumbai", "postal_code": "400001"},
+        billing_state_code="27",
+        billing_country="IN",
+    )
     db.add(client)
     db.flush()
     return client

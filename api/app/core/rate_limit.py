@@ -62,3 +62,44 @@ limiter = Limiter(
     default_limits=[],
     storage_uri=_storage_uri,
 )
+
+
+def money_route_limit(scope: str, *limit_strings: str):
+    """Per-client rate-limit DEPENDENCY for the money routes (M7, Wave 3.2).
+
+    The ``@limiter.limit`` decorator resolves the request by finding a
+    parameter literally NAMED ``request`` — and on the billing routes that
+    name belongs to the Pydantic body, so decorating them would hand the body
+    model to the key function. A FastAPI dependency gets the real ``Request``
+    unambiguously, and hits the SAME shared storage (Redis in prod) through
+    slowapi's underlying ``limits`` strategy.
+
+    Keys on the client's API key (falling back to IP pre-auth), so the ceiling
+    is per account, not per office NAT. ``scope`` names the route family so
+    each route gets its OWN bucket — without it, equal limit strings across
+    /checkout and /topup share one storage key and ten failed checkout
+    attempts would 429 an unrelated top-up. Limits are deliberately generous —
+    an abuse ceiling that real customers can never feel.
+    """
+    from fastapi import HTTPException
+    from limits import parse
+
+    parsed = [parse(item) for item in limit_strings]
+
+    def _dep(request: Request) -> None:
+        key = key_from_api_key(request)
+        for item in parsed:
+            if not limiter.limiter.hit(item, "money", scope, key):
+                # Retry-After mirrors slowapi's own handler: the window reset
+                # tells a well-behaved client exactly how long to back off.
+                reset_at, _remaining = limiter.limiter.get_window_stats(item, "money", scope, key)
+                import time as _time
+
+                retry_after = max(1, int(reset_at - _time.time()))
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many billing requests — please wait a moment and try again.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+    return _dep

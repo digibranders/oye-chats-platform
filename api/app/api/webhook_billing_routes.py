@@ -5,13 +5,19 @@ delegating dispatch to razorpay_service.handle_webhook_event.
 """
 
 import logging
+import threading
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.config import RAZORPAY_WEBHOOK_SECRET, WEBHOOK_RETRY_ON_ERROR
 from app.db.models import FailedWebhook
 from app.db.session import get_session
 from app.services import invoice_service
+
+# See razorpay_webhook: webhooks process in their own bounded slice of the
+# threadpool so a delivery burst can't starve every other sync route.
+_WEBHOOK_THREAD_LIMITER = anyio.CapacityLimiter(10)
 
 logger = logging.getLogger(__name__)
 
@@ -28,26 +34,33 @@ router = APIRouter(prefix="/webhooks", tags=["billing-webhooks"])
 _SIG_FAILURE_WINDOW_SECS = 900.0
 _SIG_FAILURE_ALERT_THRESHOLD = 3
 _sig_failures: dict[str, float] = {"count": 0.0, "window_start": 0.0}
+# The webhook pipeline now runs in the threadpool, so this counter is mutated
+# from multiple threads — an unlocked read-modify-write would under-count and
+# could miss the alert threshold.
+_sig_failures_lock = threading.Lock()
 
 
 def _note_signature_failure(now: float) -> None:
-    if now - _sig_failures["window_start"] > _SIG_FAILURE_WINDOW_SECS:
-        _sig_failures["window_start"] = now
-        _sig_failures["count"] = 0.0
-    _sig_failures["count"] += 1
-    if _sig_failures["count"] >= _SIG_FAILURE_ALERT_THRESHOLD:
+    with _sig_failures_lock:
+        if now - _sig_failures["window_start"] > _SIG_FAILURE_WINDOW_SECS:
+            _sig_failures["window_start"] = now
+            _sig_failures["count"] = 0.0
+        _sig_failures["count"] += 1
+        count = _sig_failures["count"]
+    if count >= _SIG_FAILURE_ALERT_THRESHOLD:
         logger.error(
             "Razorpay webhook signature verification failed %d times in the last %.0f min — "
             "check RAZORPAY_WEBHOOK_SECRET against the Razorpay dashboard (a rotated or "
             "mistyped secret rejects EVERY billing event before dead-lettering)",
-            int(_sig_failures["count"]),
+            int(count),
             _SIG_FAILURE_WINDOW_SECS / 60,
         )
 
 
 def _note_signature_success() -> None:
-    _sig_failures["count"] = 0.0
-    _sig_failures["window_start"] = 0.0
+    with _sig_failures_lock:
+        _sig_failures["count"] = 0.0
+        _sig_failures["window_start"] = 0.0
 
 
 def _dead_letter(
@@ -103,6 +116,12 @@ async def razorpay_webhook(request: Request):
     makes the eventual successful retry a no-op. The flag can be turned off to
     fall back to the legacy 200-on-error behaviour, but the event is still
     dead-lettered either way.
+
+    Only the body read is async; the ENTIRE processing stack (HMAC, dispatch,
+    DB writes, invoice work) is synchronous and runs in Starlette's threadpool
+    via ``run_in_threadpool`` (P1-4). Running it inline on the event loop
+    stalled every concurrent request — including /health — for the duration of
+    each webhook's DB/gateway round-trips.
     """
     if not RAZORPAY_WEBHOOK_SECRET:
         logger.error("RAZORPAY_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
@@ -114,7 +133,41 @@ async def razorpay_webhook(request: Request):
     raw_payload = await request.body()
     signature = request.headers.get("x-razorpay-signature", "")
     event_id = request.headers.get("x-razorpay-event-id")
+    # Headers worth keeping for replay/debug (not the whole set) — reused by both
+    # the missing-id and processing-error dead-letter paths.
+    replay_headers = {
+        k: request.headers.get(k)
+        for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
+        if request.headers.get(k) is not None
+    }
 
+    import anyio.to_thread
+
+    # Dedicated capacity limiter: run_in_threadpool draws from anyio's default
+    # 40-token pool shared with EVERY sync route in the app. A Razorpay retry
+    # burst (synchronized redelivery after an outage) with handlers that make
+    # inline gateway calls could otherwise occupy all 40 tokens and queue the
+    # entire API. Webhooks get their own 10 tokens and can never starve the
+    # rest of the app.
+    return await anyio.to_thread.run_sync(
+        _process_razorpay_webhook,
+        raw_payload,
+        signature,
+        event_id,
+        replay_headers,
+        limiter=_WEBHOOK_THREAD_LIMITER,
+    )
+
+
+def _process_razorpay_webhook(
+    raw_payload: bytes,
+    signature: str,
+    event_id: str | None,
+    replay_headers: dict[str, str],
+):
+    """The synchronous webhook pipeline — runs in the threadpool, never on the
+    event loop. ``HTTPException`` raised here propagates through
+    ``run_in_threadpool`` exactly like an inline raise."""
     # L5 — alert on event-id-less deliveries. A missing X-Razorpay-Event-Id means
     # idempotency dedup can't key on it; in bulk it usually signals a dashboard
     # misconfiguration that would silently drop billing events. Surface loudly.
@@ -143,14 +196,6 @@ async def razorpay_webhook(request: Request):
     event_type = event.get("event", "unknown")
     logger.info("Razorpay webhook received: %s | id=%s", event_type, event_id or "N/A")
 
-    # Headers worth keeping for replay/debug (not the whole set) — reused by both
-    # the missing-id and processing-error dead-letter paths below.
-    replay_headers = {
-        k: request.headers.get(k)
-        for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
-        if request.headers.get(k) is not None
-    }
-
     # Finding #4: a delivery with no X-Razorpay-Event-Id cannot be idempotency-
     # deduped, and the dispatcher would treat a null id as a "duplicate" and
     # silently ACK-drop it — a revenue-affecting event (subscription.charged /
@@ -175,8 +220,11 @@ async def razorpay_webhook(request: Request):
         return {"status": "error", "event": event_type, "message": str(exc)}
 
     try:
+        import hashlib
+
+        payload_digest = hashlib.sha256(raw_payload).hexdigest()
         with get_session() as session:
-            result = razorpay_service.handle_webhook_event(session, event, event_id)
+            result = razorpay_service.handle_webhook_event(session, event, event_id, payload_digest)
             session.commit()
             logger.info("Razorpay webhook processed: %s → %s", event_type, result)
         # Post-commit: nudge the PDF renderer so invoices/credit notes created

@@ -48,6 +48,11 @@ def _client_row(db, email, **billing):
 
 def _finalized(db, email, *, gstin=None, state="27", country="IN", amount=179900, pay_ref=None):
     c = _client_row(db, email, gstin=gstin, billing_state_code=state, billing_country=country)
+    if (country or "IN") != "IN":
+        # Wave 1.1 export backstop: an INR-settled export only finalizes for
+        # accounts with a genuine foreign-currency charge history — corroborate.
+        db.add(Invoice(client_id=c.id, amount_cents=1900, currency="usd", status="paid", inr_amount_minor=160000))
+        db.flush()
     inv = Invoice(
         client_id=c.id,
         amount_cents=amount,

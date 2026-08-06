@@ -1,10 +1,13 @@
-"""Paid checkout requires a complete buyer identity (F6).
+"""Paid checkout collects the buyer identity Rule 46 ACTUALLY mandates (F6).
 
 An invoice is issued from a WEBHOOK, so there is no second chance to ask who
-was billed. Today a customer can pay with every billing field NULL, which is
-why the rendered tax invoice reads "BILL TO: gaurav" with no address and no
-GSTIN — and a B2B customer without their GSTIN on the document cannot claim
-input tax credit, which is a commercial problem before it is a compliance one.
+was billed — but WHAT must be asked depends on the buyer (see
+``_missing_billing_fields``): a GST-registered buyer needs their registered
+legal name + address on record (their input tax credit depends on it); an
+export buyer needs an address (Rule 46's export proviso); an unregistered
+domestic buyer below ₹50,000 (Rule 46(f)) owes NOTHING — the account name and
+the Circular 242 supplier-state fallback make the invoice valid, and asking
+anyway was blocking legitimate B2C payments.
 """
 
 import os
@@ -46,11 +49,20 @@ _FULL_IN = {
 }
 
 
-def test_missing_identity_lists_every_missing_field_in_display_order(db):
+def test_bare_b2c_buyer_owes_nothing(db):
+    # Rule 46(f): recipient details are only mandatory on ₹50,000+ invoices to
+    # unregistered persons. A bare domestic B2C account passes the gate.
     from app.api.subscription_routes import _missing_billing_fields
 
     client = _client_row(db, "bare@test.dev", billing_country="IN")
-    assert _missing_billing_fields(client) == ["legal_name", "billing_address", "billing_state_code"]
+    assert _missing_billing_fields(client) == []
+
+
+def test_registered_buyer_missing_fields_listed_in_display_order(db):
+    from app.api.subscription_routes import _missing_billing_fields
+
+    client = _client_row(db, "bare-gstin@test.dev", billing_country="IN", gstin="27AAPFU0939F1ZV")
+    assert _missing_billing_fields(client) == ["legal_name", "billing_address"]
 
 
 def test_complete_indian_identity_passes(db):
@@ -73,9 +85,10 @@ def test_state_code_is_not_required_outside_india(db):
     assert _missing_billing_fields(client) == []
 
 
-def test_state_code_is_required_when_country_is_unset(db):
-    """NULL country defaults to IN elsewhere in the billing stack, so the
-    stricter Indian rule must apply rather than silently passing."""
+def test_unset_country_is_domestic_b2c_and_owes_nothing(db):
+    """NULL country defaults to IN throughout the billing stack; an
+    unregistered domestic buyer below the Rule 46(f) threshold owes nothing —
+    place of supply falls back to the supplier state (Circular 242)."""
     from app.api.subscription_routes import _missing_billing_fields
 
     client = _client_row(
@@ -84,17 +97,19 @@ def test_state_code_is_required_when_country_is_unset(db):
         legal_name="X",
         billing_address={"line1": "1 MG Road"},
     )
-    assert _missing_billing_fields(client) == ["billing_state_code"]
+    assert _missing_billing_fields(client) == []
 
 
-def test_address_without_line1_counts_as_missing(db):
-    """Rule 46 wants an address, not a city on its own."""
+def test_address_without_line1_counts_as_missing_for_registered_buyer(db):
+    """Rule 46 wants an address, not a city on its own — enforced where the
+    address is mandatory (a registered buyer)."""
     from app.api.subscription_routes import _missing_billing_fields
 
     client = _client_row(
         db,
         "partial@test.dev",
         legal_name="X",
+        gstin="27AAPFU0939F1ZV",
         billing_address={"city": "Pune"},
         billing_country="IN",
         billing_state_code="27",
@@ -109,11 +124,12 @@ def test_whitespace_only_values_do_not_satisfy_the_gate(db):
         db,
         "blank@test.dev",
         legal_name="   ",
+        gstin="27AAPFU0939F1ZV",
         billing_address={"line1": "  "},
         billing_country="IN",
         billing_state_code=" ",
     )
-    assert _missing_billing_fields(client) == ["legal_name", "billing_address", "billing_state_code"]
+    assert _missing_billing_fields(client) == ["legal_name", "billing_address"]
 
 
 def test_a_non_dict_address_is_treated_as_missing(db):

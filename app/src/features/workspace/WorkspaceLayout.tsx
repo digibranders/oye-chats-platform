@@ -87,49 +87,52 @@ export function WorkspaceLayout(): ReactElement {
   return (
     <div className="flex min-h-full flex-col">
       {/* Section nav - real nav semantics; NavLink stamps aria-current on the
-          active section. Horizontally scrollable so all fit on mobile. */}
-      <nav
-        aria-label="Workspace sections"
-        className="mx-auto w-full max-w-7xl overflow-x-auto border-b border-[var(--ds-border)]"
-      >
-        <ul className="-mb-px flex min-w-max items-center gap-1">
-          {sections.map((section) => {
-            const lockIntent = isFree ? section.lockIntent : undefined;
-            return (
-              <li key={section.path}>
-                {lockIntent ? (
-                  <button
-                    type="button"
-                    onClick={() => openUpgradeModal(lockIntent)}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-[13px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)]',
-                      'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                    )}
-                  >
-                    {section.label}
-                    <Lock size={12} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-                  </button>
-                ) : (
-                  <NavLink
-                    to={section.path}
-                    className={({ isActive }) =>
-                      cn(
-                        'inline-flex items-center whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors',
+          active section. Horizontally scrollable so all fit on mobile.
+          The divider lives on the wrapper and `-mb-px` on the scroll container
+          itself (never on a child): `overflow-x-auto` forces overflow-y to
+          compute to `auto`, so a negative margin inside the scroller would
+          leave 1px of vertical overflow and render a stray scrollbar. */}
+      <div className="mx-auto w-full max-w-7xl border-b border-[var(--ds-border)]">
+        <nav aria-label="Workspace sections" className="-mb-px overflow-x-auto">
+          <ul className="flex min-w-max items-center gap-1">
+            {sections.map((section) => {
+              const lockIntent = isFree ? section.lockIntent : undefined;
+              return (
+                <li key={section.path}>
+                  {lockIntent ? (
+                    <button
+                      type="button"
+                      onClick={() => openUpgradeModal(lockIntent)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-[13px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)]',
                         'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                        isActive
-                          ? 'border-[var(--ds-accent)] text-[var(--ds-text)]'
-                          : 'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-                      )
-                    }
-                  >
-                    {section.label}
-                  </NavLink>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+                      )}
+                    >
+                      {section.label}
+                      <Lock size={12} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
+                    </button>
+                  ) : (
+                    <NavLink
+                      to={section.path}
+                      className={({ isActive }) =>
+                        cn(
+                          'inline-flex items-center whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors',
+                          'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
+                          isActive
+                            ? 'border-[var(--ds-accent)] text-[var(--ds-text)]'
+                            : 'border-transparent text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
+                        )
+                      }
+                    >
+                      {section.label}
+                    </NavLink>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      </div>
 
       {/* Active section - the gap below the tab row keeps the page title from
           crowding the divider. Page content supplies its own max-width. */}

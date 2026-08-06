@@ -3,7 +3,7 @@ import { ExternalLink, Loader2, Zap } from 'lucide-react';
 import { Modal, cn } from '../../../design-system';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
-import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../../services/api';
+import { getTopupPacks, initiateTopup, verifyTopupPayment, recordBillingEvent } from '../../../services/api';
 
 interface TopupPack {
   /** INR charge amount (major unit, rupees) - the canonical price on the Razorpay rail. */
@@ -30,6 +30,13 @@ export interface TopupModalProps {
   onClose: () => void;
   /** Fired after a verified purchase with a status message. */
   onSuccess?: (message: string) => void;
+  /**
+   * Fired when the server refuses the purchase until billing details are on
+   * record (registered/export buyers). The host page opens the billing-details
+   * form focused on the missing fields instead of stranding the customer on
+   * an error banner.
+   */
+  onBillingDetailsRequired?: (missing: string[]) => void;
   botId?: number | null;
   botName?: string | null;
 }
@@ -79,12 +86,15 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [submittingPack, setSubmittingPack] = useState<number | null>(null);
   const [error, setError] = useState('');
+  // Neutral (non-error) feedback — e.g. "you cancelled, nothing was charged".
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     if (!open) return undefined;
     let cancelled = false;
     setLoadingPacks(true);
     setError('');
+    setNotice('');
     getTopupPacks()
       .then((data) => {
         if (!cancelled) setPacks(Array.isArray(data) ? (data as unknown as TopupPack[]) : []);
@@ -109,6 +119,7 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
     }
     setSubmittingPack(amount);
     setError('');
+    setNotice('');
     try {
       const result = (await initiateTopup(amount, { botId })) as Record<string, unknown>;
       // Fail fast on a malformed order payload instead of opening Razorpay with
@@ -151,7 +162,33 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
       onSuccess?.('Payment successful - credits will appear in a few seconds.');
       onClose();
     } catch (err: unknown) {
-      if ((err as { code?: string })?.code === 'dismissed') return;
+      // The customer closed the Razorpay sheet themselves. Detected via the
+      // modal's ondismiss (src/lib/razorpay.js) — say so, or returning to the
+      // app reads as "nothing happened / did my payment go through?".
+      if ((err as { code?: string })?.code === 'dismissed') {
+        void recordBillingEvent('checkout_abandoned', 'topup', { amount });
+        setNotice('Payment cancelled - you were not charged.');
+        return;
+      }
+      if ((err as { code?: string })?.code === 'payment_failed') {
+        void recordBillingEvent('payment_failed', 'topup', { amount });
+      }
+      const detail =
+        (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
+          ?.detail ?? (err as { detail?: unknown })?.detail;
+      // Registered/export buyers must complete billing details first — hand
+      // off to the form instead of a dead-end banner (B2C buyers below the
+      // Rule 46(f) threshold never hit this).
+      if (
+        detail &&
+        typeof detail === 'object' &&
+        (detail as { code?: string }).code === 'billing_details_required' &&
+        onBillingDetailsRequired
+      ) {
+        onClose();
+        onBillingDetailsRequired((detail as { missing?: string[] }).missing ?? []);
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
     } finally {
       setSubmittingPack(null);
@@ -181,6 +218,15 @@ export function TopupModal({ open, onClose, onSuccess, botId = null, botName = n
           className="mb-4 rounded-lg border border-[var(--ds-danger)] bg-[var(--ds-danger-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-danger)]"
         >
           {error}
+        </div>
+      )}
+
+      {notice && !error && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface-2)] px-3 py-2.5 text-[13px] text-[var(--ds-text-muted)]"
+        >
+          {notice}
         </div>
       )}
 

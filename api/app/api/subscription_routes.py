@@ -6,12 +6,14 @@ subscription cancellation. Razorpay webhook handling lives in
 ``webhook_billing_routes``; all billing logic is in ``razorpay_service``.
 """
 
+import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -27,7 +29,8 @@ from app.config import (
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
-from app.core.pricing import format_amount, seat_price
+from app.core.pricing import format_amount, resolve_billing_context, seat_price
+from app.core.rate_limit import money_route_limit
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service, invoice_service, plan_entitlements_service, razorpay_customer_service
@@ -488,13 +491,20 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
     # settings / onboarding); IP geo is only the fallback for accounts that
     # haven't chosen one yet. This is what makes "set the country once, and the
     # currency follows everywhere" hold across sessions.
-    country = (client.billing_country or "").strip().upper() or resolve_country(request)
+    stored = (client.billing_country or "").strip().upper() or None
+    country = stored or resolve_country(request)
     # Geo-split model: Indians see and pay INR; everyone else sees (and — once
     # the Phase-2 USD rail is live — pays) USD. Display currency == charge
     # currency by design, so there is no currency mismatch to disclose.
     display_currency = "INR" if country == "IN" else "USD"
     return {
         "country": country,
+        # Trust grade for the frontend: a "detected" (IP geo) country is
+        # DISPLAY-ONLY and must never be echoed back into a money route's
+        # billing_country param — that would launder the IP signal into the
+        # charge-grade request-confirmation slot and defeat the server's
+        # refusal to charge on it (Wave 1.2).
+        "country_source": "stored" if stored else ("detected" if country else None),
         "display_currency": display_currency,
         "display_rate": DISPLAY_USD_TO_INR,
         "razorpay_enabled": RAZORPAY_ENABLED,
@@ -510,7 +520,7 @@ class VerifyRazorpaySubscriptionRequest(BaseModel):
     razorpay_signature: str
 
 
-@router.post("/verify-razorpay-subscription")
+@router.post("/verify-razorpay-subscription", dependencies=[Depends(money_route_limit("verify-sub", "30/minute"))])
 def verify_razorpay_subscription(
     payload: VerifyRazorpaySubscriptionRequest,
     client: Client = Depends(get_current_client),
@@ -744,40 +754,62 @@ def _billing_details_dict(client: Client) -> dict:
     }
 
 
-def _missing_billing_fields(client: Client) -> list[str]:
-    """Which statutory buyer fields are absent, in display order.
+# Rule 46(f): an invoice to an UNREGISTERED buyer needs the recipient's name,
+# address and state only when its value is ₹50,000 or more. Every current
+# OyeChats price (plans, annual, top-up packs, seats) sits well under this.
+_RULE_46F_THRESHOLD_MINOR = 50_000 * 100
 
-    GST Rule 46 requires the recipient's name and address on a tax invoice, and
-    the place of supply (the buyer's state) drives the CGST/SGST vs IGST split.
-    We collect these BEFORE the charge because the invoice is issued from a
-    webhook — there is no second chance to ask who was billed.
 
-    A GSTIN is deliberately NOT required: B2C customers are legitimate. It
-    matters only for input tax credit, and the buyer can add it later.
+def _missing_billing_fields(client: Client, *, amount_minor: int | None = None) -> list[str]:
+    """Which statutory buyer fields are absent for THIS buyer, in display order.
 
-    State code is India-only; an export has no Indian place of supply. A NULL
-    country defaults to IN throughout the billing stack, so the stricter rule
-    applies rather than silently passing.
+    Mandatory-fields matrix (CGST Rule 46 + Circular 242) — ask only for what
+    the law requires from each kind of buyer, so payment stays open to
+    everyone, registered or not, Indian or foreign:
+
+    * **Registered buyer (GSTIN on record)** — registered legal name and
+      address are mandatory: the recipient details must match the GST
+      registration or the buyer's GSTR-2B reconciliation fails and they lose
+      the input tax credit. State derives from the GSTIN.
+    * **Foreign buyer (export invoice)** — Rule 46's export proviso wants the
+      recipient's name, address and destination country on the document. The
+      country is already on record (it is what routed them here); the name
+      falls back to the account name; only the address is asked for.
+    * **Unregistered domestic buyer (B2C)** — nothing, below ₹50,000. Rule
+      46(f) only demands name/address/state on invoices of ₹50,000+ to
+      unregistered persons; below that the invoice is valid without recipient
+      details, the name falls back to the account name, and the place of
+      supply falls back to the supplier's state (Circular 242 — implemented in
+      ``finalize_invoice``). Asking anyway was blocking legitimate B2C
+      payments for details the law never required from them.
+
+    A GSTIN itself is never required — it matters only for input tax credit,
+    and the buyer can add it later.
     """
-    missing: list[str] = []
-    if not (client.legal_name or "").strip():
-        missing.append("legal_name")
+    has_gstin = bool((client.gstin or "").strip())
+    is_export = (client.billing_country or "IN").strip().upper() not in ("", "IN")
     address = client.billing_address
-    if not (isinstance(address, dict) and str(address.get("line1") or "").strip()):
+    has_address = isinstance(address, dict) and bool(str(address.get("line1") or "").strip())
+    big_b2c = not has_gstin and not is_export and amount_minor is not None and amount_minor >= _RULE_46F_THRESHOLD_MINOR
+
+    missing: list[str] = []
+    if has_gstin and not (client.legal_name or "").strip():
+        missing.append("legal_name")
+    if (has_gstin or is_export or big_b2c) and not has_address:
         missing.append("billing_address")
-    if (client.billing_country or "IN").upper() == "IN" and not (client.billing_state_code or "").strip():
+    if big_b2c and not (client.billing_state_code or "").strip():
         missing.append("billing_state_code")
     return missing
 
 
-def _require_billing_identity(client: Client) -> None:
+def _require_billing_identity(client: Client, *, amount_minor: int | None = None) -> None:
     """409 unless the buyer identity needed for a Rule 46 invoice is on record.
 
     409, not 400: the request is well-formed, the ACCOUNT is not ready. The
     machine-readable ``code`` lets the UI open the billing-details modal with
     the first missing field focused instead of showing a dead-end toast.
     """
-    missing = _missing_billing_fields(client)
+    missing = _missing_billing_fields(client, amount_minor=amount_minor)
     if missing:
         raise HTTPException(
             status_code=409,
@@ -873,7 +905,9 @@ def get_billing_details(client: Client = Depends(get_current_client)):
 
 
 @router.put("/billing-details")
-def update_billing_details(body: BillingDetailsBody, client: Client = Depends(get_current_client)):
+def update_billing_details(
+    body: BillingDetailsBody, http_request: Request = None, client: Client = Depends(get_current_client)
+):
     fields = body.model_dump(exclude_unset=True)
 
     gstin_provided = "gstin" in fields
@@ -896,6 +930,22 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
 
     with get_session() as session:
         row = session.get(Client, client.id)
+
+        # ``billing_country`` is a TAX FACT, not a profile field: ``supply_kind``
+        # classifies every invoice from it, so flipping it under a live INR
+        # mandate turns subsequent renewals into self-declared zero-rated
+        # exports (P0-2). While any active-set subscription carries a Razorpay
+        # mandate the *classification* country is frozen — writes that keep the
+        # classification (IN→IN, NULL→IN) still pass so a subscribed customer
+        # can complete their billing details. Rail change = churn event;
+        # genuine relocations go through the audited superadmin override.
+        if (
+            country_provided
+            and (new_country or "IN") != ((row.billing_country or "IN").strip().upper() or "IN")
+            and _has_live_gateway_mandate(session, row.id)
+        ):
+            raise _billing_country_locked_409()
+
         # Cross-field consistency is checked on the EFFECTIVE (stored +
         # incoming) values so a two-request sequence can't assemble an
         # incoherent combination a single request would have rejected.
@@ -955,6 +1005,14 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
             row.billing_state_code = eff_state if eff_gstin else (new_state if state_provided else eff_state)
         if "billing_email" in fields:
             row.billing_email = (fields["billing_email"] or "").strip() or None
+        # An ACCEPTED foreign-country write (no live mandate → allowed) from an
+        # IN-detected request is the P0-2 signal shape — record it durably even
+        # though the write itself is legitimate, so a later export
+        # classification for this account has a review trail.
+        if country_provided and new_country and http_request is not None:
+            mismatch = _geo_mismatch_detail(new_country, resolve_country(http_request))
+            if mismatch:
+                _flag_geo_mismatch(session, row.id, mismatch)
         session.commit()
         session.refresh(row)
         # Keep the gateway's customer record aligned with the invoice buyer
@@ -974,6 +1032,50 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
         ):
             setattr(client, attr, getattr(row, attr))
     return _billing_details_dict(client)
+
+
+# ── Payment-funnel telemetry (Wave 3.0) ──────────────────────────────────────
+
+
+class BillingFunnelEventBody(BaseModel):
+    """Fire-and-forget drop-off signal from the app's Razorpay wrapper."""
+
+    event: Literal["checkout_abandoned", "payment_failed"]
+    surface: Literal["plan", "topup", "seat", "resume"]
+    meta: dict | None = None
+
+    @field_validator("meta")
+    @classmethod
+    def _bound_meta(cls, v: dict | None) -> dict | None:
+        # Telemetry, not a dumping ground: bound the payload so a buggy (or
+        # hostile) client can't grow the table with megabyte blobs.
+        if v is not None and len(json.dumps(v)) > 2048:
+            raise ValueError("meta too large")
+        return v
+
+
+@router.post(
+    "/billing-events",
+    status_code=204,
+    dependencies=[Depends(money_route_limit("billing-events", "10/minute"))],
+)
+def record_billing_funnel_event(body: BillingFunnelEventBody, client: Client = Depends(get_current_client)):
+    """Record a detected payment-funnel drop-off (customer closed the Razorpay
+    sheet, or the gateway declined). Telemetry only — nothing downstream
+    depends on these rows, so the write is simple and unconditional; the app
+    calls this fire-and-forget and ignores failures."""
+    from app.db.models import BillingFunnelEvent
+
+    with get_session() as session:
+        session.add(
+            BillingFunnelEvent(
+                client_id=client.id,
+                event=body.event,
+                surface=body.surface,
+                meta=body.meta,
+            )
+        )
+        session.commit()
 
 
 # ── Checkout & Billing Portal ──
@@ -1052,24 +1154,30 @@ def checkout_quote(
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
 
-        # The confirmed billing_country (from the checkout country-confirmation
-        # step) overrides IP geo so an Indian resident mis-detected abroad is
-        # never routed to USD — and vice-versa (FEMA-safe).
-        detected = resolve_country(request)
-        # Explicit param (this checkout) wins, then the account's saved country,
-        # then IP geo — so the quote matches what the rest of the app shows.
-        confirmed = (billing_country or "").strip().upper() or (client.billing_country or "").strip().upper() or None
-        country = confirmed or detected
-        is_domestic = country == "IN"
+        # ONE resolution order shared with the charge path (Wave 1.2):
+        # explicit param (this checkout's country-confirmation) → the account's
+        # saved country → IP geo (display-grade) → unresolved. The confirmed
+        # country overrides IP so an Indian resident mis-detected abroad is
+        # never routed to USD — and vice-versa (FEMA-safe). An UNRESOLVED buyer
+        # is domestic, matching charge_currency's rule for every legacy account
+        # (NULL country, INR mandate) — previously this quote treated unknown
+        # as foreign and dead-ended a brand-new customer at Contact-sales
+        # whenever the geo lookup failed.
+        ctx = resolve_billing_context(
+            stored_country=client.billing_country,
+            request_country=billing_country,
+            detected_country=resolve_country(request),
+        )
+        country = ctx.country
+        is_domestic = ctx.currency == "INR"
 
         # INR price is the canonical amount — use it as the free-plan test so a
         # missing USD column on a foreign quote can't misread a paid plan as free.
         inr_minor = _amount_for_cycle(plan, billing_cycle)
+        currency = ctx.currency
         if is_domestic:
-            currency = "INR"
             amount_minor = inr_minor
         else:
-            currency = "USD"
             usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
             amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
@@ -1088,6 +1196,7 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": None,
                 "reason": "free_plan",
+                "source": ctx.source,
             }
 
         # Foreign buyer, paid plan: charge on the USD rail only when the account
@@ -1114,6 +1223,7 @@ def checkout_quote(
                 "methods": list(_RAZORPAY_METHODS_USD),
                 "checkout_supported": True,
                 "contact_sales": None,
+                "source": ctx.source,
             }
 
         # Foreign buyer we cannot charge yet (international payments off, or no
@@ -1131,6 +1241,7 @@ def checkout_quote(
                 "checkout_supported": False,
                 "contact_sales": "developer@oyechats.com",
                 "reason": "intl_usd_pending",
+                "source": ctx.source,
             }
 
         # Domestic paid plan: the live INR rail.
@@ -1144,6 +1255,7 @@ def checkout_quote(
             "methods": list(_RAZORPAY_METHODS_INR),
             "checkout_supported": True,
             "contact_sales": None,
+            "source": ctx.source,
         }
 
 
@@ -1194,13 +1306,54 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     return {"plans": out}
 
 
-def _is_suspicious_geo_claim(confirmed_country: str, detected_country: str | None) -> bool:
-    """Flag a domestic (IN) billing claim that contradicts the server-side geo
-    signal (audit F35). A specific foreign detection while the customer claims IN
-    is a GST/FEMA audit signal. Unknown detection (None — geo lookups legitimately
-    fail) is not suspicious, and a non-IN confirmed country never reaches the INR
-    rail so it is out of scope here."""
-    return confirmed_country == "IN" and detected_country not in (None, "IN")
+def _geo_mismatch_detail(confirmed_country: str, detected_country: str | None) -> str | None:
+    """Describe a billing-country claim that contradicts the server-side geo
+    signal, or ``None`` when there is nothing suspicious (audit F35 / P0-2).
+
+    Bidirectional, because both directions are tax signals:
+
+    * claims **IN**, detected foreign — a domestic INR/GST classification from
+      abroad (FEMA / place-of-supply review);
+    * claims **foreign**, detected IN — a zero-rated export classification from
+      inside India: the exact self-declared flip that turns a domestic supply
+      into GST leakage.
+
+    Unknown detection (``None`` — geo lookups legitimately fail) is never
+    suspicious, and a foreign claim from a *different* foreign country is a
+    curiosity (travel, VPN), not a tax signal.
+    """
+    if detected_country is None or confirmed_country == detected_country:
+        return None
+    if confirmed_country == "IN":
+        return f"claims billing_country=IN but IP geo detected {detected_country} (GST/FEMA review)"
+    if detected_country == "IN":
+        return f"claims billing_country={confirmed_country} (zero-rated export) but IP geo detected IN (GST review)"
+    return None
+
+
+def _flag_geo_mismatch(session, client_id: int, detail: str) -> None:
+    """Stamp the persistent geo-mismatch columns on the account (newest wins).
+
+    The WARN log is the alert; these columns are the durable review trail —
+    log retention is shorter than a GST assessment window.
+    """
+    logger.warning("Billing geo mismatch: client=%s %s", client_id, detail)
+    row = session.get(Client, client_id)
+    if row is not None:
+        row.geo_mismatch_at = datetime.now(UTC)
+        row.geo_mismatch_detail = detail[:500]
+
+
+def _flag_geo_mismatch_standalone(client_id: int, detail: str) -> None:
+    """Best-effort ``_flag_geo_mismatch`` for callers outside a session (the
+    checkout/top-up resolver runs before their transaction opens). A flag
+    write must never fail the customer's money path."""
+    try:
+        with get_session() as session:
+            _flag_geo_mismatch(session, client_id, detail)
+            session.commit()
+    except Exception:
+        logger.exception("Failed to persist geo-mismatch flag for client %s", client_id)
 
 
 def _resolve_confirmed_billing_country_or_409(
@@ -1224,25 +1377,58 @@ def _resolve_confirmed_billing_country_or_409(
     the ``intl_usd_pending`` contract the frontend already renders as a
     Contact-sales CTA.
 
-    Resolution order mirrors ``checkout_quote``: explicit per-request confirmation
-    wins, then the account's stored country, then the domestic default (IN) for
-    backward-compat callers that omit it. The server-side IP geo signal is
-    cross-checked (not hard-enforced — see ``_is_suspicious_geo_claim``) and a
-    domestic claim that contradicts a specific foreign detection is logged as a
-    GST/FEMA audit signal.
+    Resolution is ``resolve_billing_context`` — the SAME order the quote uses
+    (request-confirmed → stored → detected) — with the charge path's trust
+    rules layered on top (Wave 1.2):
 
-    Extracted from ``create_checkout`` so ``initiate_topup`` cannot drift from
-    the same gate (the bug this closes: top-ups had no gate at all).
+    * The ``detected`` (IP geo) signal is never *charged on*. But when it is
+      the ONLY signal and it says foreign, the old behavior — silently
+      defaulting to IN and minting an INR mandate a USD quote never promised —
+      is replaced by a 409 ``billing_country_required``: the customer confirms
+      their country and checkout proceeds on the right rail.
+    * A GSTIN on record with a confirmed non-IN country is a contradiction (a
+      domestic GST registration cannot bill on the export rail) → 422, checked
+      BEFORE the intl kill switch so the flag being off cannot mask it.
+    * Unresolved with no foreign signal stays the domestic default (every
+      legacy account: NULL country, INR mandate).
+
+    The geo cross-check stays advisory (see ``_geo_mismatch_detail``) — a
+    charge-grade country that contradicts the IP signal is flagged, not
+    blocked.
     """
-    confirmed_country = (request_country or client.billing_country or "IN").strip().upper()
+    ctx = resolve_billing_context(
+        stored_country=client.billing_country,
+        request_country=request_country,
+        detected_country=None,  # IP geo is display-grade; never charge on it
+    )
+    detected_country = resolve_country(http_request) if http_request is not None else None
 
-    detected_country = resolve_country(http_request)
-    if _is_suspicious_geo_claim(confirmed_country, detected_country):
-        logger.warning(
-            "Billing geo mismatch: client=%s claims billing_country=IN but IP geo detected %s (GST/FEMA review)",
-            client.id,
-            detected_country,
+    if ctx.source == "unresolved" and detected_country not in (None, "IN"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "billing_country_required",
+                "message": (
+                    "Please confirm your billing country before checkout — "
+                    "it determines the currency you are charged in."
+                ),
+            },
         )
+
+    confirmed_country = ctx.country or "IN"
+
+    if confirmed_country != "IN" and (client.gstin or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Your account has an Indian GSTIN on record, which requires domestic (IN) billing. "
+                "Clear the GSTIN from your billing details before billing from another country."
+            ),
+        )
+
+    mismatch = _geo_mismatch_detail(confirmed_country, detected_country)
+    if mismatch:
+        _flag_geo_mismatch_standalone(client.id, mismatch)
 
     if confirmed_country != "IN" and not allow_usd:
         raise HTTPException(
@@ -1257,7 +1443,106 @@ def _resolve_confirmed_billing_country_or_409(
     return confirmed_country
 
 
-@router.post("/checkout")
+def _billing_country_locked_409() -> HTTPException:
+    """The one 409 every surface raises when a tax-classification country
+    change is attempted under a live mandate — PUT /billing-details, checkout,
+    and top-up must speak the same contract or the freeze has side doors."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "reason": "billing_country_locked",
+            "message": (
+                "Your billing country is locked while a subscription mandate is "
+                "active, because it determines how your invoices are taxed. "
+                "If you have genuinely relocated, contact support — the change "
+                "requires re-pointing your payment mandate to the new billing rail."
+            ),
+            "contact": "developer@oyechats.com",
+        },
+    )
+
+
+def _has_live_gateway_mandate(session, client_id: int) -> bool:
+    """Any active-set subscription (account OR per-bot — deliberately no
+    ``bot_id`` filter) carrying a Razorpay mandate. The freeze must span
+    per-bot mandates: a client whose only live mandate is bot-scoped can
+    otherwise flip the account's tax country through a side door."""
+    return (
+        session.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.client_id == client_id,
+                Subscription.status.in_(("active", "trialing", "past_due")),
+                Subscription.razorpay_subscription_id.is_not(None),
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
+def _persist_confirmed_country(session, client: Client, confirmed_country: str) -> None:
+    """Persist a checkout/top-up-confirmed billing country onto the account,
+    honouring the SAME freeze as ``PUT /billing-details``.
+
+    The persist writes at checkout and top-up used to bypass the freeze
+    entirely (review finding): a client with only a per-bot INR mandate could
+    flip IN→US via ``POST /checkout {billing_country}``, and a stored-US
+    client could flip US→IN via a top-up — both exactly the writes the PUT
+    endpoint 409s. Classification-preserving writes (IN→IN, NULL→IN) still
+    pass so a confirmed country can land on a legacy NULL row.
+    """
+    row = session.get(Client, client.id)
+    if row is None or row.gstin:
+        # A GSTIN pins the country to IN; never let a money route flip it.
+        return
+    stored_class = (row.billing_country or "IN").strip().upper() or "IN"
+    confirmed_class = (confirmed_country or "IN").strip().upper() or "IN"
+    if stored_class == confirmed_class:
+        if not row.billing_country:
+            row.billing_country = confirmed_class
+            client.billing_country = confirmed_class
+        return
+    if _has_live_gateway_mandate(session, client.id):
+        raise _billing_country_locked_409()
+    row.billing_country = confirmed_class
+    client.billing_country = confirmed_class
+
+
+def _require_precharge_gates(
+    client: Client,
+    http_request: Request | None = None,
+    *,
+    request_country: str | None = None,
+    allow_usd: bool | None = None,
+    amount_minor: int | None = None,
+) -> str:
+    """The shared pre-charge gate for EVERY route that can mint a new Razorpay
+    mandate (Wave 1.3): /checkout, /change-plan Branch 3, /resume Mode 2, and
+    top-ups.
+
+    Runs the billing-country resolution with its trust rules
+    (``billing_country_required`` / GSTIN⇒IN / ``intl_usd_pending`` / geo
+    flagging) and then the Rule 46 billing-identity check. Before this,
+    /change-plan and /resume created real gateway mandates with none of these
+    — a trial→paid conversion through change-plan skipped identity collection
+    entirely, so its activation webhook issued an invoice with no buyer.
+
+    ``allow_usd`` defaults to the intl rail flag (plan mandates); top-up passes
+    ``False`` because its order path is INR-only. Returns the resolved country
+    for callers that need the rail.
+    """
+    country = _resolve_confirmed_billing_country_or_409(
+        request_country=request_country,
+        client=client,
+        http_request=http_request,
+        allow_usd=INTL_PAYMENTS_ENABLED if allow_usd is None else allow_usd,
+    )
+    _require_billing_identity(client, amount_minor=amount_minor)
+    return country
+
+
+@router.post("/checkout", dependencies=[Depends(money_route_limit("checkout", "10/minute", "50/day"))])
 def create_checkout(
     request: CheckoutRequest,
     http_request: Request,
@@ -1278,19 +1563,13 @@ def create_checkout(
     # to domestic; a country already on the client is honoured as the fallback.
     # Shared with /credits/topup, which passes allow_usd=False because its order
     # path is still INR-only — see _resolve_confirmed_billing_country_or_409.
-    confirmed_country = _resolve_confirmed_billing_country_or_409(
-        request_country=request.billing_country,
-        client=client,
-        http_request=http_request,
-        allow_usd=INTL_PAYMENTS_ENABLED,
-    )
+    # Country trust rules + Rule 46 buyer identity, shared with every other
+    # mandate-minting route (Wave 1.3). Identity is collected BEFORE the
+    # charge: the invoice is issued from the payment webhook, so this is the
+    # last point at which we can ask who is being billed.
+    confirmed_country = _require_precharge_gates(client, http_request, request_country=request.billing_country)
 
     _assert_no_stacking(client, request.coupon_code)
-
-    # Collect the Rule 46 buyer identity BEFORE the charge: the invoice is
-    # issued from the payment webhook, so this is the last point at which we
-    # can ask who is being billed.
-    _require_billing_identity(client)
 
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
@@ -1338,18 +1617,75 @@ def create_checkout(
                 detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
             )
 
-        # Persist the confirmed billing country for invoice place-of-supply. A
-        # GSTIN pins the country to IN, so never let checkout flip it. Only write
-        # when the caller explicitly confirmed a country (don't overwrite a
-        # stored value with the IN default of an omitted field).
+        # Persist the confirmed billing country for invoice place-of-supply —
+        # through the freeze-honouring helper: a classification change under a
+        # live mandate (including a PER-BOT one) 409s here exactly like
+        # PUT /billing-details. Only writes when the caller explicitly
+        # confirmed a country (an omitted field must not overwrite a stored
+        # value with the IN default).
         if request.billing_country:
-            row = session.get(Client, client.id)
-            if row is not None and not row.gstin:
-                row.billing_country = confirmed_country
-                client.billing_country = confirmed_country
+            _persist_confirmed_country(session, client, confirmed_country)
 
-        from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
+
+        # Finding H1, first-checkout edition: a sequential re-submit (double
+        # click, second tab, re-opened modal) must reuse the in-flight
+        # authorizable subscription, not mint a sibling mandate. Placed BEFORE
+        # the promo/discount work so a reuse never burns a second promo slot.
+        # Gateway state decides staleness: rebuild_upgrade_checkout returns the
+        # payload only while the pending sub is still authorizable.
+        client_row = session.get(Client, client.id)
+        if (
+            client_row is not None
+            and client_row.pending_checkout_subscription_id
+            and client_row.pending_checkout_plan_id == plan.id
+            and (client_row.pending_checkout_cycle or "monthly") == request.billing_cycle
+            # Country is part of the key: the pending sub was minted on one
+            # rail, and reusing it after a (legitimately unlocked) country
+            # change would hand a stored-US account an INR checkout — the
+            # quote/charge divergence Wave 1.2 exists to kill.
+            and (client_row.pending_checkout_country or "IN") == confirmed_country
+        ):
+            try:
+                reused = razorpay_service.rebuild_upgrade_checkout(
+                    client_row.pending_checkout_subscription_id, client, plan, request.billing_cycle
+                )
+            except razorpay_service.RazorpayBillingError as exc:
+                # Never guess: a fetch failure is not evidence the pending sub
+                # is dead, and minting a sibling against a live authorizable
+                # one is the exact H1 hazard. Mirror /resume's doctrine.
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if reused is not None:
+                reused.setdefault("provider", "razorpay")
+                logger.info(
+                    "Reusing pending first-checkout %s for client %s (plan %s)",
+                    client_row.pending_checkout_subscription_id,
+                    client.id,
+                    plan.id,
+                )
+                # Best-effort card-tokenisation hint, same as the fresh mint.
+                try:
+                    reused_customer_id = razorpay_customer_service.ensure_customer(
+                        session, session.get(Client, client.id)
+                    )
+                    if reused_customer_id:
+                        reused["customer_id"] = reused_customer_id
+                except razorpay_customer_service.RazorpayCustomerError:
+                    logger.warning("checkout reuse: could not ensure Razorpay customer for client %s", client.id)
+                session.commit()
+                return reused
+            # Dead at the gateway — clear and fall through to a fresh mint.
+            logger.info(
+                "Pending first-checkout %s for client %s is dead; re-minting",
+                client_row.pending_checkout_subscription_id,
+                client.id,
+            )
+            client_row.pending_checkout_subscription_id = None
+            client_row.pending_checkout_plan_id = None
+            client_row.pending_checkout_cycle = None
+            client_row.pending_checkout_country = None
+            client_row.pending_checkout_at = None
+            session.flush()
 
         # Only resolve/apply the referral discount on a provider that can realise
         # it (N4). Today only Razorpay is live; gating here means that if the
@@ -1401,6 +1737,27 @@ def create_checkout(
         except razorpay_customer_service.RazorpayCustomerError:
             logger.warning("checkout: could not ensure Razorpay customer for client %s", client.id)
 
+        # Park the referral snapshot in the subscription notes instead of
+        # inserting a ReferralConversion here (Wave 1.4). Recording at
+        # checkout-create credited the affiliate for ABANDONED checkouts —
+        # mandates never authorised, money never moved. The
+        # ``subscription.charged`` handler now records the conversion from
+        # these notes on the first real payment (unique-per-client, so replays
+        # and later cycles no-op). Snapshot terms still freeze at subscribe
+        # time — they travel in the immutable notes. Covers ANY attributed
+        # code, not just discount-bearing ones (finding MED-2 preserved).
+        conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
+        extra_notes: dict[str, str] = dict(promo_extra_notes or {})
+        if conv_meta:
+            extra_notes.update(
+                {
+                    "oyechats_ref_code_id": str(conv_meta["referral_code_id"]),
+                    "oyechats_ref_affiliate_id": str(conv_meta["affiliate_id"]),
+                    "oyechats_ref_commission_bps": str(conv_meta["affiliate_commission_bps"]),
+                    "oyechats_ref_discount_bps": str(conv_meta["discount_bps"]),
+                }
+            )
+
         try:
             result = razorpay_service.create_subscription(
                 session,
@@ -1409,30 +1766,21 @@ def create_checkout(
                 request.billing_cycle,
                 discount_bps=discount_bps,
                 start_at=promo_start_at,
-                extra_notes=promo_extra_notes,
+                extra_notes=extra_notes or None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        # Record the referral conversion for ANY attributed code, not just
-        # discount-bearing ones (finding MED-2): a commission-only code earns the
-        # affiliate a pool cut with no customer discount, and is a real
-        # conversion the super-admin view must not miss. ``disc_meta`` is None for
-        # those, so resolve the snapshot independently of the discount.
-        conv_meta = discount_service.resolve_referral_conversion_snapshot(session, client)
-        if conv_meta:
-            session.add(
-                ReferralConversion(
-                    client_id=client.id,
-                    referral_code_id=int(conv_meta["referral_code_id"]),
-                    # Snapshot the affiliate so payout reconciliation can attribute
-                    # the conversion without re-joining the mutable code row (N6).
-                    affiliate_id=int(conv_meta["affiliate_id"]),
-                    commission_bps=int(conv_meta["affiliate_commission_bps"]),
-                    customer_discount_bps=int(conv_meta["discount_bps"]),
-                )
-            )
+
+        # Record the in-flight checkout for the H1 reuse above. Cleared by the
+        # activation webhook once the customer authorises.
+        if client_row is not None:
+            client_row.pending_checkout_subscription_id = result.get("subscription_id")
+            client_row.pending_checkout_plan_id = plan.id
+            client_row.pending_checkout_cycle = request.billing_cycle
+            client_row.pending_checkout_country = confirmed_country
+            client_row.pending_checkout_at = datetime.now(UTC)
         session.commit()
         if isinstance(result, dict) and customer_id:
             # Checkout needs this to tokenise a card (customer_id + save=1).
@@ -1446,7 +1794,7 @@ class ChangePlanRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/change-plan")
+@router.post("/change-plan", dependencies=[Depends(money_route_limit("change-plan", "10/minute", "50/day"))])
 def change_plan(
     request: ChangePlanRequest,
     http_request: Request,
@@ -1638,6 +1986,11 @@ def change_plan(
             from app.services import razorpay_service, transition_service
 
             billing_cycle = request.billing_cycle or sub.billing_cycle or "monthly"
+            # Upgrade-now mints a REAL replacement mandate — same pre-charge
+            # gates as every other mint (identity fields are freely clearable
+            # after the original checkout, so "they had identity once" is not
+            # a guarantee they still do).
+            _require_precharge_gates(client, http_request)
             try:
                 payload = transition_service.execute_paid_upgrade(session, client, sub, new_plan, billing_cycle)
             except ValueError as exc:
@@ -1737,6 +2090,12 @@ def change_plan(
         # account-level purchase.
         billing_cycle = request.billing_cycle or (sub.billing_cycle if sub else "monthly")
         from app.services import razorpay_service
+
+        # Same pre-charge gates as /checkout (Wave 1.3): this branch mints a
+        # REAL authorizable mandate, so it must refuse — for a missing buyer
+        # identity or an untrusted/foreign country — BEFORE subscription.create,
+        # not discover the gap at invoice time.
+        _require_precharge_gates(client, http_request)
 
         try:
             if request.bot_id is not None:
@@ -1912,8 +2271,9 @@ class ResumeSubscriptionRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/resume")
+@router.post("/resume", dependencies=[Depends(money_route_limit("resume", "10/minute", "50/day"))])
 def resume_subscription(
+    http_request: Request,
     request: ResumeSubscriptionRequest = ResumeSubscriptionRequest(),
     client: Client = Depends(get_current_client),
 ):
@@ -2018,6 +2378,12 @@ def resume_subscription(
             session.flush()
 
         # ── Mode 2: the mandate is dead — re-authorise ────────────────────────
+
+        # Mode 2 mints a REAL new mandate, so it runs the same pre-charge gates
+        # as /checkout (Wave 1.3). Deliberately NOT applied to Mode 1 above —
+        # that path only clears a flag on a live mandate, and an identity gap
+        # must not block a customer from un-cancelling their own subscription.
+        _require_precharge_gates(client, http_request)
 
         # Bill the replacement from the moment the paid period actually runs
         # out. Omitted, Razorpay starts the subscription at authorization and
@@ -2145,9 +2511,10 @@ class SeatChangeRequest(BaseModel):
     bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
-@router.post("/seats")
+@router.post("/seats", dependencies=[Depends(money_route_limit("seats", "10/minute", "50/day"))])
 def change_seat_count(
     request: SeatChangeRequest,
+    http_request: Request,
     client: Client = Depends(get_current_client),
     _verified: Client = Depends(require_verified_email),
 ):
@@ -2163,6 +2530,12 @@ def change_seat_count(
     """
     if request.delta == 0:
         raise HTTPException(status_code=400, detail="Delta must be non-zero.")
+
+    # Adding seats mints (or edits) a real seat-addon mandate whose charges are
+    # invoiced — same pre-charge gates as every other mint. Removing seats
+    # charges nothing and stays ungated.
+    if request.delta > 0:
+        _require_precharge_gates(client, http_request)
 
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
@@ -2453,8 +2826,13 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             "document_upload": int(pricing.get("credit_cost.document_upload", 3) or 0),
         }
 
-        country = resolve_country(http_request)
-        currency_code = "INR" if country == "IN" else "USD"
+        # Stored country first, IP geo as display fallback (Wave 1.2) — the
+        # old IP-only rule rendered $ on a rupee account whenever the geo
+        # lookup failed, and ignored the account's own tax fact entirely.
+        currency_code = resolve_billing_context(
+            stored_country=client.billing_country,
+            detected_country=resolve_country(http_request),
+        ).currency
         currency_symbol = "₹" if currency_code == "INR" else "$"
 
         next_reset = effective_resets_at(sub)
@@ -2633,7 +3011,7 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
         )
 
 
-@credits_router.post("/topup")
+@credits_router.post("/topup", dependencies=[Depends(money_route_limit("topup", "10/minute", "50/day"))])
 def initiate_topup(
     request: TopupRequest,
     http_request: Request,
@@ -2689,10 +3067,9 @@ def initiate_topup(
         # country (don't overwrite a stored value with the IN default of an
         # omitted field).
         if request.billing_country:
-            row = session.get(Client, client.id)
-            if row is not None and not row.gstin:
-                row.billing_country = confirmed_country
-                client.billing_country = confirmed_country
+            # Freeze-honouring persist — a top-up must not be a side door for
+            # flipping the tax country under a live mandate (review finding).
+            _persist_confirmed_country(session, client, confirmed_country)
 
         pricing = credit_service.get_pricing(session)
         packs = pricing.get("topup_packs") or []
@@ -2764,7 +3141,7 @@ class TopupVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
-@credits_router.post("/topup/verify")
+@credits_router.post("/topup/verify", dependencies=[Depends(money_route_limit("topup-verify", "30/minute"))])
 def verify_topup_payment(
     body: TopupVerifyRequest,
     client: Client = Depends(get_current_client),

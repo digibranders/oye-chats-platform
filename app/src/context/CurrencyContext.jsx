@@ -17,6 +17,10 @@ const CurrencyContext = createContext(null);
  */
 export function CurrencyProvider({ children }) {
   const [country, setCountryState] = useState(null);
+  // Trust grade of `country`: 'stored' (account fact) | 'detected' (IP geo,
+  // display-only) | 'user' (picked in this session) | null. Money routes must
+  // only ever receive a non-'detected' country as billing_country.
+  const [countrySource, setCountrySource] = useState(null);
   const [currency, setCurrency] = useState('usd'); // lowercase -> matches formatMoney
   const [loading, setLoading] = useState(true);
 
@@ -26,6 +30,7 @@ export function CurrencyProvider({ children }) {
       .then((geo) => {
         if (!alive) return;
         setCountryState(geo?.country ?? null);
+        setCountrySource(geo?.country_source ?? null);
         setCurrency(String(geo?.display_currency || 'USD').toLowerCase());
       })
       .catch(() => {
@@ -42,6 +47,7 @@ export function CurrencyProvider({ children }) {
   const value = useMemo(
     () => ({
       country, // ISO-2 or null
+      countrySource, // 'stored' | 'detected' | 'user' | null
       currency, // 'inr' | 'usd'
       isInr: currency === 'inr',
       loading,
@@ -51,10 +57,11 @@ export function CurrencyProvider({ children }) {
       setCountry: (next) => {
         const c = String(next || '').toUpperCase() || null;
         setCountryState(c);
+        setCountrySource(c ? 'user' : null);
         setCurrency(c === 'IN' ? 'inr' : 'usd');
       },
     }),
-    [country, currency, loading],
+    [country, countrySource, currency, loading],
   );
 
   return <CurrencyContext.Provider value={value}>{children}</CurrencyContext.Provider>;

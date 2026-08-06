@@ -26,6 +26,7 @@ import {
   createCheckoutSession,
   startTrial,
   verifyRazorpaySubscription,
+  recordBillingEvent,
 } from '../../../services/api';
 import { promotionAppliesToPlan, type PlanView, type PromotionView } from '../billingModel';
 import type { BillingCycle } from './planMath';
@@ -104,7 +105,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     onDone,
     onBillingDetailsRequired,
   } = ctx;
-  const { country: acctCountry } = useCurrency();
+  const { country: acctCountry, countrySource } = useCurrency();
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -178,9 +179,17 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         //   before.
         // - Account-level with an active sub → change-plan; a fresh account-level
         //   purchase → checkout.
+        // Only a charge-grade country may be sent as billing_country: the
+        // account's stored fact or one the user picked this session. A
+        // 'detected' (IP geo) country is display-only — echoing it here would
+        // launder the IP signal into the server's request-confirmation slot
+        // and silently rail-switch a mis-detected traveller. Omitted, the
+        // server refuses with billing_country_required and we hand off to the
+        // billing-details form below.
+        const chargeGradeCountry = countrySource === 'detected' ? undefined : (acctCountry ?? undefined);
         const res = ((botId != null || hasActiveSubscription) && !promoApplies
           ? await changePlan(plan.id, billingCycle, botId)
-          : await createCheckoutSession(plan.id, billingCycle, acctCountry)) as Record<string, unknown>;
+          : await createCheckoutSession(plan.id, billingCycle, chargeGradeCountry)) as Record<string, unknown>;
 
         const provider = String(res?.provider || '').toLowerCase();
         const status = String(res?.status || '').toLowerCase();
@@ -205,8 +214,12 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
             });
           } catch (cbErr: unknown) {
             if ((cbErr as { code?: string })?.code === 'dismissed') {
+              void recordBillingEvent('checkout_abandoned', 'plan', { plan_id: plan.id });
               setNotice('Payment cancelled - you have not been charged.');
               return;
+            }
+            if ((cbErr as { code?: string })?.code === 'payment_failed') {
+              void recordBillingEvent('payment_failed', 'plan', { plan_id: plan.id });
             }
             throw cbErr;
           }
@@ -272,6 +285,38 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           );
           return;
         }
+        // The server refuses to charge when its only country signal is IP
+        // geo (display-grade). Ask the customer to confirm their billing
+        // country via the same billing-details hand-off as a missing
+        // identity - the form's country field is the cure.
+        if (
+          detail &&
+          typeof detail === 'object' &&
+          (detail as { reason?: string }).reason === 'billing_country_required'
+        ) {
+          if (onBillingDetailsRequired) {
+            onBillingDetailsRequired(['billing_country']);
+          } else {
+            setError(
+              (detail as { message?: string }).message ||
+                'Please confirm your billing country before checkout.',
+            );
+          }
+          return;
+        }
+        // A locked tax country (live mandate) is a support conversation, not
+        // a form fix - surface the server's full explanation.
+        if (
+          detail &&
+          typeof detail === 'object' &&
+          (detail as { reason?: string }).reason === 'billing_country_locked'
+        ) {
+          setError(
+            (detail as { message?: string }).message ||
+              'Your billing country is locked while a subscription mandate is active. Contact support.',
+          );
+          return;
+        }
         // Not a failure - the account is simply not invoiceable yet. An
         // invoice is issued from a webhook, so the buyer identity has to be on
         // record BEFORE the charge; hand off to the billing-details form
@@ -330,6 +375,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     },
     [
       acctCountry,
+      countrySource,
       currentPlanSlug,
       currentSubscriptionStatus,
       onBillingDetailsRequired,
