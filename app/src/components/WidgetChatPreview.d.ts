@@ -11,6 +11,8 @@ export interface WidgetPreviewSettings {
   avatar_type?: string;
   orb_color?: string;
   primary_color?: string;
+  user_message_color?: string;
+  user_bubble_color?: string;
   welcome_title?: string;
   welcome_subtitle?: string;
   welcome_suggestions?: string[];

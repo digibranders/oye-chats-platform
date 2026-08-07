@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, X } from 'lucide-react';
-import { ProgressStepper, Progress, type StepperItem } from '../../design-system';
+import { ProgressStepper, Progress, cn, type StepperItem } from '../../design-system';
 import { WidgetPreview } from './preview/WidgetPreview';
 
 export interface LaunchStudioLayoutProps {
@@ -10,6 +10,12 @@ export interface LaunchStudioLayoutProps {
   maxReachedIndex: number;
   onStepClick: (index: number) => void;
   children: ReactNode;
+  /**
+   * When true, the right-side live-preview panel is hidden and the content
+   * area expands to fill the full width. Set for plan-selection step which is
+   * information-heavy and has nothing to preview yet.
+   */
+  hidePreview?: boolean;
 }
 
 /**
@@ -25,6 +31,7 @@ export function LaunchStudioLayout({
   maxReachedIndex,
   onStepClick,
   children,
+  hidePreview = false,
 }: LaunchStudioLayoutProps) {
   return (
     <div className="flex h-screen flex-col bg-[var(--ds-bg-canvas)] text-[var(--ds-text)]">
@@ -60,7 +67,10 @@ export function LaunchStudioLayout({
         />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_440px]">
+      <div className={hidePreview
+        ? 'grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]'
+        : 'grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_440px]'
+      }>
         {/* Step rail */}
         <aside className="hidden shrink-0 overflow-y-auto border-r border-[var(--ds-border)] bg-[var(--ds-sidebar-bg)] p-5 lg:block">
           <p className="mb-4 px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
@@ -76,18 +86,20 @@ export function LaunchStudioLayout({
 
         {/* Active step */}
         <main className="overflow-y-auto px-5 py-8 md:px-10 md:py-10">
-          <div className="mx-auto h-full max-w-xl">{children}</div>
+          <div className={cn("mx-auto h-full", hidePreview ? "max-w-6xl" : "max-w-xl")}>{children}</div>
         </main>
 
-        {/* Live widget preview */}
-        <aside className="hidden shrink-0 flex-col border-l border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5 lg:flex">
-          <p className="mb-4 px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Live preview
-          </p>
-          <div className="flex-1">
-            <WidgetPreview />
-          </div>
-        </aside>
+        {/* Live widget preview — hidden on plan step */}
+        {!hidePreview && (
+          <aside className="hidden shrink-0 flex-col border-l border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-5 lg:flex">
+            <p className="mb-4 px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
+              Live preview
+            </p>
+            <div className="flex-1">
+              <WidgetPreview />
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );

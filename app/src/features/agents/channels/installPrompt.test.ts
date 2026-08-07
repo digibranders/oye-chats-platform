@@ -31,7 +31,7 @@ describe('buildInstallPrompt', () => {
       expect(text).toContain(step.title);
       if (step.code) expect(text).toContain(step.code);
     }
-    expect(text).toContain('Install steps (Next.js)');
+    expect(text).toContain('Installation Steps (Next.js)');
   });
 
   it('uses each platform its own snippet, not a generic one', () => {

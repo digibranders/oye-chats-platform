@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Copy, Check, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { Card } from '../../../design-system';
 import { platforms, categoryLabels, categoryOrder } from '../../../data/platformIntegrations';
-import { recordActivationEvent } from '../../../services/api';
+import { recordActivationEvent, getApiBaseUrl } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
+import { getEmbedEnvironment } from '../../agents/channels/embedEnvironment';
+import { buildInstallPrompt } from '../../agents/channels/installPrompt';
 import { StepShell } from '../StepShell';
 import type { StepProps } from '../steps.config';
 
@@ -47,8 +49,43 @@ export function DeployStep(props: StepProps) {
   const { selectedBot } = useBotContext();
   const botKey = selectedBot?.bot_key ?? 'bot-xxxxxxxx';
   const [platformId, setPlatformId] = useState<string | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
 
   const platform = platforms.find((p) => p.id === platformId) ?? null;
+
+  const handleCopyPrompt = async () => {
+    try {
+      const apiBaseUrl = getApiBaseUrl();
+      const env = getEmbedEnvironment(apiBaseUrl);
+      const promptText = buildInstallPrompt({ botKey, apiBaseUrl, env, platform });
+      await navigator.clipboard.writeText(promptText);
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  const copyPromptButton = (
+    <button
+      type="button"
+      onClick={handleCopyPrompt}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+      title="Copy structured installation briefing for AI assistants like Cursor, Claude, or Copilot"
+    >
+      {promptCopied ? (
+        <>
+          <Check size={14} className="text-[var(--ds-success)]" aria-hidden="true" />
+          <span>Prompt copied!</span>
+        </>
+      ) : (
+        <>
+          <Sparkles size={14} className="text-purple-400" aria-hidden="true" />
+          <span>Copy prompt for AI coding agent</span>
+        </>
+      )}
+    </button>
+  );
 
   // ── Platform picker ──────────────────────────────────────────────
   if (!platform) {
@@ -63,6 +100,17 @@ export function DeployStep(props: StepProps) {
         canContinue={false}
       >
         <div className="space-y-5">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-3.5">
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-[var(--ds-text)] flex items-center gap-1.5">
+                <Sparkles size={14} className="text-purple-400" /> Using an AI coding assistant?
+              </p>
+              <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                Copy a complete briefing to paste into Cursor, Claude, or Copilot to install automatically.
+              </p>
+            </div>
+            <div className="shrink-0">{copyPromptButton}</div>
+          </div>
           {categoryOrder.map((category) => {
             const inCategory = platforms.filter((p) => p.category === category);
             if (inCategory.length === 0) return null;
@@ -115,14 +163,17 @@ export function DeployStep(props: StepProps) {
       continueLabel="I've added it"
     >
       <div className="space-y-4">
-        <button
-          type="button"
-          onClick={() => setPlatformId(null)}
-          className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)]"
-        >
-          <ChevronLeft size={14} />
-          Change platform
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setPlatformId(null)}
+            className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)]"
+          >
+            <ChevronLeft size={14} />
+            Change platform
+          </button>
+          {copyPromptButton}
+        </div>
 
         <ol className="space-y-4">
           {steps.map((step, index) => (

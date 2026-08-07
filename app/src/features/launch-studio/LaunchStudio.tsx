@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { completeOnboarding } from '../../services/api';
+import { completeOnboarding, getCurrentSubscription } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { LaunchStudioLayout } from './LaunchStudioLayout';
@@ -8,23 +8,23 @@ import { PreviewProvider } from './preview/PreviewProvider';
 import { clearLaunchProgress, readLaunchProgress, writeLaunchProgress } from './resume';
 import {
   LAUNCH_STEPS,
+  PLAN_STEP_INDEX,
+  PLAN_STEP_PATH,
   stepIndexByPath,
   type StepProps,
 } from './steps.config';
-import { WelcomeStep } from './steps/WelcomeStep';
+import { WelcomePlanStep } from './steps/WelcomePlanStep';
 import { CreateAgentStep } from './steps/CreateAgentStep';
-import { ConnectStep } from './steps/ConnectStep';
-import { KnowledgeStep } from './steps/KnowledgeStep';
+import { TrainStep } from './steps/TrainStep';
 import { TestStep } from './steps/TestStep';
 import { CustomizeStep } from './steps/CustomizeStep';
 import { DeployStep } from './steps/DeployStep';
 import { VerifyStep } from './steps/VerifyStep';
 
 const STEP_COMPONENTS: Record<string, ComponentType<StepProps>> = {
-  welcome: WelcomeStep,
+  welcome: WelcomePlanStep,
   create: CreateAgentStep,
-  connect: ConnectStep,
-  knowledge: KnowledgeStep,
+  train: TrainStep,
   test: TestStep,
   customize: CustomizeStep,
   deploy: DeployStep,
@@ -73,6 +73,34 @@ export function LaunchStudio() {
     if (savedBot) selectBot(savedBot);
   }, [bots, selectedBot, selectBot]);
 
+  // Skip-on-resume: if the user already has a PAID or trialing subscription
+  // (e.g. they paid during a previous onboarding session that was interrupted),
+  // bump maxReached past the plan step so they are never sent back to re-select
+  // a plan they already chose.
+  useEffect(() => {
+    void getCurrentSubscription(undefined)
+      .then((raw) => {
+        const envelope = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+        const sub = envelope.subscription as Record<string, unknown> | undefined;
+        const plan = envelope.plan as Record<string, unknown> | undefined;
+        const status = typeof sub?.status === 'string' ? sub.status : '';
+        const planSlug = typeof plan?.slug === 'string' ? plan.slug : '';
+        // Only skip if user is on a PAID plan or active trial — default Free plan does NOT skip!
+        const alreadyHasPaidPlan = (status === 'active' && planSlug !== 'free' && planSlug !== '') || status === 'trialing';
+        if (alreadyHasPaidPlan) {
+          setMaxReached((max) => Math.max(max, PLAN_STEP_INDEX + 1));
+        } else if (!readLaunchProgress()?.botId && bots.length === 0) {
+          // Brand new user without any created bot and on default Free plan:
+          // Clamp maxReached to 0 so steps 2..7 stay locked until step 1 is completed.
+          setMaxReached(PLAN_STEP_INDEX);
+        }
+      })
+      .catch(() => {
+        // Non-blocking: if the check fails the user sees the plan step.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bots.length]); // re-evaluate when bots list resolves
+
   useEffect(() => {
     writeLaunchProgress(currentWorkspaceId, selectedBot?.id ?? null, maxReached);
   }, [maxReached, currentWorkspaceId, selectedBot?.id]);
@@ -108,6 +136,7 @@ export function LaunchStudio() {
   };
 
   const StepComponent = STEP_COMPONENTS[LAUNCH_STEPS[currentIndex].path];
+  const isPlanStep = LAUNCH_STEPS[currentIndex].path === PLAN_STEP_PATH;
 
   return (
     <PreviewProvider>
@@ -116,6 +145,7 @@ export function LaunchStudio() {
         currentIndex={currentIndex}
         maxReachedIndex={maxReached}
         onStepClick={goToStep}
+        hidePreview={isPlanStep}
       >
         <StepComponent
           onBack={handleBack}

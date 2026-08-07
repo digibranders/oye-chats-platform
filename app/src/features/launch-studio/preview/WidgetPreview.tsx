@@ -21,6 +21,8 @@ export function WidgetPreview() {
     avatar_type: preview.avatarType,
     orb_color: preview.orbColor,
     primary_color: preview.primaryColor,
+    user_message_color: preview.userBubbleColor,
+    user_bubble_color: preview.userBubbleColor,
     feature_flags: { show_branding: true },
     // Plan-gated in the real widget (backend bot_routes.py); mirror it here
     // so onboarding shows visitors' actual experience per plan.

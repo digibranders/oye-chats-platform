@@ -37,14 +37,16 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
     try {
       const status = await getMyOperatorStatus(botId != null ? { botId } : undefined);
       if (token !== tokenRef.current) return;
-      if (status) {
+      if (status && status.operator_id != null) {
         setIsOnline(Boolean(status.is_online));
         setUnavailable(false);
       } else {
+        setIsOnline(false);
         setUnavailable(true);
       }
     } catch {
       if (token !== tokenRef.current) return;
+      setIsOnline(false);
       setUnavailable(true);
     } finally {
       if (token === tokenRef.current) setLoading(false);
@@ -53,6 +55,13 @@ export function useOperatorStatus(botId: number | undefined): OperatorStatusStat
 
   useEffect(() => {
     void load();
+    const onFocus = (): void => {
+      void load();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+    };
   }, [load]);
 
   const toggle = useCallback(async (): Promise<void> => {

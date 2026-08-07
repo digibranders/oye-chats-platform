@@ -260,7 +260,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                 <div key={i} className="flex justify-end">
                                     <div
                                         className="max-w-[80%] rounded-2xl rounded-br-md px-3.5 py-2 text-[14px] text-white whitespace-pre-wrap break-words"
-                                        style={{ backgroundColor: settings.primary_color }}
+                                        style={{ backgroundColor: settings.user_message_color || settings.user_bubble_color || settings.primary_color }}
                                     >
                                         {m.text}
                                     </div>
@@ -351,6 +351,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                     {previewSuggestions.map((s, i) => (
                                         <span
                                             key={s}
+                                            onClick={() => onSend?.(s)}
                                             className={
                                                 previewIsVertical
                                                     ? 'w-full text-left px-4 py-2.5 rounded-xl text-[13px] text-gray-700 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer'

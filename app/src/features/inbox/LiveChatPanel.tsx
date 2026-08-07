@@ -437,7 +437,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   );
 
   const handleAddSelf = useCallback(async (): Promise<void> => {
-    if (addingSelf || botId == null) return;
+    if (addingSelf) return;
     setAddingSelf(true);
     setAddSelfError(null);
     try {
@@ -445,7 +445,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
       await operator.refresh();
     } catch (err) {
       setAddSelfError(
-        err instanceof Error ? `Couldn’t add you as an operator: ${err.message}` : 'Couldn’t add you as an operator.',
+        err instanceof Error ? `Couldn’t assign you as an operator: ${err.message}` : 'Couldn’t assign you as an operator.',
       );
     } finally {
       setAddingSelf(false);
@@ -540,27 +540,25 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-3">
             <StatusBadge tone="neutral">Not an operator</StatusBadge>
-            {botId != null && (
-              <Button size="sm" onClick={() => void handleAddSelf()} disabled={addingSelf}>
-                {addingSelf ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                    Adding…
-                  </>
-                ) : (
-                  <>
-                    <UserPlus size={14} aria-hidden="true" />
-                    Add me as an operator
-                  </>
-                )}
-              </Button>
-            )}
+            <Button size="sm" onClick={() => void handleAddSelf()} disabled={addingSelf}>
+              {addingSelf ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  Assigning…
+                </>
+              ) : (
+                <>
+                  <UserPlus size={14} aria-hidden="true" />
+                  Assign myself as operator
+                </>
+              )}
+            </Button>
           </div>
           {addSelfError && <p className="text-[12px] text-[var(--ds-danger)]">{addSelfError}</p>}
         </div>
       ) : (
         <div className="flex items-center gap-3">
-          {enabled && <ConnectionPill status={status} />}
+          {enabled && status !== 'connected' && <ConnectionPill status={status} />}
           <StatusBadge tone={isOnline ? 'success' : 'neutral'} dot>
             {isOnline ? 'Online' : 'Offline'}
           </StatusBadge>
@@ -590,11 +588,28 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
         {errorBanner}
         <EmptyState
           icon={MessageSquare}
-          title={unavailable ? 'Live chat isn’t available for you' : 'Go online to start taking chats'}
+          title={unavailable ? 'Live chat isn’t available for you yet' : 'Go online to start taking chats'}
           description={
             unavailable
-              ? 'Ask a workspace admin to add you as an operator, then you’ll be able to take real-time conversations here.'
+              ? 'Assign yourself as an operator below to start receiving real-time conversations from visitors on this agent.'
               : 'Flip your availability to online and waiting visitors, your active conversations, and qualified AI Chatbot chats will appear here in real time.'
+          }
+          action={
+            unavailable ? (
+              <Button size="sm" onClick={() => void handleAddSelf()} disabled={addingSelf}>
+                {addingSelf ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                    Assigning…
+                  </>
+                ) : (
+                  <>
+                    <UserPlus size={14} aria-hidden="true" />
+                    Assign myself as operator
+                  </>
+                )}
+              </Button>
+            ) : undefined
           }
         />
       </div>
