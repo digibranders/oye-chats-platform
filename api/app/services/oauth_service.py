@@ -102,6 +102,7 @@ def issue_state_token(
     mode: str = "login",
     promo_code: str | None = None,
     referral_code: str | None = None,
+    client_target: str = "web",
 ) -> str:
     """Return a tamper-evident state token for the OAuth round trip.
 
@@ -121,6 +122,10 @@ def issue_state_token(
       the time the callback creates the account — this is the only carrier.
       Signed with the rest of the payload, so a user can't self-grant a
       code the page never had.
+    * ``cl`` — which surface started the flow (``"web"`` or ``"mobile"``).
+      The callback reads this to pick the final redirect target (the admin
+      web app vs. the mobile app's custom URL scheme), since Google's
+      round trip loses whatever page initiated the request otherwise.
 
     The token is signed with HMAC-SHA256 using ``OAUTH_STATE_SECRET`` and
     delivered as a single opaque string (payload.signature). The route
@@ -133,6 +138,7 @@ def issue_state_token(
         "next": next_path or "/",
         "mode": mode,
         "ts": int(time.time()),
+        "cl": "mobile" if client_target == "mobile" else "web",
     }
     if promo_code and promo_code.strip():
         payload["promo"] = promo_code.strip()[:64]
