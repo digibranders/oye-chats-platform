@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Inbox,
   Loader2,
+  Lock,
   MessageSquare,
   Radio,
   Sparkles,
@@ -13,6 +14,8 @@ import {
   X,
 } from 'lucide-react';
 import { Button, EmptyState, IconTile, InsightCard, Skeleton, StatusBadge, cn } from '../../design-system';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import {
   acceptChat,
   addSelfAsOperator,
@@ -111,14 +114,24 @@ function RailButton({ active, onClick, title, subtitle, badge, right, online }: 
   );
 }
 
-function RailSection({ icon, label, count }: { icon: ReactElement; label: string; count: number }): ReactElement {
+function RailSection({
+  icon,
+  label,
+  count,
+}: {
+  icon: ReactElement;
+  label: string;
+  /** Optional so gated sections can hide the "(N)" tail (a locked rail
+   *  never has a meaningful count to report). */
+  count?: number;
+}): ReactElement {
   return (
     <div className="flex items-center gap-2 px-1 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide">
       <span className="text-[var(--ds-text-subtle)]" aria-hidden="true">
         {icon}
       </span>
       <span className="text-[var(--ds-text)]">{label}</span>
-      <span className="text-[var(--ds-text-subtle)]">({count})</span>
+      {count !== undefined && <span className="text-[var(--ds-text-subtle)]">({count})</span>}
     </div>
   );
 }
@@ -233,6 +246,14 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
   const [transferOpen, setTransferOpen] = useState(false);
   const [qualified, setQualified] = useState<QualifiedSession[]>([]);
   const [qualifiedLoaded, setQualifiedLoaded] = useState(false);
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  // BANT/MEDDIC scoring is Standard+. On Free/Starter the RAG pipeline
+  // skips scoring (rag_service.py → is_bant_enabled_for_bot), so
+  // `qualified` will stay empty forever. Rendering the empty rail as-is
+  // reads as "nothing to see here" instead of "you're not entitled to
+  // this signal" — swap it for an honest lock nudge.
+  const bantUnlocked = hasFeature('bant');
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [awaitingConnect, setAwaitingConnect] = useState<Record<string, boolean>>({});
@@ -687,8 +708,32 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
               })
             )}
 
-            <RailSection icon={<Sparkles size={13} />} label="Chatting with AI" count={visibleQualified.length} />
-            {!qualifiedLoaded ? (
+            <RailSection
+              icon={
+                bantUnlocked ? (
+                  <Sparkles size={13} />
+                ) : (
+                  <Lock size={12} strokeWidth={1.75} />
+                )
+              }
+              label="Chatting with AI"
+              count={bantUnlocked ? visibleQualified.length : undefined}
+            />
+            {!bantUnlocked ? (
+              <button
+                type="button"
+                onClick={() => openUpgradeModal('view_qualification')}
+                title="Upgrade to unlock qualified AI chats"
+                className="flex w-full items-center justify-between gap-2 rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2 text-left transition-colors hover:border-[var(--ds-border-strong)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+              >
+                <span className="truncate text-[12px] text-[var(--ds-text-muted)]">
+                  Available on Standard
+                </span>
+                <span className="shrink-0 text-[12px] font-medium text-[var(--ds-accent-text)]">
+                  Upgrade
+                </span>
+              </button>
+            ) : !qualifiedLoaded ? (
               <div className="space-y-1.5 px-1 py-1">
                 <Skeleton className="h-10 w-full rounded-lg" />
                 <Skeleton className="h-10 w-full rounded-lg" />

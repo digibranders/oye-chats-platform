@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactElement, type ReactNode, useEffect, useState } from 'react';
-import { AlertTriangle, Check, Mail, Pencil, Shield, UserRound, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, Check, Mail, Pencil, UserRound, type LucideIcon } from 'lucide-react';
 import {
   Button,
   Card,
@@ -9,11 +9,12 @@ import {
   PageContainer,
   SectionHeader,
   Skeleton,
+  StatusBadge,
   useFeedback,
 } from '../../design-system';
 import { getCurrentUser, updateClientProfile } from '../../services/api';
 import { type CurrentUser } from '../../types/domain';
-import { AccountSecuritySection } from './AccountSecuritySection';
+import { ChangeEmailCard, ChangePasswordCard } from './AccountSecuritySection';
 import { AccountSessionsSection } from './AccountSessionsSection';
 import { AppearanceSection } from './AppearanceSection';
 import { ContactSection } from './ContactSection';
@@ -183,7 +184,7 @@ export function SettingsPage(): ReactElement {
           <section aria-labelledby="profile-heading" className="space-y-4">
             <SectionHeader
               title={<span id="profile-heading">Your profile</span>}
-              description="How you appear to operators in this workspace."
+              description="Your identity, sign-in email, and password."
               actions={
                 !nameEditing ? (
                   <Button variant="outline" size="sm" onClick={startNameEditing}>
@@ -238,18 +239,33 @@ export function SettingsPage(): ReactElement {
                   </div>
                 </form>
               ) : (
-                <div className="divide-y divide-[var(--ds-border)]">
-                  <SettingRow icon={UserRound} label="Name" value={user.name} />
-                  <SettingRow icon={Mail} label="Email" value={user.email} />
-                </div>
-              )}
-              {!nameEditing && (
-                <p className="mt-4 flex items-center gap-1.5 text-[12px] text-[var(--ds-text-muted)]">
-                  <Shield size={13} aria-hidden="true" />
-                  Changing your email is a separate, verified step in Account security below.
-                </p>
+                <SettingRow icon={UserRound} label="Name" value={user.name} />
               )}
             </Card>
+
+            {user.kind === 'operator' ? (
+              <Card>
+                <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ds-text)]">
+                      <Mail size={16} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
+                      Email address
+                    </p>
+                    <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
+                      Contact your workspace owner to change your email - operator accounts don’t have a
+                      self-serve email change today.
+                    </p>
+                  </div>
+                  <StatusBadge tone="neutral" className="shrink-0">
+                    Not available
+                  </StatusBadge>
+                </div>
+              </Card>
+            ) : (
+              <ChangeEmailCard user={user} onEmailChange={handleEmailChange} />
+            )}
+
+            <ChangePasswordCard isOperator={user.kind === 'operator'} />
           </section>
 
           {/* ── Appearance ──────────────────────────────────────────────── */}
@@ -257,9 +273,6 @@ export function SettingsPage(): ReactElement {
 
           {/* ── Notifications (browser web-push + install-as-app) ─────────── */}
           <NotificationsSection />
-
-          {/* ── Account security ────────────────────────────────────────── */}
-          <AccountSecuritySection user={user} onEmailChange={handleEmailChange} />
 
           {/* ── Sessions + two-factor (moved here from Workspace ▸ Security) ── */}
           <AccountSessionsSection email={user.email ?? ''} />

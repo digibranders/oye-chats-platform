@@ -213,7 +213,8 @@ function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
 export function LeadsPage(): ReactElement {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
-  const { isFree } = useEntitlements();
+  const { isFree, hasFeature } = useEntitlements();
+  const bantUnlocked = hasFeature('bant');
   const { openUpgradeModal } = useUpgradeModal();
 
   // Free-plan workspaces never get the list - the backend's `/leads` route
@@ -306,13 +307,22 @@ export function LeadsPage(): ReactElement {
   );
 
   // Row click → full lead profile (no transcript). "View chat" → transcript only.
+  // On plans without BANT (Free / Starter) the detail drawer's core value —
+  // dimension breakdown, signal evidence, tier verdict — is empty, so we
+  // route the click to the qualification upgrade modal instead of opening
+  // a hollow drawer. The "View chat" button (`openChat`) stays wired so
+  // Starter can still reach the transcript, which is not gated.
   const openLead = useCallback(
     (lead: Lead): void => {
+      if (!bantUnlocked) {
+        openUpgradeModal('view_qualification');
+        return;
+      }
       setDrawerView('detail');
       setSelectedSessionId(lead.session_id);
       markSeen(lead);
     },
-    [markSeen],
+    [bantUnlocked, openUpgradeModal, markSeen],
   );
 
   const openChat = useCallback(
@@ -437,9 +447,13 @@ export function LeadsPage(): ReactElement {
       {
         key: 'status',
         header: <span className="text-[var(--ds-success)]">BANT</span>,
+        // BANT scoring is a Standard+ feature (`hasFeature('bant')`). On Free
+        // AND Starter the RAG pipeline skips extraction, so the dimension
+        // pills would render as four blank neutrals — worse than an honest
+        // lock. Route the click straight to the qualification upgrade.
         render: (lead) =>
-          isFree ? (
-            <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
+          !bantUnlocked ? (
+            <LockedValue onUpgrade={() => openUpgradeModal('view_qualification')} />
           ) : (
             <BantSignal lead={lead} />
           ),
@@ -509,6 +523,7 @@ export function LeadsPage(): ReactElement {
       annotations,
       openChat,
       isFree,
+      bantUnlocked,
       openUpgradeModal,
     ],
   );
@@ -624,22 +639,41 @@ export function LeadsPage(): ReactElement {
               >
                 All
               </button>
-              {TIER_ORDER.map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={tierFilter === key}
-                  onClick={() => setTierFilter(tierFilter === key ? null : key)}
-                  className={cn(
-                    'rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
-                    tierFilter === key
-                      ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
-                      : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
-                  )}
-                >
-                  {TIER_META[key].label}
-                </button>
-              ))}
+              {TIER_ORDER.map((key) => {
+                // Without BANT (Free / Starter) the whole tier axis is moot:
+                // no lead is ever scored, so every chip either shows the
+                // full list or an empty list. Lock all four and route to the
+                // qualification upgrade modal so the row honestly reads as
+                // "not on this plan" instead of a broken filter.
+                const locked = !bantUnlocked;
+                const active = tierFilter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={active}
+                    aria-disabled={locked || undefined}
+                    onClick={() =>
+                      locked
+                        ? openUpgradeModal('view_qualification')
+                        : setTierFilter(active ? null : key)
+                    }
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
+                      active && !locked
+                        ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]'
+                        : locked
+                          ? 'text-[var(--ds-text-subtle)] hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text-muted)]'
+                          : 'text-[var(--ds-text-muted)] hover:bg-[var(--ds-bg-hover)]',
+                    )}
+                  >
+                    {locked && (
+                      <Lock size={11} strokeWidth={1.75} aria-hidden="true" />
+                    )}
+                    {TIER_META[key].label}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="flex flex-1 items-center gap-2 sm:justify-end">

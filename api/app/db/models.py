@@ -84,6 +84,14 @@ class Client(Base):
     # Lives on Client (not Subscription) so a plan change doesn't clobber
     # paid seats — same pattern as max_bots.
     extra_bot_seats = Column(Integer, default=0, server_default="0", nullable=False)
+    # Running total of *cleaned pre-chunk* characters ingested into this
+    # account's knowledge base across every bot. Incremented at ingest time
+    # and decremented on delete; ``knowledge_quota_service.recompute_kb_usage``
+    # can rebuild it from the ``documents.source_char_count`` column when
+    # drift is suspected. Enforced against ``plan.limits.knowledge_characters``
+    # in the ingestion pipeline. BigInteger because unlimited-tier accounts
+    # can genuinely accumulate more than ``INT4`` (2.1B chars ≈ 420M words).
+    kb_characters_used = Column(BigInteger, default=0, server_default="0", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Email OTP verification
@@ -530,6 +538,16 @@ class Document(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
+    # ``len(cleaned_source_text)`` — the character count of the SOURCE document
+    # (post-clean, pre-chunk), replicated on every chunk of that source. Used to
+    # (a) decrement ``clients.kb_characters_used`` on delete without re-computing
+    # from scratch, and (b) rebuild the client counter from source-of-truth when
+    # drift is suspected. Replicated (not stored once per source) because we
+    # don't model a source-level parent row today; ``SELECT DISTINCT ON
+    # (document_name, bot_id) source_char_count`` avoids double-counting. Nullable
+    # so pre-migration rows don't fail their NOT NULL check — treated as 0 by
+    # ``recompute_kb_usage``.
+    source_char_count = Column(Integer, nullable=True)
     metadata_info = Column(JSONB, nullable=True)
     embedding = Column(Vector(768), nullable=False)  # NOT NULL restored after 768-dim re-embed backfill (NB-2)
     search_vector = Column(TSVECTOR)
@@ -1149,7 +1167,7 @@ class Plan(Base):
     limits = Column(
         JSONB,
         nullable=False,
-        server_default='{"ai_messages": 250, "url_scans": 50, "live_chat_messages": 0, "email_summaries": 0, "email_notifications": 0, "knowledge_pages": 50, "storage_mb": 5, "chat_history_days": 7}',
+        server_default='{"ai_messages": 250, "url_scans": 50, "live_chat_messages": 0, "email_summaries": 0, "email_notifications": 0, "knowledge_pages": 50, "knowledge_characters": 2500, "storage_mb": 5, "chat_history_days": 7}',
     )
 
     # Feature flags — which features are available on this plan

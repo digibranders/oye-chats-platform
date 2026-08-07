@@ -172,13 +172,21 @@ def post_chat_destinations(
 ) -> dict:
     """Where visitors go after the chat closes.
 
-    Returns two aggregates: ``first_hops`` (the first post-phase page per
-    session, ranked) and ``full_sequences`` (top ordered post-phase paths,
-    same shape as paths_to_conversion).
+    Returns three aggregates:
+    * ``first_hops`` — the first post-phase page per session, ranked.
+    * ``all_hops`` — every post-phase page visit, counted regardless of
+      whether it was the first hop or a later one. Powers the
+      destination column so pages visitors reached mid-post-chat-
+      journey (e.g. ``chat → /about → /contact``) aren't invisible.
+      Sessions is the number of DISTINCT sessions in which the page
+      appeared as a post-chat stop.
+    * ``full_sequences`` — top ordered post-phase paths, same shape
+      as paths_to_conversion.
     """
     journeys = _fetch_journeys(db, bot_id, since, until)
 
     first_hop_counter: Counter[str] = Counter()
+    all_hop_counter: Counter[str] = Counter()
     sequence_counter: Counter[tuple[str, ...]] = Counter()
     sessions_with_post = 0
 
@@ -194,11 +202,18 @@ def post_chat_destinations(
             continue
         sessions_with_post += 1
         first_hop_counter[post_paths[0]] += 1
+        # ``all_hops`` counts DISTINCT sessions per path — a visitor who
+        # touched /about twice in their post-chat sequence counts once,
+        # not twice, matching how ``first_hops`` and ``top_pages``
+        # denominate session-share.
+        for unique_path in set(post_paths):
+            all_hop_counter[unique_path] += 1
         sequence_counter[tuple(post_paths)] += 1
 
     return {
         "sessions_with_post_chat_activity": sessions_with_post,
         "first_hops": [{"path": path, "sessions": count} for path, count in first_hop_counter.most_common(limit)],
+        "all_hops": [{"path": path, "sessions": count} for path, count in all_hop_counter.most_common(limit)],
         "full_sequences": [
             {"sequence": list(seq), "sessions": count} for seq, count in sequence_counter.most_common(limit)
         ],
@@ -211,7 +226,7 @@ def top_pre_chat_sequences(
     since: datetime,
     until: datetime,
     limit: int = 5,
-    max_seq_len: int = 3,
+    max_seq_len: int = 8,
 ) -> dict:
     """Top pre-chat page sequences across ALL sessions, converted or not.
 
@@ -233,26 +248,66 @@ def top_pre_chat_sequences(
     if total_sessions == 0:
         return {"total_sessions": 0, "sequences": []}
 
-    sequence_counter: Counter[tuple[str, ...]] = Counter()
+    # Group by pre-chat pattern; also collect the post-chat sequence
+    # each session took, so the flow diagram can render a matching
+    # post-chain to the right of the chatbot per row. The "most
+    # common" post_sequence per pattern wins — one representative
+    # continuation per row keeps the diagram legible.
+    grouped: dict[tuple[str, ...], dict] = {}
     sessions_with_pre = 0
     for journey in journeys:
         pre_paths: list[str] = []
+        post_paths: list[str] = []
         for entry in journey:
-            if entry.get("phase") != "pre":
-                continue
+            phase = entry.get("phase")
             path = entry.get("path")
-            if path and (not pre_paths or pre_paths[-1] != path):
+            if not path:
+                continue
+            if phase == "pre" and (not pre_paths or pre_paths[-1] != path):
                 pre_paths.append(path)
+            elif phase == "post" and (not post_paths or post_paths[-1] != path):
+                post_paths.append(path)
         if not pre_paths:
             continue
         sessions_with_pre += 1
-        seq = tuple(pre_paths[-max_seq_len:]) if max_seq_len > 0 else tuple(pre_paths)
-        sequence_counter[seq] += 1
+        pre_key = tuple(pre_paths[-max_seq_len:]) if max_seq_len > 0 else tuple(pre_paths)
+        bucket = grouped.setdefault(pre_key, {"sessions": 0, "post_counter": Counter()})
+        bucket["sessions"] += 1
+        if post_paths:
+            post_key = tuple(post_paths[-max_seq_len:]) if max_seq_len > 0 else tuple(post_paths)
+            bucket["post_counter"][post_key] += 1
+
+    ranked = sorted(grouped.items(), key=lambda kv: kv[1]["sessions"], reverse=True)[:limit]
+
+    def _top_post(counter: Counter[tuple[str, ...]]) -> tuple[list[str], int]:
+        """Winning post-sequence for a pre-pattern, WITH its own session count.
+
+        Returning the count is what lets the diagram label post-cards with
+        the number of sessions that actually took that continuation — not
+        the total session count of the pre-pattern, which vastly overstates
+        how many visitors reached each post page.
+        """
+        if not counter:
+            return [], 0
+        top_seq, top_count = counter.most_common(1)[0]
+        return list(top_seq), top_count
+
+    sequences_out: list[dict] = []
+    for pre_key, bucket in ranked:
+        post_seq, post_count = _top_post(bucket["post_counter"])
+        sequences_out.append(
+            {
+                "sequence": list(pre_key),
+                "post_sequence": post_seq,
+                "post_sessions": post_count,
+                "sessions": bucket["sessions"],
+            }
+        )
 
     return {
         "total_sessions": total_sessions,
         "sessions_with_pre_chat": sessions_with_pre,
-        "sequences": [{"sequence": list(seq), "sessions": count} for seq, count in sequence_counter.most_common(limit)],
+        "sequences": sequences_out,
     }
 
 
@@ -266,13 +321,24 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
     journeys = _fetch_journeys(db, bot_id, since, until)
 
     conversion_counts: Counter[str] = Counter()
+    # Sessions that did nothing after opening chat: no conversion event,
+    # no post-phase page visit. The UI reads this directly for its
+    # drop-off row instead of subtracting (conversions + post-activity)
+    # from total — that subtraction double-counted any session that both
+    # converted AND kept browsing, so drop-off skewed low.
+    sessions_no_activity = 0
     for journey in journeys:
         seen_events: set[str] = set()
+        has_post = False
         for entry in journey:
             event = entry.get("event")
             if event in CONVERSION_EVENTS and event not in seen_events:
                 conversion_counts[event] += 1
                 seen_events.add(event)
+            if not has_post and entry.get("phase") == "post" and entry.get("path"):
+                has_post = True
+        if not seen_events and not has_post:
+            sessions_no_activity += 1
 
     leads_captured = db.execute(
         select(LeadInfo).where(
@@ -289,6 +355,7 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
         "meeting_booked": conversion_counts.get("meeting_booked", 0),
         "handoff_requested": conversion_counts.get("handoff_requested", 0),
         "offline_message_sent": conversion_counts.get("offline_message_sent", 0),
+        "sessions_no_activity": sessions_no_activity,
         "leads_captured": len(leads_captured),
     }
 

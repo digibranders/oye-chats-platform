@@ -10,7 +10,6 @@ import {
   BookOpen,
   FileText,
   Globe,
-  Layers,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -23,7 +22,6 @@ import {
   Skeleton,
   StatusBadge,
 } from '../../../design-system';
-import { MetricCard } from '../../../design-system/components/MetricCard';
 import { DataTable, type Column } from '../../../design-system/components/DataTable';
 import { useAgent } from '../../../context/AgentContext';
 import { useCrawl } from '../../../context/CrawlContext';
@@ -523,10 +521,7 @@ export function KnowledgePage(): ReactElement {
   const loading = agentLoading || (agentId != null && sources === null && loadError === null);
 
   return (
-    <PageContainer
-      title="Knowledge"
-      description="Everything your AI can answer from - the websites and documents it has learned."
-    >
+    <PageContainer>
       {loading ? (
         <LoadingState />
       ) : loadError ? (
@@ -572,26 +567,7 @@ export function KnowledgePage(): ReactElement {
             </div>
           )}
 
-          {stats.total > 0 && (
-            <>
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <MetricCard label="Sources" value={stats.total.toLocaleString()} icon={Layers} />
-                <MetricCard
-                  label="Website pages"
-                  value={stats.websitePages.toLocaleString()}
-                  icon={Globe}
-                />
-                <MetricCard
-                  label="Documents"
-                  value={stats.documents.toLocaleString()}
-                  icon={FileText}
-                />
-                <MetricCard label="Last updated" value={stats.lastUpdated} icon={Sparkles} />
-              </div>
-            </>
-          )}
-
-          <section aria-labelledby="knowledge-quotas-heading" className="space-y-3">
+<section aria-labelledby="knowledge-quotas-heading" className="space-y-3">
             <SectionHeader
               title={<span id="knowledge-quotas-heading">Plan limits</span>}
               description="How much of your plan's knowledge capacity is in use."

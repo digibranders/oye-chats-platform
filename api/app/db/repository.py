@@ -615,6 +615,7 @@ def insert_documents(
     metadatas=None,
     bot_id: int | None = None,
     source: str = "upload",
+    source_char_count: int | None = None,
 ):
     """Batch insert documents. Supports both client_id (legacy) and bot_id (new).
 
@@ -624,6 +625,12 @@ def insert_documents(
 
     ``source`` tags each row as ``"upload"`` or ``"crawl"`` (M7) so the
     documents quota counts uploaded files without sniffing ``document_name``.
+
+    ``source_char_count`` — cleaned pre-chunk length of the SOURCE, replicated
+    onto every chunk row so ``knowledge_quota_service`` can decrement the
+    per-client counter on delete without re-running extraction. ``None`` for
+    callers that predate this column; downstream drift-recompute treats NULL
+    as 0.
     """
     chunks = chunks or []
     embeddings = embeddings or []
@@ -648,6 +655,8 @@ def insert_documents(
             row["bot_id"] = bot_id
         if client_id:
             row["client_id"] = client_id
+        if source_char_count is not None:
+            row["source_char_count"] = int(source_char_count)
         data.append(row)
 
     if not data:

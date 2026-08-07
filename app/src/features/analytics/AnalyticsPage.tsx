@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart3,
   Bot as BotIcon,
+  Lock,
   MessageSquare,
   RefreshCw,
   Sparkles,
@@ -18,6 +19,7 @@ import {
   EmptyState,
   InsightCard,
   type InsightTone,
+  LockedFeatureCard,
   MetricCard,
   type MetricTrend,
   PageContainer,
@@ -26,6 +28,8 @@ import {
   Tabs,
 } from '../../design-system';
 import { useBotContext } from '../../context/BotContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import {
   MOMENTUM_WINDOW_DAYS,
   sliceTrend,
@@ -217,6 +221,40 @@ export function AnalyticsPage(): ReactElement {
   const { status, data, error, refreshing, reload } = useWorkspaceAnalytics(selectedBot?.id ?? null);
   const [tab, setTab] = useState<AnalyticsTab>('conversations');
   const [range, setRange] = useState<TrendRange>('all');
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  // Leads is BANT-derived (Standard+) — Free / Starter see a lock chip on the
+  // tab and the panel body swaps to the upgrade card.
+  // Satisfaction is CSAT gathered from live-chat post-chat ratings, so it
+  // travels with the `live_chat` feature (Starter and up). Only Free is
+  // locked here — Starter accumulates real ratings and should see them.
+  const leadsUnlocked = hasFeature('bant');
+  const satisfactionUnlocked = hasFeature('live_chat');
+
+  const tabItems = useMemo(
+    () =>
+      TAB_ITEMS.map((item) => {
+        const locked =
+          (item.key === 'leads' && !leadsUnlocked) ||
+          (item.key === 'satisfaction' && !satisfactionUnlocked);
+        if (!locked) return { key: item.key, label: item.label };
+        return {
+          key: item.key,
+          label: (
+            <span className="inline-flex items-center gap-1.5">
+              <Lock
+                size={11}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                className="text-[var(--ds-text-subtle)]"
+              />
+              {item.label}
+            </span>
+          ),
+        };
+      }),
+    [leadsUnlocked, satisfactionUnlocked],
+  );
 
   const trendWindow = useMemo(
     () => (data ? sliceTrend(data.trend, range) : []),
@@ -284,10 +322,19 @@ export function AnalyticsPage(): ReactElement {
           )}
 
           <Tabs
-            tabs={TAB_ITEMS.map((item) => ({ key: item.key, label: item.label }))}
+            tabs={tabItems}
             value={tab}
             onChange={(key) => {
-              if (isAnalyticsTab(key)) setTab(key);
+              if (!isAnalyticsTab(key)) return;
+              if (key === 'leads' && !leadsUnlocked) {
+                openUpgradeModal('view_qualification');
+                return;
+              }
+              if (key === 'satisfaction' && !satisfactionUnlocked) {
+                openUpgradeModal('view_qualification');
+                return;
+              }
+              setTab(key);
             }}
             ariaLabel="Analytics views"
           />
@@ -310,8 +357,9 @@ export function AnalyticsPage(): ReactElement {
                   />
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <div className="mb-5 grid grid-cols-3 gap-4">
+                  <div className="mb-4 grid grid-cols-3 gap-3">
                     <MetricCard
+                      size="sm"
                       label="Messages"
                       value={trendSummary.total.toLocaleString()}
                       icon={MessageSquare}
@@ -319,11 +367,13 @@ export function AnalyticsPage(): ReactElement {
                       trend={messagesTrend.trend}
                     />
                     <MetricCard
+                      size="sm"
                       label="Daily average"
                       value={trendSummary.dailyAverage.toLocaleString()}
                       icon={BarChart3}
                     />
                     <MetricCard
+                      size="sm"
                       label="Busiest day"
                       value={
                         trendSummary.peak > 0
@@ -368,7 +418,11 @@ export function AnalyticsPage(): ReactElement {
               tabIndex={0}
               className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
-              <LeadJourneyFunnel botId={selectedBot?.id ?? null} />
+              {leadsUnlocked ? (
+                <LeadJourneyFunnel botId={selectedBot?.id ?? null} />
+              ) : (
+                <LockedFeatureCard intent="view_qualification" />
+              )}
             </div>
           )}
 
@@ -381,17 +435,21 @@ export function AnalyticsPage(): ReactElement {
               tabIndex={0}
               className="space-y-6 focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
-              <Card>
-                <CardHeader>
-                  <SectionHeader
-                    title="Visitor satisfaction"
-                    description="Post-chat ratings from live conversations, across every agent"
-                  />
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <SatisfactionBreakdown ratings={data.ratings} />
-                </CardContent>
-              </Card>
+              {satisfactionUnlocked ? (
+                <Card>
+                  <CardHeader>
+                    <SectionHeader
+                      title="Visitor satisfaction"
+                      description="Post-chat ratings from live conversations, across every agent"
+                    />
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <SatisfactionBreakdown ratings={data.ratings} />
+                  </CardContent>
+                </Card>
+              ) : (
+                <LockedFeatureCard intent="view_qualification" />
+              )}
             </div>
           )}
 

@@ -93,6 +93,24 @@ export function updateClientSettings(
 export function uploadLogo(file: File): Promise<{ url: string }>;
 export function uploadDocuments(files: File[], botId?: number): Promise<unknown>;
 
+export interface UploadCostPreview {
+  per_file: Array<{
+    filename: string;
+    words: number;
+    credits: number;
+    reason?: string;
+    detail?: string;
+    size_bytes?: number;
+  }>;
+  total_credits: number;
+  current_balance: number;
+  sufficient: boolean;
+}
+export function previewUploadCost(
+  files: File[],
+  botId?: number,
+): Promise<UploadCostPreview | null>;
+
 // ── Onboarding / activation ──────────────────────────────────────────────────
 export function completeOnboarding(): Promise<Record<string, unknown> | null>;
 export function recordActivationEvent(
@@ -150,6 +168,12 @@ export interface JourneySummary {
   meeting_booked: number;
   handoff_requested: number;
   offline_message_sent: number;
+  /** Sessions with a journey but no conversion event AND no post-chat
+   *  page — the honest drop-off count. Prefer this over deriving
+   *  drop-off by subtraction; subtraction double-counts sessions that
+   *  both converted AND kept browsing. Optional for backward compat
+   *  with older API builds. */
+  sessions_no_activity?: number;
   leads_captured: number;
 }
 
@@ -182,7 +206,10 @@ export interface JourneyConversionPathsResponse {
 export interface JourneyPostChatResponse {
   period: JourneyPeriod;
   sessions_with_post_chat_activity: number;
+  /** DISTINCT sessions where each page was the visitor's FIRST post-chat stop. */
   first_hops: Array<{ path: string; sessions: number }>;
+  /** DISTINCT sessions where each page appeared ANYWHERE in the post-chat path. */
+  all_hops: Array<{ path: string; sessions: number }>;
   full_sequences: Array<{ sequence: string[]; sessions: number }>;
 }
 
@@ -205,7 +232,24 @@ export interface JourneyPreChatSequencesResponse {
   period: JourneyPeriod;
   total_sessions: number;
   sessions_with_pre_chat: number;
-  sequences: Array<{ sequence: string[]; sessions: number }>;
+  sequences: Array<{
+    sequence: string[];
+    /** Top post-chat continuation for THIS pre-chat pattern —
+     *  the ordered pages visitors most commonly took after opening
+     *  chat. Empty array when no session with this pre-pattern had
+     *  any post-chat activity. Drives the per-row post-chain that
+     *  flows rightward from the chatbot in the diagram. */
+    post_sequence: string[];
+    /** Number of sessions that ACTUALLY took the winning post_sequence
+     *  above. Distinct from `sessions` (which is the pre-pattern's
+     *  total): a pre-pattern with 100 sessions where only 3 took the
+     *  top post-continuation has `sessions: 100` and `post_sessions: 3`.
+     *  The diagram labels post-chain cards with this count so numbers
+     *  don't overstate reach. Optional for backward compat with older
+     *  API builds. */
+    post_sessions?: number;
+    sessions: number;
+  }>;
 }
 
 export function getJourneyPreChatSequences(

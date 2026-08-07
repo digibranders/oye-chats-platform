@@ -117,6 +117,7 @@ _FREE_FALLBACK_FEATURES: dict[str, Any] = {
     "api_access": False,
     "online_support": False,
     "topup_allowed": False,
+    "auto_recrawl": False,
     "integrations": "reply_to_only",
 }
 
@@ -798,6 +799,10 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
         "operators": 0,
         "documents": 0,
         "leads": 0,
+        # KB char counter is a single-row read off ``clients`` — cheap enough
+        # to include on every entitlements lookup so the UI can render a
+        # "words used / limit" progress bar without a second round trip.
+        "knowledge_characters": 0,
         # ``page_scraping`` and ``credits`` are derived from the credit
         # ledger and require a separate query — left to callers that need
         # them so we don't slow every entitlements lookup.
@@ -877,6 +882,15 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
         )
     except Exception:
         logger.debug("entitlements: leads usage query failed", exc_info=True)
+
+    try:
+        from app.db.models import Client
+
+        usage["knowledge_characters"] = int(
+            db_session.execute(select(Client.kb_characters_used).where(Client.id == client_id)).scalar_one() or 0
+        )
+    except Exception:
+        logger.debug("entitlements: kb_characters usage query failed", exc_info=True)
 
     _ = limits  # Reserved for future per-limit normalization
     return usage

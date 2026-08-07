@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Clock,
   Globe,
+  Lock,
   Pencil,
   X,
   type LucideIcon,
@@ -23,6 +24,8 @@ import {
 } from '../../design-system';
 import { getBots, getCurrentUser, updateBot, updateClientProfile } from '../../services/api';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot, type CurrentUser } from '../../types/domain';
 import { BusinessHoursEditor, type BusinessHours } from './BusinessHoursEditor';
 
@@ -67,6 +70,9 @@ function SettingRow({ icon: Icon, label, value }: SettingRowProps): ReactElement
 
 export function GeneralPage(): ReactElement {
   const { currentWorkspaceId, currentWorkspaceName, currentRole, workspaces, refresh: refreshWorkspace } = useWorkspace();
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const liveChatUnlocked = hasFeature('live_chat');
 
   const [phase, setPhase] = useState<LoadPhase>({ status: 'loading' });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -365,19 +371,47 @@ export function GeneralPage(): ReactElement {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <p className="flex items-center gap-2 text-[14px] font-semibold text-[var(--ds-text)]">
-                    <Clock size={16} aria-hidden="true" className="text-[var(--ds-accent-text)]" />
+                    <Clock
+                      size={16}
+                      aria-hidden="true"
+                      className={
+                        liveChatUnlocked
+                          ? 'text-[var(--ds-accent-text)]'
+                          : 'text-[var(--ds-text-subtle)]'
+                      }
+                    />
                     Business hours
+                    {!liveChatUnlocked && (
+                      <Lock
+                        size={12}
+                        strokeWidth={1.75}
+                        aria-hidden="true"
+                        className="text-[var(--ds-text-subtle)]"
+                      />
+                    )}
                   </p>
                   <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
                     Business hours decide when live chat shows as available and when visitors see the offline form.
                   </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={handleOpenHoursModal} className="shrink-0">
-                  Configure schedule
-                </Button>
+                {liveChatUnlocked ? (
+                  <Button variant="outline" size="sm" onClick={handleOpenHoursModal} className="shrink-0">
+                    Configure schedule
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openUpgradeModal('live_chat')}
+                    className="shrink-0"
+                  >
+                    <Lock size={12} strokeWidth={1.75} aria-hidden="true" />
+                    Upgrade to configure
+                  </Button>
+                )}
               </div>
 
-              {hoursNotice && (
+              {hoursNotice && liveChatUnlocked && (
                 <p className="mt-3 text-[12px] text-[var(--ds-accent-text)]">{hoursNotice}</p>
               )}
 
@@ -385,13 +419,27 @@ export function GeneralPage(): ReactElement {
                 <span>
                   Schedule status:{' '}
                   <strong className="text-[var(--ds-text)]">
-                    {primaryBotHours && primaryBotHours.enabled
-                      ? `Active (${primaryBotHours.timezone || 'UTC'})`
-                      : 'Always available (24/7)'}
+                    {!liveChatUnlocked
+                      ? 'Not available on Free'
+                      : primaryBotHours && primaryBotHours.enabled
+                        ? `Active (${primaryBotHours.timezone || 'UTC'})`
+                        : 'Always available (24/7)'}
                   </strong>
                 </span>
-                <StatusBadge tone={primaryBotHours && primaryBotHours.enabled ? 'accent' : 'neutral'}>
-                  {primaryBotHours && primaryBotHours.enabled ? 'Schedule Active' : '24/7 Mode'}
+                <StatusBadge
+                  tone={
+                    !liveChatUnlocked
+                      ? 'neutral'
+                      : primaryBotHours && primaryBotHours.enabled
+                        ? 'accent'
+                        : 'neutral'
+                  }
+                >
+                  {!liveChatUnlocked
+                    ? 'Locked'
+                    : primaryBotHours && primaryBotHours.enabled
+                      ? 'Schedule Active'
+                      : '24/7 Mode'}
                 </StatusBadge>
               </div>
             </Card>

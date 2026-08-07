@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Lock,
   Pencil,
   Plus,
   Send,
@@ -49,6 +50,7 @@ import {
 } from '../../services/api';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot, type Webhook, type WebhookDelivery } from '../../types/domain';
 
 // ── Bot integration fields ────────────────────────────────────────────────────
@@ -1388,9 +1390,20 @@ interface WebhookResult {
 export function IntegrationsPage(): ReactElement {
   const { selectedBot, refreshBots, loading: botsLoading } = useBotContext();
   const selectedBotId = selectedBot?.id ?? null;
-  const { isFree } = useEntitlements();
+  const { isFree, hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  // Webhooks + CRM are Standard+ features (`hasFeature('webhooks')` is only
+  // true there). Starter has integrations = "all" — so Meetings + Email
+  // stay accessible — but the outbound webhook rail (and its CRM sibling,
+  // which is webhook-driven push) is gated at the plan level. Locked tabs
+  // render a lock chip in the label, intercept the click into the upgrade
+  // modal, and the panel body swaps to a LockedFeatureCard.
+  const webhooksUnlocked = hasFeature('webhooks');
 
-  const [tab, setTab] = useState<TabKey>('webhooks');
+  // Default landing tab: on Starter, Webhooks is locked, so open Meetings
+  // instead — the customer shouldn't land on a wall the moment they click
+  // "Integrations". Standard+ keeps Webhooks as the default.
+  const [tab, setTab] = useState<TabKey>(webhooksUnlocked ? 'webhooks' : 'meetings');
   // Scoped to the selected agent - integrations are configured per agent, so a
   // confirmation must not survive a switch to a different one.
   const { feedback, notify, dismiss } = useFeedback({ resetKey: selectedBotId });
@@ -1479,10 +1492,48 @@ export function IntegrationsPage(): ReactElement {
       <Tabs
         ariaLabel="Integration sections"
         value={tab}
-        onChange={(key) => setTab(key as TabKey)}
+        onChange={(key) => {
+          // Locked tabs (Starter without webhooks) route the click to the
+          // upgrade modal instead of switching — no hollow panel to see.
+          if ((key === 'webhooks' || key === 'crm') && !webhooksUnlocked) {
+            openUpgradeModal('webhooks_integration');
+            return;
+          }
+          setTab(key as TabKey);
+        }}
         tabs={[
-          { key: 'webhooks', label: 'Webhooks' },
-          { key: 'crm', label: 'CRM' },
+          {
+            key: 'webhooks',
+            label: webhooksUnlocked ? (
+              'Webhooks'
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <Lock
+                  size={11}
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                  className="text-[var(--ds-text-subtle)]"
+                />
+                Webhooks
+              </span>
+            ),
+          },
+          {
+            key: 'crm',
+            label: webhooksUnlocked ? (
+              'CRM'
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <Lock
+                  size={11}
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                  className="text-[var(--ds-text-subtle)]"
+                />
+                CRM
+              </span>
+            ),
+          },
           { key: 'meetings', label: 'Meetings' },
           { key: 'email', label: 'Email' },
         ]}
@@ -1500,14 +1551,18 @@ export function IntegrationsPage(): ReactElement {
         hidden={tab !== 'webhooks'}
         className="focus-visible:outline-none"
       >
-        <WebhooksPanel
-          webhooks={webhooks}
-          loading={webhooksLoading}
-          error={webhooksError}
-          onReload={reloadWebhooks}
-          onFeedback={notify}
-          botId={selectedBotId}
-        />
+        {webhooksUnlocked ? (
+          <WebhooksPanel
+            webhooks={webhooks}
+            loading={webhooksLoading}
+            error={webhooksError}
+            onReload={reloadWebhooks}
+            onFeedback={notify}
+            botId={selectedBotId}
+          />
+        ) : (
+          <LockedFeatureCard intent="webhooks_integration" icon={WebhookIcon} />
+        )}
       </div>
 
       <div
@@ -1518,7 +1573,11 @@ export function IntegrationsPage(): ReactElement {
         hidden={tab !== 'crm'}
         className="focus-visible:outline-none"
       >
-        <CrmPanel onFeedback={notify} onAddWebhook={() => setTab('webhooks')} />
+        {webhooksUnlocked ? (
+          <CrmPanel onFeedback={notify} onAddWebhook={() => setTab('webhooks')} />
+        ) : (
+          <LockedFeatureCard intent="webhooks_integration" icon={WebhookIcon} />
+        )}
       </div>
 
       {selectedBot && (

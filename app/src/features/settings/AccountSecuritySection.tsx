@@ -93,7 +93,7 @@ interface ChangePasswordCardProps {
  * (`POST /client/change-password`), operators use `operatorChangePassword`
  * (`POST /auth/operator-change-password`).
  */
-function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): ReactElement {
+export function ChangePasswordCard({ isOperator }: ChangePasswordCardProps): ReactElement {
   const [form, setForm] = useState<PasswordForm>(EMPTY_PASSWORD_FORM);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
@@ -291,7 +291,7 @@ interface ChangeEmailCardProps {
  * load routes Resend back through the request step, pre-filled, honestly
  * asking for the password again rather than faking a passwordless resend.
  */
-function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): ReactElement {
+export function ChangeEmailCard({ user, onEmailChange }: ChangeEmailCardProps): ReactElement {
   const [step, setStep] = useState<EmailStep>(user.pending_email ? 'verify' : 'idle');
   const [newEmail, setNewEmail] = useState(user.pending_email ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
