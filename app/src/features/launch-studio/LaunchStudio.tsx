@@ -98,7 +98,6 @@ export function LaunchStudio() {
       .catch(() => {
         // Non-blocking: if the check fails the user sees the plan step.
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bots.length]); // re-evaluate when bots list resolves
 
   useEffect(() => {

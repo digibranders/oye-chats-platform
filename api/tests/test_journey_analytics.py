@@ -202,12 +202,51 @@ class TestTopPreChatSequences:
         with patch.object(jas, "_fetch_journeys", return_value=journeys):
             out = jas.top_pre_chat_sequences(MagicMock(), 1, _ago(30), _now())
         assert out["sessions_with_pre_chat"] == 1
-        assert out["sequences"] == [{"sequence": ["/b"], "sessions": 1}]
+        assert out["sequences"] == [{"sequence": ["/b"], "post_sequence": [], "post_sessions": 0, "sessions": 1}]
 
     def test_empty_returns_zero_sessions(self):
         with patch.object(jas, "_fetch_journeys", return_value=[]):
             out = jas.top_pre_chat_sequences(MagicMock(), 1, _ago(30), _now())
         assert out == {"total_sessions": 0, "sequences": []}
+
+    def test_returns_matching_post_sequence_per_pattern(self):
+        # Two sessions took /home → /about → chat → /features → /demo,
+        # one session took /home → /about → chat with no post-chat.
+        # The row for /home,/about should carry post_sequence
+        # ['/features', '/demo'] since that's the top continuation.
+        journeys = [
+            [
+                {"path": "/home", "phase": "pre"},
+                {"path": "/about", "phase": "pre"},
+                {"path": "/about", "phase": "chat", "event": "chat_opened"},
+                {"path": "/features", "phase": "post"},
+                {"path": "/demo", "phase": "post"},
+            ],
+            [
+                {"path": "/home", "phase": "pre"},
+                {"path": "/about", "phase": "pre"},
+                {"path": "/about", "phase": "chat", "event": "chat_opened"},
+                {"path": "/features", "phase": "post"},
+                {"path": "/demo", "phase": "post"},
+            ],
+            [
+                {"path": "/home", "phase": "pre"},
+                {"path": "/about", "phase": "pre"},
+                {"path": "/about", "phase": "chat", "event": "chat_opened"},
+            ],
+        ]
+        with patch.object(jas, "_fetch_journeys", return_value=journeys):
+            out = jas.top_pre_chat_sequences(MagicMock(), 1, _ago(30), _now())
+        top = out["sequences"][0]
+        assert top["sequence"] == ["/home", "/about"]
+        assert top["sessions"] == 3
+        assert top["post_sequence"] == ["/features", "/demo"]
+        # Only 2 of the 3 sessions took the winning post-continuation;
+        # the third had no post-chat activity at all. post_sessions must
+        # reflect the winning continuation's count, not the row total —
+        # otherwise the flow diagram labels post cards as if all 3
+        # visitors went there.
+        assert top["post_sessions"] == 2
 
 
 class TestSummaryCounts:
@@ -237,6 +276,35 @@ class TestSummaryCounts:
         assert out["handoff_requested"] == 1
         assert out["offline_message_sent"] == 1
         assert out["leads_captured"] == 3
+        # Every session converted, none kept browsing → no "no activity" rows
+        assert out["sessions_no_activity"] == 0
+
+    def test_sessions_no_activity_counts_true_drop_offs(self):
+        # Overlap case: a session that BOTH converted AND kept browsing
+        # must not be counted as "no activity". Only the last session
+        # (pre-only, no conversion, no post) qualifies.
+        journeys = [
+            [
+                {"path": "/a", "phase": "pre"},
+                {"path": "/a", "phase": "chat", "event": "meeting_booked"},
+                {"path": "/thanks", "phase": "post"},  # overlap: converted AND post
+            ],
+            [
+                {"path": "/a", "phase": "pre"},
+                {"path": "/b", "phase": "post"},  # post-only, no conversion
+            ],
+            [
+                {"path": "/a", "phase": "pre"},
+                # no conversion, no post → this is a true drop-off
+            ],
+        ]
+        db = MagicMock()
+        db.execute.return_value.all.return_value = []
+        with patch.object(jas, "_fetch_journeys", return_value=journeys):
+            out = jas.summary_counts(db, 1, _ago(30), _now())
+        assert out["sessions_with_journey"] == 3
+        assert out["meeting_booked"] == 1
+        assert out["sessions_no_activity"] == 1
 
 
 # ── Routes: plan gate + shape ────────────────────────────────────────────────

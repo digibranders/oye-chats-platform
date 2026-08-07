@@ -183,11 +183,7 @@ export function ExperiencePage(): ReactElement {
   const showLoading = agentLoading || (botId !== null && draft === null && loadError === null);
 
   return (
-    <PageContainer
-      title="Experience"
-      description="Control exactly what visitors see in your chat widget - colours, avatar, greeting and voice - with a live preview."
-      width="wide"
-    >
+    <PageContainer width="wide">
       {showLoading ? (
         <LoadingState />
       ) : botId === null ? (

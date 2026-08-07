@@ -42,6 +42,10 @@ export interface UseJourneyAnalyticsResult {
   period: JourneyPeriod;
   setPeriod: (period: JourneyPeriod) => void;
   reload: () => void;
+  /** Epoch ms of the last successful fetch. Powers the "updated Xs ago"
+   *  indicator so an owner can see the poll is alive. `null` while the
+   *  very first fetch is still in flight or the hook is idle. */
+  lastUpdatedAt: number | null;
 }
 
 /**
@@ -65,6 +69,7 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
   const [period, setPeriod] = useState<JourneyPeriod>(() => toMonthKey(new Date()));
   const [reloadToken, setReloadToken] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [state, setState] = useState<{
     status: JourneyStatus;
     data: JourneyAnalytics | null;
@@ -91,7 +96,10 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             getJourneyConversionPaths(botId, 'handoff_requested', { period, limit: 5 }),
             getJourneyConversionPaths(botId, 'offline_message_sent', { period, limit: 5 }),
             getJourneyPostChat(botId, { period, limit: 10 }),
-            getJourneyPreChatSequences(botId, { period, limit: 5 }),
+            // Fetch 6 so the diagram's MAX_SEQUENCE_ROWS=6 slot has data
+            // to render — asking for 5 while the UI slot allows 6 meant
+            // the sixth row was dead code and never appeared.
+            getJourneyPreChatSequences(botId, { period, limit: 6 }),
           ]);
 
         if (cancelled) return;
@@ -110,6 +118,7 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             preChatSequences,
           },
         });
+        setLastUpdatedAt(Date.now());
       } catch (cause) {
         if (cancelled) return;
         // The `status` field is set by `buildApiError` on every API error.
@@ -141,5 +150,44 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
     setReloadToken((n) => n + 1);
   }, []);
 
-  return { status: state.status, data: state.data, error: state.error, refreshing, period, setPeriod, reload };
+  // Auto-refetch when the user brings this tab back to focus. Owners
+  // typically test a journey on their site, then flip back to the
+  // /journey tab expecting the diagram to reflect what they just did;
+  // without this the page keeps showing whatever it fetched on mount.
+  useEffect(() => {
+    if (botId == null) return;
+    const onFocus = (): void => reload();
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [botId, reload]);
+
+  // Poll while the tab is visible so a live-facing owner sees fresh
+  // sessions land without switching tabs. Skipped when the tab is
+  // hidden so we don't waste round-trips on a backgrounded page.
+  useEffect(() => {
+    if (botId == null) return;
+    const POLL_MS = 15_000;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') reload();
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [botId, reload]);
+
+  return {
+    status: state.status,
+    data: state.data,
+    error: state.error,
+    refreshing,
+    period,
+    setPeriod,
+    reload,
+    lastUpdatedAt,
+  };
 }

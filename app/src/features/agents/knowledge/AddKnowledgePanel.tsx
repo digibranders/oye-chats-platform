@@ -20,7 +20,12 @@ import {
   Zap,
 } from 'lucide-react';
 import { Button, Card, Input, Progress, cn } from '../../../design-system';
-import { discoverCrawlUrls, uploadDocuments } from '../../../services/api';
+import {
+  discoverCrawlUrls,
+  previewUploadCost,
+  uploadDocuments,
+  type UploadCostPreview,
+} from '../../../services/api';
 import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
 import { useUpgradeModal } from '../../../context/UpgradeModalContext';
@@ -88,6 +93,12 @@ export function AddKnowledgePanel({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadNote, setUploadNote] = useState<string | null>(null);
+  // Files the user has picked but not yet confirmed. Held aside while the
+  // cost-preview endpoint runs so we can show "Upload for N credits" before
+  // any deduction hits the ledger. Cleared on confirm/cancel.
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+  const [preview, setPreview] = useState<UploadCostPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // A crawl belongs to this agent when it's unscoped or explicitly ours. Kept
   // permissive so an in-progress crawl still surfaces here before it's scoped.
@@ -179,12 +190,41 @@ export function AddKnowledgePanel({
     const { accepted, rejected } = filterUploadFiles(fileList);
     setUploadError(rejected.length ? rejected.join(' · ') : null);
     if (accepted.length === 0) return;
-    setUploading(true);
+
+    // Show the customer the credit cost BEFORE we charge them. The preview
+    // endpoint extracts + counts words server-side without saving anything
+    // or touching the ledger — if it fails (network hiccup, backend older
+    // than this feature), fall through to the direct upload path so the
+    // panel keeps working.
     setUploadNote(null);
+    setPreviewLoading(true);
     try {
-      await uploadDocuments(accepted, agentId);
+      const quote = await previewUploadCost(accepted, agentId);
+      if (quote) {
+        setPendingFiles(accepted);
+        setPreview(quote);
+        return;
+      }
+      // Preview unavailable — legacy behaviour: upload directly.
+      await runUpload(accepted);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function runUpload(files: File[]): Promise<void> {
+    setUploading(true);
+    try {
+      const result = (await uploadDocuments(files, agentId)) as
+        | { credits_charged?: number }
+        | undefined;
+      const chargedRaw = result?.credits_charged;
+      const charged = typeof chargedRaw === 'number' ? chargedRaw : 0;
+      const chargedText = charged > 0 ? ` (${charged} credits used)` : '';
       setUploadNote(
-        `Added ${accepted.length} document${accepted.length === 1 ? '' : 's'}. Your AI is learning from it now.`,
+        `Added ${files.length} document${files.length === 1 ? '' : 's'}. Your AI is learning from it now.${chargedText}`,
       );
       await onChanged();
     } catch (err) {
@@ -192,6 +232,19 @@ export function AddKnowledgePanel({
     } finally {
       setUploading(false);
     }
+  }
+
+  function cancelPending(): void {
+    setPendingFiles(null);
+    setPreview(null);
+  }
+
+  async function confirmPending(): Promise<void> {
+    if (!pendingFiles) return;
+    const files = pendingFiles;
+    setPendingFiles(null);
+    setPreview(null);
+    await runUpload(files);
   }
 
   return (
@@ -538,12 +591,16 @@ export function AddKnowledgePanel({
                 variant="outline"
                 size="sm"
                 className="mt-4"
-                disabled={uploading}
+                disabled={uploading || previewLoading || pendingFiles !== null}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {uploading ? (
                   <>
                     <Loader2 size={15} className="animate-spin" /> Adding…
+                  </>
+                ) : previewLoading ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" /> Estimating cost…
                   </>
                 ) : (
                   <>
@@ -552,6 +609,15 @@ export function AddKnowledgePanel({
                 )}
               </Button>
             </div>
+
+            {pendingFiles && preview && (
+              <UploadCostPanel
+                preview={preview}
+                submitting={uploading}
+                onConfirm={confirmPending}
+                onCancel={cancelPending}
+              />
+            )}
 
             {uploadNote && (
               <StatusNote tone="success" icon={CheckCircle2}>
@@ -641,6 +707,139 @@ function CrawlProgress({
           Latest: {pages[pages.length - 1]}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Cost-preview panel — appears after the user picks files but before any
+ * credits are deducted. Shows per-file word count + credit cost, the total,
+ * and the caller's current balance. "Upload for N credits" is the explicit
+ * consent; "Cancel" drops the selection with zero side-effects.
+ *
+ * Insufficient balance disables the confirm button and swaps the copy to
+ * point at the billing page so the user knows exactly why they're blocked.
+ */
+function UploadCostPanel({
+  preview,
+  submitting,
+  onConfirm,
+  onCancel,
+}: {
+  preview: UploadCostPreview;
+  submitting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}): ReactElement {
+  const short = preview.per_file.slice(0, 5);
+  const remainder = preview.per_file.length - short.length;
+
+  const humanReason = (r?: string): string | null => {
+    if (!r) return null;
+    switch (r) {
+      case 'unsupported_type':
+        return 'Unsupported file type — will be skipped';
+      case 'oversize_file':
+        return 'Over 10 MB — will be skipped';
+      case 'batch_oversize':
+        return 'Batch over 60 MB — will be skipped';
+      case 'extraction_failed':
+        return 'Could not read text (likely a scanned PDF) — will be skipped, no charge';
+      case 'extraction_error':
+        return 'Extraction error — will be skipped, no charge';
+      default:
+        return r;
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-4">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <p className="text-[13px] font-semibold text-[var(--ds-text)]">
+          Review before upload
+        </p>
+        <p className="text-[12px] text-[var(--ds-text-subtle)]">
+          {preview.per_file.length} file{preview.per_file.length === 1 ? '' : 's'}
+        </p>
+      </div>
+
+      <ul className="mb-3 divide-y divide-[var(--ds-border)] text-[13px]">
+        {short.map((f) => {
+          const reason = humanReason(f.reason);
+          return (
+            <li key={f.filename} className="flex items-baseline justify-between gap-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-[var(--ds-text)]">{f.filename}</p>
+                {reason ? (
+                  <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">{reason}</p>
+                ) : (
+                  <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
+                    {f.words.toLocaleString()} word{f.words === 1 ? '' : 's'}
+                  </p>
+                )}
+              </div>
+              <span
+                className={cn(
+                  'shrink-0 text-[13px] font-semibold tabular-nums',
+                  f.credits > 0
+                    ? 'text-[var(--ds-text)]'
+                    : 'text-[var(--ds-text-subtle)]',
+                )}
+              >
+                {f.credits > 0 ? `${f.credits} credits` : 'Free'}
+              </span>
+            </li>
+          );
+        })}
+        {remainder > 0 && (
+          <li className="py-2 text-[12px] text-[var(--ds-text-subtle)]">
+            + {remainder} more file{remainder === 1 ? '' : 's'}
+          </li>
+        )}
+      </ul>
+
+      <div className="mb-3 flex items-baseline justify-between border-t border-[var(--ds-border)] pt-3">
+        <div>
+          <p className="text-[13px] font-semibold text-[var(--ds-text)]">Total</p>
+          <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
+            Balance: {preview.current_balance.toLocaleString()} credits
+          </p>
+        </div>
+        <p className="text-[16px] font-semibold tabular-nums text-[var(--ds-text)]">
+          {preview.total_credits.toLocaleString()} credits
+        </p>
+      </div>
+
+      {!preview.sufficient && (
+        <div className="mb-3 rounded-lg border border-[var(--ds-danger-soft)] bg-[var(--ds-danger-soft)] px-3 py-2 text-[12px] text-[var(--ds-danger)]">
+          Not enough credits ({preview.current_balance} available, {preview.total_credits} needed).
+          Top up or upgrade your plan to continue.
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={onConfirm}
+          disabled={submitting || !preview.sufficient || preview.total_credits === 0}
+        >
+          {submitting ? (
+            <>
+              <Loader2 size={15} className="animate-spin" /> Uploading…
+            </>
+          ) : preview.total_credits === 0 ? (
+            'Nothing to upload'
+          ) : (
+            <>
+              <Upload size={15} /> Upload for {preview.total_credits.toLocaleString()} credits
+            </>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

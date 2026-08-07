@@ -19,6 +19,8 @@ export interface MetricCardProps {
   icon?: LucideIcon;
   /** Adds a hover border lift, signalling a living metric. */
   interactive?: boolean;
+  /** Visual density. `sm` = sleeker padding + smaller value type for scan rows. */
+  size?: 'sm' | 'md';
   className?: string;
 }
 
@@ -46,8 +48,10 @@ export function MetricCard({
   caption,
   icon: Icon,
   interactive = false,
+  size = 'md',
   className,
 }: MetricCardProps) {
+  const isSm = size === 'sm';
   const trendStyle = trend ? trendStyles[trend] : null;
   const TrendIcon = trendStyle?.icon;
 
@@ -66,19 +70,36 @@ export function MetricCard({
   return (
     <div
       className={cn(
-        'rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]',
+        'rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-sm)]',
+        isSm ? 'px-3 py-2.5' : 'p-4',
         interactive && 'transition-colors hover:border-[var(--ds-border-strong)]',
         className,
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[12px] font-medium text-[var(--ds-text-muted)]">{label}</p>
+        <p
+          className={cn(
+            'truncate font-medium text-[var(--ds-text-muted)]',
+            isSm ? 'text-[11px]' : 'text-[12px]',
+          )}
+        >
+          {label}
+        </p>
         {Icon && (
-          <Icon size={14} aria-hidden="true" className="shrink-0 text-[var(--ds-text-subtle)]" />
+          <Icon
+            size={isSm ? 12 : 14}
+            aria-hidden="true"
+            className="shrink-0 text-[var(--ds-text-subtle)]"
+          />
         )}
       </div>
-      <div className="mt-2 flex items-baseline justify-between gap-2">
-        <span className="text-[20px] font-semibold leading-none tracking-tight tabular-nums text-[var(--ds-text)]">
+      <div className={cn('flex items-baseline justify-between gap-2', isSm ? 'mt-1' : 'mt-2')}>
+        <span
+          className={cn(
+            'font-semibold leading-none tracking-tight tabular-nums text-[var(--ds-text)]',
+            isSm ? 'text-[15px]' : 'text-[20px]',
+          )}
+        >
           {value}
         </span>
         {deltaNode ??

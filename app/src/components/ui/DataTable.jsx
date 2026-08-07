@@ -24,6 +24,12 @@ export default function DataTable({
 }) {
   const [sorting, setSorting] = useState([]);
 
+  // React Compiler flags useReactTable as "incompatible library" because
+  // TanStack Table intentionally returns non-memoizable functions. That's
+  // by design (the table API needs fresh closures per render); the compiler
+  // just skips memoizing this component, which is the intended fallback.
+  // Suppress the warning locally so `npm run lint` stays clean.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,

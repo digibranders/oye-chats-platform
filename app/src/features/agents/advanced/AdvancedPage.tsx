@@ -26,7 +26,6 @@ import { ScopeStrictnessSection } from './ScopeStrictnessSection';
 import { QualificationSection } from './QualificationSection';
 import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
-import { DeveloperAccessSection } from './DeveloperAccessSection';
 
 /**
  * Order-independent serialization. `bantConfig` is an opaque server object whose
@@ -323,10 +322,6 @@ export function AdvancedPage(): ReactElement {
             <div className="border-t border-[var(--ds-border)]" />
 
             <TimingReliabilitySection config={draft.widgetConfig} onChange={setConfigField} />
-
-            <div className="border-t border-[var(--ds-border)]" />
-
-            <DeveloperAccessSection />
 
             {/* Save bar - appears once there are unsaved edits. A saved
                 confirmation persists (keyed by savedTick) until the next edit. */}

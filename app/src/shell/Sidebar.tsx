@@ -11,14 +11,29 @@ import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import type { UpgradeIntentKey } from '../context/upgradeIntents';
 
-/** Primary-nav routes that are Free-plan-gated: the destination is a paid
- *  feature, so a Free workspace renders the item as a `LockedNavItem` that opens
- *  the upgrade modal (with the mapped intent's copy) instead of routing. Backend
- *  enforces the same gate (`plan_entitlements_service.py`; the live-chat
- *  endpoints 403 for Free), so this is UX, not the security boundary.
- *  - `/inbox`  Support / live chat is paid (`live_chat` feature). */
-const FREE_LOCKED_NAV: Record<string, UpgradeIntentKey> = {
-  '/inbox': 'view_support',
+/** Primary-nav routes whose lock is decided per-plan by a predicate. A locked
+ *  entry renders as a `LockedNavItem` that opens the upgrade modal (with the
+ *  mapped intent's copy) instead of routing. Backend enforces the same gates
+ *  (`plan_entitlements_service.py`), so this is UX, not the security boundary.
+ *
+ *  Each rule declares which feature the route needs; the sidebar checks it
+ *  against the live entitlements. Add a rule here to gate a new destination
+ *  without touching the render loop.
+ *
+ *  - `/inbox`    Support / live chat requires the `live_chat` feature (Free
+ *                is the only plan without it — Starter and up ship it).
+ *  - `/journey`  Journey analytics is Standard+; on the backend it's a slug
+ *                gate (`JOURNEY_ANALYTICS_SLUGS = {standard, professional}`),
+ *                on the frontend the `bant` feature has the same membership
+ *                so we key on that. Both Free and Starter see it locked. */
+interface LockRule {
+  readonly intent: UpgradeIntentKey;
+  readonly requiredFeature: Parameters<ReturnType<typeof useEntitlements>['hasFeature']>[0];
+}
+
+const LOCKED_NAV_RULES: Record<string, LockRule> = {
+  '/inbox': { intent: 'view_support', requiredFeature: 'live_chat' },
+  '/journey': { intent: 'view_journeys', requiredFeature: 'bant' },
 };
 
 export interface SidebarProps {
@@ -154,7 +169,7 @@ function LockedNavItem({ item, showLabels, onClick }: LockedNavItemProps): React
  */
 export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: SidebarProps) {
   const showLabels = isMobile || !collapsed;
-  const { isFree } = useEntitlements();
+  const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
   // Operators acting in another workspace get an inbox-scoped rail; owners and
   // admins see the full object-nav. Route-guarded too (`OperatorRouteGuard`).
@@ -198,13 +213,14 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
       {/* Primary navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {primaryNav.map((item) => {
-          const lockIntent = isFree ? FREE_LOCKED_NAV[item.to] : undefined;
-          return lockIntent ? (
+          const rule = LOCKED_NAV_RULES[item.to];
+          const locked = rule ? !hasFeature(rule.requiredFeature) : false;
+          return locked && rule ? (
             <LockedNavItem
               key={item.to}
               item={item}
               showLabels={showLabels}
-              onClick={() => openUpgradeModal(lockIntent)}
+              onClick={() => openUpgradeModal(rule.intent)}
             />
           ) : (
             <NavLinkItem key={item.to} item={item} showLabels={showLabels} onNavigate={onNavigate} />

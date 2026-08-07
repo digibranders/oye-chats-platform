@@ -462,7 +462,11 @@ export const sendTranscriptEmail = async (sessionId, recipientEmail) => {
  */
 const JOURNEY_MAX_ENTRIES = 200;
 const JOURNEY_PATH_MAX_LEN = 500;
-const JOURNEY_FLUSH_THROTTLE_MS = 10_000;
+// Throttle window before a coalesced journey POST fires. 3s keeps
+// the widget from spamming the backend when a visitor click-clicks
+// through a nav, while still surfacing new pages in the admin
+// dashboard within a few seconds instead of the old 10s wait.
+const JOURNEY_FLUSH_THROTTLE_MS = 3_000;
 
 const _journeyKey = () => {
     const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';

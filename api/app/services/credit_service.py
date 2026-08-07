@@ -137,11 +137,25 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # plan limits (Free 30 pages = 150 credits worst case).
     "credit_cost.url_scan": 5,
     "credit_cost.email_send": 1,
-    # Per-file knowledge base upload — bumped from 2 to 3. Documents go
-    # through OpenAI embedding + chunking + pgvector storage, so 3 credits
-    # better reflects ingestion cost (Free 5 docs = 15 credits worst case;
-    # Standard 35 docs = 105 credits — still negligible against the plan).
+    # Per-file knowledge base upload — legacy flat rate. Retained as the
+    # fallback / small-doc minimum; the real cost now scales with document
+    # size via ``credit_cost.document_upload_tiers`` (see below).
     "credit_cost.document_upload": 3,
+    # Size-based upload pricing (word buckets). ``max_words`` is EXCLUSIVE:
+    # a doc of exactly 100 words falls into the second tier, not the first.
+    # ``max_words: null`` is the catch-all tier for anything above the
+    # largest bounded bucket. Fully overridable from the super-admin panel
+    # by writing a JSONB array to ``pricing_config.credit_cost.document_upload_tiers``.
+    # Bumped from a flat 3 credits/file so bulky uploads pay their share
+    # of embedding cost and low-tier users can't game the shelf-space cap
+    # by dumping large files.
+    "credit_cost.document_upload_tiers": [
+        {"max_words": 100, "credits": 5},
+        {"max_words": 500, "credits": 15},
+        {"max_words": 2000, "credits": 30},
+        {"max_words": 10000, "credits": 75},
+        {"max_words": None, "credits": 150},
+    ],
     "seat_price_cents": 1500,
     "topup_expiry_months": 12,
     "low_balance_warn_pct": 20,
@@ -243,6 +257,72 @@ def get_credit_cost(session: Session, action: str) -> int:
             _DEFAULT_CREDIT_COST,
         )
         return _DEFAULT_CREDIT_COST
+
+
+def count_words(text: str) -> int:
+    """Rough word count for size-based upload pricing.
+
+    Uses whitespace-split — matches how a user would eyeball the doc's
+    length. Punctuation attached to words counts as one word; hyphenated
+    compounds count as one. Good enough for tier bucketing where a 10-word
+    imprecision doesn't cross any boundary. Empty / whitespace-only input
+    returns 0 (which lands in the smallest tier via ``get_document_upload_cost_for_size``).
+    """
+    if not text:
+        return 0
+    return len(text.split())
+
+
+def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
+    """Return the credit cost for uploading a document of ``word_count`` words.
+
+    Reads the ``credit_cost.document_upload_tiers`` list from pricing config
+    (super-admin editable) and returns the first tier whose ``max_words`` is
+    None or strictly greater than ``word_count``. Fails CLOSED: an unparseable
+    config falls back to the flat ``credit_cost.document_upload`` so a broken
+    JSON never grants a free upload.
+
+    Bucket edge semantics: ``max_words`` is EXCLUSIVE, so a doc of exactly
+    100 words lands in the 100–500 bucket (25 credits), not the <100 bucket.
+    Matches the marketing table shown to customers.
+    """
+    word_count = max(int(word_count or 0), 0)
+    pricing = get_pricing(session)
+    raw_tiers = pricing.get("credit_cost.document_upload_tiers")
+
+    fallback = get_credit_cost(session, "document_upload")
+
+    if not isinstance(raw_tiers, list) or not raw_tiers:
+        logger.warning(
+            "credit_cost.document_upload_tiers missing or malformed (%r) — "
+            "falling back to flat credit_cost.document_upload=%d",
+            raw_tiers,
+            fallback,
+        )
+        return fallback
+
+    try:
+        for tier in raw_tiers:
+            cap = tier.get("max_words")
+            credits = int(tier.get("credits", 0))
+            if cap is None or word_count < int(cap):
+                return max(credits, 0)
+    except (TypeError, ValueError, AttributeError):
+        logger.warning(
+            "credit_cost.document_upload_tiers has non-numeric bucket (%r) — "
+            "falling back to flat credit_cost.document_upload=%d",
+            raw_tiers,
+            fallback,
+        )
+        return fallback
+
+    # Ran off the end of a config that had bounded ``max_words`` on every
+    # tier — treat the largest tier's credits as the effective ceiling
+    # rather than accidentally billing 0.
+    try:
+        return max(int(raw_tiers[-1].get("credits", 0)), 0)
+    except (TypeError, ValueError, AttributeError):
+        return fallback
 
 
 def is_kill_switch_active(session: Session) -> bool:

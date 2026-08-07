@@ -217,6 +217,58 @@ def delete_document_endpoint(
             else:
                 base_filter.append(Document.client_id == client_id)
 
+            # Snapshot the SOURCE-level char totals before delete so we can
+            # decrement ``clients.kb_characters_used`` by the exact amount that
+            # went away. ``DISTINCT ON (document_name, bot_id)`` collapses the
+            # replicated per-chunk values to one row per source — otherwise a
+            # 47-chunk doc would over-deduct by 47×. Same collapse logic as
+            # ``knowledge_quota_service.sum_source_chars_for_client``.
+            from sqlalchemy import text as _sql_text
+
+            chars_to_free = 0
+            try:
+                where_sql = "d.document_name = :doc_name"
+                params: dict = {"doc_name": document_name}
+                if bot_id:
+                    where_sql += " AND d.bot_id = :bot_id"
+                    params["bot_id"] = bot_id
+                else:
+                    where_sql += " AND d.client_id = :client_id"
+                    params["client_id"] = client_id
+                # The list endpoint keys sources by the same normalized-URL
+                # pattern used in ``base_filter`` above, so the delete may
+                # match rows whose stored ``document_name`` isn't exactly
+                # ``document_name``. Use the same regex to snapshot chars,
+                # falling back to an exact match below if nothing hit.
+                row = session.execute(
+                    _sql_text(
+                        f"""
+                        SELECT COALESCE(SUM(chars), 0) AS total FROM (
+                            SELECT DISTINCT ON (
+                                d.document_name,
+                                COALESCE(d.bot_id, -1)
+                            )
+                                COALESCE(d.source_char_count, 0) AS chars
+                            FROM documents d
+                            WHERE COALESCE(
+                                REPLACE(
+                                    SUBSTRING(d.document_name FROM '^(https?://[^/]+)'),
+                                    'www.', ''
+                                ),
+                                d.document_name
+                            ) = :doc_name
+                            {(" AND d.bot_id = :bot_id" if bot_id else " AND d.client_id = :client_id")}
+                            ORDER BY d.document_name, COALESCE(d.bot_id, -1), d.id
+                        ) t
+                        """
+                    ),
+                    params,
+                ).first()
+                if row and row.total is not None:
+                    chars_to_free = int(row.total)
+            except Exception:
+                logger.debug("kb-usage snapshot failed for delete", exc_info=True)
+
             deleted_count = session.query(Document).filter(*base_filter).delete(synchronize_session=False)
             session.commit()
             logger.info(f"Deleted {deleted_count} records for Source: {document_name}")
@@ -227,11 +279,35 @@ def delete_document_endpoint(
                     fallback_filter.append(Document.bot_id == bot_id)
                 else:
                     fallback_filter.append(Document.client_id == client_id)
+                # Same fallback for the char snapshot — exact document_name match.
+                if chars_to_free == 0:
+                    try:
+                        from app.services.knowledge_quota_service import chars_used_by_source
+
+                        chars_to_free = chars_used_by_source(
+                            session,
+                            client_id=client_id,
+                            document_name=document_name,
+                            bot_id=bot_id,
+                        )
+                    except Exception:
+                        logger.debug("kb-usage exact-name snapshot failed", exc_info=True)
                 deleted_count = session.query(Document).filter(*fallback_filter).delete(synchronize_session=False)
                 session.commit()
 
             if deleted_count == 0:
                 raise HTTPException(status_code=404, detail=f"Source '{document_name}' not found.")
+
+            # Reclaim the source's contribution from the per-account KB counter.
+            # ``chars_to_free`` is 0 for pre-migration rows whose
+            # ``source_char_count`` was never backfilled — safe no-op in that
+            # case; the drift-correcting recompute helper is the ultimate
+            # source of truth if this ever under-reports.
+            if chars_to_free > 0:
+                from app.services.knowledge_quota_service import increment_kb_usage
+
+                increment_kb_usage(session, client_id, -chars_to_free)
+                session.commit()
 
             tenant_dir = _tenant_documents_dir(client_id, bot_id)
             file_path = (tenant_dir / document_name).resolve()
@@ -302,6 +378,139 @@ def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | 
         logger.error(f"Background ingestion failed for client {client_id}: {e}")
 
 
+@router.post("/ingest/preview-cost")
+@limiter.limit("20/minute", key_func=key_from_api_key)
+def preview_ingest_cost(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Return the credit cost the customer will pay if they upload ``files``.
+
+    Extracts each file in-memory, counts words, and returns the tiered credit
+    charge per file plus the grand total — **without** saving anything,
+    charging credits, or touching the ingest pipeline. The admin UI calls
+    this after the user picks files so we can render a
+    "Upload for N credits" confirm button.
+
+    Same size + type validation as ``/ingest`` so the preview matches what
+    would actually happen. Files that fail extraction (scanned PDFs, empty
+    DOCX) show ``words: 0, credits: 0`` and a diagnostic ``reason`` — matching
+    the "not billed, will be quarantined" behavior of the real upload path.
+
+    No credit gate here — the goal is a *preview*, not a hold. Confirming
+    the upload runs the real deduction on POST /ingest, which is where the
+    402 for insufficient credits fires.
+    """
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files supplied.")
+
+    import tempfile
+
+    from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
+    from app.services import credit_service
+
+    supported = [".pdf", ".docx", ".txt", ".md"]
+
+    per_file: list[dict] = []
+    total_credits = 0
+    total_bytes = 0
+
+    with tempfile.TemporaryDirectory(prefix="oyechats-preview-") as tmp:
+        tmp_dir = Path(tmp)
+        for f in files:
+            fname = f.filename or "unnamed"
+            ext = Path(fname).suffix.lower()
+
+            if ext not in supported:
+                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "unsupported_type"})
+                continue
+
+            content = f.file.read()
+            fsize = len(content)
+            total_bytes += fsize
+
+            if fsize > _MAX_FILE_SIZE:
+                per_file.append(
+                    {
+                        "filename": fname,
+                        "words": 0,
+                        "credits": 0,
+                        "reason": "oversize_file",
+                        "size_bytes": fsize,
+                    }
+                )
+                continue
+            if total_bytes > _MAX_TOTAL_UPLOAD:
+                per_file.append(
+                    {
+                        "filename": fname,
+                        "words": 0,
+                        "credits": 0,
+                        "reason": "batch_oversize",
+                    }
+                )
+                continue
+
+            # Write to a scratch temp path so the existing extractors (which
+            # take file paths) can run. The whole tempdir is cleaned up when
+            # the ``with`` block exits — nothing persists to disk.
+            tmp_path = tmp_dir / fname.replace("/", "_")
+            try:
+                tmp_path.write_bytes(content)
+                if ext == ".pdf":
+                    pages = load_pdf(str(tmp_path))
+                elif ext == ".docx":
+                    pages = load_docx(str(tmp_path))
+                else:
+                    pages = load_txt(str(tmp_path))
+            except ExtractionError as exc:
+                per_file.append(
+                    {
+                        "filename": fname,
+                        "words": 0,
+                        "credits": 0,
+                        "reason": "extraction_failed",
+                        "detail": str(exc),
+                    }
+                )
+                continue
+            except Exception:
+                logger.exception(f"preview-cost extraction error for {fname}")
+                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "extraction_error"})
+                continue
+
+            text = " ".join(p.get("text", "") for p in pages)
+            words = credit_service.count_words(text)
+            with get_session() as db:
+                credits = credit_service.get_document_upload_cost_for_size(db, words)
+            per_file.append({"filename": fname, "words": words, "credits": credits})
+            total_credits += credits
+
+    # Include the current balance so the widget can show "you have X, this
+    # will cost Y" without a second API round-trip.
+    with get_session() as db:
+        from app.db.models import Bot as _Bot
+
+        ledger_bot_id: int | None = None
+        if bot_id is not None:
+            _bot = db.get(_Bot, bot_id)
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(_bot)
+        current_balance = int(credit_service.get_balance(db, client_id, bot_id=ledger_bot_id) or 0)
+
+    return {
+        "per_file": per_file,
+        "total_credits": total_credits,
+        "current_balance": current_balance,
+        "sufficient": current_balance >= total_credits,
+    }
+
+
 @router.post("/ingest")
 @limiter.limit("10/minute", key_func=key_from_api_key)
 def ingest_documents(
@@ -365,6 +574,52 @@ def ingest_documents(
                     },
                 )
 
+        # ── Plan enforcement: KB character quota (pre-flight) ──
+        # Exact enforcement happens inside the ingestion pipeline (which knows
+        # the cleaned-text length), but if the account is already AT or OVER
+        # its char cap, fail fast — avoids a silent background failure where
+        # the widget just never sees the new document.
+        from sqlalchemy import select as _sa_select
+
+        from app.db.models import Client as _Client
+        from app.services.knowledge_quota_service import get_kb_char_limit
+        from app.services.plan_service import get_client_plan
+
+        plan = get_client_plan(db, client_id)
+        kb_char_limit_raw = get_kb_char_limit(plan)
+        # Only enforce when the limit is a real int. Mocked test sessions can
+        # return MagicMock sentinels here; real JSONB plan rows always store
+        # ints. Same defensive posture as ``check_kb_quota``.
+        if (
+            isinstance(kb_char_limit_raw, int)
+            and not isinstance(kb_char_limit_raw, bool)
+            and kb_char_limit_raw != UNLIMITED
+        ):
+            kb_char_limit = int(kb_char_limit_raw)
+            try:
+                kb_used = int(
+                    db.execute(_sa_select(_Client.kb_characters_used).where(_Client.id == client_id)).scalar_one() or 0
+                )
+            except (TypeError, ValueError):
+                kb_used = 0
+            if kb_used >= kb_char_limit:
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "limit_reached",
+                        "limit": "knowledge_characters",
+                        "current": kb_used,
+                        "max": kb_char_limit,
+                        "current_plan": plan.slug,
+                        "message": (
+                            "You've reached your plan's knowledge base size limit "
+                            f"({kb_used:,} / {kb_char_limit:,} characters). "
+                            "Delete existing content or upgrade to add more."
+                        ),
+                        "upgrade_url": "/billing",
+                    },
+                )
+
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     saved_paths: list[str] = []  # Track written paths for cleanup on failure
     saved_files: list[str] = []
@@ -396,68 +651,32 @@ def ingest_documents(
     if not file_buffers:
         raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) supplied.")
 
-    # ── Phase 1.5: Credit pre-flight ──
-    # Charge upfront so a client with insufficient credits can't slip
-    # past validation, write 60 MB to disk, and only fail at ingest time.
-    # Refund happens below if any file write actually fails.
+    # ── Phase 1.5: Size-based credit pricing ──
+    # Legacy flow charged a flat ``credit_cost.document_upload`` per file
+    # before touching disk. The new model bills by *word count* so a 50-word
+    # FAQ and a 15,000-word manual don't cost the same — the second one
+    # burns proportionally more embedding + storage. To know the word count
+    # we must first extract the file, so ordering is now:
+    #   1. Save file to tenant_dir on disk (extraction needs a real path).
+    #   2. Extract → count words → look up tiered cost per file.
+    #   3. Deduct the SUMMED tiered cost in a single ledger row.
+    #   4. On insufficient-credits, delete the saved files (rollback) and
+    #      surface a 402 with the required amount so the widget can prompt
+    #      the user to top-up before retrying.
+    # Files that fail extraction (scanned PDFs, empty DOCX) are skipped for
+    # billing entirely — no credits charged, no ingest attempted; the file
+    # is quarantined by the background sweep on its next run.
     from app.db.models import Bot as _Bot
+    from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
     from app.services import credit_service
 
-    # Resolve per-bot ledger scope ONCE so deduct + refund agree on which
-    # bucket to charge / repay. Per-bot subscriptions get their own
-    # isolated ledger; legacy-pooled and Free bots drain the client pool.
     ledger_bot_id: int | None = None
     if bot_id is not None:
         with get_session() as db:
             _bot_for_ledger = db.get(_Bot, bot_id)
             ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(_bot_for_ledger)
 
-    per_doc_cost = 0
-    deducted_amount = 0
-    with get_session() as db:
-        per_doc_cost = credit_service.get_credit_cost(db, "document_upload")
-        total_cost = per_doc_cost * len(file_buffers)
-        if total_cost > 0:
-            try:
-                credit_service.check_and_deduct(
-                    db,
-                    client_id,
-                    total_cost,
-                    reason="document_upload",
-                    reference_id=bot_id,
-                    bot_id=ledger_bot_id,
-                )
-                db.commit()
-                deducted_amount = total_cost
-            except credit_service.InsufficientCredits as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=402,
-                    detail={
-                        "error": "insufficient_credits",
-                        "required": exc.required,
-                        "available": exc.available,
-                        "per_document_cost": per_doc_cost,
-                        "document_count": len(file_buffers),
-                        "message": (
-                            f"Uploading {len(file_buffers)} document(s) costs {exc.required} credits, "
-                            f"but you only have {exc.available}. Top up or upgrade to continue."
-                        ),
-                    },
-                ) from exc
-            except credit_service.KillSwitchActive as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "error": "billing_paused",
-                        "message": "Billing is temporarily paused for maintenance.",
-                    },
-                ) from exc
-
-    # ── Phase 2: All files validated + credits secured — write to disk ──
-    # Write into the caller's OWN namespaced folder so the ingestion sweep
-    # can never see another tenant's files (P0-2).
+    # ── Phase 2: Save files to disk (extraction needs a real path) ──
     tenant_dir = _tenant_documents_dir(client_id, bot_id)
     for filename, content in file_buffers:
         file_path = (tenant_dir / filename).resolve()
@@ -473,36 +692,99 @@ def ingest_documents(
         except Exception as e:
             logger.error(f"Failed to save {filename}: {e}")
 
-    # Refund credits for any files that failed to save. The pre-flight
-    # charged for ``len(file_buffers)`` but only ``len(saved_files)`` are
-    # actually being ingested. The delta is unfair to bill for.
-    failed_count = len(file_buffers) - len(saved_files)
-    if failed_count > 0 and per_doc_cost > 0:
-        refund_amount = per_doc_cost * failed_count
+    if not saved_files:
+        raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) saved.")
+
+    # ── Phase 3: Extract each saved file, count words, price by tier ──
+    # Extraction is synchronous here (typically 10-100ms per file, worst-case
+    # a few seconds for a 60 MB PDF). Anything slower already sits behind the
+    # 10-minute request timeout. If extraction fails for a specific file we
+    # skip it in the cost calculation — the background ingest will quarantine
+    # it and no credits should be charged for content we can't store.
+    def _extract_words_for_cost(path: Path, ext: str) -> int:
+        try:
+            if ext == ".pdf":
+                pages = load_pdf(str(path))
+            elif ext == ".docx":
+                pages = load_docx(str(path))
+            else:  # .txt, .md
+                pages = load_txt(str(path))
+        except ExtractionError as exc:
+            logger.warning(f"Skipping {path.name} for billing (extraction failed): {exc}")
+            return 0
+        except Exception:  # pragma: no cover — pypdf/docx surprise
+            logger.exception(f"Unexpected extraction error for {path.name}; skipping billing")
+            return 0
+        raw = " ".join(p.get("text", "") for p in pages)
+        return credit_service.count_words(raw)
+
+    per_file_costs: list[tuple[str, int, int]] = []  # (filename, words, credits)
+    total_cost = 0
+    with get_session() as db:
+        for saved_path in saved_paths:
+            fname = saved_path.name
+            ext = saved_path.suffix.lower()
+            words = _extract_words_for_cost(saved_path, ext)
+            cost = credit_service.get_document_upload_cost_for_size(db, words) if words > 0 else 0
+            per_file_costs.append((fname, words, cost))
+            total_cost += cost
+
+    deducted_amount = 0
+    if total_cost > 0:
         with get_session() as db:
             try:
-                credit_service.refund(
+                credit_service.check_and_deduct(
                     db,
                     client_id,
-                    refund_amount,
-                    reference_id=bot_id or 0,
-                    note=f"document_upload partial failure ({failed_count} files)",
+                    total_cost,
+                    reason="document_upload",
+                    reference_id=bot_id,
                     bot_id=ledger_bot_id,
                 )
                 db.commit()
-                deducted_amount -= refund_amount
-            except Exception as refund_err:
-                # Refund failure is non-fatal — log loudly so it can be
-                # reconciled manually if it ever happens.
-                logger.error(
-                    "Document upload refund failed for client=%s amount=%s: %s",
-                    client_id,
-                    refund_amount,
-                    refund_err,
-                )
+                deducted_amount = total_cost
+            except credit_service.InsufficientCredits as exc:
+                db.rollback()
+                # Rollback the disk writes so the customer isn't left with
+                # orphaned files sitting in tenant_dir that will get picked
+                # up on the next background sweep and processed for free.
+                for p in saved_paths:
+                    try:
+                        p.unlink(missing_ok=True)
+                    except Exception:
+                        logger.debug("failed to clean up saved file after 402", exc_info=True)
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "insufficient_credits",
+                        "required": exc.required,
+                        "available": exc.available,
+                        "document_count": len(saved_files),
+                        "per_file": [{"filename": name, "words": w, "credits": c} for name, w, c in per_file_costs],
+                        "message": (
+                            f"Uploading these {len(saved_files)} document(s) costs {exc.required} credits, "
+                            f"but you only have {exc.available}. Top up or upgrade to continue."
+                        ),
+                    },
+                ) from exc
+            except credit_service.KillSwitchActive as exc:
+                db.rollback()
+                for p in saved_paths:
+                    try:
+                        p.unlink(missing_ok=True)
+                    except Exception:
+                        logger.debug("failed to clean up saved file after 503", exc_info=True)
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "billing_paused",
+                        "message": "Billing is temporarily paused for maintenance.",
+                    },
+                ) from exc
 
-    if not saved_files:
-        raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) saved.")
+    # Files with 0 billed credits (extraction failed → will be quarantined by
+    # the background pass) stay on disk; they contribute nothing to the
+    # customer's ledger and the pipeline surfaces the quarantine event.
 
     logger.info(
         f"Starting background ingestion for {len(saved_files)} files for client {client_id}, bot_id={bot_id}..."
@@ -524,7 +806,11 @@ def ingest_documents(
         "files_uploaded": saved_files,
         "status": "processing",
         "credits_charged": deducted_amount,
-        "credits_per_document": per_doc_cost,
+        # Per-file breakdown so the widget can render "doc A (240 words → 25
+        # credits)" instead of a lump total. Replaces the old
+        # ``credits_per_document`` field, which was meaningless once pricing
+        # started varying per file.
+        "per_file_billing": [{"filename": name, "words": w, "credits": c} for name, w, c in per_file_costs],
     }
     if job_id:
         response["job_id"] = job_id

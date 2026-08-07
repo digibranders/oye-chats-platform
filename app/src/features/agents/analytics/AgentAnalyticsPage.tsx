@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactElement } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Lock,
   MessageSquare,
   Rocket,
   Sparkles,
@@ -10,11 +11,13 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { Button, EmptyState, PageContainer, Skeleton } from '../../../design-system';
+import { Button, EmptyState, LockedFeatureCard, PageContainer, Skeleton } from '../../../design-system';
 import { MetricCard } from '../../../design-system/components/MetricCard';
 import { InsightCard, type InsightTone } from '../../../design-system/components/InsightCard';
 import { Tabs, type TabItem } from '../../../design-system/components/Tabs';
 import { useAgent } from '../../../context/AgentContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { useAgentAnalytics, type AgentAnalytics } from './useAgentAnalytics';
 import { EngagementChart } from './EngagementChart';
 import { TopQuestions } from './TopQuestions';
@@ -101,6 +104,40 @@ export function AgentAnalyticsPage(): ReactElement {
   const { agent, agentId, loading: agentLoading, error: agentError } = useAgent();
   const state = useAgentAnalytics(agent?.id ?? null);
   const [panel, setPanel] = useState<PanelKey>('engagement');
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  // "Leads" reads BANT-derived pipeline stages — Standard+ only. Free / Starter
+  // see a locked chip on the tab and the panel body swaps to the upgrade teaser.
+  // "Satisfaction" reads CSAT + resolution from live-chat post-chat ratings, so
+  // it travels with `live_chat` (Starter and up). Only Free is locked here —
+  // Starter accumulates real ratings and should see them.
+  const leadsUnlocked = hasFeature('bant');
+  const satisfactionUnlocked = hasFeature('live_chat');
+
+  const panels = useMemo<readonly TabItem[]>(
+    () =>
+      PANELS.map((tab) => {
+        const locked =
+          (tab.key === 'leads' && !leadsUnlocked) ||
+          (tab.key === 'satisfaction' && !satisfactionUnlocked);
+        if (!locked) return tab;
+        return {
+          ...tab,
+          label: (
+            <span className="inline-flex items-center gap-1.5">
+              <Lock
+                size={11}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                className="text-[var(--ds-text-subtle)]"
+              />
+              {tab.label}
+            </span>
+          ),
+        };
+      }),
+    [leadsUnlocked, satisfactionUnlocked],
+  );
 
   const totalMessages = useMemo(
     () => state.data?.engagement.reduce((sum, p) => sum + p.messages, 0) ?? 0,
@@ -209,10 +246,19 @@ export function AgentAnalyticsPage(): ReactElement {
       {/* Deep-dive sections. */}
       <div>
         <Tabs
-          tabs={PANELS}
+          tabs={panels}
           value={panel}
           onChange={(key) => {
-            if (isPanelKey(key)) setPanel(key);
+            if (!isPanelKey(key)) return;
+            if (key === 'leads' && !leadsUnlocked) {
+              openUpgradeModal('view_qualification');
+              return;
+            }
+            if (key === 'satisfaction' && !satisfactionUnlocked) {
+              openUpgradeModal('view_qualification');
+              return;
+            }
+            setPanel(key);
           }}
           ariaLabel="Analytics sections"
         />
@@ -229,14 +275,22 @@ export function AgentAnalyticsPage(): ReactElement {
           {panel === 'questions' && (
             <TopQuestions questions={analytics.topQuestions} loading={loading} />
           )}
-          {panel === 'leads' && <LeadsBreakdown leads={analytics.leads} loading={loading} />}
-          {panel === 'satisfaction' && (
-            <SatisfactionBreakdown
-              ratings={analytics.ratings}
-              resolution={analytics.resolution}
-              loading={loading}
-            />
-          )}
+          {panel === 'leads' &&
+            (leadsUnlocked ? (
+              <LeadsBreakdown leads={analytics.leads} loading={loading} />
+            ) : (
+              <LockedFeatureCard intent="view_qualification" />
+            ))}
+          {panel === 'satisfaction' &&
+            (satisfactionUnlocked ? (
+              <SatisfactionBreakdown
+                ratings={analytics.ratings}
+                resolution={analytics.resolution}
+                loading={loading}
+              />
+            ) : (
+              <LockedFeatureCard intent="view_qualification" />
+            ))}
           {panel === 'feedback' && <FeedbackPanel agentId={agentId ?? undefined} />}
         </div>
       </div>

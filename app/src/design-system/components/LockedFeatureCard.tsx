@@ -48,8 +48,8 @@ export function LockedFeatureCard({ intent, icon: Icon = Lock, className }: Lock
         className,
       )}
     >
-      <span className="flex h-10 w-10 items-center justify-center rounded-[var(--ds-radius-md)] bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-        <Icon size={18} aria-hidden="true" />
+      <span className="flex h-9 w-9 items-center justify-center rounded-[var(--ds-radius-sm)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] text-[var(--ds-text-muted)]">
+        <Icon size={16} strokeWidth={1.5} aria-hidden="true" />
       </span>
 
       <div className="space-y-1.5">

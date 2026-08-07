@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import Launcher from './Launcher';
 import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/api';
-import { readSessionId } from '../services/storage-keys';
+import { readSessionId, writeSessionId } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
 import { readWidgetOpen, writeWidgetOpen } from '../services/storage-keys';
 
@@ -225,14 +225,23 @@ const ChatWidget = () => {
     setIsVisible(true);
     lockBodyScroll();
     writeWidgetOpen(true, { shareDomain });
-    // Journey marker — chat_opened. Also flips the phase flag inside
-    // api.js so every subsequent auto-appended pathname is tagged
-    // ``post``. sessionId may not exist yet (visitor opened panel
-    // before first message); markChatEvent tolerates that and the
-    // marker is picked up by the next flush that has one.
+    // Journey marker — chat_opened. If no session id has been minted
+    // yet (visitor is opening the panel for the first time and hasn't
+    // typed a message), MINT ONE HERE so the pre-chat journey we've
+    // already captured in sessionStorage gets flushed to the backend
+    // right now instead of sitting local until the first message. The
+    // backend's ensure_chat_session creates the chat_sessions row
+    // lazily from any well-formed uuid, so this is safe.
     try {
-      const persistedSessionId = readSessionId(window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY);
-      markChatEvent(persistedSessionId, 'chat_opened');
+      const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY;
+      let sessionId = readSessionId(botKey);
+      if (!sessionId) {
+        sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        writeSessionId(sessionId, { botKey, shareDomain });
+      }
+      markChatEvent(sessionId, 'chat_opened');
     } catch { /* non-critical */ }
     // Allow React to paint widget-hidden state, then trigger open animation
     setTimeout(() => {
