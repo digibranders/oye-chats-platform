@@ -66,11 +66,18 @@ STATE_COOKIE_MAX_AGE = 600  # seconds; matches STATE_MAX_AGE_SECONDS
 # frontend has a single place that parses both success and failure paths.
 ERROR_REDIRECT_URL = OAUTH_SUCCESS_REDIRECT_URL
 
+# Custom URL scheme the mobile app registers (see mobile-app/app.json
+# "scheme": "oyechats"). Mirrors ERROR_REDIRECT_URL / OAUTH_SUCCESS_REDIRECT_URL
+# but for the mobile client — chosen via the ``cl`` field on the signed state
+# token (set by ``/login?client=mobile``) since Google's round trip carries no
+# other signal of which surface started the flow.
+MOBILE_REDIRECT_URL = "oyechats://auth/callback"
+
 
 # ── helpers ─────────────────────────────────────────────────────────────
 
 
-def _error_redirect(code: str, *, next_path: str | None = None) -> RedirectResponse:
+def _error_redirect(code: str, *, next_path: str | None = None, client_target: str = "web") -> RedirectResponse:
     """Redirect back to the frontend with a machine-readable error code.
 
     ``code`` is a short string the frontend maps to a friendly message —
@@ -80,13 +87,16 @@ def _error_redirect(code: str, *, next_path: str | None = None) -> RedirectRespo
     params = {"error": code}
     if next_path:
         params["next"] = next_path
-    target = f"{ERROR_REDIRECT_URL}?{urlencode(params)}"
+    base = MOBILE_REDIRECT_URL if client_target == "mobile" else ERROR_REDIRECT_URL
+    target = f"{base}?{urlencode(params)}"
     resp = RedirectResponse(target, status_code=status.HTTP_302_FOUND)
     resp.delete_cookie(STATE_COOKIE_NAME, path="/auth/google")
     return resp
 
 
-def _success_redirect(api_key: str, *, next_path: str, is_new: bool, is_superadmin: bool) -> RedirectResponse:
+def _success_redirect(
+    api_key: str, *, next_path: str, is_new: bool, is_superadmin: bool, client_target: str = "web"
+) -> RedirectResponse:
     """Redirect to the frontend with the api_key in the URL fragment.
 
     Fragment-based delivery keeps the api_key out of server logs and
@@ -102,7 +112,8 @@ def _success_redirect(api_key: str, *, next_path: str, is_new: bool, is_superadm
         query["next"] = next_path
 
     fragment = urlencode({"api_key": api_key})
-    target = f"{OAUTH_SUCCESS_REDIRECT_URL}?{urlencode(query)}#{fragment}"
+    base = MOBILE_REDIRECT_URL if client_target == "mobile" else OAUTH_SUCCESS_REDIRECT_URL
+    target = f"{base}?{urlencode(query)}#{fragment}"
     resp = RedirectResponse(target, status_code=status.HTTP_302_FOUND)
     resp.delete_cookie(STATE_COOKIE_NAME, path="/auth/google")
     return resp
@@ -126,13 +137,17 @@ def google_login(
     mode: str = "login",
     promo_code: str | None = None,
     referral_code: str | None = None,
+    client: str = "web",
 ):
     """Kick off the Google OAuth flow.
 
     Issues the state cookie and 302-redirects to Google's consent screen.
     ``next`` is an optional relative path to land on after success (e.g.
     ``/billing``). ``mode`` is telemetry only — backend behaviour is the
-    same for login and signup.
+    same for login and signup. ``client`` is ``"web"`` (default) or
+    ``"mobile"`` — the mobile app passes ``client=mobile`` so the callback
+    redirects into the app's ``oyechats://`` scheme instead of the admin
+    web app once Google sends the user back.
     """
     if not GOOGLE_OAUTH_ENABLED:
         raise HTTPException(
@@ -143,12 +158,19 @@ def google_login(
     next_path = _safe_next_path(next)
     if mode not in ("login", "register"):
         mode = "login"
+    client_target = "mobile" if client == "mobile" else "web"
 
     # Campaign/affiliate codes from the register page ride the SIGNED state —
     # the full-page Google round trip would otherwise lose them, which is
     # exactly how a promo-link signup via "Continue with Google" ended up
     # with no promotion attributed.
-    state_token = issue_state_token(next_path=next_path, mode=mode, promo_code=promo_code, referral_code=referral_code)
+    state_token = issue_state_token(
+        next_path=next_path,
+        mode=mode,
+        promo_code=promo_code,
+        referral_code=referral_code,
+        client_target=client_target,
+    )
 
     try:
         authorize_url = build_authorize_url(state_token)
@@ -215,12 +237,13 @@ def google_callback(
         return _error_redirect("oauth_state_invalid")
 
     next_path = _safe_next_path(state_payload.get("next"))
+    client_target = "mobile" if state_payload.get("cl") == "mobile" else "web"
 
     try:
         profile = exchange_code_for_profile(code)
     except OAuthError as exc:
         logger.warning("google_oauth_exchange_failed: %s", exc)
-        return _error_redirect("oauth_exchange_failed", next_path=next_path)
+        return _error_redirect("oauth_exchange_failed", next_path=next_path, client_target=client_target)
 
     # Email must be verified by Google before we'll trust it for the
     # email-based account-linking branch. Without this check a malicious
@@ -228,7 +251,7 @@ def google_callback(
     # password customers and hijack the account.
     if not profile.email_verified:
         logger.info("google_oauth_email_unverified email=%s", profile.email)
-        return _error_redirect("oauth_email_unverified", next_path=next_path)
+        return _error_redirect("oauth_email_unverified", next_path=next_path, client_target=client_target)
 
     try:
         client, is_new = _resolve_client_for_profile(profile, resolve_country(request))
@@ -238,10 +261,10 @@ def google_callback(
         # abundance of caution — they should sign in with their password
         # once and link from a dedicated UI surface later. (Future work.)
         # For now, send them to login with a code the UI can explain.
-        return _error_redirect("oauth_email_has_password", next_path=next_path)
+        return _error_redirect("oauth_email_has_password", next_path=next_path, client_target=client_target)
     except Exception as exc:  # pragma: no cover — defensive
         logger.exception("google_oauth_resolve_failed: %s", exc)
-        return _error_redirect("oauth_internal_error", next_path=next_path)
+        return _error_redirect("oauth_internal_error", next_path=next_path, client_target=client_target)
 
     # First-touch attribution for accounts CREATED by this OAuth flow. The
     # register page's password path does the same two stamps; without this,
@@ -274,6 +297,7 @@ def google_callback(
         next_path=next_path,
         is_new=is_new,
         is_superadmin=bool(client.is_superadmin),
+        client_target=client_target,
     )
 
 
