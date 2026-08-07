@@ -564,6 +564,45 @@ export const resetPassword = async (email, otp, new_password) => {
  * @param {File[]} files - An array of File objects (must be PDFs)
  * @returns {Promise<Object>} The API response with upload results
  */
+/**
+ * Preview the credit cost of uploading files WITHOUT saving or charging.
+ * Extracts each file server-side, counts words, and returns the tiered
+ * credit charge per file plus the grand total and the caller's current
+ * credit balance. The Knowledge panel calls this after the user drops
+ * files so we can render "Upload for N credits" with an explicit
+ * confirmation step — no surprise deductions.
+ *
+ * On failure, returns null so the caller can fall through to a plain
+ * upload (best-effort: preview is UX sugar, not a correctness gate — the
+ * real deduct happens on POST /ingest).
+ *
+ * @param {File[]} files - files the user is about to upload
+ * @param {number|undefined} botId - optional bot scope
+ * @returns {Promise<null | {
+ *   per_file: {filename: string, words: number, credits: number, reason?: string, detail?: string, size_bytes?: number}[],
+ *   total_credits: number,
+ *   current_balance: number,
+ *   sufficient: boolean,
+ * }>}
+ */
+export const previewUploadCost = async (files, botId) => {
+    if (!files || files.length === 0) return null;
+    const formData = new FormData();
+    files.forEach((file) => {
+        formData.append('files', file);
+    });
+    try {
+        const url = botId ? `/ingest/preview-cost?bot_id=${botId}` : '/ingest/preview-cost';
+        const response = await api.post(url, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return response.data;
+    } catch (error) {
+        console.warn('Cost preview failed — proceeding without preview:', error);
+        return null;
+    }
+};
+
 export const uploadDocuments = async (files, botId) => {
     const formData = new FormData();
 

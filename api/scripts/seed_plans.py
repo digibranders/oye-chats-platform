@@ -61,6 +61,7 @@ _PLANS: list[dict] = [
             "leads": 15,
             "page_scraping": 20,
             "documents": 3,
+            "knowledge_characters": 2_500,  # ~500 words — tiny KB, real product try
             "chat_history_days": 7,
             "max_crawl_depth": 2,
             "max_crawl_pages": 20,
@@ -75,6 +76,7 @@ _PLANS: list[dict] = [
             "api_access": False,
             "online_support": False,
             "topup_allowed": False,
+            "auto_recrawl": False,
             "integrations": "reply_to_only",
         },
         "marketing": {"tagline": "A grounded AI bot, free forever."},
@@ -99,9 +101,10 @@ _PLANS: list[dict] = [
             "credits": 2000,
             "bots": 1,
             "operators": 1,
-            "leads": 35,
+            "leads": -1,
             "page_scraping": 500,
             "documents": 20,
+            "knowledge_characters": 50_000,  # ~10k words — small help center
             "chat_history_days": 30,
             "max_crawl_depth": 3,
             "max_crawl_pages": -1,
@@ -116,6 +119,7 @@ _PLANS: list[dict] = [
             "api_access": False,
             "online_support": True,
             "topup_allowed": True,
+            "auto_recrawl": False,
             "integrations": "all",
         },
         "marketing": {"tagline": "For a solo site that wants live chat + a real AI agent."},
@@ -142,7 +146,8 @@ _PLANS: list[dict] = [
             "operators": 2,
             "leads": -1,
             "page_scraping": 2000,
-            "documents": 50,
+            "documents": -1,  # unlimited — Standard trusts the char cap + credit gate
+            "knowledge_characters": 500_000,  # ~100k words — full product docs
             "chat_history_days": 90,
             "max_crawl_depth": 4,
             "max_crawl_pages": -1,
@@ -157,6 +162,7 @@ _PLANS: list[dict] = [
             "api_access": True,
             "online_support": True,
             "topup_allowed": True,
+            "auto_recrawl": True,
             "integrations": "all",
         },
         "marketing": {
@@ -186,7 +192,8 @@ _PLANS: list[dict] = [
             "operators": 3,
             "leads": -1,
             "page_scraping": 5000,
-            "documents": 150,
+            "documents": -1,  # unlimited (Professional)
+            "knowledge_characters": -1,  # unlimited (Professional)
             "chat_history_days": 365,
             "max_crawl_depth": 5,
             "max_crawl_pages": -1,
@@ -201,6 +208,7 @@ _PLANS: list[dict] = [
             "api_access": True,
             "online_support": True,
             "topup_allowed": True,
+            "auto_recrawl": True,
             "integrations": "all",
         },
         "marketing": {"tagline": "For teams scaling qualified pipeline with deeper frameworks."},

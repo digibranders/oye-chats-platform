@@ -785,7 +785,12 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
 
 
 @router.post("/chat/behavioral-signals")
-@limiter.limit("30/minute", key_func=key_from_bot_key)
+# Widget flushes every 3s while a visitor navigates, so this ceiling
+# needs to accommodate several concurrent visitors on a busy bot.
+# 600/min = up to ~30 fast-navigating visitors per minute without any
+# silent 429s. Idempotent merge on the server (see _merge_journey) makes
+# accidental burst-sends harmless.
+@limiter.limit("600/minute", key_func=key_from_bot_key)
 def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Receive behavioral signals from the widget and compute a behavioral score.
 

@@ -3078,8 +3078,14 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     # answering from a paid-tier KB until the customer re-adds on Free or
     # re-upgrades (reversible; see knowledge_state_service).
     from app.services.knowledge_state_service import deactivate_bot_knowledge
+    from app.services.transition_service import enforce_operator_ceiling
 
     deactivate_bot_knowledge(session, local.bot_id)
+    # Same paid→Free path applies to operator seats: without this the customer
+    # keeps every operator they invited under the paid tier even though Free
+    # grants 0 seats, so the Usage meter reads "N / 0" and every seat-based
+    # query overcounts. Deactivates the excess oldest-first (see the helper).
+    enforce_operator_ceiling(session, local.client_id)
     session.flush()
     return f"Subscription {sub_entity.get('id')} cancelled"
 
@@ -3109,8 +3115,11 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     # Paid → Free (natural end-of-life): deactivate this bot's knowledge, same
     # as the cancel / dunning-expiry paths.
     from app.services.knowledge_state_service import deactivate_bot_knowledge
+    from app.services.transition_service import enforce_operator_ceiling
 
     deactivate_bot_knowledge(session, local.bot_id)
+    # Operator seats fall under the same paid→Free rule (see the cancel path).
+    enforce_operator_ceiling(session, local.client_id)
     session.flush()
     return f"Subscription {sub_entity.get('id')} completed"
 

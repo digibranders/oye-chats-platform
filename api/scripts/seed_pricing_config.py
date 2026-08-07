@@ -47,13 +47,13 @@ _CONFIG: dict[str, object] = {
     "kill_switch": False,
     # Top-up packs (headline INR + USD; provider ids resolved lazily at purchase).
     "topup_packs": [
-        {"inr": 1599, "usd": 19, "credits": 2000, "bonus_pct": 0, "stripe_price_id": None, "razorpay_plan_id": None},
-        {"inr": 3999, "usd": 49, "credits": 5500, "bonus_pct": 10, "stripe_price_id": None, "razorpay_plan_id": None},
+        {"inr": 1599, "usd": 19, "credits": 3000, "bonus_pct": 0, "stripe_price_id": None, "razorpay_plan_id": None},
+        {"inr": 3999, "usd": 49, "credits": 8000, "bonus_pct": 7, "stripe_price_id": None, "razorpay_plan_id": None},
         {
             "inr": 7999,
             "usd": 99,
-            "credits": 12000,
-            "bonus_pct": 20,
+            "credits": 24000,
+            "bonus_pct": 60,
             "badge": "Best value",
             "stripe_price_id": None,
             "razorpay_plan_id": None,
@@ -61,8 +61,8 @@ _CONFIG: dict[str, object] = {
         {
             "inr": 19999,
             "usd": 249,
-            "credits": 32500,
-            "bonus_pct": 30,
+            "credits": 75000,
+            "bonus_pct": 100,
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },

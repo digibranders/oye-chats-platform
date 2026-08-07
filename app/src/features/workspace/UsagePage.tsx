@@ -69,6 +69,13 @@ function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement
   // quota meter here would advertise a ceiling for a surface Free can't open.
   // Hide the meter on Free; paid plans keep it.
   const showLeads = !isFree;
+  // Free grants 0 operator seats, so a "1 / 0" meter reads as broken (the "1"
+  // is a leftover row from a prior paid subscription that wasn't deactivated
+  // on downgrade). Hide the tile on any plan whose operator ceiling is 0 so
+  // the tile only surfaces when it can plausibly move; the invite path is
+  // separately gated in `operator_routes.py`.
+  const membersLimit = pool?.planLimits?.operators ?? limitFor('operators');
+  const showMembers = membersLimit > 0;
 
   // Per-agent scope: read ceilings from the selected agent's own plan and pair
   // them with that agent's usage. Drops "Agents" (a workspace-level count with
@@ -84,7 +91,9 @@ function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement
           description={`The ceilings on ${pool.name}'s plan, alongside what this agent has used.`}
         />
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-          <QuotaMeter label="Members" used={usage.operators} limit={lim('operators')} />
+          {showMembers && (
+            <QuotaMeter label="Members" used={usage.operators} limit={lim('operators')} />
+          )}
           <QuotaMeter label="Documents" used={usage.documents} limit={lim('documents')} />
           {showLeads && <QuotaMeter label="Leads" used={usage.leads} limit={lim('leads')} />}
         </div>
@@ -116,7 +125,9 @@ function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement
         description="The ceilings on your current plan, alongside what your workspace has used."
       />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <QuotaMeter label="Members" used={entitlements.usage.operators ?? 0} limit={limitFor('operators')} />
+        {showMembers && (
+          <QuotaMeter label="Members" used={entitlements.usage.operators ?? 0} limit={limitFor('operators')} />
+        )}
         <QuotaMeter label="Documents" used={entitlements.usage.documents ?? 0} limit={limitFor('documents')} />
         {showLeads && (
           <QuotaMeter label="Leads" used={entitlements.usage.leads ?? 0} limit={limitFor('leads')} />
@@ -416,8 +427,6 @@ export function UsagePage(): ReactElement {
             emailSend: balance.emailSend,
           }
         : { aiChat: emptyBucket, documentUpload: emptyBucket, urlScan: emptyBucket, emailSend: emptyBucket };
-  const scopedPeriodUsed =
-    selectedBot && selectedPool ? selectedPool.periodCreditsUsed : balance?.periodCreditsUsed ?? 0;
   // `null` = closed. A target carries the pool the top-up is scoped to: the
   // shared account balance (`botId: null`) or one agent's isolated balance.
   const navigate = useNavigate();
@@ -492,30 +501,7 @@ export function UsagePage(): ReactElement {
             />
           )}
 
-          {/* Metered consumption this period - scoped to the selected agent. */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <ActivityCard
-              label="AI chat replies"
-              icon={MessageSquare}
-              eventCount={scopedActivity.aiChat.eventCount}
-              creditsUsed={scopedActivity.aiChat.creditsUsed}
-            />
-            <ActivityCard
-              label="Documents uploaded"
-              icon={FileText}
-              eventCount={scopedActivity.documentUpload.eventCount}
-              creditsUsed={scopedActivity.documentUpload.creditsUsed}
-            />
-            <ActivityCard
-              label="Pages crawled"
-              icon={Globe}
-              eventCount={scopedActivity.urlScan.eventCount}
-              creditsUsed={scopedActivity.urlScan.creditsUsed}
-            />
-            <MetricCard label="Credits used" value={formatCredits(scopedPeriodUsed)} icon={Zap} />
-          </div>
-
-          {/* Breakdown + trend - the shape of consumption. */}
+{/* Breakdown + trend - the shape of consumption. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <CreditBreakdown activity={scopedActivity} />
             {phase.trend.status === 'ready' && <ConsumptionTrend points={phase.trend.points} />}

@@ -120,6 +120,89 @@ def check_seat_overflow(session: Session, client_id: int, target_plan: Plan) -> 
     return SeatOverflow(active_seats=active, allowed_seats=allowed)
 
 
+def enforce_operator_ceiling(session: Session, client_id: int) -> int:
+    """Deactivate operator rows exceeding the client's current entitlement.
+
+    Companion to the pure :func:`check_seat_overflow` guard (which refuses
+    paid→paid downgrades). This one *actively repairs* the operator roster
+    after a paid→Free transition — cancellation, natural expiry, dunning
+    expiry — where the subscription simply goes terminal and there is no
+    "target plan" to guard against. Without this, a customer who invited 2
+    operators on Standard and then cancelled keeps 2 active operator rows
+    even though Free grants 0, leaving the Usage meter reading "2 / 0" and
+    every seat-based query overcounting.
+
+    Behaviour:
+      * Resolves the client's live ceiling via
+        :func:`plan_entitlements_service.get_entitlements` (bypassing cache
+        so the just-flipped subscription status is respected). Uses the
+        already-normalised ``limits.operators`` value — which the resolver
+        adjusts to ``max(included_seats, paid_seats)`` capped at the plan
+        ceiling — so this helper never re-implements the ordering rule.
+      * Selects the excess operators oldest-first (by ``created_at`` ASC,
+        stable by ``id``) so the workspace keeps its longest-tenured team
+        members; matches how any human would triage a downgrade.
+      * Soft-deactivates via ``is_active = False`` and does NOT delete rows
+        — audit trail (``ChatAuditLog``, historical ``ChatSession``
+        assignments) must remain intact.
+      * Invalidates the entitlements cache so the Usage meter reflects the
+        new count within one hop.
+
+    Returns the number of operators just deactivated (0 if the client was
+    already within the ceiling — the common case, since :func:`check_seat_overflow`
+    fires on paid→paid downgrades). Callers do not need to react to the
+    return value; it exists for logging.
+    """
+    # Deferred import: transition_service is loaded during app bootstrap, and
+    # plan_entitlements_service transitively imports plan_service which imports
+    # this module for the SeatOverflow / DocumentOverflow guard types.
+    from app.services import plan_entitlements_service
+
+    # Flush any pending status change on the just-cancelled/expired subscription
+    # so ``get_entitlements`` sees the current active-set, not the pre-flip one.
+    session.flush()
+    plan_entitlements_service.invalidate(client_id)
+
+    entitlements = plan_entitlements_service.get_entitlements(client_id, session, include_usage=False, use_cache=False)
+    ceiling = entitlements.limit_for("operators")
+    # UNLIMITED (-1) means "no cap" — nothing to enforce.
+    if ceiling < 0:
+        return 0
+
+    active_ids = list(
+        session.scalars(
+            select(Operator.id)
+            .where(Operator.client_id == client_id, Operator.is_active.is_(True))
+            .order_by(Operator.created_at.asc(), Operator.id.asc())
+        )
+    )
+    if len(active_ids) <= ceiling:
+        return 0
+
+    # Keep the oldest ``ceiling`` operators; deactivate the rest.
+    to_deactivate = active_ids[ceiling:]
+    now = datetime.now(UTC)
+    for op_id in to_deactivate:
+        operator = session.get(Operator, op_id)
+        if operator is None:
+            continue
+        operator.is_active = False
+        # Best-effort audit stamp; ``deactivated_at`` is optional on the model.
+        if hasattr(operator, "deactivated_at"):
+            operator.deactivated_at = now
+
+    session.flush()
+    plan_entitlements_service.invalidate(client_id)
+    logger.info(
+        "enforce_operator_ceiling: client=%s ceiling=%s active=%s deactivated=%s",
+        client_id,
+        ceiling,
+        len(active_ids),
+        len(to_deactivate),
+    )
+    return len(to_deactivate)
+
+
 # ── Document overflow ───────────────────────────────────────────────────────
 
 

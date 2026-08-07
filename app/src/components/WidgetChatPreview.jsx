@@ -49,6 +49,59 @@ function PreviewBotAvatar({ settings, size = 'sm' }) {
 }
 
 /**
+ * PreviewLauncher - a pixel-faithful replica of the real widget's Launcher
+ * button (widget/src/components/Launcher.jsx). Shows a 56×56px rounded-full
+ * button with the correct avatar (orb / mascot / uploaded logo / default Bot
+ * icon) and a primary-colour chevron-down badge (the "chat is open" state).
+ *
+ * Presentational only - no toggle logic needed in the preview. This makes the
+ * preview show the complete widget UI (chat window + launcher) that visitors
+ * actually see, not just the open window on its own.
+ */
+function PreviewLauncher({ settings }) {
+    const primaryColor = settings.primary_color || '#2B66BC';
+    const color = settings.orb_color || primaryColor;
+
+    const renderIcon = () => {
+        if (settings.avatar_type === 'orb') {
+            return <PremiumOrb color={color} size={56} style={{ width: '100%', height: '100%' }} />;
+        }
+        if (settings.avatar_type === 'mascot') {
+            return (
+                <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
+                    <Bot size={28} className="text-white" />
+                </div>
+            );
+        }
+        if (settings.bot_logo) {
+            return <img src={settings.bot_logo} alt="Launcher" className="w-full h-full object-cover" />;
+        }
+        return (
+            <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
+                <Bot size={28} className="text-white" />
+            </div>
+        );
+    };
+
+    return (
+        <div className="relative w-14 h-14">
+            {/* Pulse ring - mirrors the "chat is open" state */}
+            <span
+                className="absolute inset-0 rounded-full pointer-events-none"
+                style={{ animation: 'launcherPulse 2s ease-in-out infinite', border: `2px solid ${primaryColor}` }}
+            />
+            {/* Main button */}
+            <div
+                aria-hidden="true"
+                className="w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden"
+            >
+                {renderIcon()}
+            </div>
+        </div>
+    );
+}
+
+/**
  * PreviewSafeLink - minimal safe link renderer for bot-message markdown.
  * Blocks non-http(s) URI schemes and opens external links in a new tab.
  * Mirrors the spirit (not the full pill/icon-link logic) of the widget's
@@ -142,14 +195,19 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
     };
 
     return (
-        /* Chat Window Preview Wrapper - mirrors the real widget's classic
-           (light) theme 1:1 (see widget/src/components/{themeConfigs,
-           ChatWindow,WelcomeScreen,ChatInput}.jsx). The font stack
-           matches widget/src/index.css so the preview can't drift from
-           what visitors actually see. */
+        /* Outer container - stacks the chat window above the launcher button
+           exactly as the real widget does: the launcher sits bottom-right of the
+           window, separated by a small gap. The font stack is set here so both
+           the chat window and the launcher inherit the correct typography. */
         <div
-            className={`widget-chat-preview w-full max-w-[380px] bg-[#F8F8F8] rounded-2xl overflow-hidden shadow-xl flex flex-col border border-[#BBE7FF]/30 transition-colors ${className}`}
+            className={`widget-chat-preview-wrapper flex flex-col items-end gap-3 w-full max-w-[380px] ${className}`}
             style={{ fontFamily: WIDGET_FONT_STACK }}
+        >
+        {/* Chat Window - mirrors the real widget's classic (light) theme 1:1
+            (see widget/src/components/{themeConfigs,ChatWindow,
+            WelcomeScreen,ChatInput}.jsx). */}
+        <div
+            className="widget-chat-preview w-full bg-[#F8F8F8] rounded-2xl overflow-hidden shadow-xl flex flex-col border border-[#BBE7FF]/30 transition-colors"
         >
 
             {/* 1. Header bar - date/time + action icons. The "···" menu
@@ -202,7 +260,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                 <div key={i} className="flex justify-end">
                                     <div
                                         className="max-w-[80%] rounded-2xl rounded-br-md px-3.5 py-2 text-[14px] text-white whitespace-pre-wrap break-words"
-                                        style={{ backgroundColor: settings.primary_color }}
+                                        style={{ backgroundColor: settings.user_message_color || settings.user_bubble_color || settings.primary_color }}
                                     >
                                         {m.text}
                                     </div>
@@ -293,6 +351,7 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                                     {previewSuggestions.map((s, i) => (
                                         <span
                                             key={s}
+                                            onClick={() => onSend?.(s)}
                                             className={
                                                 previewIsVertical
                                                     ? 'w-full text-left px-4 py-2.5 rounded-xl text-[13px] text-gray-700 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer'
@@ -451,6 +510,11 @@ export default function WidgetChatPreview({ settings, state = 'chat', messages =
                     </div>
                 </div>
             )}
+        </div>
+        {/* Launcher button - the floating avatar toggle that visitors use to
+            open/close the widget. Always rendered in the "open" state (chevron-
+            down badge) since the preview always shows the chat window open. */}
+        <PreviewLauncher settings={settings} />
         </div>
     );
 }

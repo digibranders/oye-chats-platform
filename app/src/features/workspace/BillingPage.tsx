@@ -63,6 +63,7 @@ import {
   buildSubscription,
   formatDate,
   formatMoneyMinor,
+  getRenewalDisplay,
   INVOICE_KIND_LABEL,
   statusTone,
   type BillingDetailsView,
@@ -390,10 +391,10 @@ export function BillingPage(): ReactElement {
   // since it has its own banner; a bare pending cancellation is otherwise
   // invisible on the page.
   const pendingCancel = Boolean(subscription?.cancelAtPeriodEnd && !subscription.scheduledChange);
-  const renewalLabel = subscription?.trialEnd
-    ? formatDate(subscription.trialEnd)
-    : formatDate(subscription?.currentPeriodEnd ?? null);
-  const renewalCaption = subscription?.trialEnd ? 'Trial ends' : pendingCancel ? 'Plan ends' : 'Renews';
+  const { caption: renewalCaption, label: renewalLabel } = getRenewalDisplay(subscription, pendingCancel);
+  // "Free until" alone doesn't tell a promo customer what happens after - spell
+  // out the price their mandate will actually charge once the free period ends.
+  const renewalNote = renewalCaption === 'Free until' && plan?.isPaid ? `then ${priceLabel}` : null;
 
   const autoRenew = Boolean(subscription?.hasActive && !subscription.cancelAtPeriodEnd);
   // A Free plan isn't billed, so it has no payment method regardless of the
@@ -500,6 +501,7 @@ export function BillingPage(): ReactElement {
                 isPaid={Boolean(plan?.isPaid)}
                 renewalCaption={renewalCaption}
                 renewalLabel={renewalLabel}
+                renewalNote={renewalNote}
                 autoRenew={autoRenew}
                 paymentLabel={paymentLabel}
                 paymentSub={paymentSub}

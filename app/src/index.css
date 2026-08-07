@@ -626,4 +626,11 @@ fieldset:disabled *:not(label) {
   z-index: 9999;
 }
 
-
+/* ── Widget live preview - launcher pulse ring animation ──
+   Mirrors launcherPulse from widget/src/index.css exactly so the
+   PreviewLauncher in WidgetChatPreview.jsx renders identically to
+   the real widget launcher's "chat is open" pulse state. */
+@keyframes launcherPulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50%      { transform: scale(1.18); opacity: 0; }
+}

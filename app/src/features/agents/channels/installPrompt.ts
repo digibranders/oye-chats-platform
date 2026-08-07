@@ -78,72 +78,29 @@ export function buildInstallPrompt({
     ? platform.getSteps(botKey, env).map(renderStep).join('\n\n')
     : genericSteps(botKey, scriptUrl);
 
-  return `# Task: install the OyeChats AI chat widget on ${target}
+  return `# Task: Install OyeChats AI Chat Widget on ${target}
 
-You are working in the codebase for my website. Install the OyeChats chat widget so it loads on every page, verify it actually works, and change nothing else.
+Install the OyeChats chat widget so it loads on every page of the website.
 
-## What you are installing
+## Widget Snippet
+\`\`\`html
+<script src="${scriptUrl}" data-bot-key="${botKey}"></script>
+\`\`\`
 
-OyeChats is a hosted AI chat widget. It is **one script tag** - there is no npm package to add, no environment variable to set, and no backend work. The bundle finds its own \`<script>\` tag, reads \`data-bot-key\`, injects its own CSS, creates \`<div id="oyechats-widget-root">\`, and renders an isolated React app inside it. It runs in the browser only, so it is safe on server-rendered and statically generated pages.
+- **Bot Key:** \`${botKey}\` (Public identifier - safe to commit)
+- **Widget Script:** \`${scriptUrl}\`
+- **API Base:** \`${api}\`
 
-| | |
-|---|---|
-| Widget bundle | \`${scriptUrl}\` |
-| Bot key (public identifier - safe to commit) | \`${botKey}\` |
-| API base URL | \`${api}\` |
-| Platform | ${platform ? platform.name : 'detect from the repository'} |
-
-## Install steps${platform ? ` (${platform.name})` : ''}
+## Installation Steps${platform ? ` (${platform.name})` : ''}
 
 ${steps}
 
-## Rules
-
-- Load the widget **exactly once**, site-wide. Two copies render two launchers.
-- Load it from the URL above. Do not vendor, bundle, self-host, or proxy the file - it is versioned on our CDN and updates itself.
-- \`${botKey}\` is a **public** key, like a Google Analytics ID. Do not move it into a secret, a server-only env var, or a \`.env\` file that isn't shipped to the browser.
-- Do not restyle, wrap, or reposition the widget, and do not touch \`#oyechats-widget-root\`. Appearance is configured from my OyeChats dashboard.
-- If the site sends a \`Content-Security-Policy\`, it must allow \`script-src ${new URL(scriptUrl).origin}\`, \`connect-src ${api}\`, and inline styles for the injected stylesheet. If the CSP needs changing, make the minimal edit and tell me exactly what you changed.
-- Keep the change to the smallest possible diff. Do not upgrade dependencies or reformat unrelated files.
-
-## Verify with the API
-
-Run these from your shell. **Do not add an \`Origin\` or \`Referer\` header** - my dashboard detects a real install from the browser's own origin, and a forged one would mark the agent "installed" before it is.
-
-1. **Check the key is live** (free, no credits used):
-
-\`\`\`bash
-curl -sS -i "${api}/bots/settings/public" -H "X-Bot-Key: ${botKey}"
-\`\`\`
-
-   Expect \`200\` and a JSON body with the agent's display settings. A \`401\`/\`403\` means the key is wrong - stop and tell me.
-
-2. **Check the AI answers** (this consumes one message credit from my plan - run it **once**, do not loop):
-
-\`\`\`bash
-curl -sS -X POST "${api}/chat" \\
-  -H "X-Bot-Key: ${botKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"question":"What do you do?"}'
-\`\`\`
-
-   Expect \`200\` with an answer in the JSON body.
-
-3. **Check it renders.** Run the site locally (or open the deployed page) and confirm all of:
-   - the request to \`${scriptUrl}\` returns \`200\`
-   - \`document.getElementById('oyechats-widget-root')\` exists
-   - \`window.OYECHATS_BOT_KEY === '${botKey}'\`
-   - the launcher is visible in the bottom-right, opens on click, and replies to a message
-   - the browser console shows no errors prefixed \`[OyeChats]\`
-
-## If something is wrong
-
-- **\`401\`/\`403\` from the API** - the bot key is wrong or was truncated. Report it; do not guess another key.
-- **Script 404s** - the URL was altered. Restore it exactly as given above.
-- **Nothing renders and the console shows CSP violations** - apply the CSP allowances listed under Rules.
-- **Widget loads but every reply says we're away, or it never appears on the live domain** - that is account-side (subscription state, or domain restrictions that don't list this site's domain). Tell me the exact domain you tested on and stop; it is fixed in my dashboard, not in the code.
-
-## Done when
-
-The snippet is committed in the right place, all three verification checks above pass, and you have told me: which file(s) you changed, the domain you tested on, and the actual reply text the AI returned.`;
+## Guidelines
+1. **Load Site-wide:** Include the snippet once in the root layout or main template before \`</body>\`. Do not duplicate it.
+2. **Public Key:** \`${botKey}\` is safe to commit in client code.
+3. **No Local Bundling:** Do not vendor or npm install the bundle; load directly from \`${scriptUrl}\`.
+4. **Verification:**
+   - Public info probe: \`GET ${api}/bots/settings/public\` (H: X-Bot-Key: ${botKey})
+   - AI chat probe (consumes one message credit): \`POST ${api}/chat\` (H: X-Bot-Key: ${botKey}). Do not add an \`Origin\` or \`Referer\` header when testing via curl.
+5. **CSP Allowances (if CSP is active):** \`script-src ${new URL(scriptUrl).origin}\` and \`connect-src ${api}\`.`;
 }

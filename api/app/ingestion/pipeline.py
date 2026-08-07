@@ -21,6 +21,11 @@ from app.ingestion.youtube_metadata import (
     enrich_media_urls_with_channel_videos,
     enrich_media_urls_with_durations,
 )
+from app.services.knowledge_quota_service import (
+    KnowledgeQuotaExceeded,
+    check_kb_quota,
+    increment_kb_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +209,9 @@ def _ingest_document(
     # between re-crawls doesn't trigger re-ingest + re-billing. See
     # ``_normalize_for_dedup_hash`` for the patterns being stripped.
     file_hash = calculate_hash(_normalize_for_dedup_hash(cleaned_full_text))
+    # Per-account KB character quota. Measured on the *cleaned pre-chunk*
+    # text so PDF extraction artefacts and chunk-overlap don't eat the cap.
+    source_char_count = len(cleaned_full_text)
 
     with get_session() as session:
         already_processed = is_document_processed(session, client_id, file_hash, bot_id=bot_id)
@@ -211,6 +219,13 @@ def _ingest_document(
         if already_processed:
             logger.info(f"Skipping {source_name} (Already processed for client {client_id}, bot {bot_id})")
             return 0
+
+        # KB char quota gate — raises KnowledgeQuotaExceeded (mapped to 402
+        # at the route layer). Runs BEFORE chunking + embedding so we never
+        # burn embedding quota on content we can't accept. Takes a row-level
+        # lock on the client row so concurrent uploads race-safely against
+        # the same counter.
+        check_kb_quota(session, client_id, source_char_count)
 
         # 2. Chunk the SAME cleaned text we hashed (Preserves metadata)
         chunks = chunk_text(cleaned_pages_data, document_name=source_name)
@@ -254,7 +269,12 @@ def _ingest_document(
                 chunk_metadatas,
                 bot_id=bot_id,
                 source=source,
+                source_char_count=source_char_count,
             )
+            # Advance the per-account KB counter in the SAME TX as the insert
+            # so a rollback below unwinds both. Ordering (insert → increment)
+            # matches the delete path (delete → decrement) exactly.
+            increment_kb_usage(session, client_id, source_char_count)
             # 4a. Structured event extraction (Tier 2). Only meaningful for
             # crawled pages: uploaded PDFs/DOCX are almost never event
             # calendars, and the ``source_url`` we need as part of the
@@ -558,6 +578,7 @@ def batch_web_ingestion(
                 continue
 
             chunk_contents = [c.page_content for c in chunks]
+            page_source_chars = len(cleaned)
 
             # Optional: contextual enrichment before embedding (mirrors _ingest_document)
             if CHUNK_ENRICHMENT_ENABLED and chunk_contents:
@@ -577,6 +598,7 @@ def batch_web_ingestion(
                     "file_hash": file_hash,
                     "start_idx": len(all_chunk_contents),
                     "count": len(chunk_contents),
+                    "source_char_count": page_source_chars,
                 }
             )
 
@@ -622,11 +644,31 @@ def batch_web_ingestion(
             page_embeddings = all_embeddings[start : start + count]
             page_metas = all_chunk_metadatas[start : start + count]
 
+            page_source_chars = int(boundary.get("source_char_count", 0))
+
             try:
                 # Remove stale chunks for this URL before inserting fresh ones.
                 # Makes ingestion idempotent per-URL: content changes never
                 # produce duplicates; hash dedup still skips unchanged pages above.
+                # Re-ingest: the OLD source_char_count of this URL is about to
+                # disappear, so its contribution to the account counter needs to
+                # be reclaimed BEFORE the quota check — otherwise a re-crawl of
+                # the same URL would double-count itself and could 402 spuriously.
+                from app.services.knowledge_quota_service import chars_used_by_source
+
+                old_source_chars = chars_used_by_source(
+                    session, client_id=client_id, document_name=boundary["url"], bot_id=bot_id
+                )
                 delete_chunks_for_url(session, boundary["url"], bot_id=bot_id, client_id=client_id)
+                if old_source_chars:
+                    increment_kb_usage(session, client_id, -old_source_chars)
+
+                # Per-page KB char quota gate. Raises KnowledgeQuotaExceeded when
+                # a page would push the account past its cap — caught below,
+                # aborts the crawl same as InsufficientCredits so we don't burn
+                # embed quota on pages that can't be stored.
+                check_kb_quota(session, client_id, page_source_chars)
+
                 insert_documents(
                     session,
                     client_id,
@@ -637,7 +679,9 @@ def batch_web_ingestion(
                     page_metas,
                     bot_id=bot_id,
                     source="crawl",
+                    source_char_count=page_source_chars,
                 )
+                increment_kb_usage(session, client_id, page_source_chars)
                 # Atomic billing: deduct in the same TX as the chunk insert so
                 # we never end up with chunks-without-charge or charge-without-
                 # chunks if the worker dies between the two operations.
@@ -679,6 +723,20 @@ def batch_web_ingestion(
                     exc.available,
                 )
                 # Stop ingesting further pages — the user can't pay for them.
+                aborted = True
+                break
+            except KnowledgeQuotaExceeded as exc:
+                session.rollback()
+                logger.warning(
+                    "Crawl aborted at %s for client %s: knowledge base char limit "
+                    "reached (%d + %d > %d, plan=%s). Remaining pages skipped.",
+                    boundary["url"],
+                    client_id,
+                    exc.current,
+                    exc.attempted,
+                    exc.limit,
+                    exc.plan_slug,
+                )
                 aborted = True
                 break
             except credit_service.KillSwitchActive:

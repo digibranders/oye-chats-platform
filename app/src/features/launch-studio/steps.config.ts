@@ -1,7 +1,6 @@
 import {
   PartyPopper,
   Bot,
-  Globe,
   BookOpenCheck,
   MessagesSquare,
   Palette,
@@ -30,22 +29,28 @@ export interface LaunchStep {
 }
 
 /**
- * Launch Studio - the 8-step onboarding. Rebuilt from first principles; the
- * legacy 4-milestone Build Studio is a logic reference only. Opens with a
- * Welcome intro + explicit "Create Agent"; "Knowledge" is one state-driven step
- * that shows live training progress then becomes the source/page review. Users
- * complete this once, then it's gone - never navigation.
+ * Launch Studio - 7-step onboarding.
+ *
+ * Step merges vs. previous 9-step build:
+ *   Welcome + Plan Selection  → 'welcome'  (choose plan before building)
+ *   Connect Website + Knowledge → 'train'  (one URL-to-trained surface)
  */
 export const LAUNCH_STEPS: LaunchStep[] = [
-  { key: 'welcome', path: 'welcome', label: 'Welcome', hint: "Let's get you set up", icon: PartyPopper },
-  { key: 'create', path: 'create', label: 'Create Agent', hint: 'Name your AI Chatbot', icon: Bot },
-  { key: 'connect', path: 'connect', label: 'Connect Website', hint: 'Point us at your site', icon: Globe },
-  { key: 'knowledge', path: 'knowledge', label: 'Knowledge', hint: 'Train & review', icon: BookOpenCheck },
-  { key: 'test', path: 'test', label: 'Test Agent', hint: 'Try it yourself', icon: MessagesSquare },
-  { key: 'customize', path: 'customize', label: 'Customize Widget', hint: 'Make it yours', icon: Palette },
-  { key: 'deploy', path: 'deploy', label: 'Deploy', hint: 'Add it to your site', icon: Rocket },
-  { key: 'verify', path: 'verify', label: 'Verification', hint: "Confirm it's live", icon: BadgeCheck },
+  { key: 'welcome',  path: 'welcome',  label: 'Welcome',        hint: 'Get started & pick a plan', icon: PartyPopper   },
+  { key: 'create',   path: 'create',   label: 'Create Agent',   hint: 'Name your AI Chatbot',     icon: Bot           },
+  { key: 'train',    path: 'train',    label: 'Setup & Train',  hint: 'Connect website & teach AI',icon: BookOpenCheck  },
+  { key: 'test',     path: 'test',     label: 'Test Agent',     hint: 'Try it yourself',          icon: MessagesSquare},
+  { key: 'customize',path: 'customize',label: 'Customize Widget',hint: 'Make it yours',           icon: Palette       },
+  { key: 'deploy',   path: 'deploy',   label: 'Deploy',         hint: 'Add it to your site',     icon: Rocket        },
+  { key: 'verify',   path: 'verify',   label: 'Verification',   hint: "Confirm it's live",       icon: BadgeCheck    },
 ];
+
+/**
+ * The welcome step IS the plan-selection step (index 0).
+ * Used by LaunchStudio to know when to hide the live preview panel.
+ */
+export const PLAN_STEP_PATH = 'welcome';
+export const PLAN_STEP_INDEX = 0;
 
 export const LAUNCH_PROGRESS_KEY = 'oc_launch_max_step';
 

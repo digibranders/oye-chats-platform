@@ -1,5 +1,5 @@
 import { type ReactElement, type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { AlertCircle, Check, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Check, Lock, Plus, Trash2 } from 'lucide-react';
 import {
   Button,
   EmptyState,
@@ -13,6 +13,7 @@ import {
   cn,
 } from '../../../design-system';
 import { useAgent } from '../../../context/AgentContext';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getBot, updateBot } from '../../../services/api';
 import {
@@ -366,6 +367,7 @@ function TextField({
   onChange,
   placeholder,
   maxLength,
+  disabled,
 }: {
   label: string;
   hint?: string;
@@ -373,12 +375,20 @@ function TextField({
   onChange: (value: string) => void;
   placeholder: string;
   maxLength?: number;
+  disabled?: boolean;
 }): ReactElement {
   const id = useId();
   const hintId = useId();
   return (
     <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-[13px] font-medium text-[var(--ds-text)]">
+      <label
+        htmlFor={id}
+        className={cn(
+          'flex items-center gap-1.5 text-[13px] font-medium',
+          disabled ? 'text-[var(--ds-text-subtle)]' : 'text-[var(--ds-text)]',
+        )}
+      >
+        {disabled && <Lock size={11} strokeWidth={1.75} aria-hidden="true" />}
         {label}
       </label>
       <Input
@@ -386,6 +396,7 @@ function TextField({
         value={value}
         maxLength={maxLength}
         placeholder={placeholder}
+        disabled={disabled}
         aria-describedby={hint ? hintId : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -731,12 +742,36 @@ function WidgetCopyCard({
   onSave: () => void;
 }): ReactElement {
   const offlineId = useId();
+  const { hasFeature } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
+  const liveChatUnlocked = hasFeature('live_chat');
+
   return (
     <section className="space-y-5">
       <SectionHeader
         title="More widget copy"
         description="The remaining visitor-facing strings - the live-chat button, greeting bubble, offline banner and post-chat prompts."
       />
+      {!liveChatUnlocked && (
+        <button
+          type="button"
+          onClick={() => openUpgradeModal('live_chat')}
+          className="group flex w-full items-center gap-2.5 rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3.5 py-2.5 text-left transition-colors hover:border-[var(--ds-border-strong)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+        >
+          <Lock
+            size={13}
+            strokeWidth={1.75}
+            aria-hidden="true"
+            className="text-[var(--ds-text-subtle)]"
+          />
+          <span className="text-[12.5px] text-[var(--ds-text-muted)]">
+            Live-chat copy is available on Starter and up.
+          </span>
+          <span className="ml-auto text-[12.5px] font-medium text-[var(--ds-accent-text)] transition-colors group-hover:text-[var(--ds-accent)]">
+            Upgrade
+          </span>
+        </button>
+      )}
       <Card>
         <TextField
           label="Live-chat button label"
@@ -744,6 +779,7 @@ function WidgetCopyCard({
           value={value.liveChatLabel}
           placeholder={COPY_PLACEHOLDERS.liveChatLabel}
           maxLength={40}
+          disabled={!liveChatUnlocked}
           onChange={(liveChatLabel) => onChange((prev) => ({ ...prev, liveChatLabel }))}
         />
         <TextField
@@ -755,7 +791,14 @@ function WidgetCopyCard({
           onChange={(greetingMessage) => onChange((prev) => ({ ...prev, greetingMessage }))}
         />
         <div className="space-y-1.5">
-          <label htmlFor={offlineId} className="block text-[13px] font-medium text-[var(--ds-text)]">
+          <label
+            htmlFor={offlineId}
+            className={cn(
+              'flex items-center gap-1.5 text-[13px] font-medium',
+              liveChatUnlocked ? 'text-[var(--ds-text)]' : 'text-[var(--ds-text-subtle)]',
+            )}
+          >
+            {!liveChatUnlocked && <Lock size={11} strokeWidth={1.75} aria-hidden="true" />}
             Offline banner
           </label>
           <Textarea
@@ -764,6 +807,7 @@ function WidgetCopyCard({
             value={value.offlineMessage}
             maxLength={200}
             placeholder={COPY_PLACEHOLDERS.offlineMessage}
+            disabled={!liveChatUnlocked}
             onChange={(e) => onChange((prev) => ({ ...prev, offlineMessage: e.target.value }))}
           />
           <p className="text-[11px] text-[var(--ds-text-subtle)]">
@@ -778,6 +822,7 @@ function WidgetCopyCard({
           value={value.ratingPrompt}
           placeholder={COPY_PLACEHOLDERS.ratingPrompt}
           maxLength={120}
+          disabled={!liveChatUnlocked}
           onChange={(ratingPrompt) => onChange((prev) => ({ ...prev, ratingPrompt }))}
         />
         <TextField
@@ -786,6 +831,7 @@ function WidgetCopyCard({
           value={value.endChatLabel}
           placeholder={COPY_PLACEHOLDERS.endChatLabel}
           maxLength={40}
+          disabled={!liveChatUnlocked}
           onChange={(endChatLabel) => onChange((prev) => ({ ...prev, endChatLabel }))}
         />
 

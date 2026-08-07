@@ -18,6 +18,8 @@ export interface PlansPanelProps {
   trialEnd?: string | null;
   /** Active launch promotion - marks eligible cards "Free for N months". */
   promotion?: PromotionView | null;
+  /** When true (e.g. during onboarding), the current Free plan card CTA is enabled as 'Continue with Free'. */
+  allowSelectCurrent?: boolean;
 }
 
 /**
@@ -37,6 +39,7 @@ export function PlansPanel({
   currentStatus = null,
   trialEnd = null,
   promotion = null,
+  allowSelectCurrent = false,
 }: PlansPanelProps): ReactElement {
   const [compareOpen, setCompareOpen] = useState(false);
   const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
@@ -57,6 +60,7 @@ export function PlansPanel({
         currentStatus={currentStatus}
         trialEnd={trialEnd}
         promotion={promotion}
+        allowSelectCurrent={allowSelectCurrent}
       />
 
       {/* Full feature-by-feature breakdown, in-app and one click away. */}

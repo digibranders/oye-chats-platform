@@ -1381,12 +1381,15 @@ def get_my_operator_status(
     """
     with get_session() as session:
         if auth["type"] == "operator":
-            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+            operator = session.execute(
+                select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
+            ).scalar_one_or_none()
         else:
             client = auth["entity"]
             self_op_stmt = select(Operator).where(
                 Operator.client_id == client.id,
                 Operator.linked_client_id == client.id,
+                Operator.is_active.is_(True),
             )
             if bot_id is not None:
                 self_op_stmt = self_op_stmt.where(Operator.bot_id == bot_id)
@@ -1395,6 +1398,7 @@ def get_my_operator_status(
                 legacy_stmt = select(Operator).where(
                     Operator.client_id == client.id,
                     Operator.role == "owner",
+                    Operator.is_active.is_(True),
                 )
                 if bot_id is not None:
                     legacy_stmt = legacy_stmt.where(Operator.bot_id == bot_id)
@@ -1440,13 +1444,12 @@ async def set_operator_status(
 
     with get_session() as session:
         if auth["type"] == "operator":
-            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+            operator = session.execute(
+                select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
+            ).scalar_one_or_none()
             if not operator:
                 raise HTTPException(status_code=404, detail="Operator not found.")
             previously_online = operator.is_online
-            # Explicit set when the caller sent ``is_online``; otherwise pure
-            # toggle. A body that only carries ``bot_id`` for scoping still
-            # counts as a toggle — treat that identically to no body at all.
             explicit = request is not None and request.is_online is not None
             new_online = request.is_online if explicit else (not operator.is_online)
             operator.is_online = new_online
@@ -1455,25 +1458,12 @@ async def set_operator_status(
                 operator_id_to_release = operator.id
             response = {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
         else:
-            # Client: find the caller's operator row in this workspace, if any.
-            # Preference order:
-            #   1. A self-op row (linked_client_id == client.id) — the row
-            #      created by ``POST /me/self-operator``.
-            #   2. A legacy owner-role row (role == 'owner', linked_client_id
-            #      NULL) — created by earlier auto-provisioning paths before
-            #      the linked-identity model landed.
-            # When ``bot_id`` is supplied the lookup is further constrained to
-            # operator rows bound to THAT bot — a client with self-op rows on
-            # two different bots must not toggle the wrong one just because
-            # the sidebar was on the other.
-            # If neither branch finds an operator row, refuse (see 404 below)
-            # so the frontend can prompt the caller to explicitly self-add
-            # for the currently-selected bot.
             client = auth["entity"]
             target_bot_id = request.bot_id if request is not None else None
             self_op_stmt = select(Operator).where(
                 Operator.client_id == client.id,
                 Operator.linked_client_id == client.id,
+                Operator.is_active.is_(True),
             )
             if target_bot_id is not None:
                 self_op_stmt = self_op_stmt.where(Operator.bot_id == target_bot_id)
@@ -1482,6 +1472,7 @@ async def set_operator_status(
                 legacy_stmt = select(Operator).where(
                     Operator.client_id == client.id,
                     Operator.role == "owner",
+                    Operator.is_active.is_(True),
                 )
                 if target_bot_id is not None:
                     legacy_stmt = legacy_stmt.where(Operator.bot_id == target_bot_id)

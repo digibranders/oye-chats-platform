@@ -3,6 +3,7 @@ import { Sparkles } from 'lucide-react';
 import { LockedFeatureCard, PageContainer, Skeleton } from '../../design-system';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { JourneyOutcomes } from './JourneyOutcomes';
 import { PageInfluence } from './PageInfluence';
 import { UserJourneyFlow } from './UserJourneyFlow';
 
@@ -47,7 +48,10 @@ export function JourneyPage(): ReactElement {
       ) : (
         <div className="flex flex-col gap-6">
           <UserJourneyFlow botId={botId} />
-          <PageInfluence botId={botId} />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <PageInfluence botId={botId} />
+            <JourneyOutcomes botId={botId} />
+          </div>
         </div>
       )}
     </PageContainer>

@@ -65,6 +65,8 @@ export interface PlanCardsProps {
   trialEnd?: string | null;
   /** Active launch promotion - eligible cards lead with "Free", then the price. */
   promotion?: PromotionView | null;
+  /** When true (e.g. during onboarding), the current Free plan card CTA is enabled as 'Continue with Free'. */
+  allowSelectCurrent?: boolean;
 }
 
 /**
@@ -85,6 +87,7 @@ export function PlanCards({
   currentStatus = null,
   trialEnd = null,
   promotion = null,
+  allowSelectCurrent = false,
 }: PlanCardsProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -141,6 +144,8 @@ export function PlanCards({
         // CTA; a paid current plan is a disabled ghost; recommended = filled
         // primary; other upgrade = outline; downgrade = quiet ghost. An
         // enterprise tier always routes to sales rather than checkout.
+        const isCurrentFree = isCurrent && !plan.isPaid;
+
         const ctaVariant =
           isTrialingCurrent || isRecommended || promoApplies
             ? 'primary'
@@ -151,20 +156,21 @@ export function PlanCards({
                 : 'outline';
         const ctaLabel = isTrialingCurrent
           ? 'Subscribe & pay'
-          : isCurrent
-            ? 'Current plan'
-            : plan.isEnterprise
-              ? 'Contact sales'
-              : promoApplies && promotion
-                ? `Start ${formatFreeMonths(promotion.freeCycles)} free`
-                : isRecommended
-                  ? `Upgrade to ${plan.name}`
-                  : isDowngrade
-                    ? 'Downgrade'
-                    : 'Select';
-        // Only a genuinely-current PAID plan is a dead button; a trial can be
-        // activated from its own card.
-        const ctaDisabled = isCurrent && !isTrialingCurrent;
+          : isCurrentFree && allowSelectCurrent
+            ? 'Continue with Free'
+            : isCurrent
+              ? 'Current plan'
+              : plan.isEnterprise
+                ? 'Contact sales'
+                : promoApplies && promotion
+                  ? `Start ${formatFreeMonths(promotion.freeCycles)} free`
+                  : isRecommended
+                    ? `Upgrade to ${plan.name}`
+                    : isDowngrade
+                      ? 'Downgrade'
+                      : 'Select';
+        // Only a genuinely-current PAID plan (or non-selectable current Free) is a dead button
+        const ctaDisabled = isCurrent && !isTrialingCurrent && !(isCurrentFree && allowSelectCurrent);
 
         return (
           <div

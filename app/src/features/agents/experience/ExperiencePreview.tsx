@@ -1,7 +1,9 @@
-import { type ReactElement, useState } from 'react';
-import WidgetChatPreview, { type WidgetPreviewSettings } from '../../../components/WidgetChatPreview';
+import { type ReactElement, useState, useCallback, useRef } from 'react';
+import WidgetChatPreview, { type WidgetPreviewSettings, type WidgetPreviewMessage } from '../../../components/WidgetChatPreview';
 import { cn } from '../../../design-system';
 import { useEntitlements } from '../../../hooks/useEntitlements';
+import { useBotContext } from '../../../context/BotContext';
+import { previewChatStream } from '../../../services/api';
 import { type ExperienceDraft } from './types';
 
 export interface ExperiencePreviewProps {
@@ -31,12 +33,57 @@ const STATE_TABS: { key: PreviewState; label: string }[] = [
  */
 export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps): ReactElement {
   const [state, setState] = useState<PreviewState>('chat');
+  const [messages, setMessages] = useState<WidgetPreviewMessage[]>([]);
+  const [pending, setPending] = useState(false);
+  const sessionRef = useRef<string | null>(null);
+  const { selectedBot } = useBotContext();
   const { hasFeature } = useEntitlements();
+
   // Mirror the backend's widget /settings gate (bot_routes.py): the headphones
   // icon is plan-gated. On Free `hasFeature('live_chat')` is false so it
   // hides; on Starter+ it renders - exactly what visitors will see.
   const planIncludesLiveChat = hasFeature('live_chat');
   const suggestions = draft.quickActions.map((s) => s.trim()).filter((s) => s.length > 0);
+
+  const ask = useCallback(
+    (question: string) => {
+      const q = question.trim();
+      if (!q || !selectedBot) return;
+
+      if (!sessionRef.current) {
+        sessionRef.current = `preview-${Math.random().toString(36).slice(2)}`;
+      }
+
+      setMessages((prev) => [...prev, { role: 'user', text: q }]);
+      setPending(true);
+
+      void previewChatStream(selectedBot.id, q, sessionRef.current, {
+        onChunk: (text) =>
+          setMessages((prev) => {
+            const next = prev.slice();
+            const last = next[next.length - 1];
+            if (last && last.role === 'bot') {
+              next[next.length - 1] = { ...last, text: last.text + text };
+            } else {
+              next.push({ role: 'bot', text });
+            }
+            return next;
+          }),
+        onFinal: () => setPending(false),
+        onError: () =>
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'bot' && last.text) {
+              setPending(false);
+              return prev;
+            }
+            setPending(false);
+            return [...prev, { role: 'bot', text: 'Sorry, I couldn’t answer that just now.' }];
+          }),
+      });
+    },
+    [selectedBot],
+  );
 
   const settings: WidgetPreviewSettings = {
     bot_name: agentName,
@@ -44,6 +91,8 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
     avatar_type: draft.avatarType,
     orb_color: draft.orbColor,
     primary_color: draft.primaryColor,
+    user_message_color: draft.userBubbleColor,
+    user_bubble_color: draft.userBubbleColor,
     welcome_title: draft.welcomeGreeting,
     welcome_subtitle: draft.welcomeSubtitle,
     welcome_suggestions: suggestions,
@@ -83,8 +132,16 @@ export function ExperiencePreview({ draft, agentName }: ExperiencePreviewProps):
           );
         })}
       </div>
-      <WidgetChatPreview settings={settings} state={state} />
-      <p className="text-[11px] text-[var(--ds-text-subtle)]">Live preview - updates as you edit</p>
+      <WidgetChatPreview
+        settings={settings}
+        state={state}
+        messages={messages}
+        pending={pending}
+        onSend={selectedBot ? ask : undefined}
+      />
+      <p className="text-[11px] text-[var(--ds-text-subtle)]">
+        Live preview - test your bot & watch edits update in real time
+      </p>
     </div>
   );
 }
