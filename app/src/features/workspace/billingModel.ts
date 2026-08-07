@@ -103,6 +103,13 @@ export interface SubscriptionView {
   seats: number;
   trialEnd: string | null;
   currentPeriodEnd: string | null;
+  /**
+   * First-charge date while a promo's free period is running. Set only until
+   * the first `subscription.charged` webhook lands - at that point Razorpay
+   * populates `currentPeriodEnd` and this reverts to `null`, so the two are
+   * mutually exclusive in practice (see `getRenewalDisplay`).
+   */
+  promoFreeUntil: string | null;
   /** Post-trial grace deadline after which the workspace is deleted (trial_expired only). */
   dataRetentionUntil: string | null;
   paymentProvider: string | null;
@@ -254,6 +261,7 @@ export function buildSubscription(raw: unknown): SubscriptionView {
     seats: record ? toNumber(record.operator_quantity) : 0,
     trialEnd: record ? toOptionalText(record.trial_end) : null,
     currentPeriodEnd: record ? toOptionalText(record.current_period_end) : null,
+    promoFreeUntil: record ? toOptionalText(record.promo_free_until) : null,
     dataRetentionUntil: record ? toOptionalText(record.data_retention_until) : null,
     paymentProvider: record ? toOptionalText(record.payment_provider) : null,
     cancelAtPeriodEnd: record ? toBool(record.cancel_at_period_end) : false,
@@ -360,6 +368,37 @@ export function formatDate(iso: string | null | undefined): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+export interface RenewalDisplay {
+  caption: string;
+  label: string;
+}
+
+/**
+ * Caption + date for the Overview "renews" panel. A subscription redeemed on
+ * a launch promo has no `currentPeriodEnd` yet - Razorpay only starts a real
+ * billing cycle once the free period's deferred `start_at` triggers the first
+ * charge - so falling straight through to `currentPeriodEnd` left the panel
+ * blank ("Renews -") for every promo customer with no indication they were on
+ * a free month at all. Prefer `promoFreeUntil` whenever there's no period end
+ * yet, with its own "Free until" caption so it doesn't read as an existing
+ * paid cycle renewing.
+ */
+export function getRenewalDisplay(
+  subscription: Pick<SubscriptionView, 'trialEnd' | 'currentPeriodEnd' | 'promoFreeUntil'> | null | undefined,
+  pendingCancel: boolean
+): RenewalDisplay {
+  if (subscription?.trialEnd) {
+    return { caption: 'Trial ends', label: formatDate(subscription.trialEnd) };
+  }
+  if (!subscription?.currentPeriodEnd && subscription?.promoFreeUntil) {
+    return { caption: 'Free until', label: formatDate(subscription.promoFreeUntil) };
+  }
+  return {
+    caption: pendingCancel ? 'Plan ends' : 'Renews',
+    label: formatDate(subscription?.currentPeriodEnd ?? null),
+  };
 }
 
 export type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info';

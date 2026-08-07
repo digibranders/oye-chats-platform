@@ -12,6 +12,8 @@ export interface BillingOverviewProps {
   isPaid: boolean;
   renewalCaption: string;
   renewalLabel: string;
+  /** e.g. "then ₹1,399/month" - only set while renewalCaption is "Free until". */
+  renewalNote?: string | null;
   /** Derived from `!cancelAtPeriodEnd` - false when the plan is set to end. */
   autoRenew: boolean;
   paymentLabel: string;
@@ -50,6 +52,7 @@ export function BillingOverview({
   isPaid,
   renewalCaption,
   renewalLabel,
+  renewalNote = null,
   autoRenew,
   paymentLabel,
   paymentSub,
@@ -124,6 +127,7 @@ export function BillingOverview({
                 {renewalCaption}
               </p>
               <p className="mt-0.5 text-[15px] font-semibold text-[var(--ds-text)]">{renewalLabel}</p>
+              {renewalNote && <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">{renewalNote}</p>}
               {isPaid ? (
                 <div className="mt-1.5">
                   <StatusBadge tone={autoRenew ? 'success' : 'warning'} dot>
