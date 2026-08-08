@@ -276,6 +276,15 @@ export const submitMeetingBooked = async (sessionId, data = {}) => {
 
 export const requestHandoff = async (sessionId, formData) => {
     try {
+        // Await lead capture BEFORE handoff so that backend validation
+        // (like Reoon email checking) can block the handoff on failure.
+        if (formData.name || formData.email) {
+            await submitLeadCapture(sessionId, {
+                name: formData.name,
+                email: formData.email,
+            });
+        }
+
         const response = await fetch(`${API_URL}/operators/handoff`, {
             method: 'POST',
             headers: getHeaders(),
@@ -286,15 +295,6 @@ export const requestHandoff = async (sessionId, formData) => {
             }),
         });
         if (!response.ok) throw new Error('Handoff request failed');
-
-        // Save lead info fire-and-forget — handoff success should not
-        // depend on lead capture success.
-        if (formData.name || formData.email) {
-            submitLeadCapture(sessionId, {
-                name: formData.name,
-                email: formData.email,
-            }).catch(err => console.warn('[OyeChats] Lead capture failed (non-fatal):', err));
-        }
 
         return await response.json();
     } catch (error) {

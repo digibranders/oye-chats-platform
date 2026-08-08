@@ -391,16 +391,14 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
 
 
 def _enrich_lead_in_background(session_id: str, email: str | None):
-    """Background task to extract company domain and verify email safety."""
+    """Background task to extract company domain."""
     if not email:
         return
 
-    from app.db.models import EmailSuppression, LeadInfo
+    from app.db.models import LeadInfo
     from app.services.email_domain_service import extract_company_domain
-    from app.services.reoon_service import verify_email
 
     domain = extract_company_domain(email)
-    is_safe = verify_email(email)
 
     with get_session() as session:
         if domain:
@@ -410,18 +408,10 @@ def _enrich_lead_in_background(session_id: str, email: str | None):
                 if not lead.company:
                     lead.company = domain.split(".")[0].capitalize()
 
-        if is_safe is False:
-            suppression = EmailSuppression(email=email.strip().lower(), reason="reoon_verification_failed")
-            session.add(suppression)
-
         try:
             session.commit()
             if domain:
                 logger.info(f"Background lead enrichment | session={session_id} | domain={domain}")
-            if is_safe is False:
-                logger.warning(
-                    f"Background lead enrichment | session={session_id} | email suppressed due to Reoon failure"
-                )
         except Exception as e:
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
@@ -781,6 +771,13 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
     from app.services.plan_entitlements_service import is_lead_source_attribution_enabled_for_bot
+    from app.services.reoon_service import verify_email
+
+    if body.email:
+        reoon_result = verify_email(body.email)
+        if reoon_result is not None:
+            if reoon_result.get("is_safe_to_send") is False or reoon_result.get("status") == "invalid" or reoon_result.get("is_disposable") is True:
+                raise HTTPException(status_code=400, detail="Please enter a valid working email address.")
 
     try:
         with get_session() as session:
