@@ -35,6 +35,7 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
+from app.services.ip_intel_service import fetch_ip_intel
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -304,6 +305,18 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             # there is no meaningful visitor geolocation to resolve.
             return
 
+        ip_intel = fetch_ip_intel(ip_address)
+        if ip_intel:
+            for _ in range(5):
+                with get_session() as session:
+                    chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+                    if chat_session:
+                        chat_session.visitor_metadata = ip_intel
+                        session.commit()
+                        logger.info(f"IP intel resolved | session={session_id} | company={ip_intel.get('company')}")
+                        break
+                time.sleep(0.5)
+
         if not ip_address:
             return
 
@@ -375,6 +388,43 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
         logger.warning(f"Background geolocation: session row never appeared | session={session_id}")
     except Exception as e:
         logger.warning(f"Background geolocation failed for session {session_id}: {e}")
+
+
+def _enrich_lead_in_background(session_id: str, email: str | None):
+    """Background task to extract company domain and verify email safety."""
+    if not email:
+        return
+
+    from app.db.models import EmailSuppression, LeadInfo
+    from app.services.email_domain_service import extract_company_domain
+    from app.services.reoon_service import verify_email
+
+    domain = extract_company_domain(email)
+    is_safe = verify_email(email)
+
+    with get_session() as session:
+        if domain:
+            lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+            if lead:
+                lead.domain = domain
+                if not lead.company:
+                    lead.company = domain.split(".")[0].capitalize()
+
+        if is_safe is False:
+            suppression = EmailSuppression(email=email.strip().lower(), reason="reoon_verification_failed")
+            session.add(suppression)
+
+        try:
+            session.commit()
+            if domain:
+                logger.info(f"Background lead enrichment | session={session_id} | domain={domain}")
+            if is_safe is False:
+                logger.warning(
+                    f"Background lead enrichment | session={session_id} | email suppressed due to Reoon failure"
+                )
+        except Exception as e:
+            session.rollback()
+            logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
 
 
 _DEFAULT_OFFLINE_MESSAGE = "We're currently away. Please leave a message and we'll get back to you soon."
@@ -760,6 +810,11 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             )
             session.commit()
             logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={_redact_email(body.email)}")
+
+            # Fire background enrichment
+            from app.core.thread_pool import submit_background
+
+            submit_background(_enrich_lead_in_background, body.session_id, body.email)
             try:
                 from app.services.webhook_service import fire_webhook
 
