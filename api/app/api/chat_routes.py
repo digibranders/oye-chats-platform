@@ -775,9 +775,12 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
 
     if body.email:
         reoon_result = verify_email(body.email)
-        if reoon_result is not None:
-            if reoon_result.get("is_safe_to_send") is False or reoon_result.get("status") == "invalid" or reoon_result.get("is_disposable") is True:
-                raise HTTPException(status_code=400, detail="Please enter a valid working email address.")
+        if reoon_result is not None and (
+            reoon_result.get("is_safe_to_send") is False
+            or reoon_result.get("status") == "invalid"
+            or reoon_result.get("is_disposable") is True
+        ):
+            raise HTTPException(status_code=400, detail="Please enter a valid working email address.")
 
     try:
         with get_session() as session:

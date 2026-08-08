@@ -1,14 +1,16 @@
 from unittest.mock import patch
 
-from app.db.models import ChatSession, Bot, Client
 from app.api.chat_routes import _resolve_and_update_location
-from app.db.session import get_session
+from app.db.models import Bot, ChatSession, Client
+
 
 def test_resolve_and_update_location_writes_visitor_metadata(db):
     client = Client(id=1, email="test@example.com", name="Test Client", api_key="test-key")
     db.add(client)
     db.flush()
-    bot = Bot(id=1, client_id=1, bot_key="bot-test123abc", name="Test Bot", website="https://example.com", is_active=True)
+    bot = Bot(
+        id=1, client_id=1, bot_key="bot-test123abc", name="Test Bot", website="https://example.com", is_active=True
+    )
     db.add(bot)
     db.commit()
 
@@ -30,8 +32,10 @@ def test_resolve_and_update_location_writes_visitor_metadata(db):
     class MockSessionManager:
         def __init__(self, db):
             self.db = db
+
         def __enter__(self):
             return self.db
+
         def __exit__(self, *args):
             pass
 
