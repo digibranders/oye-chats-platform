@@ -170,7 +170,7 @@ def expo_push_subscribe(
         existing = session.execute(
             select(OperatorExpoPushToken).where(OperatorExpoPushToken.token == body.token)
         ).scalar_one_or_none()
-        
+
         if existing is not None:
             # Re-bind the endpoint to whichever account is logged in *now*.
             if is_operator:
