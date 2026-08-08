@@ -21,6 +21,7 @@ from app.services.plan_entitlements_service import (
     is_lead_intelligence_enabled,
     is_lead_source_attribution_enabled,
     is_leads_dashboard_enabled,
+    is_visitor_intelligence_enabled,
 )
 from app.services.unsubscribe_token import make_unsubscribe_token
 
@@ -131,6 +132,7 @@ def list_leads(
 
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
         intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
+        visitor_intelligence_enabled = is_visitor_intelligence_enabled(auth["client_id"], session)
 
         # Build leads with scores — filters are Python-computed (score/tier not in DB)
         leads = []
@@ -142,6 +144,7 @@ def list_leads(
                 bot=bot_map.get(chat_session.bot_id),
                 include_attribution=attribution_enabled,
                 include_intelligence=intelligence_enabled,
+                include_visitor_intelligence=visitor_intelligence_enabled,
             )
 
             # Apply filters (tier or legacy status param). Tier/score are part
@@ -486,6 +489,7 @@ def get_lead_detail(
         msg_count = len(messages)
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
         intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
+        visitor_intelligence_enabled = is_visitor_intelligence_enabled(auth["client_id"], session)
         lead = build_lead_response(
             chat_session,
             lead_info,
@@ -493,6 +497,7 @@ def get_lead_detail(
             bot=bot,
             include_attribution=attribution_enabled,
             include_intelligence=intelligence_enabled,
+            include_visitor_intelligence=visitor_intelligence_enabled,
         )
         lead["messages"] = [
             {
@@ -563,8 +568,8 @@ def send_manual_follow_up(
         if not chat_session:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        if not is_lead_intelligence_enabled(auth["client_id"], session):
-            raise HTTPException(status_code=403, detail="Lead Intelligence not enabled on your plan")
+        if not is_visitor_intelligence_enabled(auth["client_id"], session):
+            raise HTTPException(status_code=403, detail="Visitor Intelligence not enabled on your plan")
 
         lead_info = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
 
