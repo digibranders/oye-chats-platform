@@ -122,3 +122,19 @@ def test_lead_source_attribution_is_per_bot(db):
 
     assert ent.is_lead_source_attribution_enabled_for_bot(bot_std.id, db) is True
     assert ent.is_lead_source_attribution_enabled_for_bot(bot_starter.id, db) is False
+
+
+def test_email_validation_is_per_bot_standard_and_professional_only(db):
+    """Email validation keys on plan SLUG ({standard, professional}) — a
+    bot on Starter must not fire the paid Reoon check."""
+    client = _client(db, "emailval-perbot@e.com")
+    standard = _plan(db, "standard", price=94900, bant=True)
+    starter = _plan(db, "starter", price=44900, bant=False)
+    bot_std = _bot(db, client, "bot-emailval-std")
+    bot_starter = _bot(db, client, "bot-emailval-starter")
+    _sub(db, client, standard, bot_id=bot_std.id)
+    _sub(db, client, starter, bot_id=bot_starter.id)
+    db.flush()
+
+    assert ent.is_email_validation_enabled_for_bot(bot_std.id, db) is True
+    assert ent.is_email_validation_enabled_for_bot(bot_starter.id, db) is False

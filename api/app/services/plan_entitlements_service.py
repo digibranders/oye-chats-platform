@@ -515,6 +515,70 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
     return entitlements.plan_slug != "free"
 
 
+# ── Visitor intelligence gate ────────────────────────────────────────────────
+#
+# Visitor Intelligence is the IP-based company/threat signal
+# (``ChatSession.visitor_metadata``), the Reoon-validated email display
+# (``LeadInfo.is_valid_email`` / ``email_score``), and the manual "Send
+# Follow-up" action — all strictly Professional-only, narrower than the
+# general lead-intelligence layer (score/tier/BANT), which is Starter+.
+# Kept as its own frozenset (rather than reusing ``plan_slug != "free"``)
+# so a future plan tier change to lead intelligence can't silently loosen
+# this boundary too.
+VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional"})
+
+
+def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool:
+    """True iff this client's active plan includes Visitor Intelligence.
+
+    Gates: the company/IP-threat signal and validated-email fields on the
+    ``/leads`` responses, and the manual follow-up send endpoint. Denies
+    on any resolver error — same deny-by-default policy as every other
+    gate in this module.
+    """
+    try:
+        entitlements = get_entitlements(client_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "visitor_intelligence_gate: entitlements lookup failed for client=%s — denying",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
+
+
+# ── Real-time email validation gate (Standard + Professional) ───────────────
+#
+# The widget calls POST /chat/validate-email on the email field's blur event
+# to block obviously-fake addresses before a visitor can submit the handoff
+# or lead-capture form. This is a data-quality feature available one tier
+# below Visitor Intelligence — Standard and Professional both get it; Free
+# and Starter widgets skip the Reoon call entirely (not just hide its
+# result), so a lower-tier bot never pays for a check it can't act on.
+EMAIL_VALIDATION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
+
+
+def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot includes real-time email validation.
+
+    Bot-scoped (mirrors :func:`is_lead_source_attribution_enabled_for_bot`)
+    because the gated call sites — ``POST /chat/validate-email`` and the
+    background lead-enrichment Reoon check — are both authenticated via
+    ``X-Bot-Key``, not a client session. Denies on any resolver error.
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "email_validation_gate: entitlements lookup failed for bot=%s — denying",
+            bot_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in EMAIL_VALIDATION_SLUGS
+
+
 def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:
     """Days of chat history the client's active plan lets them see.
 
