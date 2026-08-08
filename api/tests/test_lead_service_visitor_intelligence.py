@@ -54,7 +54,9 @@ class TestVisitorIntelligenceFieldsDefaultOff:
         assert "visitor_metadata" not in payload
 
     def test_fields_absent_with_no_lead_info(self):
-        payload = build_lead_response(_session(visitor_metadata={"company": "Acme"}), None, include_visitor_intelligence=True)
+        payload = build_lead_response(
+            _session(visitor_metadata={"company": "Acme"}), None, include_visitor_intelligence=True
+        )
         # No lead_info at all — contact stays None, but the session-level
         # visitor_metadata signal is still surfaced (it exists independent
         # of whether the visitor ever submitted a form).
