@@ -25,11 +25,11 @@ from __future__ import annotations
 
 import json
 import logging
-import httpx
 from datetime import UTC, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 from sqlalchemy import delete, select
@@ -41,7 +41,7 @@ from app.config import (
     VAPID_PRIVATE_KEY_FILE,
     VAPID_SUBJECT,
 )
-from app.db.models import Operator, OperatorPushSubscription, OperatorExpoPushToken
+from app.db.models import Operator, OperatorExpoPushToken, OperatorPushSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ def _send_expo_pushes_to_rows(
     delivered = 0
     stale_ids = []
     now = datetime.now(UTC)
-    
+
     try:
         response = httpx.post("https://exp.host/--/api/v2/push/send", json=messages, timeout=10)
         # Expo returns a list of results corresponding to the messages array
@@ -240,10 +240,10 @@ def send_push_to_operator(
         .scalars()
         .all()
     )
-    
+
     web_delivered = _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
     expo_delivered = _send_expo_pushes_to_rows(session, expo_tokens, payload)
-    
+
     return web_delivered + expo_delivered
 
 
@@ -273,10 +273,10 @@ def send_push_to_client(
         .scalars()
         .all()
     )
-    
+
     web_delivered = _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
     expo_delivered = _send_expo_pushes_to_rows(session, expo_tokens, payload)
-    
+
     return web_delivered + expo_delivered
 
 
