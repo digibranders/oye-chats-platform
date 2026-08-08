@@ -1,42 +1,54 @@
+"""Public unsubscribe endpoint. No auth — reached via a signed link in a
+follow-up email, not the widget/API-key flow used elsewhere.
+
+The token is HMAC-signed (see ``app/services/unsubscribe_token.py``) so a
+bare ``email`` query param can't be used to suppress an arbitrary address
+for any bot.
+"""
+
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import EmailSuppression
 from app.db.session import get_session
+from app.services.unsubscribe_token import verify_unsubscribe_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
 
-class UnsubscribeRequest(BaseModel):
-    email: str
-
-
-def _do_unsubscribe(email: str):
+def _do_unsubscribe(bot_id: int, email: str, reason: str = "unsubscribe") -> None:
     email = email.strip().lower()
-    if not email:
-        return
     with get_session() as session:
-        suppression = EmailSuppression(email=email, reason="unsubscribe")
-        session.add(suppression)
+        existing = (
+            session.query(EmailSuppression)
+            .filter(EmailSuppression.bot_id == bot_id, EmailSuppression.email == email)
+            .first()
+        )
+        if existing:
+            return
         try:
+            session.add(EmailSuppression(bot_id=bot_id, email=email, reason=reason))
             session.commit()
-            logger.info(f"Unsubscribed email: {email}")
+            logger.info(f"Unsubscribed | bot={bot_id} | email={email[:3]}***")
         except IntegrityError:
-            session.rollback()
-            # Already unsubscribed
-            pass
+            session.rollback()  # race: another request inserted it first — fine, already suppressed
 
 
 @router.get("/unsubscribe")
-def unsubscribe_get(email: str = Query(..., description="Email to unsubscribe")):
+def unsubscribe_get(token: str = Query(..., description="Signed unsubscribe token from the email link")):
     """Handles direct clicks from email footers."""
-    _do_unsubscribe(email)
+    decoded = verify_unsubscribe_token(token)
+    if decoded is None:
+        raise HTTPException(status_code=400, detail="This unsubscribe link is invalid or has expired.")
+
+    bot_id, email = decoded
+    _do_unsubscribe(bot_id, email)
+
     html_content = f"""
     <html>
         <head>
@@ -56,7 +68,12 @@ def unsubscribe_get(email: str = Query(..., description="Email to unsubscribe"))
 
 
 @router.post("/unsubscribe")
-def unsubscribe_post(body: UnsubscribeRequest):
-    """API endpoint for frontend unsubscribe forms."""
-    _do_unsubscribe(body.email)
+def unsubscribe_post(token: str = Query(..., description="Signed unsubscribe token from the email link")):
+    """API endpoint for a JS-driven unsubscribe confirmation button."""
+    decoded = verify_unsubscribe_token(token)
+    if decoded is None:
+        raise HTTPException(status_code=400, detail="This unsubscribe link is invalid or has expired.")
+
+    bot_id, email = decoded
+    _do_unsubscribe(bot_id, email)
     return {"status": "success"}

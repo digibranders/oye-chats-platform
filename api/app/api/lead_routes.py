@@ -3,13 +3,15 @@
 import csv
 import io
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import desc, func, select, update
 
 from app.api.auth import get_current_client_or_operator
+from app.config import API_BASE_URL
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
 from app.services.email_design import esc, h1, p, shell
@@ -20,6 +22,7 @@ from app.services.plan_entitlements_service import (
     is_lead_source_attribution_enabled,
     is_leads_dashboard_enabled,
 )
+from app.services.unsubscribe_token import make_unsubscribe_token
 
 logger = logging.getLogger(__name__)
 
@@ -527,9 +530,29 @@ def get_lead_detail(
         return lead
 
 
+FOLLOWUP_COOLDOWN = timedelta(days=14)
+
+
+class SendFollowUpRequest(BaseModel):
+    confirm_override: bool = False
+
+
 @router.post("/{session_id}/follow-up")
-def send_manual_follow_up(session_id: str, auth: dict = Depends(get_current_client_or_operator)):
-    """Admin manually sends a follow-up email to a captured lead."""
+def send_manual_follow_up(
+    session_id: str,
+    body: SendFollowUpRequest | None = None,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Admin manually sends a follow-up email to a captured lead.
+
+    There is no automatic or timed send anywhere in this system — an
+    operator triggers this explicitly, but every gate below still runs at
+    click time (not just when deciding whether to show the button), so a
+    bad send stays structurally hard to make. See
+    docs/superpowers/plans/2026-08-08-visitor-intelligence.md §02.
+    """
+    confirm_override = bool(body and body.confirm_override)
+
     with get_session() as session:
         bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
 
@@ -540,50 +563,54 @@ def send_manual_follow_up(session_id: str, auth: dict = Depends(get_current_clie
         if not chat_session:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        # Gate 1: Plan enabled
         if not is_lead_intelligence_enabled(auth["client_id"], session):
             raise HTTPException(status_code=403, detail="Lead Intelligence not enabled on your plan")
 
         lead_info = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
 
-        if not lead_info or not lead_info.email:
-            raise HTTPException(status_code=400, detail="Lead has no email captured")
+        # Gate 1 — hard stop, no override. No email captured, or Reoon
+        # never confirmed it's safe to send (covers "not yet validated"
+        # and "flagged unsafe" identically — both mean don't send).
+        if not lead_info or not lead_info.email or lead_info.is_valid_email is not True:
+            raise HTTPException(status_code=400, detail="Lead is not eligible — no validated, safe-to-send email.")
 
-        # Gate 4: Already sent?
-        if lead_info.followup_sent:
-            raise HTTPException(status_code=400, detail="Follow-up already sent")
+        # Gate 2 — soft stop, operator can override.
+        if lead_info.last_followup_sent_at:
+            elapsed = datetime.now(UTC) - lead_info.last_followup_sent_at
+            if elapsed < FOLLOWUP_COOLDOWN and not confirm_override:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Already followed up {elapsed.days} day(s) ago. Resend with confirm_override to proceed."),
+                )
 
-        # Gate 2: Email suppressed
-        is_suppressed = session.execute(
-            select(EmailSuppression).where(EmailSuppression.email == lead_info.email.strip().lower())
-        ).scalar_one_or_none()
-        if is_suppressed:
-            raise HTTPException(status_code=403, detail="Email is suppressed (unsubscribed or invalid)")
-
-        # Gate 3: Enough messages?
-        messages = (
-            session.execute(
-                select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at)
+        # Gate 3 — hard stop, no override, ever. Scoped to THIS bot —
+        # unsubscribing from one company's follow-ups must never suppress
+        # a different, unrelated customer's bot from emailing the same address.
+        suppressed = session.execute(
+            select(EmailSuppression).where(
+                EmailSuppression.bot_id == chat_session.bot_id,
+                EmailSuppression.email == lead_info.email.strip().lower(),
             )
-            .scalars()
-            .all()
-        )
-        if len(messages) <= 1:
-            raise HTTPException(status_code=400, detail="Not enough messages in session to warrant follow-up")
+        ).scalar_one_or_none()
+        if suppressed:
+            raise HTTPException(status_code=403, detail="This email has unsubscribed — cannot send.")
 
-        # Action: Insert canned message
-        canned_msg = ChatMessage(
-            session_id=session_id, role="bot", content="[Manual Follow-Up Sent by Admin]", created_at=datetime.now(UTC)
-        )
-        session.add(canned_msg)
+        # Gate 4 — hard stop, no override.
+        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if bot and bot.followup_sending_paused:
+            raise HTTPException(status_code=423, detail="Sending is paused for this bot — contact ops.")
 
-        # Dispatch Email
+        unsubscribe_url = (
+            f"{API_BASE_URL}/leads/unsubscribe?token={make_unsubscribe_token(chat_session.bot_id, lead_info.email)}"
+        )
+
         subject = "Following up on your chat with us"
         safe_name = esc(lead_info.name) if lead_info.name else "there"
         inner = (
             h1(subject)
             + p(f"Hi {safe_name},")
             + p("We noticed you were chatting with our assistant. How can we help you further?")
+            + p(f'<a href="{esc(unsubscribe_url)}">Unsubscribe from future follow-ups</a>')
         )
         html_body = shell(subject=subject, preheader="Following up on your chat", inner=inner, visitor=True)
 
@@ -597,8 +624,9 @@ def send_manual_follow_up(session_id: str, auth: dict = Depends(get_current_clie
             logger.error(f"Failed to send follow up to {lead_info.email}: {e}")
             raise HTTPException(status_code=500, detail="Failed to send email") from e
 
-        # Update followup_sent
-        lead_info.followup_sent = True
+        lead_info.last_followup_sent_at = datetime.now(UTC)
+        lead_info.followup_sent_by_operator_id = auth.get("operator_id")
         session.commit()
 
-        return {"status": "success"}
+        logger.info(f"Follow-up sent | session={session_id} | operator={auth.get('operator_id')}")
+        return {"success": True}

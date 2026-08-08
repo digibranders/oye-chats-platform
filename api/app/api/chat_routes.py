@@ -222,6 +222,10 @@ class LeadCaptureRequest(PydanticBaseModel):
         return v
 
 
+class ValidateEmailRequest(PydanticBaseModel):
+    email: str
+
+
 class BehavioralSignalsRequest(PydanticBaseModel):
     session_id: str
     page_url: str | None = None
@@ -391,27 +395,43 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
 
 
 def _enrich_lead_in_background(session_id: str, email: str | None):
-    """Background task to extract company domain."""
+    """Fire-and-forget: free domain extraction + Reoon power-mode validation.
+
+    Two independent checks, not chained — the domain is free and always
+    attempted; validation determines is_valid_email/email_score but never
+    blocks the domain from being written, and neither one ever blocks lead
+    capture itself (that already succeeded before this was scheduled).
+    Power mode can take seconds to over a minute per Reoon's own docs —
+    that's fine here since nothing is waiting on this thread.
+    """
     if not email:
         return
 
     from app.db.models import LeadInfo
     from app.services.email_domain_service import extract_company_domain
+    from app.services.reoon_service import verify_email
 
     domain = extract_company_domain(email)
+    validation = verify_email(email)
 
     with get_session() as session:
+        lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+        if not lead:
+            logger.warning(f"Lead enrichment: LeadInfo row not found | session={session_id}")
+            return
+
         if domain:
-            lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
-            if lead:
-                lead.domain = domain
-                if not lead.company:
-                    lead.company = domain.split(".")[0].capitalize()
+            lead.company = domain
+        if validation:
+            lead.is_valid_email = validation.get("is_safe_to_send", False)
+            lead.email_score = validation.get("overall_score")
 
         try:
             session.commit()
-            if domain:
-                logger.info(f"Background lead enrichment | session={session_id} | domain={domain}")
+            logger.info(
+                f"Lead enriched | session={session_id} | domain={domain} | "
+                f"is_valid_email={validation.get('is_safe_to_send') if validation else 'unknown'}"
+            )
         except Exception as e:
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
@@ -766,21 +786,60 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 
 
+@router.post("/chat/validate-email")
+@limiter.limit("20/minute", key_func=key_from_bot_key)
+def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
+    """Real-time check the widget calls on email-field blur, before the
+    visitor can submit the handoff or offline-message form. Auth: X-Bot-Key.
+
+    Deliberately lenient: blocks only unambiguous junk (bad syntax,
+    disposable addresses, spamtraps, domains with no working mail server).
+    Catch-all and "unknown" results are let through — many real B2B
+    companies run catch-all mail gateways that Reoon can't confirm
+    deliverability on either way, and this endpoint's job is to keep fake
+    leads out, not to reject genuine visitors it can't fully verify. Fails
+    open (valid=True) if Reoon is unreachable or unconfigured — an infra
+    hiccup on our side must never block a real visitor from talking to a
+    human. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md.
+    """
+    email = body.email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        return {"valid": False, "reason": "Please enter a valid email address."}
+
+    from app.services.reoon_service import verify_email
+
+    validation = verify_email(email)
+    if validation is None:
+        return {"valid": True}
+
+    is_junk = (
+        not validation.get("is_valid_syntax", True)
+        or validation.get("is_disposable") is True
+        or validation.get("is_spamtrap") is True
+        or validation.get("status") == "invalid"
+        or validation.get("mx_accepts_mail") is False
+    )
+    if is_junk:
+        return {"valid": False, "reason": "This email address doesn't look right — mind double-checking it?"}
+    return {"valid": True}
+
+
 @router.post("/chat/lead-capture")
 @limiter.limit("10/minute", key_func=key_from_bot_key)
 def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot = Depends(get_current_bot)):
-    """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
-    from app.services.plan_entitlements_service import is_lead_source_attribution_enabled_for_bot
-    from app.services.reoon_service import verify_email
+    """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key.
 
-    if body.email:
-        reoon_result = verify_email(body.email)
-        if reoon_result is not None and (
-            reoon_result.get("is_safe_to_send") is False
-            or reoon_result.get("status") == "invalid"
-            or reoon_result.get("is_disposable") is True
-        ):
-            raise HTTPException(status_code=400, detail="Please enter a valid working email address.")
+    Email validation (Reoon) runs entirely in the background via
+    ``_enrich_lead_in_background`` — never here. Reoon's power mode can take
+    seconds to over a minute; blocking this endpoint on it would hang the
+    visitor's live chat request. A possibly-invalid email is still captured:
+    Reoon has known false positives (confirmed empirically — see
+    docs/superpowers/plans/2026-08-08-visitor-intelligence.md §04), so
+    hard-rejecting a lead the visitor is actively submitting risks losing a
+    real one. The validation result instead gates the *manual* follow-up
+    send later (Gate 1 in ``lead_routes.send_manual_follow_up``).
+    """
+    from app.services.plan_entitlements_service import is_lead_source_attribution_enabled_for_bot
 
     try:
         with get_session() as session:

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent } from '../services/api';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback, markChatEvent, validateEmail as checkEmailWithServer } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -282,6 +282,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [offlineSubmitting, setOfflineSubmitting] = useState(false);
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
     const [offlineError, setOfflineError] = useState(false);
+    // Real-time email check on blur — 'idle' | 'checking' | 'valid' | 'invalid'.
+    const [offlineEmailCheckState, setOfflineEmailCheckState] = useState('idle');
+    const [offlineEmailError, setOfflineEmailError] = useState('');
+    const offlineEmailCheckPromiseRef = useRef(null);
+    const offlineLastCheckedEmailRef = useRef('');
 
     // WS function handles exposed by LiveChatMode via onWsReady
     const wsSendRef = useRef(null);
@@ -1811,8 +1816,69 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // ── Offline message submit ───────────────────────────────────────────────────
+    const offlineLooksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+    // Fires on blur — validation runs in the background while the visitor
+    // fills in the remaining fields, same pattern as HandoffForm.
+    const handleOfflineEmailBlur = () => {
+        const email = offlineForm.email.trim();
+        if (!email || email === offlineLastCheckedEmailRef.current) return;
+        if (!offlineLooksLikeEmail(email)) {
+            setOfflineEmailCheckState('invalid');
+            setOfflineEmailError('Please enter a valid email address.');
+            return;
+        }
+
+        offlineLastCheckedEmailRef.current = email;
+        setOfflineEmailCheckState('checking');
+        const promise = checkEmailWithServer(email).then((result) => {
+            if (offlineLastCheckedEmailRef.current !== email) return result;
+            if (result.valid) {
+                setOfflineEmailCheckState('valid');
+                setOfflineEmailError('');
+            } else {
+                setOfflineEmailCheckState('invalid');
+                setOfflineEmailError(result.reason || 'Please enter a valid email address.');
+            }
+            return result;
+        });
+        offlineEmailCheckPromiseRef.current = promise;
+    };
+
     const handleOfflineSubmit = async (e) => {
         e.preventDefault();
+
+        // Skip the check entirely when the email is already known/trusted
+        // from an earlier step (compact form never even shows this input) —
+        // only a freshly-typed email in the full form needs validating.
+        const hasKnownEmail = Boolean(
+            liveChatState?.capturedEmail?.trim() || existingLeadInfo?.email?.trim()
+        );
+        if (!hasKnownEmail) {
+            const email = offlineForm.email.trim();
+            if (!offlineLooksLikeEmail(email)) {
+                setOfflineEmailCheckState('invalid');
+                setOfflineEmailError('Please enter a valid email address.');
+                return;
+            }
+            if (offlineEmailCheckState === 'checking' && offlineEmailCheckPromiseRef.current) {
+                const result = await offlineEmailCheckPromiseRef.current;
+                if (!result.valid) return;
+            } else if (offlineEmailCheckState === 'invalid') {
+                return;
+            } else if (offlineEmailCheckState === 'idle') {
+                setOfflineEmailCheckState('checking');
+                const result = await checkEmailWithServer(email);
+                if (!result.valid) {
+                    setOfflineEmailCheckState('invalid');
+                    setOfflineEmailError(result.reason || 'Please enter a valid email address.');
+                    return;
+                }
+                setOfflineEmailCheckState('valid');
+            }
+        }
+        setOfflineEmailError('');
+
         setOfflineSubmitting(true);
         try {
             // Build the chat transcript from rendered messages so the responding
@@ -2614,16 +2680,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 </div>
                                 <p className="text-[12px] text-gray-500 mb-3">We&apos;ll get back to you as soon as we can.</p>
                                 <form onSubmit={handleOfflineSubmit} className="space-y-2">
+                                    <div>
+                                        <div className={`flex items-center gap-2 rounded-xl border bg-gray-50/50 px-3 py-2 ${offlineEmailError ? 'border-red-300' : 'border-gray-200'}`}>
+                                            <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                            <input type="email" placeholder="Email address" required value={offlineForm.email}
+                                                onChange={(e) => {
+                                                    setOfflineForm(p => ({ ...p, email: e.target.value }));
+                                                    if (offlineEmailError) setOfflineEmailError('');
+                                                    setOfflineEmailCheckState('idle');
+                                                }}
+                                                onBlur={handleOfflineEmailBlur}
+                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                            {offlineEmailCheckState === 'checking' && (
+                                                <div className="w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin flex-shrink-0" />
+                                            )}
+                                        </div>
+                                        {offlineEmailError && (
+                                            <p className="mt-0.5 ml-1 text-[11px] text-red-500">{offlineEmailError}</p>
+                                        )}
+                                    </div>
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                                         <input type="text" placeholder="Your name" required value={offlineForm.name}
                                             onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
-                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                    </div>
-                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                        <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="email" placeholder="Email address" required value={offlineForm.email}
-                                            onChange={(e) => setOfflineForm(p => ({ ...p, email: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
                                     </div>
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
@@ -2638,7 +2717,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                             onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
                                             className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
                                     </div>
-                                    <button type="submit" disabled={offlineSubmitting}
+                                    <button type="submit" disabled={offlineSubmitting || offlineEmailCheckState === 'invalid'}
                                         className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
                                         style={{ backgroundColor: primary }}>
                                         {offlineSubmitting

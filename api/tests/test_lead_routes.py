@@ -9,9 +9,9 @@ Covers the "unread leads" contract that backs the sidebar badge:
 """
 
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -50,6 +50,15 @@ def _client_auth(client_id: int = 1) -> dict:
         "entity": SimpleNamespace(id=client_id),
         "client_id": client_id,
         "operator_id": None,
+    }
+
+
+def _operator_auth(client_id: int = 1, operator_id: int = 7) -> dict:
+    return {
+        "type": "operator",
+        "entity": SimpleNamespace(id=operator_id),
+        "client_id": client_id,
+        "operator_id": operator_id,
     }
 
 
@@ -521,3 +530,189 @@ class TestBuildLeadResponseUnread:
 
         assert payload["unread"] is False
         assert payload["lead_viewed_at"] == viewed_at.isoformat()
+
+
+# ── Manual follow-up (the four gates) ────────────────────────────────────────
+#
+# There is no automatic or timed send anywhere in this system — an operator
+# triggers this from the Admin Panel, and every gate below runs at click
+# time. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md §02.
+
+
+def _lead_info(**overrides):
+    base = dict(
+        email="gaurav@fynix.digital",
+        name="Gaurav",
+        company="fynix.digital",
+        is_valid_email=True,
+        last_followup_sent_at=None,
+        followup_sent_by_operator_id=None,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _chat_session_row(bot_id: int = 1):
+    return SimpleNamespace(id="lead-1", bot_id=bot_id)
+
+
+def _bot_row(bot_id: int = 1, followup_sending_paused: bool = False):
+    return SimpleNamespace(id=bot_id, followup_sending_paused=followup_sending_paused)
+
+
+class TestSendManualFollowUp:
+    def test_gate1_blocks_when_no_lead_info(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], _chat_session_row(), None)
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 400
+        assert "not eligible" in response.json()["detail"].lower()
+        mock_send.assert_not_called()
+
+    def test_gate1_blocks_when_email_not_validated_safe(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], _chat_session_row(), _lead_info(is_valid_email=False))
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 400
+        mock_send.assert_not_called()
+
+    def test_gate1_blocks_when_email_never_validated(self, monkeypatch):
+        """None (still validating / Reoon never ran) must be treated the
+        same as "unsafe" — never as "safe by default"."""
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], _chat_session_row(), _lead_info(is_valid_email=None))
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 400
+        mock_send.assert_not_called()
+
+    def test_gate2_blocks_recent_followup_without_override(self, monkeypatch):
+        from app.api import lead_routes
+
+        recent = datetime.now(UTC) - timedelta(days=1)
+        session = MagicMock()
+        _install_scalars_chain(session, [1], _chat_session_row(), _lead_info(last_followup_sent_at=recent))
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 409
+        mock_send.assert_not_called()
+
+    def test_gate2_allows_override_past_cooldown(self, monkeypatch):
+        from app.api import lead_routes
+
+        recent = datetime.now(UTC) - timedelta(days=1)
+        session = MagicMock()
+        _install_scalars_chain(
+            session,
+            [1],
+            _chat_session_row(),
+            _lead_info(last_followup_sent_at=recent),
+            None,  # not suppressed
+            _bot_row(),  # not paused
+        )
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post(
+                "/leads/lead-1/follow-up", json={"confirm_override": True}
+            )
+
+        assert response.status_code == 200
+        mock_send.assert_called_once()
+
+    def test_gate3_blocks_suppressed_email_with_no_override(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(
+            session,
+            [1],
+            _chat_session_row(),
+            _lead_info(),
+            SimpleNamespace(bot_id=1, email="gaurav@fynix.digital"),  # suppressed row found
+        )
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 403
+        assert "unsubscribed" in response.json()["detail"].lower()
+        mock_send.assert_not_called()
+
+    def test_gate4_blocks_when_bot_paused(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(
+            session,
+            [1],
+            _chat_session_row(),
+            _lead_info(),
+            None,  # not suppressed
+            _bot_row(followup_sending_paused=True),
+        )
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 423
+        assert "paused" in response.json()["detail"].lower()
+        mock_send.assert_not_called()
+
+    def test_all_gates_pass_sends_and_records_operator_and_timestamp(self, monkeypatch):
+        from app.api import lead_routes
+
+        lead = _lead_info()
+        session = MagicMock()
+        _install_scalars_chain(
+            session,
+            [1],
+            _chat_session_row(),
+            lead,
+            None,  # not suppressed
+            _bot_row(),  # not paused
+        )
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_operator_auth(operator_id=7))).post(
+                "/leads/lead-1/follow-up"
+            )
+
+        assert response.status_code == 200
+        mock_send.assert_called_once()
+        assert lead.last_followup_sent_at is not None
+        assert lead.followup_sent_by_operator_id == 7
+
+    def test_lead_not_found_returns_404(self, monkeypatch):
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], None)
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 404

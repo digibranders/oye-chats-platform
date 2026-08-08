@@ -24,6 +24,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
+import Markdown from 'react-markdown';
 import { Button, StatusBadge, cn } from '../../design-system';
 import type { CannedResponse } from '../../types/domain';
 import type { ActiveChat, OperatorMessage, VisitorPresence } from './liveChatProtocol';
@@ -164,7 +165,9 @@ function MessageBubble({
             {message.filename ?? 'Attachment'}
           </a>
         ) : (
-          <span className="whitespace-pre-wrap break-words">{message.content}</span>
+          <div className="[&>p]:my-0 [&>p]:empty:hidden break-words whitespace-pre-wrap">
+            <Markdown>{message.content}</Markdown>
+          </div>
         )}
       </div>
       {message.timestamp && (

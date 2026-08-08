@@ -234,6 +234,29 @@ export const submitFeedback = async (messageId, feedbackValue) => {
     }
 };
 
+/**
+ * Real-time check called on email-field blur, before the visitor can
+ * submit the handoff or offline-message form. Fails open ({valid: true})
+ * on any network/HTTP error — an outage on our side must never block a
+ * real visitor from talking to a human. See
+ * api/app/api/chat_routes.py validate_email_endpoint for the server-side
+ * (lenient) blocking rule.
+ */
+export const validateEmail = async (email) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/validate-email`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ email }),
+        });
+        if (!response.ok) return { valid: true };
+        return await response.json();
+    } catch (error) {
+        console.warn('[OyeChats] Email validation check failed (failing open):', error);
+        return { valid: true };
+    }
+};
+
 export const submitLeadCapture = async (sessionId, formData) => {
     try {
         const response = await fetch(`${API_URL}/chat/lead-capture`, {
@@ -276,15 +299,6 @@ export const submitMeetingBooked = async (sessionId, data = {}) => {
 
 export const requestHandoff = async (sessionId, formData) => {
     try {
-        // Await lead capture BEFORE handoff so that backend validation
-        // (like Reoon email checking) can block the handoff on failure.
-        if (formData.name || formData.email) {
-            await submitLeadCapture(sessionId, {
-                name: formData.name,
-                email: formData.email,
-            });
-        }
-
         const response = await fetch(`${API_URL}/operators/handoff`, {
             method: 'POST',
             headers: getHeaders(),
@@ -295,6 +309,17 @@ export const requestHandoff = async (sessionId, formData) => {
             }),
         });
         if (!response.ok) throw new Error('Handoff request failed');
+
+        // Save lead info fire-and-forget — handoff success should not
+        // depend on lead capture success, and email validation (Reoon)
+        // runs entirely server-side in the background, never blocking
+        // this request. See api/app/api/chat_routes.py lead_capture_endpoint.
+        if (formData.name || formData.email) {
+            submitLeadCapture(sessionId, {
+                name: formData.name,
+                email: formData.email,
+            }).catch(err => console.warn('[OyeChats] Lead capture failed (non-fatal):', err));
+        }
 
         return await response.json();
     } catch (error) {

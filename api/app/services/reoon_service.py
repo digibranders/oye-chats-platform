@@ -46,4 +46,7 @@ def verify_email(email: str) -> dict | None:
         "is_safe_to_send": data.get("is_safe_to_send", False),
         "is_disposable": data.get("is_disposable", False),
         "is_deliverable": data.get("is_deliverable", False),
+        "is_valid_syntax": data.get("is_valid_syntax", True),
+        "is_spamtrap": data.get("is_spamtrap", False),
+        "mx_accepts_mail": data.get("mx_accepts_mail", True),
     }
