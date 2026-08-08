@@ -298,3 +298,57 @@ def exchange_code_for_profile(code: str) -> GoogleProfile:
         name=(claims.get("name") or "").strip() or None,
         picture=claims.get("picture") or None,
     )
+
+
+def verify_id_token(id_token: str) -> GoogleProfile:
+    """Verify an ID token directly and return the profile.
+
+    This is used by the mobile native SDK login flow, which fetches the
+    id_token directly from Google instead of using the auth code flow.
+    """
+    if not GOOGLE_OAUTH_CLIENT_ID:
+        raise OAuthError("Google OAuth is not configured on the server.")
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            info_resp = client.get(GOOGLE_TOKENINFO_URL, params={"id_token": id_token})
+    except httpx.RequestError as exc:
+        logger.warning("google_oauth_tokeninfo_network_error: %s", exc)
+        raise OAuthError("Could not verify your Google sign-in. Please try again.") from exc
+
+    if info_resp.status_code != 200:
+        logger.warning(
+            "google_oauth_tokeninfo_failed status=%s body=%s",
+            info_resp.status_code,
+            info_resp.text[:300],
+        )
+        raise OAuthError("Google could not verify the sign-in token.")
+
+    claims = info_resp.json()
+
+    if claims.get("aud") != GOOGLE_OAUTH_CLIENT_ID:
+        logger.warning(
+            "google_oauth_audience_mismatch expected=%s actual=%s",
+            GOOGLE_OAUTH_CLIENT_ID,
+            claims.get("aud"),
+        )
+        raise OAuthError("Google sign-in token was issued for a different application.")
+
+    subject = claims.get("sub")
+    email = (claims.get("email") or "").strip().lower()
+    if not subject or not email:
+        raise OAuthError("Google did not return enough profile information to sign you in.")
+
+    email_verified_raw = claims.get("email_verified")
+    if isinstance(email_verified_raw, bool):
+        email_verified = email_verified_raw
+    else:
+        email_verified = str(email_verified_raw).lower() == "true"
+
+    return GoogleProfile(
+        subject=str(subject),
+        email=email,
+        email_verified=email_verified,
+        name=(claims.get("name") or "").strip() or None,
+        picture=claims.get("picture") or None,
+    )

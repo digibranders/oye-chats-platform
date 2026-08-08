@@ -10,8 +10,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select, update
 
 from app.api.auth import get_current_client_or_operator
-from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, LeadInfo
+from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
+from app.services.email_design import esc, h1, p, shell
+from app.services.email_service import send_email_async
 from app.services.lead_service import build_lead_response
 from app.services.plan_entitlements_service import (
     is_lead_intelligence_enabled,
@@ -523,3 +525,80 @@ def get_lead_detail(
             ]
 
         return lead
+
+
+@router.post("/{session_id}/follow-up")
+def send_manual_follow_up(session_id: str, auth: dict = Depends(get_current_client_or_operator)):
+    """Admin manually sends a follow-up email to a captured lead."""
+    with get_session() as session:
+        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+
+        chat_session = session.execute(
+            select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id.in_(bot_ids))
+        ).scalar_one_or_none()
+
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        # Gate 1: Plan enabled
+        if not is_lead_intelligence_enabled(auth["client_id"], session):
+            raise HTTPException(status_code=403, detail="Lead Intelligence not enabled on your plan")
+
+        lead_info = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
+
+        if not lead_info or not lead_info.email:
+            raise HTTPException(status_code=400, detail="Lead has no email captured")
+
+        # Gate 4: Already sent?
+        if lead_info.followup_sent:
+            raise HTTPException(status_code=400, detail="Follow-up already sent")
+
+        # Gate 2: Email suppressed
+        is_suppressed = session.execute(
+            select(EmailSuppression).where(EmailSuppression.email == lead_info.email.strip().lower())
+        ).scalar_one_or_none()
+        if is_suppressed:
+            raise HTTPException(status_code=403, detail="Email is suppressed (unsubscribed or invalid)")
+
+        # Gate 3: Enough messages?
+        messages = (
+            session.execute(
+                select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at)
+            )
+            .scalars()
+            .all()
+        )
+        if len(messages) <= 1:
+            raise HTTPException(status_code=400, detail="Not enough messages in session to warrant follow-up")
+
+        # Action: Insert canned message
+        canned_msg = ChatMessage(
+            session_id=session_id, role="bot", content="[Manual Follow-Up Sent by Admin]", created_at=datetime.now(UTC)
+        )
+        session.add(canned_msg)
+
+        # Dispatch Email
+        subject = "Following up on your chat with us"
+        safe_name = esc(lead_info.name) if lead_info.name else "there"
+        inner = (
+            h1(subject)
+            + p(f"Hi {safe_name},")
+            + p("We noticed you were chatting with our assistant. How can we help you further?")
+        )
+        html_body = shell(subject=subject, preheader="Following up on your chat", inner=inner, visitor=True)
+
+        try:
+            send_email_async(
+                to_email=lead_info.email,
+                subject=subject,
+                html_body=html_body,
+            )
+        except Exception as e:
+            logger.error(f"Failed to send follow up to {lead_info.email}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to send email") from e
+
+        # Update followup_sent
+        lead_info.followup_sent = True
+        session.commit()
+
+        return {"status": "success"}

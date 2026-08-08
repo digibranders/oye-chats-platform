@@ -52,6 +52,7 @@ from app.api.superadmin_plan_routes import router as superadmin_plan_router
 from app.api.superadmin_promotion_routes import router as superadmin_promotion_router
 from app.api.superadmin_routes import router as superadmin_router
 from app.api.superadmin_routes_v2 import router as superadmin_v2_router
+from app.api.unsubscribe_routes import router as unsubscribe_router
 from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
@@ -148,6 +149,7 @@ app.include_router(bot_router)
 app.include_router(chat_router)
 app.include_router(document_router)
 app.include_router(analytics_router)
+app.include_router(unsubscribe_router)
 app.include_router(lead_router)
 app.include_router(operator_router)
 app.include_router(push_router)

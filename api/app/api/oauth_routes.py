@@ -30,6 +30,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.config import (
@@ -47,6 +48,7 @@ from app.services.oauth_service import (
     build_authorize_url,
     exchange_code_for_profile,
     issue_state_token,
+    verify_id_token,
     verify_state_token,
 )
 
@@ -299,6 +301,52 @@ def google_callback(
         is_superadmin=bool(client.is_superadmin),
         client_target=client_target,
     )
+
+
+class IdTokenRequest(BaseModel):
+    id_token: str
+
+
+@router.post("/id-token")
+@limiter.limit("30/minute")
+def google_id_token_login(request: Request, payload: IdTokenRequest):
+    """Handle native mobile Google Sign-In using an id_token directly.
+
+    The mobile app uses the native Google Sign-In SDK to fetch an id_token
+    and POSTs it here. We verify the token signature and exchange it for a
+    profile, then create or return the API key in a JSON response.
+    """
+    if not GOOGLE_OAUTH_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is not configured on this server.",
+        )
+
+    try:
+        profile = verify_id_token(payload.id_token)
+    except OAuthError as exc:
+        logger.warning("google_oauth_id_token_verification_failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if not profile.email_verified:
+        logger.info("google_oauth_email_unverified email=%s", profile.email)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your Google email address is unverified.",
+        )
+
+    try:
+        client, is_new = _resolve_client_for_profile(profile, resolve_country(request))
+    except _DuplicatePasswordAccount as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account with this email already exists and uses a password. Please sign in with your password.",
+        ) from exc
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.exception("google_oauth_resolve_failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error.") from exc
+
+    return {"api_key": client.api_key, "is_new": is_new, "is_superadmin": bool(client.is_superadmin)}
 
 
 # ── account resolution ─────────────────────────────────────────────────

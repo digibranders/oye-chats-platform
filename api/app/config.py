@@ -189,6 +189,7 @@ MARKETING_URL = os.getenv("MARKETING_URL", "https://www.oyechats.com").rstrip("/
 # Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
 # Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
 APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 # Address users should reach out to for help. Different from EMAIL_FROM_ADDRESS,
 # which is the no-reply sender. SUPPORT_EMAIL is what appears in "Contact us".
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@oyechats.com")

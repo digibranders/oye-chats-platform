@@ -281,6 +281,8 @@ class Bot(Base):
     # once during the Build Studio Prove step; null = not computed yet, [] =
     # computed but nothing passed verification (show only the open input).
     seed_questions = Column(JSONB, nullable=True)
+
+    followup_sending_paused = Column(Boolean, default=False, server_default="false")
     # Durable per-bot ingestion ("trained") state. Lets the frontend read a
     # persistent fact instead of racing the ephemeral, client-scoped
     # /crawl/progress toast (which CrawlContext clears a few seconds after
@@ -584,6 +586,12 @@ class LeadInfo(Base):
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     company = Column(String, nullable=True)
+
+    metadata_json = Column(JSONB, nullable=True)
+    suppression_reason = Column(String, nullable=True)
+    is_b2b = Column(Boolean, nullable=True)
+    is_valid_email = Column(Boolean, nullable=True)
+    email_score = Column(Integer, nullable=True)
 
     # Durable source attribution — snapshot of the parent session's UTM +
     # visitor journey at the moment this lead was captured. Kept on the
@@ -2542,3 +2550,11 @@ class Event(Base):
     )
 
     bot = relationship("Bot", back_populates="events")
+
+
+class EmailSuppression(Base):
+    __tablename__ = "email_suppressions"
+    id = Column(Integer, primary_key=True)
+    email = Column(String, unique=True, index=True)
+    reason = Column(String)  # 'hard_bounce', 'unsubscribe', 'spam_complaint'
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

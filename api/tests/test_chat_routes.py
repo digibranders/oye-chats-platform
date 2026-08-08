@@ -143,6 +143,10 @@ class TestLeadCapture:
             patch("app.api.chat_routes.ensure_chat_session"),
             patch("app.api.chat_routes.create_or_update_lead_info"),
             patch("app.services.webhook_service.fire_webhook"),
+            patch(
+                "app.services.reoon_service.verify_email",
+                return_value={"is_safe_to_send": True, "status": "safe", "is_disposable": False},
+            ),
         ):
             session = MagicMock()
             mock_gs.return_value = _session_ctx(session)
