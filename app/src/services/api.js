@@ -1822,6 +1822,22 @@ export const markAllLeadsViewed = async (botId) => {
     }
 };
 
+// Manually trigger a follow-up email for a captured lead. Every gate (valid
+// email, cooldown, unsubscribe, bot pause) is enforced server-side — this
+// call can come back 400/403/409/423 with a human-readable `detail`, which
+// callers should surface rather than treat as a generic failure.
+export const sendLeadFollowUp = async (sessionId, confirmOverride = false) => {
+    try {
+        const response = await api.post(`/leads/${sessionId}/follow-up`, {
+            confirm_override: confirmOverride,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error sending lead follow-up:', error);
+        throw buildApiError(error, 'Failed to send follow-up email');
+    }
+};
+
 // ── Webhooks ──
 
 export const getWebhooks = async (botId) => {
