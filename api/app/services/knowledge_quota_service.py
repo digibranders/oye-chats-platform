@@ -82,7 +82,9 @@ def _lock_client_row(session: Session, client_id: int) -> Client | None:
     """
     bind = session.get_bind()
     if bind is not None and bind.dialect.name == "postgresql":
-        return session.execute(select(Client).where(Client.id == client_id).with_for_update()).scalar_one_or_none()
+        return session.execute(
+            select(Client).where(Client.id == client_id).with_for_update(of=Client)
+        ).scalar_one_or_none()
     return session.execute(select(Client).where(Client.id == client_id)).scalar_one_or_none()
 
 
