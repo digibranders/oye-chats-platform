@@ -29,6 +29,7 @@ import { type ChatMessage } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
 import { type LeadAnnotationController } from './useLeadAnnotations';
 import { LeadInsights } from './LeadInsights';
+import { VisitorIntelligenceSection } from './VisitorIntelligenceSection';
 import {
   SCORE_TONE_VAR,
   TIER_META,
@@ -54,6 +55,15 @@ export interface LeadDetailDrawerProps {
    * qualification sections. The `'chat'` face (conversation) is never locked.
    */
   locked?: boolean;
+  /**
+   * True when the caller's plan includes Visitor Intelligence
+   * (Professional). Controls whether `VisitorIntelligenceSection` renders
+   * the company signal / email validity / follow-up action, or a locked
+   * teaser in their place. Independent of `locked` — a Starter client
+   * (unlocked lead intelligence, no Visitor Intelligence) sees the full
+   * drawer with only this one section gated.
+   */
+  visitorIntelligenceUnlocked?: boolean;
   /**
    * Operator-private notes & tags for this lead (localStorage-backed). Optional
    * so the drawer still renders standalone; when present, a "Private notes"
@@ -291,6 +301,7 @@ export function LeadDetailDrawer({
   onClose,
   view = 'detail',
   locked = false,
+  visitorIntelligenceUnlocked = false,
   annotations,
 }: LeadDetailDrawerProps): ReactElement {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -508,6 +519,9 @@ export function LeadDetailDrawer({
 
             {/* Source attribution + behavioural signals (rendered only when present) */}
             <LeadInsights detail={detail} />
+
+            {/* Company signal, email validity, and the manual follow-up action */}
+            <VisitorIntelligenceSection detail={detail} unlocked={visitorIntelligenceUnlocked} />
               </>
             )}
 

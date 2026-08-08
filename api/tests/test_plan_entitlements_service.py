@@ -26,6 +26,7 @@ from app.services.plan_entitlements_service import (
     is_bant_enabled_for_plan,
     is_lead_intelligence_enabled,
     is_leads_dashboard_enabled,
+    is_visitor_intelligence_enabled,
 )
 
 # ── Dataclass helpers ──────────────────────────────────────────────────────
@@ -567,6 +568,50 @@ class TestIsLeadIntelligenceEnabled:
             side_effect=RuntimeError("cache down"),
         ):
             assert is_lead_intelligence_enabled(1, session) is False
+
+
+# ── Visitor intelligence plan-gate helper ────────────────────────────────────
+#
+# Visitor Intelligence (IP-based company/threat signal, validated-email
+# display, manual follow-up action) is a Professional-only deliverable —
+# strictly narrower than ``is_lead_intelligence_enabled`` (Starter+).
+
+
+class TestIsVisitorIntelligenceEnabled:
+    def _entitlements(self, slug: str) -> PlanEntitlements:
+        return PlanEntitlements(
+            client_id=1,
+            plan_slug=slug,
+            plan_name=slug.title(),
+            subscription_status="active",
+            limits={},
+            features={},
+        )
+
+    @pytest.mark.parametrize("slug", ["free", "starter", "standard"])
+    def test_non_professional_denied(self, slug):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements(slug),
+        ):
+            assert is_visitor_intelligence_enabled(1, session) is False
+
+    def test_professional_allowed(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=self._entitlements("professional"),
+        ):
+            assert is_visitor_intelligence_enabled(1, session) is True
+
+    def test_returns_false_on_entitlements_lookup_failure(self):
+        session = MagicMock()
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            side_effect=RuntimeError("cache down"),
+        ):
+            assert is_visitor_intelligence_enabled(1, session) is False
 
 
 # ── Chat history retention helper ────────────────────────────────────────────

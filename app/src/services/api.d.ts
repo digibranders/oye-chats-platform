@@ -272,6 +272,10 @@ export function getLeadStats(botId?: number): Promise<Record<string, unknown>>;
 export function exportLeadsCsv(botId?: number): Promise<void>;
 export function markLeadViewed(sessionId: string): Promise<void>;
 export function markAllLeadsViewed(botId?: number): Promise<void>;
+export interface SendFollowUpResult {
+  success: boolean;
+}
+export function sendLeadFollowUp(sessionId: string, confirmOverride?: boolean): Promise<SendFollowUpResult>;
 
 // ── Inbox / offline messages ─────────────────────────────────────────────────
 export function getOfflineMessages(params?: Record<string, unknown>): Promise<OfflineMessagesResult>;

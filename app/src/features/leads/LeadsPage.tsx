@@ -61,6 +61,13 @@ const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: strin
   { value: 'all', label: 'Everyone' },
 ];
 
+/**
+ * Plan slugs allowed to see Visitor Intelligence (company signal, email
+ * validity, manual follow-up). Mirrors ``VISITOR_INTELLIGENCE_SLUGS`` in
+ * ``plan_entitlements_service.py`` — Professional only.
+ */
+const VISITOR_INTELLIGENCE_PLAN_SLUGS = new Set<string>(['professional']);
+
 /** How the lead table is ordered. Exposed via the "Sort by" control. */
 const SORT_OPTIONS = [
   { value: 'recent', label: 'Latest activity' },
@@ -213,8 +220,9 @@ function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
 export function LeadsPage(): ReactElement {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
-  const { isFree, hasFeature } = useEntitlements();
+  const { isFree, hasFeature, planSlug } = useEntitlements();
   const bantUnlocked = hasFeature('bant');
+  const visitorIntelligenceUnlocked = VISITOR_INTELLIGENCE_PLAN_SLUGS.has(planSlug);
   const { openUpgradeModal } = useUpgradeModal();
 
   // Free-plan workspaces never get the list - the backend's `/leads` route
@@ -789,6 +797,7 @@ export function LeadsPage(): ReactElement {
           data={detailData}
           view={drawerView}
           locked={isFree}
+          visitorIntelligenceUnlocked={visitorIntelligenceUnlocked}
           onClose={() => setSelectedSessionId(null)}
           annotations={annotations.controllerFor(selectedSessionId)}
         />

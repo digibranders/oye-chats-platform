@@ -18,7 +18,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from app.api.auth import get_current_client_or_operator
-from app.db.models import OperatorPushSubscription
+from app.db.models import OperatorExpoPushToken, OperatorPushSubscription
 from app.db.session import get_session
 
 router = APIRouter(prefix="/operators/push", tags=["push"])
@@ -42,6 +42,18 @@ class PushSubscribeRequest(BaseModel):
             raise ValueError("endpoint must be an https:// URL")
         if len(v) > 2048:
             raise ValueError("endpoint too long")
+        return v
+
+
+class ExpoPushSubscribeRequest(BaseModel):
+    token: str
+
+    @field_validator("token")
+    @classmethod
+    def _validate_token(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("ExponentPushToken[") and not v.startswith("ExpoPushToken["):
+            raise ValueError("token must be a valid Expo Push Token")
         return v
 
 
@@ -138,6 +150,66 @@ def push_unsubscribe(
             sa_delete(OperatorPushSubscription).where(
                 scope,
                 OperatorPushSubscription.endpoint == body.endpoint,
+            )
+        )
+        session.commit()
+
+    return {"success": True}
+
+
+@router.post("/expo/subscribe")
+def expo_push_subscribe(
+    body: ExpoPushSubscribeRequest,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Register an Expo Push token for the calling user."""
+    is_operator = auth["type"] == "operator"
+    subscriber_id = auth["entity"].id
+
+    with get_session() as session:
+        existing = session.execute(
+            select(OperatorExpoPushToken).where(OperatorExpoPushToken.token == body.token)
+        ).scalar_one_or_none()
+
+        if existing is not None:
+            # Re-bind the endpoint to whichever account is logged in *now*.
+            if is_operator:
+                existing.operator_id = subscriber_id
+                existing.client_id = None
+            else:
+                existing.client_id = subscriber_id
+                existing.operator_id = None
+        else:
+            session.add(
+                OperatorExpoPushToken(
+                    operator_id=subscriber_id if is_operator else None,
+                    client_id=None if is_operator else subscriber_id,
+                    token=body.token,
+                )
+            )
+        session.commit()
+
+    return {"success": True}
+
+
+@router.delete("/expo/subscribe")
+def expo_push_unsubscribe(
+    body: ExpoPushSubscribeRequest,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Remove an Expo Push token previously registered for this user."""
+    is_operator = auth["type"] == "operator"
+    subscriber_id = auth["entity"].id
+    scope = (
+        OperatorExpoPushToken.operator_id == subscriber_id
+        if is_operator
+        else OperatorExpoPushToken.client_id == subscriber_id
+    )
+    with get_session() as session:
+        session.execute(
+            sa_delete(OperatorExpoPushToken).where(
+                scope,
+                OperatorExpoPushToken.token == body.token,
             )
         )
         session.commit()

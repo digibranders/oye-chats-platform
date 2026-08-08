@@ -219,6 +219,10 @@ export interface LeadContact {
   email?: string | null;
   phone?: string | null;
   company?: string | null;
+  /** Present only when the caller's plan includes Visitor Intelligence (Professional). */
+  is_valid_email?: boolean | null;
+  /** Present only when the caller's plan includes Visitor Intelligence (Professional). */
+  email_score?: number | null;
 }
 
 /** One dimension's decayed value + score inside a lead's framework breakdown. */
@@ -251,6 +255,12 @@ export interface Lead {
   lead_viewed_at?: string | null;
   /** Present only on plans with Lead Source Attribution enabled. */
   source?: Record<string, unknown>;
+  /**
+   * IP-based company/threat signal (ipapi.is), captured for every visitor
+   * regardless of plan but only ever returned on plans with Visitor
+   * Intelligence (Professional).
+   */
+  visitor_metadata?: Record<string, unknown> | null;
 }
 
 /** Paginated lead list envelope from getLeads. */

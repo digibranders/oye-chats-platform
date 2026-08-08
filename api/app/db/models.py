@@ -2434,6 +2434,40 @@ class OperatorPushSubscription(Base):
     client = relationship("Client", foreign_keys=[client_id])
 
 
+class OperatorExpoPushToken(Base):
+    """Mobile Push subscription (Expo) for a user's mobile device."""
+
+    __tablename__ = "operator_expo_push_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    operator_id = Column(
+        Integer,
+        ForeignKey("operators.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    token = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("token", name="uq_operator_expo_push_token"),
+        CheckConstraint(
+            "((operator_id IS NULL)::int + (client_id IS NULL)::int) = 1",
+            name="chk_expo_push_token_owner_xor",
+        ),
+    )
+
+    operator = relationship("Operator", foreign_keys=[operator_id])
+    client = relationship("Client", foreign_keys=[client_id])
+
+
 # ── In-app notifications (admin dashboard bell + dropdown) ──────────────────
 
 

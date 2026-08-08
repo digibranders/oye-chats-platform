@@ -29,6 +29,7 @@ export type UpgradeIntentKey =
   | 'view_support'
   | 'view_leads'
   | 'view_journeys'
+  | 'view_visitor_intelligence'
   | 'leads_form'
   | 'view_team'
   | 'view_qualification'
@@ -164,6 +165,18 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
       'Where visitors go after they close the chat',
     ],
     recommendedPlan: 'Standard',
+  }),
+  view_visitor_intelligence: () => ({
+    eyebrow: 'Visitor Intelligence is a Professional feature',
+    title: 'Know who you’re talking to before they tell you',
+    description:
+      'Upgrade to Professional to see each visitor’s company signal, a validated deliverability score for every captured email, and to send a manual follow-up the moment a lead goes quiet.',
+    highlights: [
+      'Company & threat signal resolved from the visitor’s IP',
+      'Reoon-validated email score — know a real inbox from a typo before you reach out',
+      'One-click manual follow-up email, with built-in unsubscribe & cooldown safeguards',
+    ],
+    recommendedPlan: 'Professional',
   }),
   leads_form: () => ({
     eyebrow: 'Lead capture form is a paid feature',

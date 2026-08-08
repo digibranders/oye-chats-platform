@@ -82,6 +82,15 @@ def db(pg_engine):
     session.close()
 
 
+@pytest.fixture(autouse=True)
+def patch_sessionlocal(monkeypatch, pg_engine):
+    """Ensure any code using get_session() connects to the test DB."""
+    from sqlalchemy.orm import sessionmaker
+
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=pg_engine)
+    monkeypatch.setattr("app.db.session.SessionLocal", TestSessionLocal)
+
+
 # ── Mock DB session ──────────────────────────────────────────────────────────
 
 

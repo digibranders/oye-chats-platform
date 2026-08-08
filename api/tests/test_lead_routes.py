@@ -25,15 +25,16 @@ from app.api.lead_routes import router
 def _allow_leads_dashboard(monkeypatch):
     """Every route in this file assumes the caller has paid-tier leads
     access — the plan gates are exercised in ``test_plan_entitlements_service``
-    and in ``TestFreePlanIntelligenceStripping`` below. Stub them here so we
-    don't have to mock a full entitlements resolver in every test's session
-    fixture. ``patch`` at import site so both the router-level dependency and
-    the in-handler checks see the stub.
+    and in ``TestFreePlanIntelligenceStripping`` / ``TestVisitorIntelligenceGating``
+    below. Stub them here so we don't have to mock a full entitlements
+    resolver in every test's session fixture. ``patch`` at import site so
+    both the router-level dependency and the in-handler checks see the stub.
     """
     from app.api import lead_routes as _lead_routes
 
     monkeypatch.setattr(_lead_routes, "is_leads_dashboard_enabled", lambda *_a, **_k: True)
     monkeypatch.setattr(_lead_routes, "is_lead_intelligence_enabled", lambda *_a, **_k: True)
+    monkeypatch.setattr(_lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -543,8 +544,10 @@ def _lead_info(**overrides):
     base = dict(
         email="gaurav@fynix.digital",
         name="Gaurav",
+        phone=None,
         company="fynix.digital",
         is_valid_email=True,
+        email_score=None,
         last_followup_sent_at=None,
         followup_sent_by_operator_id=None,
     )
@@ -716,3 +719,66 @@ class TestSendManualFollowUp:
         response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
 
         assert response.status_code == 404
+
+
+class TestVisitorIntelligenceGating:
+    def test_follow_up_denied_when_not_professional(self, monkeypatch):
+        """send_manual_follow_up now gates on Visitor Intelligence
+        (Professional-only), NOT the general lead-intelligence check —
+        a Starter/Standard client must be denied even though they pass
+        is_lead_intelligence_enabled."""
+        from app.api import lead_routes
+
+        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: False)
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], _chat_session_row(), _lead_info())
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 403
+        assert "not enabled" in response.json()["detail"].lower()
+        mock_send.assert_not_called()
+
+    def test_get_lead_detail_includes_visitor_fields_when_professional(self, monkeypatch):
+        from app.api import lead_routes
+
+        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: True)
+
+        session = MagicMock()
+        lead = _lead_info(is_valid_email=True, email_score=91)
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        chat_session_row = _make_session_row("lead-1", visitor_metadata={"company": "Acme"})
+        # execute() order (paid, with visitor intelligence): bot_ids → chat_session → bot → lead_info → messages → signals
+        _install_scalars_chain(session, [1], chat_session_row, bot, lead, [], [])
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads/lead-1")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["contact"]["is_valid_email"] is True
+        assert body["contact"]["email_score"] == 91
+        assert body["visitor_metadata"] == {"company": "Acme"}
+
+    def test_get_lead_detail_omits_visitor_fields_when_not_professional(self, monkeypatch):
+        from app.api import lead_routes
+
+        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: False)
+
+        session = MagicMock()
+        lead = _lead_info(is_valid_email=True, email_score=91)
+        bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+        chat_session_row = _make_session_row("lead-1", visitor_metadata={"company": "Acme"})
+        # execute() order (paid, without visitor intelligence): bot_ids → chat_session → bot → lead_info → messages → signals
+        _install_scalars_chain(session, [1], chat_session_row, bot, lead, [], [])
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        response = TestClient(_build_app(auth_override=_client_auth())).get("/leads/lead-1")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "is_valid_email" not in body["contact"]
+        assert "visitor_metadata" not in body

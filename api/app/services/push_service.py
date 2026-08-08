@@ -29,6 +29,7 @@ from datetime import UTC, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 from sqlalchemy import delete, select
@@ -40,7 +41,7 @@ from app.config import (
     VAPID_PRIVATE_KEY_FILE,
     VAPID_SUBJECT,
 )
-from app.db.models import Operator, OperatorPushSubscription
+from app.db.models import Operator, OperatorExpoPushToken, OperatorPushSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,61 @@ def _send_push_to_rows(
     return delivered
 
 
+def _send_expo_pushes_to_rows(
+    session: Session,
+    tokens: list[OperatorExpoPushToken],
+    payload: dict[str, Any],
+) -> int:
+    """Inner fan-out for Expo pushes: send to a pre-fetched list of tokens, prune stale ones."""
+    if not tokens:
+        return 0
+
+    messages = []
+    for t in tokens:
+        message = {
+            "to": t.token,
+            "sound": "default",
+            "body": payload.get("body"),
+            "data": payload,
+        }
+        if "title" in payload:
+            message["title"] = payload["title"]
+        messages.append(message)
+
+    delivered = 0
+    stale_ids = []
+    now = datetime.now(UTC)
+
+    try:
+        response = httpx.post("https://exp.host/--/api/v2/push/send", json=messages, timeout=10)
+        # Expo returns a list of results corresponding to the messages array
+        if response.status_code == 200:
+            results = response.json().get("data", [])
+            for i, result in enumerate(results):
+                token_row = tokens[i]
+                status = result.get("status")
+                if status == "ok":
+                    delivered += 1
+                    token_row.last_used_at = now
+                elif status == "error":
+                    details = result.get("details", {})
+                    error_code = details.get("error")
+                    if error_code in ("DeviceNotRegistered", "InvalidCredentials"):
+                        logger.info("Expo Push token stale, will prune: %s", token_row.token)
+                        stale_ids.append(token_row.id)
+                    else:
+                        logger.warning("Expo push error: %s", result.get("message"))
+        else:
+            logger.warning("Expo API failed with status %s: %s", response.status_code, response.text)
+    except httpx.RequestError as exc:
+        logger.warning("Expo Push API request failed: %s", exc)
+
+    if stale_ids:
+        session.execute(delete(OperatorExpoPushToken).where(OperatorExpoPushToken.id.in_(stale_ids)))
+
+    return delivered
+
+
 def send_push_to_operator(
     session: Session,
     operator_id: int,
@@ -179,7 +235,16 @@ def send_push_to_operator(
         .scalars()
         .all()
     )
-    return _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
+    expo_tokens = (
+        session.execute(select(OperatorExpoPushToken).where(OperatorExpoPushToken.operator_id == operator_id))
+        .scalars()
+        .all()
+    )
+
+    web_delivered = _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
+    expo_delivered = _send_expo_pushes_to_rows(session, expo_tokens, payload)
+
+    return web_delivered + expo_delivered
 
 
 def send_push_to_client(
@@ -203,7 +268,16 @@ def send_push_to_client(
         .scalars()
         .all()
     )
-    return _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
+    expo_tokens = (
+        session.execute(select(OperatorExpoPushToken).where(OperatorExpoPushToken.client_id == client_id))
+        .scalars()
+        .all()
+    )
+
+    web_delivered = _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
+    expo_delivered = _send_expo_pushes_to_rows(session, expo_tokens, payload)
+
+    return web_delivered + expo_delivered
 
 
 def send_push_to_operators(

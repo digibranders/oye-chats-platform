@@ -229,6 +229,7 @@ def build_lead_response(
     *,
     include_attribution: bool = False,
     include_intelligence: bool = True,
+    include_visitor_intelligence: bool = False,
 ) -> dict:
     """Build a standardized lead payload using decayed display scores.
 
@@ -246,6 +247,17 @@ def build_lead_response(
     the Free plan — the composite score, tier, per-dimension breakdown,
     and location/device are stripped entirely, leaving the conversation
     surface: identity, contact, chat count, and timestamps.
+
+    ``include_visitor_intelligence`` gates the Professional-only Visitor
+    Intelligence layer: the Reoon-validated ``is_valid_email`` / `email_score`
+    on ``contact``, and the top-level ``visitor_metadata`` IP-intelligence
+    block (company/ASN/VPN-threat signal captured in the background for
+    every visitor, regardless of plan — this flag only controls whether it's
+    ever returned in the API response). Route boundary:
+    ``is_visitor_intelligence_enabled``. Unlike ``include_intelligence``,
+    these keys are never present in the base payload and are only added
+    when this flag is True — there's nothing to strip on lower tiers
+    because the fields don't exist in the payload at all otherwise.
 
     BR-01: ``config`` reflects the bot's ACTUAL selected framework (via
     the fixed ``get_bant_config``), and the ``bant`` breakdown below
@@ -269,6 +281,9 @@ def build_lead_response(
             "phone": lead_info.phone,
             "company": lead_info.company,
         }
+        if include_visitor_intelligence:
+            contact["is_valid_email"] = lead_info.is_valid_email
+            contact["email_score"] = lead_info.email_score
 
     tier = get_lead_tier(score, thresholds=config.get("thresholds"))
     lead_viewed_at = getattr(session, "lead_viewed_at", None)
@@ -312,6 +327,9 @@ def build_lead_response(
         "unread": lead_viewed_at is None,
         "lead_viewed_at": _isoformat_or_none(lead_viewed_at),
     }
+
+    if include_visitor_intelligence:
+        payload["visitor_metadata"] = getattr(session, "visitor_metadata", None)
 
     if not include_intelligence:
         # Free plan: the conversation surface only. Deleting (not nulling)
