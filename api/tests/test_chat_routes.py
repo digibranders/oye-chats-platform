@@ -40,10 +40,17 @@ def _allow_subscription(monkeypatch):
     happy-path behaviour, so the gate would otherwise short-circuit them
     into the offline path. Tests that specifically exercise the offline
     path patch this same symbol back to a non-active value.
+
+    Also defaults every test's bot to a plan that includes real-time email
+    validation (Standard/Professional) — TestValidateEmail's tests assert
+    on Reoon's result and predate the Standard+Professional plan gate;
+    the new gating tests in test_chat_routes_email_validation_gating.py
+    override this back to False per-test to exercise the denial path.
     """
     from app.api import chat_routes
 
     monkeypatch.setattr(chat_routes, "bot_subscription_status", lambda _client_id, subscription_id=None: "active")
+    monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
 
 
 def _default_bot(**overrides):

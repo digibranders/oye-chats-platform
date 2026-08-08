@@ -36,6 +36,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.ip_intel_service import fetch_ip_intel
+from app.services.plan_entitlements_service import is_email_validation_enabled_for_bot
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -394,25 +395,35 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
         logger.warning(f"Background geolocation failed for session {session_id}: {e}")
 
 
-def _enrich_lead_in_background(session_id: str, email: str | None):
+def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int | None = None):
     """Fire-and-forget: free domain extraction + Reoon power-mode validation.
 
     Two independent checks, not chained — the domain is free and always
-    attempted; validation determines is_valid_email/email_score but never
-    blocks the domain from being written, and neither one ever blocks lead
-    capture itself (that already succeeded before this was scheduled).
-    Power mode can take seconds to over a minute per Reoon's own docs —
-    that's fine here since nothing is waiting on this thread.
+    attempted regardless of plan; Reoon validation (paid, Standard+
+    Professional only — checked via ``is_email_validation_enabled_for_bot``)
+    determines is_valid_email/email_score but never blocks the domain from
+    being written, and neither one ever blocks lead capture itself (that
+    already succeeded before this was scheduled). Power mode can take
+    seconds to over a minute per Reoon's own docs — that's fine here since
+    nothing is waiting on this thread. ``bot_id`` is optional only for
+    backward-compat with any already-queued background task from before
+    this signature changed; a missing bot_id denies the paid check
+    (deny-by-default), matching every other gate in this codebase.
     """
     if not email:
         return
 
     from app.db.models import LeadInfo
     from app.services.email_domain_service import extract_company_domain
-    from app.services.reoon_service import verify_email
 
     domain = extract_company_domain(email)
-    validation = verify_email(email)
+
+    validation = None
+    with get_session() as session:
+        if bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session):
+            from app.services.reoon_service import verify_email
+
+            validation = verify_email(email)
 
     with get_session() as session:
         lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
@@ -792,19 +803,30 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     """Real-time check the widget calls on email-field blur, before the
     visitor can submit the handoff or offline-message form. Auth: X-Bot-Key.
 
+    Standard + Professional plans only — gated per-bot via
+    ``is_email_validation_enabled_for_bot`` so a Free/Starter bot never
+    fires the paid Reoon call (not just hides its result): the widget
+    still submits the form normally, exactly as it did before this
+    feature existed.
+
     Deliberately lenient: blocks only unambiguous junk (bad syntax,
     disposable addresses, spamtraps, domains with no working mail server).
     Catch-all and "unknown" results are let through — many real B2B
     companies run catch-all mail gateways that Reoon can't confirm
     deliverability on either way, and this endpoint's job is to keep fake
     leads out, not to reject genuine visitors it can't fully verify. Fails
-    open (valid=True) if Reoon is unreachable or unconfigured — an infra
-    hiccup on our side must never block a real visitor from talking to a
-    human. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md.
+    open (valid=True) if Reoon is unreachable, unconfigured, or the bot's
+    plan doesn't include this feature — an infra hiccup or a lower tier
+    must never block a real visitor from talking to a human. See
+    docs/superpowers/plans/2026-08-08-visitor-intelligence.md.
     """
     email = body.email.strip().lower()
     if not _EMAIL_RE.match(email):
         return {"valid": False, "reason": "Please enter a valid email address."}
+
+    with get_session() as session:
+        if not is_email_validation_enabled_for_bot(bot.id, session):
+            return {"valid": True}
 
     from app.services.reoon_service import verify_email
 
@@ -873,7 +895,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             # Fire background enrichment
             from app.core.thread_pool import submit_background
 
-            submit_background(_enrich_lead_in_background, body.session_id, body.email)
+            submit_background(_enrich_lead_in_background, body.session_id, body.email, bot.id)
             try:
                 from app.services.webhook_service import fire_webhook
 
