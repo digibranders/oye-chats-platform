@@ -184,6 +184,147 @@ class TestLeadCapture:
         assert response.status_code == 422
 
 
+# ── Validate email (submit-time widget gate) ─────────────────────────────────
+
+
+class TestValidateEmail:
+    def test_bad_syntax_blocked_without_calling_reoon(self):
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with patch("app.services.reoon_service.verify_email") as mock_verify:
+            response = tc.post(
+                "/chat/validate-email",
+                json={"email": "not-an-email"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"valid": False, "reason": "Please enter a valid email address."}
+        mock_verify.assert_not_called()
+
+    def test_disposable_email_blocked(self):
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with patch(
+            "app.services.reoon_service.verify_email",
+            return_value={
+                "status": "disposable",
+                "is_safe_to_send": False,
+                "is_disposable": True,
+                "is_valid_syntax": True,
+                "is_spamtrap": False,
+                "mx_accepts_mail": True,
+            },
+        ):
+            response = tc.post(
+                "/chat/validate-email",
+                json={"email": "test@mailinator.com"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["valid"] is False
+
+    def test_dead_domain_blocked(self):
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with patch(
+            "app.services.reoon_service.verify_email",
+            return_value={
+                "status": "invalid",
+                "is_safe_to_send": False,
+                "is_disposable": False,
+                "is_valid_syntax": True,
+                "is_spamtrap": False,
+                "mx_accepts_mail": False,
+            },
+        ):
+            response = tc.post(
+                "/chat/validate-email",
+                json={"email": "test@thisdomaindoesnotexist9821xyz.com"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["valid"] is False
+
+    def test_catch_all_domain_allowed_through(self):
+        """The key lenient-blocking behavior: a real B2B lead on a
+        catch-all corporate domain must NOT be rejected just because Reoon
+        can't positively confirm deliverability."""
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with patch(
+            "app.services.reoon_service.verify_email",
+            return_value={
+                "status": "catch_all",
+                "is_safe_to_send": False,  # not positively confirmed — but not junk either
+                "is_disposable": False,
+                "is_valid_syntax": True,
+                "is_spamtrap": False,
+                "mx_accepts_mail": True,
+            },
+        ):
+            response = tc.post(
+                "/chat/validate-email",
+                json={"email": "gaurav@cleanstart.com"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"valid": True}
+
+    def test_confirmed_safe_email_allowed(self):
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with patch(
+            "app.services.reoon_service.verify_email",
+            return_value={
+                "status": "safe",
+                "is_safe_to_send": True,
+                "is_disposable": False,
+                "is_valid_syntax": True,
+                "is_spamtrap": False,
+                "mx_accepts_mail": True,
+            },
+        ):
+            response = tc.post(
+                "/chat/validate-email",
+                json={"email": "gaurav@fynix.digital"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"valid": True}
+
+    def test_fails_open_when_reoon_unavailable(self):
+        """An outage or missing key on our side must never block a real
+        visitor from submitting the form."""
+        bot = _default_bot()
+        app = _build_app(bot_override=bot)
+        tc = TestClient(app)
+
+        with patch("app.services.reoon_service.verify_email", return_value=None):
+            response = tc.post(
+                "/chat/validate-email",
+                json={"email": "gaurav@fynix.digital"},
+                headers={"X-Bot-Key": "bot-test123"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"valid": True}
+
+
 # ── Feedback ─────────────────────────────────────────────────────────────────
 
 

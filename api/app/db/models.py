@@ -593,6 +593,13 @@ class LeadInfo(Base):
     is_valid_email = Column(Boolean, nullable=True)
     email_score = Column(Integer, nullable=True)
 
+    # Manual follow-up tracking (Gate 2 cooldown + audit trail). There is no
+    # automatic/timed send anywhere in this system — an operator triggers
+    # this from the Admin Panel; these two columns are what that endpoint
+    # checks/records. See docs/superpowers/plans/2026-08-08-visitor-intelligence.md §02.
+    last_followup_sent_at = Column(DateTime(timezone=True), nullable=True)
+    followup_sent_by_operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
+
     # Durable source attribution — snapshot of the parent session's UTM +
     # visitor journey at the moment this lead was captured. Kept on the
     # lead row (not just the session) so attribution survives session
@@ -606,6 +613,7 @@ class LeadInfo(Base):
 
     session = relationship("ChatSession", back_populates="lead_info")
     bot = relationship("Bot", back_populates="lead_infos")
+    followup_sent_by = relationship("Operator")
 
 
 class ChatSession(Base):
@@ -2553,8 +2561,17 @@ class Event(Base):
 
 
 class EmailSuppression(Base):
+    """Permanent per-bot unsubscribe/bounce list. Scoped by ``bot_id`` —
+    unsubscribing from one customer's follow-ups must never suppress that
+    address for a different, unrelated customer's bot. Checked by Gate 3
+    before any manual follow-up send. Once added, a row is never removed
+    by application code."""
+
     __tablename__ = "email_suppressions"
     id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String, nullable=False)
     reason = Column(String)  # 'hard_bounce', 'unsubscribe', 'spam_complaint'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("bot_id", "email", name="uq_email_suppressions_bot_email"),)

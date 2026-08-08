@@ -366,6 +366,12 @@ OAUTH_SUCCESS_REDIRECT_URL = os.getenv("OAUTH_SUCCESS_REDIRECT_URL", f"{FRONTEND
 # acceptable since the state cookie lives for <10 minutes).
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET") or os.getenv("SECRET_KEY") or _secrets.token_urlsafe(48)
 
+# HMAC key for signing manual-follow-up unsubscribe links (bot_id + email).
+# Without this a bare `?bot_id=&email=` query param could be used to
+# suppress an arbitrary address for any bot — see
+# docs/superpowers/plans/2026-08-08-visitor-intelligence.md post-implementation review.
+UNSUBSCRIBE_SECRET = os.getenv("UNSUBSCRIBE_SECRET") or os.getenv("SECRET_KEY") or _secrets.token_urlsafe(48)
+
 if GOOGLE_OAUTH_ENABLED:
     logger.info("Google OAuth enabled (redirect=%s)", GOOGLE_OAUTH_REDIRECT_URI)
 else:

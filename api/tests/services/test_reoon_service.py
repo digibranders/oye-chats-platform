@@ -54,3 +54,26 @@ def test_verify_email_returns_none_on_error(monkeypatch):
 def test_verify_email_returns_none_without_api_key(monkeypatch):
     monkeypatch.delenv("REOON_API_KEY", raising=False)
     assert verify_email("test@example.com") is None
+
+
+def test_verify_email_includes_junk_detection_fields(monkeypatch):
+    """The submit-time widget gate (chat_routes.validate_email_endpoint)
+    needs these three fields to tell "clear junk" apart from "unconfirmed
+    catch-all" — see docs/superpowers/plans/2026-08-08-visitor-intelligence.md."""
+    monkeypatch.setenv("REOON_API_KEY", "test-key")
+    payload = {
+        "status": "disposable",
+        "overall_score": 5,
+        "is_safe_to_send": False,
+        "is_disposable": True,
+        "is_deliverable": False,
+        "is_valid_syntax": True,
+        "is_spamtrap": False,
+        "mx_accepts_mail": True,
+    }
+    with patch("app.services.reoon_service.urllib.request.urlopen", return_value=_mock_response(payload)):
+        result = verify_email("test@mailinator.com")
+
+    assert result["is_valid_syntax"] is True
+    assert result["is_spamtrap"] is False
+    assert result["mx_accepts_mail"] is True

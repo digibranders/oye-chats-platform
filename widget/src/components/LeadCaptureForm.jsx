@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { User, Mail, Phone, Building2, ArrowRight } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 import { sanitizeColor } from '../services/sanitize';
+import { validateEmail as checkEmailWithServer } from '../services/api';
 
 const FIELD_CONFIG = {
     name: { label: 'Your Name', icon: User, type: 'text', placeholder: 'John Doe' },
@@ -15,14 +16,51 @@ const FIELD_CONFIG = {
 // button) and outer container, so this component MUST NOT render its own.
 // Adding chrome here produces a "second chat window stacked on top" look.
 const LeadCaptureForm = ({ settings, onSubmit }) => {
+    // Email-first by default so the real-time check below (fires on blur)
+    // runs in the background while the visitor fills in the remaining
+    // fields. Only applies when the customer hasn't set their own order —
+    // an explicit settings.lead_form_fields is never silently reordered.
     const fields = settings?.lead_form_fields || [
-        { field: 'name', required: true },
         { field: 'email', required: true },
+        { field: 'name', required: true },
     ];
 
     const [formData, setFormData] = useState({});
     const [errors, setErrors] = useState({});
     const [submitting, setSubmitting] = useState(false);
+    // 'idle' | 'checking' | 'valid' | 'invalid'
+    const [emailCheckState, setEmailCheckState] = useState('idle');
+    const emailCheckPromiseRef = useRef(null);
+    const lastCheckedEmailRef = useRef('');
+
+    const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+    // Fires on blur from the email field — validates in the background
+    // while the visitor moves on to the next field.
+    const handleEmailBlur = () => {
+        const email = formData.email?.trim();
+        if (!email || email === lastCheckedEmailRef.current) return;
+        if (!looksLikeEmail(email)) {
+            setEmailCheckState('invalid');
+            setErrors(prev => ({ ...prev, email: 'Please enter a valid email' }));
+            return;
+        }
+
+        lastCheckedEmailRef.current = email;
+        setEmailCheckState('checking');
+        const promise = checkEmailWithServer(email).then((result) => {
+            if (lastCheckedEmailRef.current !== email) return result;
+            if (result.valid) {
+                setEmailCheckState('valid');
+                setErrors(prev => ({ ...prev, email: undefined }));
+            } else {
+                setEmailCheckState('invalid');
+                setErrors(prev => ({ ...prev, email: result.reason || 'Please enter a valid email' }));
+            }
+            return result;
+        });
+        emailCheckPromiseRef.current = promise;
+    };
 
     const validate = () => {
         const newErrors = {};
@@ -31,8 +69,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                 newErrors[f.field] = `${FIELD_CONFIG[f.field]?.label || f.field} is required`;
             }
             if (f.field === 'email' && formData.email?.trim()) {
-                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                if (!emailRegex.test(formData.email.trim())) {
+                if (!looksLikeEmail(formData.email.trim())) {
                     newErrors.email = 'Please enter a valid email';
                 }
             }
@@ -41,9 +78,31 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
         return Object.keys(newErrors).length === 0;
     };
 
+    const hasEmailField = fields.some(f => f.field === 'email');
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!validate()) return;
+
+        if (hasEmailField && formData.email?.trim()) {
+            // The visitor may click submit before the blur check resolves.
+            if (emailCheckState === 'checking' && emailCheckPromiseRef.current) {
+                const result = await emailCheckPromiseRef.current;
+                if (!result.valid) return; // error already set inside the check
+            } else if (emailCheckState === 'invalid') {
+                return;
+            } else if (emailCheckState === 'idle') {
+                setEmailCheckState('checking');
+                const result = await checkEmailWithServer(formData.email.trim());
+                if (!result.valid) {
+                    setEmailCheckState('invalid');
+                    setErrors(prev => ({ ...prev, email: result.reason || 'Please enter a valid email' }));
+                    return;
+                }
+                setEmailCheckState('valid');
+            }
+        }
+
         setSubmitting(true);
         try {
             await onSubmit(formData);
@@ -108,9 +167,14 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
                                             if (errors[f.field]) {
                                                 setErrors(prev => ({ ...prev, [f.field]: undefined }));
                                             }
+                                            if (f.field === 'email') setEmailCheckState('idle');
                                         }}
+                                        onBlur={f.field === 'email' ? handleEmailBlur : undefined}
                                         className="flex-1 bg-transparent outline-none text-sm text-[#16202C] placeholder:text-gray-400"
                                     />
+                                    {f.field === 'email' && emailCheckState === 'checking' && (
+                                        <div className="w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin flex-shrink-0" />
+                                    )}
                                 </div>
                                 {errors[f.field] && (
                                     <p className="text-red-500 text-xs mt-1 ml-1">{errors[f.field]}</p>
@@ -121,7 +185,7 @@ const LeadCaptureForm = ({ settings, onSubmit }) => {
 
                     <button
                         type="submit"
-                        disabled={submitting}
+                        disabled={submitting || emailCheckState === 'invalid'}
                         className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-medium transition-all hover:opacity-90 disabled:opacity-60"
                         style={{ backgroundColor: primary }}
                     >
