@@ -36,12 +36,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import (
-    PUSH_ENABLED,
+    EXPO_PUSH_ENABLED,
     VAPID_PRIVATE_KEY,
     VAPID_PRIVATE_KEY_FILE,
     VAPID_SUBJECT,
+    WEB_PUSH_ENABLED,
 )
-from app.db.models import Operator, OperatorExpoPushToken, OperatorPushSubscription
+from app.db.models import Client, Operator, OperatorExpoPushToken, OperatorPushSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def send_push_to_subscription(
     Returns ``(success, status_code)``. ``status_code`` is ``None`` for
     network-level errors. A ``410`` means the caller must prune this row.
     """
-    if not PUSH_ENABLED:
+    if not WEB_PUSH_ENABLED:
         return False, None
 
     subscription_info = {
@@ -165,7 +166,7 @@ def _send_expo_pushes_to_rows(
     payload: dict[str, Any],
 ) -> int:
     """Inner fan-out for Expo pushes: send to a pre-fetched list of tokens, prune stale ones."""
-    if not tokens:
+    if not EXPO_PUSH_ENABLED or not tokens:
         return 0
 
     messages = []
@@ -221,24 +222,33 @@ def send_push_to_operator(
     *,
     tag: str | None = None,
     ttl: int = DEFAULT_TTL_SECONDS,
+    web: bool = True,
+    expo: bool = True,
 ) -> int:
     """Send the same payload to every subscription owned by an operator.
 
     Prunes subscriptions that return 410 in the same DB transaction. Returns
     the number of successful deliveries (best-effort — push is fire-and-forget,
     not delivery-guaranteed).
+
+    ``web`` / ``expo`` select which transports to use. Callers suppress *web*
+    push for an operator with an open dashboard tab (the in-page toast already
+    covers them) but must still send *expo*: a browser toast is not visible on
+    a phone, so the two are never duplicates of each other.
     """
-    if not PUSH_ENABLED:
-        return 0
     subs = (
         session.execute(select(OperatorPushSubscription).where(OperatorPushSubscription.operator_id == operator_id))
         .scalars()
         .all()
+        if web
+        else []
     )
     expo_tokens = (
         session.execute(select(OperatorExpoPushToken).where(OperatorExpoPushToken.operator_id == operator_id))
         .scalars()
         .all()
+        if expo
+        else []
     )
 
     web_delivered = _send_push_to_rows(session, subs, payload, tag=tag, ttl=ttl)
@@ -261,8 +271,6 @@ def send_push_to_client(
     small-team case (workspace owner is the primary chat-taker) gets push
     coverage without a separate Operator record.
     """
-    if not PUSH_ENABLED:
-        return 0
     subs = (
         session.execute(select(OperatorPushSubscription).where(OperatorPushSubscription.client_id == client_id))
         .scalars()
@@ -385,6 +393,23 @@ def _operator_wants_push(prefs: Any, event_type: str, now_utc: datetime) -> bool
 
     quiet = push.get("quiet_hours")
     return not (isinstance(quiet, dict) and _in_quiet_hours(quiet, now_utc))
+
+
+def client_wants_push(
+    session: Session,
+    client_id: int,
+    event_type: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Consult a workspace owner's prefs, mirroring the operator filter.
+
+    The owner is a genuine push recipient (``send_push_to_client``), so the same
+    opt-outs and quiet hours must apply. Unknown client → True, matching the
+    "absent prefs = opted in" convention used everywhere else here.
+    """
+    prefs = session.execute(select(Client.notification_preferences).where(Client.id == client_id)).scalar_one_or_none()
+    return _operator_wants_push(prefs, event_type, now or datetime.now(UTC))
 
 
 def filter_operators_by_push_prefs(

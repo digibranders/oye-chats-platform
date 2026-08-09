@@ -225,11 +225,27 @@ PUSH_WS_GRACE_SECONDS = int(_env("PUSH_WS_GRACE_SECONDS", "30"))
 # sends multiple messages in quick succession, only one email per window.
 PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(_env("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
 
-PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
-if PUSH_ENABLED:
+WEB_PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
+# Expo relays to FCM/APNs using credentials Expo holds on our behalf, so it
+# needs no local key material. It must therefore be gated independently: a
+# single flag derived from VAPID used to switch off *mobile* push too, so
+# rotating web-push keys would silently kill every operator's phone alerts
+# for a reason nobody would think to look for.
+EXPO_PUSH_ENABLED = _env("EXPO_PUSH_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+# Back-compat: ``PUSH_ENABLED`` has always meant "web push is configured", and
+# ``GET /operators/push/vapid-public-key`` still reports it under that name.
+PUSH_ENABLED = WEB_PUSH_ENABLED
+
+if WEB_PUSH_ENABLED:
     logger.info("Web Push notifications enabled (VAPID configured)")
 else:
     logger.info("Web Push notifications disabled (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY missing)")
+logger.info("Expo (mobile) push notifications %s", "enabled" if EXPO_PUSH_ENABLED else "disabled")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Redis (required in production — enables distributed rate limiting + caching)

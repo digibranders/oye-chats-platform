@@ -42,6 +42,11 @@ class Client(Base):
     billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
     billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
     billing_email = Column(String, nullable=True)  # falls back to login email
+    # Push/alert opt-outs for the workspace owner. Same JSONB shape as
+    # ``Operator.notification_preferences`` so one evaluator serves both — the
+    # owner is a chat recipient too (``send_push_to_client``) and previously had
+    # no way to mute anything.
+    notification_preferences = Column(JSONB, nullable=True)
     # Newest billing-geo contradiction (claimed country vs server-side IP geo),
     # both directions — durable GST/FEMA review trail, not just a WARN log.
     geo_mismatch_at = Column(DateTime(timezone=True), nullable=True)

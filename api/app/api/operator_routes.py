@@ -10,7 +10,16 @@ from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.core.security import get_password_hash
-from app.db.models import BANTSignal, Bot, ChatAuditLog, ChatMessage, ChatSession, Department, Operator
+from app.db.models import (
+    BANTSignal,
+    Bot,
+    ChatAuditLog,
+    ChatMessage,
+    ChatSession,
+    Client,
+    Department,
+    Operator,
+)
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services.live_chat_service import manager
@@ -1412,6 +1421,130 @@ def get_my_operator_status(
             "operator_name": operator.name,
             "operator_id": operator.id,
         }
+
+
+# ── Notification preferences (self-service) ─────────────────────────────────
+#
+# The prefs JSONB has always existed on ``Operator`` and is consulted by every
+# push dispatch task, but the only way to write it was the admin-facing
+# ``PATCH /operators/{id}``. These endpoints let the signed-in user manage
+# their own alerts from any client.
+#
+# Which row is written follows *who actually receives the push*: an operator
+# token is stored against ``operator_id`` and filtered by
+# ``filter_operators_by_push_prefs``; an owner token is stored against
+# ``client_id`` and filtered by ``client_wants_push``. Writing anywhere else
+# would save a preference that never gets consulted.
+
+# Opt-out categories, mirroring ``push_service._EVENT_CATEGORY`` values.
+_PUSH_EVENT_KEYS = {"handoff_request", "chat_transferred", "offline_message"}
+
+
+class QuietHoursModel(BaseModel):
+    start: str
+    end: str
+    tz: str = "UTC"
+
+    @field_validator("start", "end")
+    @classmethod
+    def _valid_hhmm(cls, v: str) -> str:
+        try:
+            hh, mm = v.split(":", 1)
+            if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("time must be 'HH:MM' in 24-hour form") from None
+        return v
+
+
+class PushPreferencesModel(BaseModel):
+    enabled: bool = True
+    events: dict[str, bool] = Field(default_factory=dict)
+    quiet_hours: QuietHoursModel | None = None
+
+    @field_validator("events")
+    @classmethod
+    def _known_events(cls, v: dict[str, bool]) -> dict[str, bool]:
+        # Drop unknown keys rather than 400 — a newer client sending a category
+        # this deploy doesn't know about shouldn't fail the whole save.
+        return {k: bool(val) for k, val in v.items() if k in _PUSH_EVENT_KEYS}
+
+
+class NotificationPreferencesRequest(BaseModel):
+    push: PushPreferencesModel = Field(default_factory=PushPreferencesModel)
+
+
+def _default_prefs() -> dict:
+    """Absent prefs mean fully opted in — render that explicitly for clients."""
+    return {
+        "push": {
+            "enabled": True,
+            "events": {k: True for k in sorted(_PUSH_EVENT_KEYS)},
+            "quiet_hours": None,
+        }
+    }
+
+
+def _normalize_prefs(stored: dict | None) -> dict:
+    """Fill in every field so the caller never has to infer a default."""
+    out = _default_prefs()
+    if not isinstance(stored, dict):
+        return out
+    push = stored.get("push")
+    if not isinstance(push, dict):
+        return out
+    if isinstance(push.get("enabled"), bool):
+        out["push"]["enabled"] = push["enabled"]
+    events = push.get("events")
+    if isinstance(events, dict):
+        for k in _PUSH_EVENT_KEYS:
+            if isinstance(events.get(k), bool):
+                out["push"]["events"][k] = events[k]
+    quiet = push.get("quiet_hours")
+    if isinstance(quiet, dict) and quiet.get("start") and quiet.get("end"):
+        out["push"]["quiet_hours"] = {
+            "start": quiet.get("start"),
+            "end": quiet.get("end"),
+            "tz": quiet.get("tz") or "UTC",
+        }
+    return out
+
+
+def _prefs_target(session, auth):
+    """Resolve the row whose prefs govern *this* caller's pushes."""
+    if auth["type"] == "operator":
+        return session.execute(
+            select(Operator).where(Operator.id == auth["operator_id"], Operator.is_active.is_(True))
+        ).scalar_one_or_none()
+    return session.execute(select(Client).where(Client.id == auth["client_id"])).scalar_one_or_none()
+
+
+@router.get("/me/notification-preferences")
+def get_my_notification_preferences(auth=Depends(get_current_client_or_operator)):
+    """Return the caller's own push preferences, fully defaulted."""
+    with get_session() as session:
+        target = _prefs_target(session, auth)
+        if target is None:
+            raise HTTPException(status_code=404, detail="No notification profile for this account")
+        return _normalize_prefs(target.notification_preferences)
+
+
+@router.put("/me/notification-preferences")
+def set_my_notification_preferences(
+    request: NotificationPreferencesRequest,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Replace the caller's own push preferences and echo the saved state."""
+    with get_session() as session:
+        target = _prefs_target(session, auth)
+        if target is None:
+            raise HTTPException(status_code=404, detail="No notification profile for this account")
+
+        payload = request.model_dump(mode="json")
+        normalized = _normalize_prefs(payload)
+        target.notification_preferences = normalized
+        session.commit()
+        return normalized
 
 
 class SetStatusRequest(BaseModel):
