@@ -16,7 +16,7 @@ def test_send_push_passes_a_positive_timeout(monkeypatch):
         captured.update(kwargs)
         return SimpleNamespace(status_code=201)
 
-    monkeypatch.setattr(push_service, "PUSH_ENABLED", True)
+    monkeypatch.setattr(push_service, "WEB_PUSH_ENABLED", True)
     monkeypatch.setattr(push_service, "_get_vapid", lambda: "vapid-key")
     monkeypatch.setattr(push_service, "webpush", fake_webpush)
 
