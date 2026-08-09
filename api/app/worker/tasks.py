@@ -1637,6 +1637,7 @@ async def task_dispatch_handoff_push(
     from app.db.session import SessionLocal
     from app.services.operator_presence_service import get_online_operator_ids
     from app.services.push_service import (
+        client_wants_push,
         filter_operators_by_push_prefs,
         send_push_to_client,
         send_push_to_operator,
@@ -1676,9 +1677,13 @@ async def task_dispatch_handoff_push(
                 q = q.where((Operator.department_id == department_id) | (Operator.department_id.is_(None)))
             operators = db.execute(q).scalars().all()
 
-            # Skip operators actively watching the dashboard — they got the
-            # in-dashboard toast already. Push is the *fallback* channel.
-            candidates = [op.id for op in operators if op.id not in connected]
+            # Operators watching the dashboard already got the in-page toast, so
+            # web push would duplicate it — but a browser toast is invisible on a
+            # phone, so Expo push must still go out. Presence therefore mutes one
+            # transport, not the operator. (A mobile client holds its WebSocket
+            # open while backgrounded, so "connected" says nothing about whether
+            # a human is actually looking.)
+            candidates = [op.id for op in operators]
             allowed = set(filter_operators_by_push_prefs(db, candidates, "handoff_request"))
             operator_targets = [op for op in operators if op.id in allowed]
 
@@ -1695,14 +1700,18 @@ async def task_dispatch_handoff_push(
 
             total = 0
             for op in operator_targets:
-                total += send_push_to_operator(db, op.id, payload, tag=tag)
+                total += send_push_to_operator(db, op.id, payload, tag=tag, web=op.id not in connected, expo=True)
             # Also fan out to the workspace owner — small teams where the
             # client login is the primary chat-taker rely on this to get
             # notified at all. The owner isn't tracked in ``operator_connections``
             # the same way operators are; we always push and let the SW's
             # tag-replace semantics handle the case where they happen to be
             # watching the dashboard in another tab.
-            total += send_push_to_client(db, bot.client_id, payload, tag=tag)
+            #
+            # The owner is a real recipient, so their opt-outs and quiet hours
+            # apply exactly as an operator's do.
+            if client_wants_push(db, bot.client_id, "handoff_request"):
+                total += send_push_to_client(db, bot.client_id, payload, tag=tag)
             db.commit()
             if total == 0:
                 logger.info(
@@ -1753,6 +1762,7 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
     from app.db.models import ChatSession, OfflineMessage, Operator
     from app.db.session import SessionLocal
     from app.services.push_service import (
+        client_wants_push,
         filter_operators_by_push_prefs,
         send_push_to_client,
         send_push_to_operators,
@@ -1806,7 +1816,8 @@ async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
                 operators = db.execute(select(Operator).where(Operator.client_id == cs.bot.client_id)).scalars().all()
                 allowed = filter_operators_by_push_prefs(db, [op.id for op in operators], payload["type"])
                 send_push_to_operators(db, allowed, payload, tag=tag)
-                send_push_to_client(db, cs.bot.client_id, payload, tag=tag)
+                if client_wants_push(db, cs.bot.client_id, payload["type"]):
+                    send_push_to_client(db, cs.bot.client_id, payload, tag=tag)
             db.commit()
             return True
 
@@ -1908,9 +1919,10 @@ async def task_dispatch_transfer_push(
             operator = db.execute(select(Operator).where(Operator.id == new_operator_id)).scalar_one_or_none()
             if operator is None:
                 return 0
-            if new_operator_id in get_online_operator_ids(operator.client_id):
-                # WS already carried the transfer — don't double-notify.
-                return 0
+            # A live WS carried the transfer to whatever surface is connected, so
+            # web push would duplicate it. Expo still goes out: the operator may
+            # be connected from a backgrounded phone, where nothing was shown.
+            on_ws = new_operator_id in get_online_operator_ids(operator.client_id)
             if not filter_operators_by_push_prefs(db, [new_operator_id], "chat_transferred"):
                 return 0
 
@@ -1922,7 +1934,7 @@ async def task_dispatch_transfer_push(
                 "click_url": f"/support?session={session_id}",
             }
             tag = f"transfer:{session_id}"
-            delivered = send_push_to_operator(db, new_operator_id, payload, tag=tag)
+            delivered = send_push_to_operator(db, new_operator_id, payload, tag=tag, web=not on_ws, expo=True)
             db.commit()
             return delivered
 
@@ -1965,6 +1977,7 @@ async def task_dispatch_offline_message_push(
     from app.db.session import SessionLocal
     from app.services.operator_presence_service import get_online_operator_ids
     from app.services.push_service import (
+        client_wants_push,
         filter_operators_by_push_prefs,
         send_push_to_client,
         send_push_to_operator,
@@ -1996,7 +2009,8 @@ async def task_dispatch_offline_message_push(
                 # used by handoff push above.
                 q = q.where((Operator.department_id == msg.department_id) | (Operator.department_id.is_(None)))
             operators = db.execute(q).scalars().all()
-            candidates = [op.id for op in operators if op.id not in connected]
+            # Same split as handoff: presence mutes web push only.
+            candidates = [op.id for op in operators]
             allowed = set(filter_operators_by_push_prefs(db, candidates, "offline_message_received"))
             operator_targets = [op for op in operators if op.id in allowed]
 
@@ -2016,8 +2030,9 @@ async def task_dispatch_offline_message_push(
 
             total = 0
             for op in operator_targets:
-                total += send_push_to_operator(db, op.id, payload, tag=tag)
-            total += send_push_to_client(db, bot.client_id, payload, tag=tag)
+                total += send_push_to_operator(db, op.id, payload, tag=tag, web=op.id not in connected, expo=True)
+            if client_wants_push(db, bot.client_id, "offline_message_received"):
+                total += send_push_to_client(db, bot.client_id, payload, tag=tag)
             db.commit()
             if total == 0:
                 logger.info(
