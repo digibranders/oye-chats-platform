@@ -34,6 +34,7 @@ import {
   SCORE_TONE_VAR,
   TIER_META,
   formatDateTime,
+  formatLocation,
   humanizeDimension,
   normalizeTier,
   scoreTone,
@@ -446,7 +447,9 @@ export function LeadDetailDrawer({
                 {detail.contact?.company && (
                   <ContactRow icon={Building2} value={detail.contact.company} />
                 )}
-                {detail.location && <ContactRow icon={MapPin} value={detail.location} />}
+                {formatLocation(detail.location) !== 'Unknown' && (
+                  <ContactRow icon={MapPin} value={formatLocation(detail.location)} />
+                )}
                 {detail.device && <ContactRow icon={Monitor} value={detail.device} />}
                 {!detail.contact?.name &&
                   !detail.contact?.email &&

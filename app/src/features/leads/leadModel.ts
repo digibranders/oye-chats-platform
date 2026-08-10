@@ -257,6 +257,27 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
+/**
+ * Render a lead's location WITHOUT the visitor's IP address.
+ *
+ * The backend stores `ChatSession.location` as `"<City>, <Country> | <IP>"`
+ * (see `chat_routes._resolve_and_update_location`), and stamps a bare
+ * `"IP: <addr>"` placeholder before the background geo lookup resolves. A
+ * visitor IP is personal data under GDPR/DPDP and has no place in an
+ * operator-facing table, so everything from the `|` separator onward is
+ * dropped, and the placeholder degrades to "Unknown" rather than printing a
+ * bare address. The raw value is left untouched in the database, where ops
+ * still needs it.
+ */
+export function formatLocation(raw: string | null | undefined): string {
+  const value = (raw ?? '').trim();
+  if (!value) return 'Unknown';
+  // "IP: 1.2.3.4" is the pre-resolution stamp — no geography in it at all.
+  if (/^ip:/i.test(value)) return 'Unknown';
+  const geo = value.split('|')[0]?.trim() ?? '';
+  return geo || 'Unknown';
+}
+
 /** Format an ISO timestamp as a compact "Jul 21, 3:04 PM"; em-dash on absence. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '-';

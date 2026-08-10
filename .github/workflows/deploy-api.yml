@@ -180,6 +180,23 @@ jobs:
             # reset and reset.
             git pull origin main
 
+            # VAPID private key: written to its own PEM file rather than
+            # inlined into .env. systemd's EnvironmentFile= parser strips
+            # backslash-escapes (\n) without inserting a real newline, which
+            # silently corrupts an escaped-PEM env var — this broke web push
+            # in production on 2026-08-10 (worked when read via python-dotenv
+            # locally, broke only under systemd). printf '%b' expands the \n
+            # escapes into real newlines when writing the file, so the value
+            # systemd hands the process is never touched.
+            if [ -n "${VAPID_PRIVATE_KEY}" ]; then
+              printf '%b' "${VAPID_PRIVATE_KEY}" > api/vapid_private_key.pem
+              chmod 600 api/vapid_private_key.pem
+              VAPID_PRIVATE_KEY_FILE_PATH="/opt/oyechats/platform/api/vapid_private_key.pem"
+            else
+              rm -f api/vapid_private_key.pem
+              VAPID_PRIVATE_KEY_FILE_PATH=""
+            fi
+
             # Generate .env from secrets + hardcoded prod values
             printf '%s\n' \
               "DB_URL=${DB_URL}" \
@@ -245,7 +262,7 @@ jobs:
               "OAUTH_STATE_SECRET=${OAUTH_STATE_SECRET}" \
               "UNSUBSCRIBE_SECRET=${UNSUBSCRIBE_SECRET}" \
               "VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}" \
-              "VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}" \
+              "VAPID_PRIVATE_KEY_FILE=${VAPID_PRIVATE_KEY_FILE_PATH}" \
               "REOON_API_KEY=${REOON_API_KEY}" \
               "IPAPI_IS_KEY=${IPAPI_IS_KEY}" \
               > api/.env
@@ -261,6 +278,10 @@ jobs:
             if getent group oyechats >/dev/null 2>&1; then
               chgrp oyechats api/.env
               chmod 640 api/.env
+              if [ -f api/vapid_private_key.pem ]; then
+                chgrp oyechats api/vapid_private_key.pem
+                chmod 640 api/vapid_private_key.pem
+              fi
             fi
 
             # System libs for WeasyPrint (invoice PDF rendering) — idempotent.
