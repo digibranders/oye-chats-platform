@@ -35,6 +35,7 @@ import {
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
+import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
 import { type Lead } from '../../types/domain';
@@ -65,6 +66,10 @@ const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: strin
  * Plan slugs allowed to see Visitor Intelligence (company signal, email
  * validity, manual follow-up). Mirrors ``VISITOR_INTELLIGENCE_SLUGS`` in
  * ``plan_entitlements_service.py`` — Professional only.
+ *
+ * Matched against the SELECTED AGENT's slug, not the account's, because
+ * billing is per-agent: a workspace can hold a Professional agent and a Free
+ * one, and the backend gates each agent's leads independently.
  */
 const VISITOR_INTELLIGENCE_PLAN_SLUGS = new Set<string>(['professional']);
 
@@ -220,9 +225,13 @@ function LockedValue({ onUpgrade }: { onUpgrade: () => void }): ReactElement {
 export function LeadsPage(): ReactElement {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const botId = selectedBot?.id;
-  const { isFree, hasFeature, planSlug } = useEntitlements();
+  const { isFree, hasFeature } = useEntitlements();
   const bantUnlocked = hasFeature('bant');
-  const visitorIntelligenceUnlocked = VISITOR_INTELLIGENCE_PLAN_SLUGS.has(planSlug);
+  // Per-agent, matching the backend gate. `null` while resolving — hold the
+  // gate closed rather than flashing paid UI we'd then have to take away.
+  const selectedBotPlanSlug = useSelectedBotPlanSlug();
+  const visitorIntelligenceUnlocked =
+    selectedBotPlanSlug !== null && VISITOR_INTELLIGENCE_PLAN_SLUGS.has(selectedBotPlanSlug);
   const { openUpgradeModal } = useUpgradeModal();
 
   // Free-plan workspaces never get the list - the backend's `/leads` route

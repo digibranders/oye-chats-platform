@@ -529,11 +529,16 @@ VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional"})
 
 
 def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool:
-    """True iff this client's active plan includes Visitor Intelligence.
+    """True iff ANY of this client's subscriptions includes Visitor Intelligence.
 
-    Gates: the company/IP-threat signal and validated-email fields on the
-    ``/leads`` responses, and the manual follow-up send endpoint. Denies
-    on any resolver error — same deny-by-default policy as every other
+    Account-level view — resolves to the HIGHEST-priced plan across every bot
+    the client owns. Use this ONLY for account-wide questions ("should the
+    workspace see this feature exist at all?"). For anything scoped to a
+    specific bot's data — which is every ``/leads`` response, since leads
+    belong to a bot — use :func:`is_visitor_intelligence_enabled_for_bot`
+    instead, or a Free bot's leads inherit a sibling bot's paid plan.
+
+    Denies on any resolver error — same deny-by-default policy as every other
     gate in this module.
     """
     try:
@@ -548,19 +553,47 @@ def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool
     return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
 
 
-# ── Real-time email validation gate (Standard + Professional) ───────────────
+def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
+    """True iff the plan funding THIS bot includes Visitor Intelligence.
+
+    The correct gate for every lead-scoped surface. Billing attaches to the
+    Bot, not the Client, so a workspace can hold one Professional bot and one
+    Free bot at the same time. Gating those leads on the account-level
+    resolver would surface paid company/email-validity data (and enable the
+    manual follow-up send) on the FREE bot's leads too, because that resolver
+    deliberately returns the highest-priced subscription in the account.
+
+    Mirrors :func:`is_lead_source_attribution_enabled_for_bot`. Denies on any
+    resolver error.
+    """
+    try:
+        entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "visitor_intelligence_gate: entitlements lookup failed for bot=%s — denying",
+            bot_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
+
+
+# ── Real-time email validation gate (every PAID plan) ───────────────────────
 #
 # The widget calls POST /chat/validate-email on the email field's blur event
 # to block obviously-fake addresses before a visitor can submit the handoff
-# or lead-capture form. This is a data-quality feature available one tier
-# below Visitor Intelligence — Standard and Professional both get it; Free
-# and Starter widgets skip the Reoon call entirely (not just hide its
-# result), so a lower-tier bot never pays for a check it can't act on.
-EMAIL_VALIDATION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
+# or lead-capture form. Lead quality is the baseline value of paying at all,
+# so every paid tier gets it — Starter included. Only Free is excluded, and
+# a Free bot skips the Reoon call entirely (rather than making it and hiding
+# the result), so we never pay for a check that can't be acted on.
+#
+# Expressed as "not free" rather than a slug allow-list, matching
+# ``is_lead_intelligence_enabled``: a custom paid slug provisioned for an
+# enterprise deal is a paid plan and must not silently lose the feature.
 
 
 def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
-    """True iff the plan funding THIS bot includes real-time email validation.
+    """True iff the plan funding THIS bot is a paid plan (any tier above Free).
 
     Bot-scoped (mirrors :func:`is_lead_source_attribution_enabled_for_bot`)
     because the gated call sites — ``POST /chat/validate-email`` and the
@@ -576,7 +609,7 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug in EMAIL_VALIDATION_SLUGS
+    return entitlements.plan_slug != "free"
 
 
 def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:

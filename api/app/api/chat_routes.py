@@ -410,8 +410,8 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
     """Fire-and-forget: free domain extraction + Reoon power-mode validation.
 
     Two independent checks, not chained — the domain is free and always
-    attempted regardless of plan; Reoon validation (paid, Standard+
-    Professional only — checked via ``is_email_validation_enabled_for_bot``)
+    attempted regardless of plan; Reoon validation (paid plans only, any
+    tier above Free — checked via ``is_email_validation_enabled_for_bot``)
     determines is_valid_email/email_score but never blocks the domain from
     being written, and neither one ever blocks lead capture itself (that
     already succeeded before this was scheduled). Power mode can take
@@ -818,11 +818,10 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
     """Real-time check the widget calls on email-field blur, before the
     visitor can submit the handoff or offline-message form. Auth: X-Bot-Key.
 
-    Standard + Professional plans only — gated per-bot via
-    ``is_email_validation_enabled_for_bot`` so a Free/Starter bot never
-    fires the paid Reoon call (not just hides its result): the widget
-    still submits the form normally, exactly as it did before this
-    feature existed.
+    Paid plans only (every tier above Free) — gated per-bot via
+    ``is_email_validation_enabled_for_bot`` so a Free bot never fires the
+    paid Reoon call (not just hides its result): its widget still submits
+    the form normally, exactly as it did before this feature existed.
 
     Deliberately lenient: blocks only unambiguous junk (bad syntax,
     disposable addresses, spamtraps, domains with no working mail server).

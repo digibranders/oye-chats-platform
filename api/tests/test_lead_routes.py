@@ -34,7 +34,7 @@ def _allow_leads_dashboard(monkeypatch):
 
     monkeypatch.setattr(_lead_routes, "is_leads_dashboard_enabled", lambda *_a, **_k: True)
     monkeypatch.setattr(_lead_routes, "is_lead_intelligence_enabled", lambda *_a, **_k: True)
-    monkeypatch.setattr(_lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: True)
+    monkeypatch.setattr(_lead_routes, "is_visitor_intelligence_enabled_for_bot", lambda *_a, **_k: True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -777,7 +777,7 @@ class TestVisitorIntelligenceGating:
         is_lead_intelligence_enabled."""
         from app.api import lead_routes
 
-        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: False)
+        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled_for_bot", lambda *_a, **_k: False)
 
         session = MagicMock()
         _install_scalars_chain(session, [1], _chat_session_row(), _lead_info())
@@ -793,7 +793,7 @@ class TestVisitorIntelligenceGating:
     def test_get_lead_detail_includes_visitor_fields_when_professional(self, monkeypatch):
         from app.api import lead_routes
 
-        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: True)
+        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled_for_bot", lambda *_a, **_k: True)
 
         session = MagicMock()
         lead = _lead_info(is_valid_email=True, email_score=91)
@@ -814,7 +814,7 @@ class TestVisitorIntelligenceGating:
     def test_get_lead_detail_omits_visitor_fields_when_not_professional(self, monkeypatch):
         from app.api import lead_routes
 
-        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled", lambda *_a, **_k: False)
+        monkeypatch.setattr(lead_routes, "is_visitor_intelligence_enabled_for_bot", lambda *_a, **_k: False)
 
         session = MagicMock()
         lead = _lead_info(is_valid_email=True, email_score=91)
