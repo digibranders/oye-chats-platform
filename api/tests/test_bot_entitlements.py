@@ -124,17 +124,55 @@ def test_lead_source_attribution_is_per_bot(db):
     assert ent.is_lead_source_attribution_enabled_for_bot(bot_starter.id, db) is False
 
 
-def test_email_validation_is_per_bot_standard_and_professional_only(db):
-    """Email validation keys on plan SLUG ({standard, professional}) — a
-    bot on Starter must not fire the paid Reoon check."""
+def test_email_validation_is_enabled_on_every_paid_plan(db):
+    """Email validation is a paid-tier baseline: Starter counts, and so does
+    any custom paid slug provisioned for an enterprise deal. Only Free is out."""
     client = _client(db, "emailval-perbot@e.com")
-    standard = _plan(db, "standard", price=94900, bant=True)
     starter = _plan(db, "starter", price=44900, bant=False)
-    bot_std = _bot(db, client, "bot-emailval-std")
+    standard = _plan(db, "standard", price=94900, bant=True)
+    custom = _plan(db, "enterprise-custom", price=500000, bant=True)
     bot_starter = _bot(db, client, "bot-emailval-starter")
-    _sub(db, client, standard, bot_id=bot_std.id)
+    bot_std = _bot(db, client, "bot-emailval-std")
+    bot_custom = _bot(db, client, "bot-emailval-custom")
     _sub(db, client, starter, bot_id=bot_starter.id)
+    _sub(db, client, standard, bot_id=bot_std.id)
+    _sub(db, client, custom, bot_id=bot_custom.id)
     db.flush()
 
+    assert ent.is_email_validation_enabled_for_bot(bot_starter.id, db) is True
     assert ent.is_email_validation_enabled_for_bot(bot_std.id, db) is True
-    assert ent.is_email_validation_enabled_for_bot(bot_starter.id, db) is False
+    assert ent.is_email_validation_enabled_for_bot(bot_custom.id, db) is True
+
+
+def test_email_validation_is_denied_on_free(db):
+    """A Free bot must skip the paid Reoon call entirely."""
+    client = _client(db, "emailval-free@e.com")
+    free = _plan(db, "free", price=0, bant=False)
+    bot_free = _bot(db, client, "bot-emailval-free")
+    _sub(db, client, free, bot_id=bot_free.id)
+    db.flush()
+
+    assert ent.is_email_validation_enabled_for_bot(bot_free.id, db) is False
+
+
+def test_visitor_intelligence_is_per_bot_not_account_highest(db):
+    """The entitlement leak this closes: account-level ``get_entitlements``
+    deliberately returns the HIGHEST-priced plan across a client's bots, so
+    gating lead data on it surfaced Professional-only company/email-validity
+    fields (and enabled the manual follow-up send) on a FREE bot's leads
+    whenever any sibling bot was on Professional."""
+    client = _client(db, "visintel-perbot@e.com")
+    professional = _plan(db, "professional", price=139900, bant=True)
+    free = _plan(db, "free", price=0, bant=False)
+    bot_pro = _bot(db, client, "bot-visintel-pro")
+    bot_free = _bot(db, client, "bot-visintel-free")
+    _sub(db, client, professional, bot_id=bot_pro.id)
+    _sub(db, client, free, bot_id=bot_free.id)
+    db.flush()
+
+    assert ent.is_visitor_intelligence_enabled_for_bot(bot_pro.id, db) is True
+    assert ent.is_visitor_intelligence_enabled_for_bot(bot_free.id, db) is False
+
+    # The account-level resolver still reports True (highest plan wins) —
+    # which is exactly why lead-scoped surfaces must not use it.
+    assert ent.is_visitor_intelligence_enabled(client.id, db) is True

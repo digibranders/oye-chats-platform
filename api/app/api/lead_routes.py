@@ -21,7 +21,7 @@ from app.services.plan_entitlements_service import (
     is_lead_intelligence_enabled,
     is_lead_source_attribution_enabled,
     is_leads_dashboard_enabled,
-    is_visitor_intelligence_enabled,
+    is_visitor_intelligence_enabled_for_bot,
 )
 from app.services.unsubscribe_token import make_unsubscribe_token
 
@@ -132,7 +132,18 @@ def list_leads(
 
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
         intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
-        visitor_intelligence_enabled = is_visitor_intelligence_enabled(auth["client_id"], session)
+        # Visitor Intelligence resolves PER BOT — a workspace can hold a
+        # Professional bot and a Free bot simultaneously, and the Free bot's
+        # leads must not inherit the paid fields. Memoized per bot_id so a
+        # 200-lead page still costs one entitlements lookup per bot, not per row.
+        visitor_intel_by_bot: dict[int, bool] = {}
+
+        def _visitor_intel_for(bot_id_: int | None) -> bool:
+            if bot_id_ is None:
+                return False
+            if bot_id_ not in visitor_intel_by_bot:
+                visitor_intel_by_bot[bot_id_] = is_visitor_intelligence_enabled_for_bot(bot_id_, session)
+            return visitor_intel_by_bot[bot_id_]
 
         # Build leads with scores — filters are Python-computed (score/tier not in DB)
         leads = []
@@ -144,7 +155,7 @@ def list_leads(
                 bot=bot_map.get(chat_session.bot_id),
                 include_attribution=attribution_enabled,
                 include_intelligence=intelligence_enabled,
-                include_visitor_intelligence=visitor_intelligence_enabled,
+                include_visitor_intelligence=_visitor_intel_for(chat_session.bot_id),
             )
 
             # Apply filters (tier or legacy status param). Tier/score are part
@@ -489,7 +500,9 @@ def get_lead_detail(
         msg_count = len(messages)
         attribution_enabled = is_lead_source_attribution_enabled(auth["client_id"], session)
         intelligence_enabled = is_lead_intelligence_enabled(auth["client_id"], session)
-        visitor_intelligence_enabled = is_visitor_intelligence_enabled(auth["client_id"], session)
+        # Per-bot, not per-account: this lead belongs to one specific bot, so
+        # it gets exactly that bot's subscription's features.
+        visitor_intelligence_enabled = is_visitor_intelligence_enabled_for_bot(chat_session.bot_id, session)
         lead = build_lead_response(
             chat_session,
             lead_info,
@@ -568,8 +581,14 @@ def send_manual_follow_up(
         if not chat_session:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        if not is_visitor_intelligence_enabled(auth["client_id"], session):
-            raise HTTPException(status_code=403, detail="Visitor Intelligence not enabled on your plan")
+        # Gated on THIS bot's subscription, not the account's best plan — a
+        # Free bot must not be able to send follow-ups just because a sibling
+        # bot in the same workspace is on Professional.
+        if not is_visitor_intelligence_enabled_for_bot(chat_session.bot_id, session):
+            raise HTTPException(
+                status_code=403,
+                detail="Visitor Intelligence is not enabled on this agent's plan.",
+            )
 
         lead_info = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
 
