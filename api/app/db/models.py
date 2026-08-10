@@ -342,6 +342,14 @@ class Bot(Base):
     lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
+    # Metered lead-enrichment opt-in. When True (and the plan is Standard /
+    # Professional and the super-admin ``feature.email_verification_enabled``
+    # switch is on), captured lead emails are verified via Reoon at
+    # ``credit_cost.email_verification`` credits each. Defaults OFF so an agent
+    # never spends credits on verification until the customer explicitly enables
+    # it in AI Agent → Advanced.
+    email_verification_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+
     # Email notification settings
     notification_email = Column(String, nullable=True)  # Legacy single recipient (kept for backward compat)
     notification_emails = Column(
@@ -1887,6 +1895,8 @@ class CreditLedger(Base):
             "refund",
             "expiry",
             "document_upload",
+            "email_verification",
+            "company_name",
             name="credit_reason",
         ).with_variant(String(), "sqlite"),
         nullable=False,

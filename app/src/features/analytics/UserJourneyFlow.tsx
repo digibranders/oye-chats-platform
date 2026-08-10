@@ -32,7 +32,7 @@ import {
   Modal,
   Skeleton,
 } from '../../design-system';
-import { useJourneyAnalytics } from './useJourneyAnalytics';
+import { useJourneyAnalytics, type JourneyAnalytics } from './useJourneyAnalytics';
 
 /**
  * UserJourneyFlow — a Sankey-inspired flow visualisation. Sources on
@@ -625,6 +625,38 @@ function clampCard(x: number, w: number): number {
   return Math.max(CHAIN_START_X, Math.min(POST_CHAIN_END_X - w, x));
 }
 
+/** Join a page-path sequence into a stable comparison key. */
+function sequenceKey(sequence: readonly string[]): string {
+  return sequence.join('␟');
+}
+
+/**
+ * Drop-off approximation. The backend attributes conversions per positive
+ * outcome (Meeting / Live Chat / Offline) but does NOT attribute drop-off, so we
+ * derive it: the pre-chat journeys that reached the bot from a tracked page but
+ * are not present in ANY positive-outcome path set. Set subtraction is by
+ * full-sequence key; a journey not matched to a conversion stays in (erring
+ * toward showing it rather than hiding it). This is why clicking "Drop-off /
+ * Exit" now surfaces the un-converted journeys instead of an empty diagram - the
+ * old heuristic ("empty post_sequence") conflated "didn't browse further" with
+ * "dropped off" and almost always matched nothing.
+ */
+function dropOffSequences(
+  data: JourneyAnalytics,
+): JourneyAnalytics['preChatSequences']['sequences'] {
+  const converted = new Set<string>();
+  for (const key of Object.keys(data.conversionPaths) as Array<
+    keyof JourneyAnalytics['conversionPaths']
+  >) {
+    for (const path of data.conversionPaths[key]?.paths ?? []) {
+      converted.add(sequenceKey(path.sequence));
+    }
+  }
+  return data.preChatSequences.sequences.filter(
+    (seq) => !converted.has(sequenceKey(seq.sequence)),
+  );
+}
+
 // ── UI ─────────────────────────────────────────────────────────────────────
 
 export interface UserJourneyFlowProps {
@@ -709,9 +741,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     if (outcomeFilter && outcomeFilter !== 'exit') {
       src = data.conversionPaths[outcomeFilter]?.paths ?? [];
     } else if (outcomeFilter === 'exit') {
-      src = data.preChatSequences.sequences.filter(
-        (s) => (s.post_sequence?.length ?? 0) === 0,
-      );
+      src = dropOffSequences(data);
     } else {
       src = data.preChatSequences.sequences;
     }
@@ -777,9 +807,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         post_sessions: 0,
       }));
     } else if (outcomeFilter === 'exit') {
-      source = data.preChatSequences.sequences.filter(
-        (s) => (s.post_sequence?.length ?? 0) === 0,
-      );
+      source = dropOffSequences(data);
     } else {
       source = data.preChatSequences.sequences;
     }
@@ -1048,7 +1076,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           title="No journeys match this filter"
           description={
             outcomeFilter === 'exit'
-              ? 'No sessions dropped off from a tracked pre-chat page in this window.'
+              ? `Every tracked pre-chat journey reached an outcome in this window${startFilter ? ` starting on ${startFilter}` : ''} — no drop-offs to show.`
               : outcomeFilter
                 ? `No sessions ended in ${outcomeLabel(outcomeFilter)} in this window${startFilter ? ` starting on ${startFilter}` : ''}.`
                 : `No sessions started on ${startFilter} in this window.`

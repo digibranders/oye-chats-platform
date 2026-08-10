@@ -5,7 +5,7 @@ import ReactCrop, {
   type PercentCrop,
 } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
-import { Circle, Lasso, Square, Undo2 } from 'lucide-react';
+import { Circle, Lasso, Square, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button, Modal, cn } from '../../../design-system';
 
 type Shape = 'square' | 'circle' | 'free';
@@ -16,6 +16,11 @@ const SHAPES: { key: Shape; label: string; icon: typeof Square }[] = [
   { key: 'free', label: 'Custom', icon: Lasso },
 ];
 
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 3;
+
+/** A point as a FRACTION (0..1) of the displayed image, so it's independent of
+ *  the current zoom level. */
 interface Pt {
   x: number;
   y: number;
@@ -40,7 +45,8 @@ function defaultCrop(w: number, h: number): PercentCrop {
   return centerCrop(makeAspectCrop({ unit: '%', width: 80 }, 1, w, h), w, h);
 }
 
-/** Rect/circle crop of the displayed image to a PNG File. */
+/** Rect/circle crop to a PNG File. The percentage crop + the displayed width
+ *  both scale with zoom, so the zoom factor cancels out here. */
 function toRectFile(img: HTMLImageElement, crop: PercentCrop, circular: boolean, fileName: string): Promise<File> {
   const scaleX = img.naturalWidth / img.width;
   const scaleY = img.naturalHeight / img.height;
@@ -63,18 +69,18 @@ function toRectFile(img: HTMLImageElement, crop: PercentCrop, circular: boolean,
   return canvasToFile(canvas, fileName);
 }
 
-/** Freehand-lasso crop: clip to the drawn polygon, keep its bounding box, make
- *  everything outside the outline transparent. */
+/** Freehand-lasso crop: clip to the drawn polygon (points are fractions of the
+ *  image, so zoom-independent), keep its bounding box, transparent outside. */
 function toLassoFile(img: HTMLImageElement, pts: Pt[], fileName: string): Promise<File> {
-  const scaleX = img.naturalWidth / img.clientWidth;
-  const scaleY = img.naturalHeight / img.clientHeight;
-  const nat = pts.map((p) => ({ x: p.x * scaleX, y: p.y * scaleY }));
+  const NW = img.naturalWidth;
+  const NH = img.naturalHeight;
+  const nat = pts.map((p) => ({ x: p.x * NW, y: p.y * NH }));
   const xs = nat.map((p) => p.x);
   const ys = nat.map((p) => p.y);
   const minX = Math.max(0, Math.floor(Math.min(...xs)));
   const minY = Math.max(0, Math.floor(Math.min(...ys)));
-  const maxX = Math.min(img.naturalWidth, Math.ceil(Math.max(...xs)));
-  const maxY = Math.min(img.naturalHeight, Math.ceil(Math.max(...ys)));
+  const maxX = Math.min(NW, Math.ceil(Math.max(...xs)));
+  const maxY = Math.min(NH, Math.ceil(Math.max(...ys)));
   const w = Math.max(1, maxX - minX);
   const h = Math.max(1, maxY - minY);
   const canvas = document.createElement('canvas');
@@ -113,8 +119,8 @@ function canvasToFile(canvas: HTMLCanvasElement, fileName: string): Promise<File
 /**
  * AvatarCropModal - crop an uploaded avatar before it's uploaded.
  *   • Square / Circle: a locked 1:1 selection (circle bakes a transparent round mask).
- *   • Custom: a freehand lasso - drag to trace ANY shape around the logo; everything
- *     outside the outline becomes transparent.
+ *   • Custom: a freehand lasso - drag to trace ANY shape; outside becomes transparent.
+ *   • Zoom slider: enlarges the image inside a scrollable viewport for precise framing.
  */
 export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCropModalProps): ReactElement {
   const imgRef = useRef<HTMLImageElement>(null);
@@ -122,6 +128,9 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
   const [crop, setCrop] = useState<PercentCrop>();
   const [pts, setPts] = useState<Pt[]>([]);
   const [drawing, setDrawing] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  // The image's fitted size at zoom = 1; explicit sizing is then base * zoom.
+  const [baseSize, setBaseSize] = useState<{ w: number; h: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,9 +140,10 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
     const img = imgRef.current;
     if (!img) return null;
     const r = img.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return null;
     return {
-      x: Math.min(Math.max(e.clientX - r.left, 0), r.width),
-      y: Math.min(Math.max(e.clientY - r.top, 0), r.height),
+      x: Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1),
+      y: Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1),
     };
   };
 
@@ -157,20 +167,23 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
     }
   };
 
+  const imgStyle = baseSize
+    ? { width: baseSize.w * zoom, height: baseSize.h * zoom, maxWidth: 'none', display: 'block' }
+    : { maxHeight: '48vh', maxWidth: '100%', display: 'block' };
+
   const displaySrc = (
     <img
       ref={imgRef}
       src={src}
       alt="Avatar to crop"
       draggable={false}
-      // Anonymous CORS so re-cropping an already-hosted avatar (not just a fresh
-      // data URL) keeps the canvas untainted for export. Ignored for data: URLs.
       crossOrigin="anonymous"
       onLoad={(e) => {
+        if (!baseSize) setBaseSize({ w: e.currentTarget.clientWidth, h: e.currentTarget.clientHeight });
         if (shape !== 'free') setCrop(defaultCrop(e.currentTarget.width, e.currentTarget.height));
       }}
       onError={() => setError('Could not load this image for cropping. Try uploading it again.')}
-      style={{ maxHeight: '55vh', maxWidth: '100%', display: 'block' }}
+      style={imgStyle}
     />
   );
 
@@ -181,8 +194,8 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
       title="Crop your avatar"
       description={
         shape === 'free'
-          ? 'Drag to draw any shape around your logo.'
-          : 'Pick a shape, then drag the box to frame your logo.'
+          ? 'Drag to draw any shape around your logo. Use the slider to zoom.'
+          : 'Pick a shape, drag the box to frame your logo, and zoom for precision.'
       }
       size="md"
     >
@@ -205,9 +218,6 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
                   onClick={() => {
                     setShape(key);
                     setPts([]);
-                    if (key !== 'free' && imgRef.current) {
-                      setCrop(defaultCrop(imgRef.current.width, imgRef.current.height));
-                    }
                   }}
                   className={cn(
                     'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
@@ -235,8 +245,8 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
           )}
         </div>
 
-        {/* Cropper */}
-        <div className="flex justify-center rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-2">
+        {/* Cropper viewport (scrolls when zoomed in) */}
+        <div className="flex max-h-[48vh] max-w-full justify-center overflow-auto rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-2">
           {shape === 'free' ? (
             <div
               className="relative touch-none select-none"
@@ -255,7 +265,7 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
                 if (!p) return;
                 setPts((prev) => {
                   const last = prev[prev.length - 1];
-                  if (last && Math.hypot(p.x - last.x, p.y - last.y) < 3) return prev;
+                  if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.005) return prev;
                   return [...prev, p];
                 });
               }}
@@ -264,13 +274,19 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
             >
               {displaySrc}
               {pts.length > 0 && (
-                <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+                <svg
+                  viewBox="0 0 1 1"
+                  preserveAspectRatio="none"
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                  aria-hidden="true"
+                >
                   <polygon
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="var(--ds-accent)"
                     fillOpacity={0.18}
                     stroke="var(--ds-accent)"
                     strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
                     strokeDasharray="5 4"
                   />
                 </svg>
@@ -288,6 +304,22 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
               {displaySrc}
             </ReactCrop>
           )}
+        </div>
+
+        {/* Zoom slider */}
+        <div className="flex items-center gap-3">
+          <ZoomOut size={15} className="shrink-0 text-[var(--ds-text-muted)]" aria-hidden="true" />
+          <input
+            type="range"
+            min={ZOOM_MIN}
+            max={ZOOM_MAX}
+            step={0.02}
+            value={zoom}
+            onChange={(e) => setZoom(Number(e.target.value))}
+            aria-label="Zoom"
+            className="h-1 flex-1 cursor-pointer accent-[var(--ds-accent)]"
+          />
+          <ZoomIn size={15} className="shrink-0 text-[var(--ds-text-muted)]" aria-hidden="true" />
         </div>
 
         {shape === 'free' && pts.length < 3 && (

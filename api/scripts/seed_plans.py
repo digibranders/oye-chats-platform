@@ -85,12 +85,12 @@ _PLANS: list[dict] = [
         "slug": "starter",
         "name": "Starter",
         "description": "For a solo site that wants live chat + a real AI agent.",
-        "credits_per_month": 2000,
-        "monthly_price_cents": 44900,  # ₹449
-        "annual_price_cents": 430800,  # ₹4,308 (₹359/mo × 12)
-        "monthly_price_usd_cents": 900,  # $9
-        "annual_price_usd_cents": 8400,  # $84 ($7/mo × 12)
-        "annual_discount_percent": 20,
+        "credits_per_month": 1000,
+        "monthly_price_cents": 59900,  # ₹599
+        "annual_price_cents": 598800,  # ₹5,988 (₹499/mo × 12)
+        "monthly_price_usd_cents": 1900,  # $19
+        "annual_price_usd_cents": 18000,  # $180 ($15/mo × 12)
+        "annual_discount_percent": 17,
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 1,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -98,7 +98,7 @@ _PLANS: list[dict] = [
         "is_default": False,
         "sort_order": 2,
         "limits": {
-            "credits": 2000,
+            "credits": 1000,
             "bots": 1,
             "operators": 1,
             "leads": -1,
@@ -128,12 +128,12 @@ _PLANS: list[dict] = [
         "slug": "standard",
         "name": "Standard",
         "description": "The lead-machine — grounded AI plus BANT qualification.",
-        "credits_per_month": 6000,
-        "monthly_price_cents": 94900,  # ₹949
-        "annual_price_cents": 910800,  # ₹9,108 (₹759/mo × 12)
-        "monthly_price_usd_cents": 1900,  # $19
-        "annual_price_usd_cents": 18000,  # $180 ($15/mo × 12)
-        "annual_discount_percent": 20,
+        "credits_per_month": 2500,
+        "monthly_price_cents": 119900,  # ₹1,199
+        "annual_price_cents": 1198800,  # ₹11,988 (₹999/mo × 12)
+        "monthly_price_usd_cents": 3100,  # $31
+        "annual_price_usd_cents": 30000,  # $300 ($25/mo × 12)
+        "annual_discount_percent": 17,
         "trial_days": 7,  # the 7-day full-Standard trial
         "included_operator_seats": 2,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -141,7 +141,7 @@ _PLANS: list[dict] = [
         "is_default": False,
         "sort_order": 3,
         "limits": {
-            "credits": 6000,
+            "credits": 2500,
             "bots": 1,
             "operators": 2,
             "leads": -1,
@@ -175,11 +175,11 @@ _PLANS: list[dict] = [
         "name": "Professional",
         "description": "For teams scaling qualified pipeline with deeper frameworks.",
         "credits_per_month": 10000,
-        "monthly_price_cents": 139900,  # ₹1,399
-        "annual_price_cents": 1342800,  # ₹13,428 (₹1,119/mo × 12)
+        "monthly_price_cents": 359900,  # ₹3,599
+        "annual_price_cents": 3598800,  # ₹35,988 (₹2,999/mo × 12)
         "monthly_price_usd_cents": 3900,  # $39
         "annual_price_usd_cents": 37200,  # $372 ($31/mo × 12)
-        "annual_discount_percent": 20,
+        "annual_discount_percent": 17,
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 3,
         "extra_seat_price_cents": 44900,  # ₹449

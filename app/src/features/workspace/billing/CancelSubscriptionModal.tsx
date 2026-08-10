@@ -109,7 +109,7 @@ export function CancelSubscriptionModal({
           {[
             `Full access to ${planName} continues until ${endLabel}.`,
             'After that, your agents stop replying and go offline.',
-            'Any top-up credits you’ve bought stay valid - they don’t expire for 12 months.',
+            'Any top-up credits you’ve bought stay valid - they never expire.',
             `Changed your mind? Reactivate anytime before ${endLabel} - it's instant, and there's nothing to pay.`,
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5">

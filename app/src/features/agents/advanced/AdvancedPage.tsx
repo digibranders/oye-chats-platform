@@ -26,6 +26,10 @@ import { ScopeStrictnessSection } from './ScopeStrictnessSection';
 import { QualificationSection } from './QualificationSection';
 import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
+import { LeadEnrichmentSection } from './LeadEnrichmentSection';
+
+/** Plans whose entitlements include metered Reoon email verification. */
+const EMAIL_VERIFICATION_PLANS = new Set(['standard', 'professional']);
 
 /**
  * Order-independent serialization. `bantConfig` is an opaque server object whose
@@ -63,7 +67,8 @@ export function AdvancedPage(): ReactElement {
   // Advanced is a paid surface. `loading` guards the initial entitlements fetch
   // (defaults to the restrictive Free fallback) so a paid workspace deep-linking
   // here never flashes the locked card before its real plan resolves.
-  const { isFree, loading: entitlementsLoading } = useEntitlements();
+  const { isFree, loading: entitlementsLoading, planSlug } = useEntitlements();
+  const emailVerificationPlanAllows = EMAIL_VERIFICATION_PLANS.has(planSlug);
 
   const [draft, setDraft] = useState<AdvancedDraft | null>(null);
   const [initial, setInitial] = useState<AdvancedDraft | null>(null);
@@ -161,6 +166,11 @@ export function AdvancedPage(): ReactElement {
     );
   }, []);
 
+  const setEmailVerification = useCallback((next: boolean) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, emailVerificationEnabled: next } : prev));
+  }, []);
+
   const dirty = useMemo(
     () => draft !== null && initial !== null && !draftsEqual(draft, initial),
     [draft, initial],
@@ -211,6 +221,7 @@ export function AdvancedPage(): ReactElement {
             relevance_threshold: draft.relevanceThreshold,
             feature_flags: draft.featureFlags,
             widget_config: draft.widgetConfig,
+            email_verification_enabled: draft.emailVerificationEnabled,
           },
           agentId,
         ),
@@ -318,6 +329,14 @@ export function AdvancedPage(): ReactElement {
             <div className="border-t border-[var(--ds-border)]" />
 
             <WidgetBehaviorSection flags={draft.featureFlags} onToggle={toggleFlag} />
+
+            <div className="border-t border-[var(--ds-border)]" />
+
+            <LeadEnrichmentSection
+              enabled={draft.emailVerificationEnabled}
+              onToggle={setEmailVerification}
+              planAllows={emailVerificationPlanAllows}
+            />
 
             <div className="border-t border-[var(--ds-border)]" />
 

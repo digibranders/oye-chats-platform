@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from app.api.chat_routes import _resolve_and_update_location
@@ -46,10 +47,14 @@ def test_resolve_and_update_location_writes_visitor_metadata(db):
 
     with (
         patch("app.api.chat_routes.fetch_ip_intel", return_value=fake_intel),
+        # Company lookup is now Professional-gated + metered — stub the plan gate
+        # and the credit reservation so the lookup path runs.
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True),
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo for this test")),
         patch("app.api.chat_routes.get_session", return_value=MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", bot.id)
 
     # IP intel is namespaced under ``ip_intel`` rather than replacing the whole
     # blob — ``visitor_metadata`` is shared with the operator console's
@@ -92,10 +97,12 @@ def test_resolve_and_update_location_preserves_existing_visitor_metadata(db):
 
     with (
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp", "is_vpn": False}),
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True),
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo for this test")),
         patch("app.api.chat_routes.get_session", return_value=MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", bot.id)
 
     updated = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     assert updated.visitor_metadata["browser"] == "Chrome"
@@ -112,6 +119,19 @@ class _MockSessionManager:
 
     def __exit__(self, *args):
         pass
+
+
+@contextmanager
+def _metering_allowed():
+    """Plan gate open and the charge accepted, so the dedup tests exercise the
+    real path. The charge mock is ASSERTED ON, not just installed — "charged
+    once per session, not once per message" is the billing property these
+    tests exist to protect."""
+    with (
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
+    ):
+        yield charge
 
 
 def _seed(db, *, client_id, bot_key, session_id, visitor_metadata=None, location=None):
@@ -140,18 +160,52 @@ def test_a_second_message_does_not_pay_for_the_same_lookups_again(db):
     session_id = _seed(db, client_id=10, bot_key="bot-repeat1", session_id="s-repeat")
 
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}) as intel,
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", 10)
         assert intel.call_count == 1
 
         # Turns 2 and 3 of the same conversation.
-        _resolve_and_update_location(session_id, "8.8.8.8")
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", 10)
+        _resolve_and_update_location(session_id, "8.8.8.8", 10)
 
     assert intel.call_count == 1, "the IP lookup was repeated for an unchanged session IP"
+
+
+def test_the_company_lookup_is_charged_once_per_session_not_once_per_message(db):
+    """The billing property, asserted at the charge rather than the lookup.
+
+    `fetch_ip_intel` is metered at `credit_cost.company_name` (10). It is
+    submitted from /chat and /chat/stream on EVERY message, so charging before
+    the dedup check bills a 15-turn conversation 150 credits of enrichment
+    against 15 credits of actual AI replies — roughly 67 conversations would
+    exhaust a Professional plan's whole monthly allowance.
+
+    The two halves of this — the metering and the dedup — were written
+    independently and git merges them with no conflict in either order, so
+    nothing but this test holds the order in place.
+    """
+    session_id = _seed(db, client_id=30, bot_key="bot-charge1", session_id="s-charge")
+
+    with (
+        _metering_allowed() as charge,
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        for _ in range(5):
+            _resolve_and_update_location(session_id, "8.8.8.8", 30)
+
+    assert charge.call_count == 1, (
+        f"charged {charge.call_count}x for one visitor's company lookup — "
+        "the charge must sit behind the per-session dedup"
+    )
+    # And it must carry an idempotency key, so two overlapping background
+    # threads cannot both succeed even when both pass the best-effort dedup.
+    assert charge.call_args.kwargs.get("idempotency_key"), "the enrichment charge has no idempotency key"
 
 
 def test_a_changed_ip_is_resolved_again(db):
@@ -160,12 +214,13 @@ def test_a_changed_ip_is_resolved_again(db):
     session_id = _seed(db, client_id=11, bot_key="bot-moved1", session_id="s-moved")
 
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}) as intel,
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
-        _resolve_and_update_location(session_id, "1.1.1.1")
+        _resolve_and_update_location(session_id, "8.8.8.8", 11)
+        _resolve_and_update_location(session_id, "1.1.1.1", 11)
 
     assert intel.call_count == 2
 
@@ -175,11 +230,12 @@ def test_a_missing_session_row_is_not_mistaken_for_already_done(db):
     this thread, so "no row yet" is the normal first-turn state. Reading it as
     "already resolved" would disable the feature entirely."""
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}) as intel,
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location("session-that-does-not-exist-yet", "8.8.8.8")
+        _resolve_and_update_location("session-that-does-not-exist-yet", "8.8.8.8", 999)
 
     assert intel.call_count == 1
 
@@ -195,11 +251,12 @@ def test_intel_still_resolves_when_only_the_location_is_known(db):
     )
 
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}) as intel,
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", 12)
 
     assert intel.call_count == 1
 
@@ -251,15 +308,16 @@ def test_the_geolocation_vendors_are_skipped_once_the_location_is_known(db):
     session_id = _seed(db, client_id=20, bot_key="bot-geo1", session_id="s-geo")
 
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
         patch("app.api.chat_routes.urllib.request.urlopen", return_value=_geo_response()) as geo,
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", 20)
         assert geo.call_count == 1, "the first turn must resolve the location"
 
-        _resolve_and_update_location(session_id, "8.8.8.8")
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", 20)
+        _resolve_and_update_location(session_id, "8.8.8.8", 20)
 
     assert geo.call_count == 1, "the geolocation vendors were re-hit for a known location"
     assert db.query(ChatSession).filter(ChatSession.id == session_id).first().location == "Delhi, India | 8.8.8.8"
@@ -273,20 +331,22 @@ def test_a_new_ip_replaces_a_stale_resolved_location(db):
     session_id = _seed(db, client_id=21, bot_key="bot-geo2", session_id="s-geo-move")
 
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
         patch("app.api.chat_routes.urllib.request.urlopen", return_value=_geo_response("Delhi", "India")),
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8", 21)
 
     with (
+        _metering_allowed(),
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
         patch("app.api.chat_routes.urllib.request.urlopen", return_value=_geo_response("Mumbai", "India")) as geo,
         patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
     ):
-        _resolve_and_update_location(session_id, "1.1.1.1")
+        _resolve_and_update_location(session_id, "1.1.1.1", 21)
         # ...and the new value must now latch, so a third message is free.
-        _resolve_and_update_location(session_id, "1.1.1.1")
+        _resolve_and_update_location(session_id, "1.1.1.1", 21)
 
     assert db.query(ChatSession).filter(ChatSession.id == session_id).first().location == "Mumbai, India | 1.1.1.1"
     assert geo.call_count == 1, "the re-resolved location did not latch; every message re-hits the vendors"
@@ -303,3 +363,41 @@ def test_a_hand_written_location_is_never_clobbered(db):
     # Not ours: the trailing segment has to parse as a real IP.
     assert _is_resolver_owned_location("Head office | Mumbai") is False
     assert _is_resolver_owned_location("Verified on-site") is False
+
+
+def test_company_lookup_skipped_when_not_professional(db):
+    """Company lookup is Professional-only + feature-gated: when the plan gate
+    denies it, ``fetch_ip_intel`` must not be called and no ``ip_intel`` is
+    written (the free geolocation path still runs)."""
+    client = Client(id=3, email="skip@example.com", name="Skip Client", api_key="skip-key")
+    db.add(client)
+    db.flush()
+    bot = Bot(id=3, client_id=3, bot_key="bot-skip123", name="Skip Bot", is_active=True)
+    db.add(bot)
+    db.commit()
+
+    session_id = "test-session-skip"
+    db.add(ChatSession(id=session_id, bot_id=bot.id, status="bot", visitor_metadata={"browser": "Chrome"}))
+    db.commit()
+
+    class MockSessionManager:
+        def __init__(self, db):
+            self.db = db
+
+        def __enter__(self):
+            return self.db
+
+        def __exit__(self, *args):
+            pass
+
+    with (
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}) as mock_fetch,
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=False),
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo for this test")),
+        patch("app.api.chat_routes.get_session", return_value=MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", bot.id)
+
+    mock_fetch.assert_not_called()
+    updated = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    assert "ip_intel" not in (updated.visitor_metadata or {})

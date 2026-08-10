@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 # Matches the default INR topup pack in credit_service._DEFAULT_PRICING —
 # amount=1599 (rupees), credits=2000. Using the real default keeps this test
 # honest against pricing_config drift rather than faking a pack.
-_PACK_AMOUNT = 1599
+_PACK_AMOUNT = 3999  # smallest configured pack (see credit_service._DEFAULT_PRICING)
 
 
 @contextmanager

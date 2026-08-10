@@ -2,10 +2,13 @@ import { type ReactElement, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  Building2,
   CalendarClock,
+  ChevronDown,
   FileText,
   Globe,
   ListOrdered,
+  MailCheck,
   MessageSquare,
   Wallet,
   Zap,
@@ -187,11 +190,31 @@ function ActivityCard({ label, icon, eventCount, creditsUsed }: ActivityCardProp
 
 // ── How credits work (per-action cost reference) ─────────────────────────────
 
+/** One size bucket in a tiered action's expandable breakdown. */
+interface CreditCostTier {
+  readonly label: string;
+  readonly cost: number;
+}
+
 interface CreditCostRow {
   readonly icon: LucideIcon;
   readonly label: string;
   readonly detail: string;
   readonly cost: number;
+  /**
+   * When present, the row becomes expandable (chevron) and reveals a
+   * size→credits table. The flat `cost` acts as the entry-tier floor shown on
+   * the collapsed badge. Mirrors the backend
+   * `credit_cost.document_upload_tiers` defaults (credit_service.py); max_words
+   * is exclusive, so a 100-word doc lands in the 100–500 bucket.
+   */
+  readonly tiers?: readonly CreditCostTier[];
+  /**
+   * Built but not launched yet — the card shows a muted "Coming soon" badge
+   * instead of a credit price, and never charges (the super-admin
+   * `feature.company_name_enabled` switch stays off until launch).
+   */
+  readonly comingSoon?: boolean;
 }
 
 /**
@@ -212,18 +235,118 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     cost: 1,
   },
   {
-    icon: FileText,
-    label: 'Document upload',
-    detail: 'Charged per file added to your knowledge base. Refunded if a file fails to save.',
-    cost: 3,
-  },
-  {
     icon: Globe,
     label: 'URL crawl',
     detail: 'Charged per page actually ingested into your knowledge base.',
     cost: 5,
   },
+  {
+    icon: FileText,
+    label: 'Document upload',
+    detail: 'Charged by document size. Refunded if a file fails to save.',
+    cost: 5,
+    tiers: [
+      { label: 'Up to 100 words', cost: 5 },
+      { label: '100–500 words', cost: 15 },
+      { label: '500–2,000 words', cost: 30 },
+      { label: '2,000–10,000 words', cost: 75 },
+      { label: '10,000+ words', cost: 150 },
+    ],
+  },
+  {
+    icon: MailCheck,
+    label: 'Email verification',
+    detail: 'Verifies a captured lead’s email. Standard & Professional plans.',
+    cost: 10,
+  },
+  {
+    icon: Building2,
+    label: 'Company lookup',
+    detail: 'Identifies a visitor’s company from their IP. Professional plan.',
+    cost: 10,
+    comingSoon: true,
+  },
 ];
+
+/** Format a credit amount for a badge/row ("1 credit" / "30 credits"). */
+function formatCreditCost(cost: number): string {
+  return cost === 1 ? '1 credit' : `${cost} credits`;
+}
+
+/**
+ * A single cost card. Flat rows render statically; a row carrying `tiers`
+ * becomes expandable — a chevron toggles a size→credits table, and the badge
+ * shows the full span (e.g. "5–150 credits") so the range is legible before
+ * expanding.
+ */
+function CreditCostItem({ row }: { row: CreditCostRow }): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const Icon = row.icon;
+  // A "coming soon" row is inert — no expandable tiers, no live price.
+  const tiers = row.comingSoon ? undefined : row.tiers;
+  const badge =
+    tiers && tiers.length > 0
+      ? `${tiers[0].cost}–${tiers[tiers.length - 1].cost} credits`
+      : formatCreditCost(row.cost);
+
+  return (
+    // `relative` so the expanded tier list can float as an absolute dropdown —
+    // it must NOT reflow the grid, or opening one card shoves the cards in the
+    // next row down. `z-20` lifts the open panel above sibling cards.
+    <div
+      className={cn(
+        'relative flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]',
+        expanded && 'z-20',
+      )}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+        <Icon size={16} aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-[13px] font-semibold text-[var(--ds-text)]">{row.label}</p>
+          {row.comingSoon ? (
+            <span className="shrink-0 rounded-md border border-[var(--ds-border)] bg-transparent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+              Coming soon
+            </span>
+          ) : (
+            <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
+              {badge}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{row.detail}</p>
+        {tiers && tiers.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
+            className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-accent-text)] hover:underline focus-visible:underline focus-visible:outline-none"
+          >
+            {expanded ? 'Hide size ranges' : 'See size ranges'}
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={cn('transition-transform duration-200', expanded && 'rotate-180')}
+            />
+          </button>
+        )}
+      </div>
+      {tiers && tiers.length > 0 && expanded && (
+        <ul className="absolute left-3 right-3 top-full z-20 mt-1.5 space-y-1.5 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-3 shadow-[var(--ds-shadow-lg)]">
+          {tiers.map((tier) => (
+            <li key={tier.label} className="flex items-center justify-between gap-2 text-[12px]">
+              <span className="text-[var(--ds-text-muted)]">{tier.label}</span>
+              <span className="shrink-0 font-semibold tabular-nums text-[var(--ds-text)]">
+                {formatCreditCost(tier.cost)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /**
  * CreditCostReference - a compact "what each action costs" card. Lives on the
@@ -237,25 +360,9 @@ function CreditCostReference(): ReactElement {
         title="How credits work"
         description="What each action costs from your credit balance."
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {CREDIT_COSTS.map(({ icon: Icon, label, detail, cost }) => (
-          <div
-            key={label}
-            className="flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-              <Icon size={16} aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="text-[13px] font-semibold text-[var(--ds-text)]">{label}</p>
-                <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
-                  {cost === 1 ? '1 credit' : `${cost} credits`}
-                </span>
-              </div>
-              <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{detail}</p>
-            </div>
-          </div>
+      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
+        {CREDIT_COSTS.map((row) => (
+          <CreditCostItem key={row.label} row={row} />
         ))}
       </div>
     </section>
@@ -356,7 +463,7 @@ function RecentTopups({ rows }: { rows: LedgerRow[] }): ReactElement | null {
     <section aria-label="Recent top-ups" className="space-y-4">
       <SectionHeader
         title="Recent top-ups"
-        description="Your latest credit purchases. Top-up credits roll over for 12 months."
+        description="Your latest credit purchases. Top-up credits never expire."
       />
       <ul className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
         {purchases.map((row) => (
@@ -425,8 +532,17 @@ export function UsagePage(): ReactElement {
             documentUpload: balance.documentUpload,
             urlScan: balance.urlScan,
             emailSend: balance.emailSend,
+            emailVerification: balance.emailVerification,
+            companyName: balance.companyName,
           }
-        : { aiChat: emptyBucket, documentUpload: emptyBucket, urlScan: emptyBucket, emailSend: emptyBucket };
+        : {
+            aiChat: emptyBucket,
+            documentUpload: emptyBucket,
+            urlScan: emptyBucket,
+            emailSend: emptyBucket,
+            emailVerification: emptyBucket,
+            companyName: emptyBucket,
+          };
   // `null` = closed. A target carries the pool the top-up is scoped to: the
   // shared account balance (`botId: null`) or one agent's isolated balance.
   const navigate = useNavigate();

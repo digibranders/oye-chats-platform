@@ -1,5 +1,5 @@
 import { type ReactElement } from 'react';
-import { FileText, Globe, MessageSquare, type LucideIcon } from 'lucide-react';
+import { Building2, FileText, Globe, MailCheck, MessageSquare, type LucideIcon } from 'lucide-react';
 import { formatCredits, type UsageBuckets } from '../usage-model';
 
 interface BreakdownRow {
@@ -27,6 +27,8 @@ export function CreditBreakdown({ activity }: CreditBreakdownProps): ReactElemen
     { key: 'crawler', label: 'Crawler', icon: Globe, creditsUsed: activity.urlScan.creditsUsed, eventCount: activity.urlScan.eventCount },
     { key: 'documents', label: 'Documents', icon: FileText, creditsUsed: activity.documentUpload.creditsUsed, eventCount: activity.documentUpload.eventCount },
     { key: 'chat', label: 'AI chat', icon: MessageSquare, creditsUsed: activity.aiChat.creditsUsed, eventCount: activity.aiChat.eventCount },
+    { key: 'email-verification', label: 'Email verification', icon: MailCheck, creditsUsed: activity.emailVerification.creditsUsed, eventCount: activity.emailVerification.eventCount },
+    { key: 'company-name', label: 'Company lookup', icon: Building2, creditsUsed: activity.companyName.creditsUsed, eventCount: activity.companyName.eventCount },
   ].sort((a, b) => b.creditsUsed - a.creditsUsed);
 
   const total = rows.reduce((sum, row) => sum + row.creditsUsed, 0);

@@ -202,6 +202,12 @@ export interface AdvancedDraft {
   bantConfig: Record<string, unknown> | null;
   featureFlags: Record<string, boolean>;
   widgetConfig: Record<string, number>;
+  /**
+   * Per-agent opt-in for metered Reoon email verification. Bound to the
+   * `email_verification_enabled` Bot field; defaults OFF. Only effective on
+   * Standard / Professional plans (enforced server-side).
+   */
+  emailVerificationEnabled: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -240,6 +246,7 @@ export function parseSettings(raw: Record<string, unknown>): AdvancedDraft {
     bantConfig: isRecord(raw.bant_config) ? raw.bant_config : null,
     featureFlags: mergeFlags(raw.feature_flags),
     widgetConfig: mergeConfig(raw.widget_config),
+    emailVerificationEnabled: raw.email_verification_enabled === true,
   };
 }
 

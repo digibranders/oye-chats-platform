@@ -82,7 +82,13 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Support Concierge' })).toBeInTheDocument();
+    // The agent's NAME is no longer this page's job: `AgentOverviewHero` was
+    // deleted and identity (avatar, name, website, created date) moved up into
+    // `AgentLayout`'s header, which wraps every agent tab. Asserting it here
+    // now fails for the right reason — the page genuinely does not render it —
+    // so the assertion is re-homed to what this page does own: the health
+    // verdict that answers "Is my AI healthy?", and the route out to fix it.
+    expect(screen.queryByRole('heading', { level: 1, name: 'Support Concierge' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /manage knowledge/i })).toHaveAttribute(
       'href',
       '/agents/17/knowledge',
