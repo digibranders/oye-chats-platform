@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { Calendar, Globe, Inbox, Lock, Mail, PlugZap } from 'lucide-react';
+import { Globe, PlugZap } from 'lucide-react';
 import {
   Button,
   EmptyState,
@@ -9,45 +9,25 @@ import {
   StatusBadge,
 } from '../../../design-system';
 import { InsightCard } from '../../../design-system/components/InsightCard';
-import { QuickAction } from '../../../design-system/components/QuickAction';
 import { useAgent } from '../../../context/AgentContext';
-import { useEntitlements } from '../../../hooks/useEntitlements';
-import { useUpgradeModal } from '../../../context/UpgradeModalContext';
-import { getBot, updateBot } from '../../../services/api';
+import { getBot } from '../../../services/api';
 import { type Bot } from '../../../types/domain';
 import { ChannelCard } from './ChannelCard';
 import { WebsiteInstall } from './WebsiteInstall';
 import { DomainRestrictionsSection } from './DomainRestrictionsSection';
 import { SubdomainSessionSection } from './SubdomainSessionSection';
-import { COMING_SOON_CHANNELS } from './channels.data';
 
 /**
  * The full agent record includes channel fields the lightweight list `Bot`
  * omits. `getBot` returns the complete row; we read those extra fields through
  * this local widening of the shared `Bot` type (all optional - the backend may
- * not set them). See `pages/Integrations.jsx` for the source of truth on these
- * meeting fields.
+ * not set them). The Channels tab is Website-only, so only the widget-install
+ * and domain fields are read here.
  */
 interface ChannelBot extends Bot {
-  meeting_booking_enabled?: boolean;
-  meeting_provider?: string | null;
-  calendly_url?: string | null;
-  zcal_url?: string | null;
-  calcom_url?: string | null;
-  notification_emails?: { default?: string[] } | null;
   allowed_domains?: string[] | null;
   domain_check_enabled?: boolean | null;
   session_share_domain?: string | null;
-}
-
-const MEETING_PROVIDER_LABELS: Record<string, string> = {
-  calendly: 'Calendly',
-  zcal: 'Zcal',
-  calcom: 'Cal.com',
-};
-
-function meetingUrlOf(bot: ChannelBot): string {
-  return bot.calendly_url || bot.zcal_url || bot.calcom_url || '';
 }
 
 /** Skeleton placeholder shown while the agent record loads. */
@@ -64,16 +44,13 @@ function ChannelsSkeleton(): ReactElement {
 
 /**
  * ChannelsPage - the agent's "Channels" tab. Answers one question: *where is my
- * AI connected?* It surfaces the live Website channel (with the full install
- * flow), the Meetings and Email channels, and the roadmap of channels still to
- * come. Data is loaded fresh via `getBot`; the Meetings channel can be toggled
- * with `updateBot`.
+ * AI connected?* It surfaces the live Website channel with the full install
+ * flow (embed snippet, domain allow-list, cross-subdomain sessions). Meetings,
+ * Email, and the roadmap channels live in Workspace → Integrations. Data is
+ * loaded fresh via `getBot`.
  */
 export function ChannelsPage(): ReactElement {
   const { agent, loading: agentLoading } = useAgent();
-  const { entitlements } = useEntitlements();
-  const { openUpgradeModal } = useUpgradeModal();
-  const premiumIntegrationsLocked = entitlements.features.integrations !== 'all';
   const numericId = agent?.id ?? null;
 
   // Load token = which agent + which retry. Storing it alongside the result lets
@@ -109,31 +86,6 @@ export function ChannelsPage(): ReactElement {
   const loadError = failed && failed.token === token ? failed.message : null;
   const loading = agentLoading || (numericId != null && record == null && loadError == null);
 
-  // ── Meetings channel write (updateBot) ────────────────────────────────────
-  const [savingMeetings, setSavingMeetings] = useState(false);
-  const [meetingsError, setMeetingsError] = useState<string | null>(null);
-
-  const setMeetingsEnabled = async (next: boolean): Promise<void> => {
-    if (numericId == null || token == null) return;
-    setSavingMeetings(true);
-    setMeetingsError(null);
-    try {
-      // PATCH /bots/{id} returns { message }, NOT the bot - so merge the single
-      // changed field into the current record instead of overwriting it (which
-      // would blank out bot_key, website, install status, etc.).
-      await updateBot(numericId, { meeting_booking_enabled: next });
-      setFetched((prev) =>
-        prev && prev.token === token
-          ? { token, bot: { ...prev.bot, meeting_booking_enabled: next } }
-          : prev,
-      );
-    } catch (err: unknown) {
-      setMeetingsError(err instanceof Error ? err.message : 'Couldn’t save. Please try again.');
-    } finally {
-      setSavingMeetings(false);
-    }
-  };
-
   // ── States: agent missing / loading / error ───────────────────────────────
   const body = (): ReactElement => {
     if (!agentLoading && numericId == null) {
@@ -165,15 +117,6 @@ export function ChannelsPage(): ReactElement {
     const installed = Boolean(record.widget_installed_at);
     const website = record.website;
     const botKey = record.bot_key;
-
-    const meetingUrl = meetingUrlOf(record);
-    const meetingsConfigured = Boolean(meetingUrl);
-    const meetingsOn = Boolean(record.meeting_booking_enabled);
-    const providerLabel = record.meeting_provider
-      ? (MEETING_PROVIDER_LABELS[record.meeting_provider] ?? 'your scheduler')
-      : 'your scheduler';
-
-    const notifyCount = record.notification_emails?.default?.length ?? 0;
 
     return (
       <div className="space-y-8">
@@ -256,129 +199,6 @@ export function ChannelsPage(): ReactElement {
               </p>
             )}
           </ChannelCard>
-
-          {/* Meetings - bookings inside the chat. Requires the paid `integrations: 'all'` tier. */}
-          <ChannelCard
-            icon={premiumIntegrationsLocked ? Lock : Calendar}
-            iconTone={premiumIntegrationsLocked ? 'neutral' : 'info'}
-            name="Meetings"
-            description={
-              premiumIntegrationsLocked
-                ? 'Let visitors book a meeting without leaving the conversation. Available on paid plans.'
-                : meetingsOn && meetingsConfigured
-                  ? `Visitors can book time via ${providerLabel} right inside the chat.`
-                  : 'Let visitors book a meeting without leaving the conversation.'
-            }
-            status={
-              premiumIntegrationsLocked ? (
-                <StatusBadge tone="neutral">
-                  <Lock size={11} aria-hidden="true" />
-                  Locked
-                </StatusBadge>
-              ) : meetingsOn && meetingsConfigured ? (
-                <StatusBadge tone="success" dot>
-                  Active
-                </StatusBadge>
-              ) : meetingsConfigured ? (
-                <StatusBadge tone="neutral">Off</StatusBadge>
-              ) : (
-                <StatusBadge tone="neutral">Not set up</StatusBadge>
-              )
-            }
-            action={
-              premiumIntegrationsLocked ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openUpgradeModal('meetings_integration')}
-                >
-                  <Lock size={13} aria-hidden="true" />
-                  Upgrade to connect
-                </Button>
-              ) : meetingsConfigured ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    variant={meetingsOn ? 'outline' : 'primary'}
-                    size="sm"
-                    disabled={savingMeetings}
-                    onClick={() => void setMeetingsEnabled(!meetingsOn)}
-                  >
-                    {savingMeetings
-                      ? 'Saving…'
-                      : meetingsOn
-                        ? 'Turn off'
-                        : 'Turn on'}
-                  </Button>
-                  {meetingsError ? (
-                    <span role="alert" className="text-[12px] text-[var(--ds-danger)]">
-                      {meetingsError}
-                    </span>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                    Add a scheduling link to turn this on.
-                  </p>
-                  <QuickAction
-                    icon={Calendar}
-                    label="Set up in Integrations"
-                    to="/workspace/integrations"
-                  />
-                </div>
-              )
-            }
-          />
-
-          {/* Email - always-on fallback capture */}
-          <ChannelCard
-            icon={Mail}
-            iconTone="success"
-            name="Email"
-            description="When no one’s available, visitors leave a message and it lands in your inbox."
-            status={
-              notifyCount > 0 ? (
-                <StatusBadge tone="success" dot>
-                  Active
-                </StatusBadge>
-              ) : (
-                <StatusBadge tone="warning" dot>
-                  Needs setup
-                </StatusBadge>
-              )
-            }
-            action={
-              <div className="flex flex-col gap-2">
-                <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                  {notifyCount > 0
-                    ? `Notifications go to ${notifyCount} address${notifyCount === 1 ? '' : 'es'}.`
-                    : 'Add notification recipients so you never miss a message.'}
-                </p>
-                <QuickAction icon={Inbox} label="Open inbox" to="/inbox" />
-              </div>
-            }
-          />
-        </section>
-
-        {/* Roadmap channels */}
-        <section aria-label="More channels" className="space-y-4">
-          <SectionHeader
-            title="More channels"
-            description="We’re bringing your agent to more places soon."
-          />
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {COMING_SOON_CHANNELS.map((channel) => (
-              <ChannelCard
-                key={channel.id}
-                icon={channel.icon}
-                iconTone="neutral"
-                brand={channel.brand}
-                name={channel.name}
-                description={channel.description}
-                status={<StatusBadge tone="neutral">Coming soon</StatusBadge>}
-              />
-            ))}
-          </div>
         </section>
       </div>
     );

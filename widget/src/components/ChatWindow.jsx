@@ -7,7 +7,7 @@ import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
-import { readSessionId, writeSessionId, clearSessionId, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
+import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
@@ -175,6 +175,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         header_color: '#3A0CA3',
         background_color: '#ffffff'
     });
+    // Effective cross-subdomain share domain: explicit `session_share_domain`
+    // wins, else the auto-detected apex, else null (localStorage-only). Apex
+    // detection is memoized inside the resolver, so recomputing per render is
+    // cheap.
+    const shareDomain = resolveShareDomain(settings?.session_share_domain);
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [isInitializing, setIsInitializing] = useState(true);
@@ -1006,10 +1011,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── New chat ─────────────────────────────────────────────────────────────────
     const handleNewChat = () => {
         setIsInitializing(true);
-        clearSessionId({ shareDomain: settings?.session_share_domain });
+        clearSessionId({ shareDomain });
         const newSession = `session_${crypto.randomUUID()}`;
         setSessionId(newSession);
-        writeSessionId(newSession, { shareDomain: settings?.session_share_domain });
+        writeSessionId(newSession, { shareDomain });
         setShowWelcome(true);
         handoffTriggeredRef.current = false;
         handoffFormInjectedRef.current = false;
@@ -1084,7 +1089,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 onMetadata: (metadata) => {
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
-                        writeSessionId(metadata.session_id, { shareDomain: settings?.session_share_domain });
+                        writeSessionId(metadata.session_id, { shareDomain });
                     }
                     // Send behavioral signals once per conversation
                     const resolvedSid = metadata.session_id || sessionId;
@@ -1269,8 +1274,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // subscription (registered once) always invokes the current closure.
     handleSendRef.current = handleSend;
 
+    // Re-fetch the visitor's saved contact (name/email) from the backend. The
+    // init fetch runs before the visitor has typed anything, so a name captured
+    // DURING the chat (e.g. via the "what's your name?" flow) won't be in
+    // ``existingLeadInfo`` yet. Refreshing right before the live-chat / offline
+    // forms appear means their fields pre-fill with the name the visitor already
+    // gave, instead of asking for it again.
+    const refreshLeadInfo = useCallback(async () => {
+        const sid = sessionId || readSessionId();
+        if (!sid) return null;
+        try {
+            const leadData = await getLeadInfo(sid);
+            if (leadData) setExistingLeadInfo(leadData);
+            return leadData;
+        } catch {
+            return null;
+        }
+    }, [sessionId]);
+
     // ── Handoff flow ─────────────────────────────────────────────────────────────
     const injectHandoffForm = useCallback(() => {
+        // Refresh saved contact so HandoffForm mounts pre-filled with the name
+        // the visitor gave earlier this session (fire-and-forget; the lazy form
+        // chunk load gives the fetch time to land before mount).
+        refreshLeadInfo();
         setMessages(prev => {
             if (prev.some(m => m.type === 'handoff_form')) return prev;
             return [...prev, {
@@ -1307,13 +1334,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 }, delay);
             });
         }
-    }, []);
+    }, [refreshLeadInfo]);
+
+    // When the offline "Leave a message" form appears (chatMode -> unavailable),
+    // refresh saved contact so its name/email pre-fill from what the visitor
+    // already gave. The seeding effect above then fills the offline form.
+    useEffect(() => {
+        if (chatMode === 'unavailable') refreshLeadInfo();
+    }, [chatMode, refreshLeadInfo]);
 
     const triggerHandoff = useCallback(() => {
         if (!sessionId) {
             const newSession = `session_${crypto.randomUUID()}`;
             setSessionId(newSession);
-            writeSessionId(newSession, { shareDomain: settings?.session_share_domain });
+            writeSessionId(newSession, { shareDomain });
         }
         if (handoffFormInjectedRef.current) return;
         handoffFormInjectedRef.current = true;
@@ -1324,7 +1358,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         } else {
             injectHandoffForm();
         }
-    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, settings?.session_share_domain]);
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm, shareDomain]);
 
     const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
     // Live chat availability state from the backend resolver. Set on the
@@ -1680,7 +1714,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const newSessionId = sessionId || `session_${crypto.randomUUID()}`;
         if (!sessionId) {
             setSessionId(newSessionId);
-            writeSessionId(newSessionId, { shareDomain: settings?.session_share_domain });
+            writeSessionId(newSessionId, { shareDomain });
         }
         await submitLeadCapture(newSessionId, formData);
         markChatEvent(newSessionId, 'lead_captured');

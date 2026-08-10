@@ -57,6 +57,90 @@ export function WhatsAppGlyph({
   );
 }
 
+/**
+ * Shared scheduling "app icon": a colored square with a white calendar whose
+ * header rule and date dot are cut back to the square color, so the mark reads
+ * as a calendar at 40px. The scheduling brand glyphs differ only by that color.
+ */
+function SchedulerSquare({
+  size = 40,
+  className,
+  'aria-hidden': ariaHidden = true,
+  fill,
+}: BrandGlyphProps & { fill: string }): ReactElement {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden={ariaHidden}
+    >
+      <rect width="24" height="24" fill={fill} />
+      {/* white calendar body + top posts */}
+      <rect x="5" y="6" width="14" height="13" rx="2.4" fill="#FFF" />
+      <rect x="7.6" y="3.7" width="1.7" height="4" rx="0.85" fill="#FFF" />
+      <rect x="14.7" y="3.7" width="1.7" height="4" rx="0.85" fill="#FFF" />
+      {/* header rule + date dot cut back to the square color */}
+      <rect x="5" y="9.5" width="14" height="1.5" fill={fill} />
+      <circle cx="12" cy="14.6" r="1.7" fill={fill} />
+    </svg>
+  );
+}
+
+/** Calendly app icon - Calendly blue square, white calendar. */
+export function CalendlyGlyph(props: BrandGlyphProps): ReactElement {
+  return <SchedulerSquare {...props} fill="#006BFF" />;
+}
+
+/** Zcal app icon - indigo square, white calendar. */
+export function ZcalGlyph(props: BrandGlyphProps): ReactElement {
+  return <SchedulerSquare {...props} fill="#4F46E5" />;
+}
+
+/** Cal.com app icon - near-black square, white calendar. */
+export function CalComGlyph(props: BrandGlyphProps): ReactElement {
+  return <SchedulerSquare {...props} fill="#111827" />;
+}
+
+/** Email app icon - rose gradient square, white envelope. Generic on purpose
+ *  (the Email channel is OyeChats' own capture, not a third-party provider),
+ *  so it reads as "mail" without impersonating a specific email brand. */
+export function EmailGlyph({
+  size = 40,
+  className,
+  'aria-hidden': ariaHidden = true,
+}: BrandGlyphProps): ReactElement {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden={ariaHidden}
+    >
+      <defs>
+        <linearGradient id="oyechats-mail-grad" x1="12" y1="0" x2="12" y2="24" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FB7185" />
+          <stop offset="1" stopColor="#F43F5E" />
+        </linearGradient>
+      </defs>
+      <rect width="24" height="24" fill="url(#oyechats-mail-grad)" />
+      <rect x="4.5" y="6.75" width="15" height="10.5" rx="2.2" fill="#FFF" />
+      <path
+        d="M5.6 8.4 12 12.7 18.4 8.4"
+        fill="none"
+        stroke="#F43F5E"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** Messenger app icon - blue gradient square, white bubble, blue lightning. */
 export function MessengerGlyph({
   size = 40,
