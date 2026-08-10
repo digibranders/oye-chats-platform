@@ -272,3 +272,161 @@ class TestIpCompanyNameSanityFilter:
         result = TestFetchIpIntelFlattening()._fetch(payload)
         assert result["company_name"] == "Infosys Limited"
         assert result["company_domain"] == "infosys.com"
+
+
+class TestIpCompanyNameFilterHardening:
+    """Cases from the adversarial review of the first version of the filter.
+
+    Each group below is a defect that shipped and was caught in review, kept as
+    a regression guard rather than a description.
+    """
+
+    @staticmethod
+    def _ok(name):
+        from app.services.ip_intel_service import is_usable_company_name
+
+        return is_usable_company_name(name)
+
+    @pytest.mark.parametrize("name", [123, 0, {"name": "x"}, b"Acme", [], 1.5, True])
+    def test_a_non_string_name_does_not_raise(self, name):
+        """`.strip()` on an int raised AttributeError straight out of
+        `fetch_ip_intel`, which sits BEFORE the geolocation lookup inside its
+        caller's try block — so one malformed vendor field cost the session its
+        city and country as well as its company."""
+        assert self._ok(name) is False
+
+    def test_a_malformed_name_does_not_lose_the_rest_of_the_payload(self):
+        payload = {
+            "company": {"name": 0, "type": "business"},
+            "asn": {"asn": 4755, "org": "Some Net"},
+            "is_vpn": True,
+        }
+        result = TestFetchIpIntelFlattening()._fetch(payload)
+        assert result is not None, "a non-string company name aborted the whole lookup"
+        assert result["company_name"] is None
+        assert result["asn_org"] == "Some Net"
+        assert result["is_vpn"] is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Reliance Jio",
+            "Jio",
+            "JioFiber",
+            "Jio-Fiber",
+            "RELIANCEJIO-IN",
+        ],
+    )
+    def test_jio_is_caught_in_every_spelling(self, name):
+        """India's largest ISP was matched by the substring `"jio "` — with a
+        trailing space. That caught exactly one spelling, the one under test,
+        and leaked every other including the real ASN-style org string."""
+        assert self._ok(name) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        ["FTTH Subscribers", "Customer Subnets", "IP Allocations", "Netblocks Ltd", "Telecoms Ltd"],
+    )
+    def test_plurals_do_not_escape_the_word_set(self, name):
+        assert self._ok(name) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Telecommunication Consultants India Limited", "Telekom Deutschland", "Telco Systems"],
+    )
+    def test_telecom_variants_are_covered(self, name):
+        """The set had `telecom` and `telecommunications` but not the singular
+        `telecommunication`, nor the German or shortened forms."""
+        assert self._ok(name) is False
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            # Bare infrastructure vocabulary => a label.
+            ("TSBB pool2", False),
+            ("BSNL Broadband", False),
+            ("subnet-allocation-7", False),
+            # The same vocabulary WITH a corporate suffix => a company.
+            ("Pool Corporation", True),  # NASDAQ: POOL, ~$5B revenue
+            ("Deep Pool Financial Solutions", True),
+            ("Broadband Search Ltd", True),
+            ("Allocation Network GmbH", True),
+            ("Asset Allocation Advisors", True),
+        ],
+    )
+    def test_ambiguous_words_are_decided_by_a_corporate_suffix(self, name, expected):
+        """`pool`, `broadband`, `allocation` and `subscriber` are infrastructure
+        vocabulary AND ordinary business vocabulary. A registered company says
+        so in its name; a subnet label never does."""
+        assert self._ok(name) is expected
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Liverpool Victoria", "Whirlpool Corporation", "Blackpool Council", "Poolside AI"],
+    )
+    def test_pool_inside_a_longer_word_is_not_a_pool(self, name):
+        """The anchoring case that actually matters for the shipped word list —
+        the original tests only anchored words that had been removed from it."""
+        assert self._ok(name) is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Singtel",
+            "Swisscom AG",
+            "Rostelecom",
+            "Turkcell",
+            "Telkomsel",
+            "Safaricom PLC",
+            "CenturyLink",
+            "Rogers Communications",
+            "BT Group",
+            "Virgin Media",
+        ],
+    )
+    def test_carriers_outside_india_are_caught_too(self, name):
+        """A review tested 197 realistic carrier names worldwide against the
+        first 24-entry list; 126 passed. Traffic is India-heavy but not
+        India-only."""
+        assert self._ok(name) is False
+
+    @pytest.mark.parametrize("name", ["3M", "GE", "HP", "LG"])
+    def test_two_letter_company_names_are_not_junk(self, name):
+        assert self._ok(name) is True
+
+    @pytest.mark.parametrize(
+        "phrase_name",
+        ["Acme Internet Service", "Dynamic IP Ltd", "Static IP Solutions", "Leased Line Co", "Address Pool 4"],
+    )
+    def test_the_phrase_list_is_load_bearing(self, phrase_name):
+        """The phrase list had ZERO coverage — disabling it entirely left the
+        suite green, because the only phrase any test touched was also caught
+        by the word rule."""
+        assert self._ok(phrase_name) is False
+
+    @pytest.mark.parametrize("company_type", ["education", "government"])
+    def test_universities_and_government_are_employers(self, company_type):
+        """Originally excluded along with hosting and isp, which was an
+        oversight: a procurement officer at IIT Bombay is a legitimate — often
+        the most valuable — B2B lead, and their range is exactly as
+        employer-owned as a company's."""
+        payload = {
+            "company": {
+                "name": "Indian Institute of Technology Bombay",
+                "domain": "iitb.ac.in",
+                "type": company_type,
+            },
+            "asn": {"asn": 1234, "org": "ERNET"},
+        }
+        result = TestFetchIpIntelFlattening()._fetch(payload)
+        assert result["company_name"] == "Indian Institute of Technology Bombay"
+        assert result["company_domain"] == "iitb.ac.in"
+
+    @pytest.mark.parametrize("company_type", ["hosting", "isp", "unknown-future-value", None])
+    def test_every_other_range_type_fails_closed(self, company_type):
+        payload = {
+            "company": {"name": "Perfectly Normal Corp", "domain": "pnc.com", "type": company_type},
+            "asn": {"asn": 1234, "org": "Someone"},
+        }
+        result = TestFetchIpIntelFlattening()._fetch(payload)
+        assert result["company_name"] is None

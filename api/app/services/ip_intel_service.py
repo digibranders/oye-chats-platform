@@ -33,15 +33,37 @@ IPAPI_IS_URL = "https://api.ipapi.is/"
 # Networks, while "isp" matches inside "DispatchTrack". Those are precisely
 # the B2B leads the feature exists to surface.
 
-# Single tokens that only appear in network-infrastructure labels. Kept
-# deliberately narrow. Notably NOT here, because they are ordinary company
-# vocabulary: network(s), communications, mobile, wireless, cable, fibre,
-# fiber, cellular.
+# Tokens that only appear in network-infrastructure labels. Deliberately
+# narrow. Notably NOT here, because they are ordinary company vocabulary:
+# network(s), communications, mobile, wireless, cable, fibre, fiber, cellular.
 _INFRASTRUCTURE_WORDS = frozenset(
     {
-        "pool", "subnet", "netblock", "cgnat", "dhcp", "dsl", "pppoe",
-        "dialup", "broadband", "isp", "telecom", "telecommunications",
-        "concentrator", "allocation", "subscriber",
+        "subnet", "netblock", "cgnat", "dhcp", "dsl", "pppoe", "ftth",
+        "dialup", "isp", "telecom", "telecommunication", "telecommunications",
+        "telekom", "telco", "telecomunicaciones", "concentrator",
+    }
+)  # fmt: skip
+
+# Infrastructure vocabulary that is ALSO ordinary business vocabulary. These
+# only condemn a name when it carries no corporate suffix, because a real
+# company says so in its name and a subnet label never does:
+#
+#   "TSBB pool2"            -> rejected   (a label)
+#   "Pool Corporation"      -> accepted   (NASDAQ: POOL, ~$5B revenue)
+#   "BSNL Broadband"        -> rejected
+#   "Broadband Search Ltd"  -> accepted
+_AMBIGUOUS_INFRASTRUCTURE_WORDS = frozenset({"pool", "broadband", "allocation", "subscriber"})
+
+# A corporate suffix is the cheapest available evidence that a string is a
+# registered company rather than a network label.
+_CORPORATE_SUFFIXES = frozenset(
+    {
+        "ltd", "limited", "inc", "incorporated", "corp", "corporation", "llc",
+        "llp", "plc", "gmbh", "ag", "sa", "sas", "bv", "nv", "oy", "oyj", "ab",
+        "as", "aps", "spa", "srl", "pty", "pvt", "co", "company", "holdings",
+        "partners", "ventures", "technologies", "solutions", "advisors",
+        "associates", "consultants", "systems", "labs", "industries",
+        "enterprises", "international", "capital", "financial",
     }
 )  # fmt: skip
 
@@ -53,15 +75,40 @@ _INFRASTRUCTURE_WORDS = frozenset(
 # consumer IPs and a handful of office ones, so "Airtel" on an inbound lead is
 # overwhelmingly a consumer connection, and asserting otherwise to a
 # salesperson is worse than saying nothing.
-_CARRIER_BRANDS = (
-    "airtel", "jio ", "jio_", "bsnl", "mtnl", "vodafone", "idea cellular",
-    "tata teleservices", "tata communications", "act fibernet", "hathway",
-    "excitel", "t-mobile", "at&t", "comcast", "verizon", "charter communications",
-    "spectrum internet", "orange s.a", "deutsche telekom", "telefonica",
-    "china telecom", "china unicom", "china mobile",
+#
+# A hand-curated list CANNOT generalise, and this one does not pretend to: a
+# review tested 197 realistic carrier names worldwide against an earlier
+# 24-entry version and 126 passed. It is a best-effort backstop for when the
+# vendor's `type` field is wrong, not a guarantee. Matched on word boundaries
+# for the same reason everything else here is — "jio" as a bare substring
+# would hit nothing useful, and as a trailing-space hack ("jio ") it missed
+# "JioFiber", "Reliance Jio" and the ASN-style "RELIANCEJIO-IN".
+_CARRIER_BRAND_WORDS = frozenset(
+    {
+        # India
+        "airtel", "jio", "jiofiber", "reliancejio", "bsnl", "mtnl",
+        "hathway", "excitel", "fibernet", "railwire", "gtpl", "den",
+        # Global majors and incumbents
+        "vodafone", "verizon", "comcast", "xfinity", "centurylink", "lumen",
+        "frontier", "windstream", "altice", "optimum", "mediacom", "cox",
+        "spectrum", "rogers", "telus", "videotron", "shaw", "bell",
+        "singtel", "starhub", "myrepublic", "telkomsel", "viettel", "vnpt",
+        "pldt", "celcom", "axiata", "maxis", "globe", "smart",
+        "swisscom", "kpn", "ziggo", "telenet", "proximus", "sfr", "bouygues",
+        "telia", "telenor", "elisa", "fastweb", "wind", "tim", "vivo",
+        "rostelecom", "mts", "megafon", "beeline", "turkcell", "turktelekom",
+        "plusnet", "talktalk", "virginmedia", "btgroup", "openreach", "bt",
+        "telefonica", "movistar", "claro", "telmex", "oi", "entel", "tigo",
+        "cablevision", "izzi", "totalplay", "megacable",
+        "mtn", "safaricom", "vodacom", "glo", "ooredoo", "zamtel", "econet",
+        "telkom", "orange", "unicom", "chinanet", "chinamobile", "chinatelecom",
+    }
 )  # fmt: skip
 
 # Multi-word phrases, matched as substrings because each is unambiguous.
+# "last mile" was here and is gone: it condemned Delhivery, Shadowfax,
+# Loadshare and Porter — one of India's largest B2B verticals — while
+# matching no realistic ipapi.is label.
 _INFRASTRUCTURE_PHRASES = (
     "internet service",
     "address pool",
@@ -70,10 +117,40 @@ _INFRASTRUCTURE_PHRASES = (
     "dynamic ip",
     "static ip",
     "leased line",
-    "last mile",
+    "virgin media",
 )
 
-_MIN_COMPANY_NAME_LEN = 3
+# Two, not three: 3M, GE, BP, HP and LG are real employers. (BT is not — it is
+# British Telecom, and it sits in the carrier list above.) Empty and
+# whitespace-only names are already caught by the strip and isalpha guards.
+_MIN_COMPANY_NAME_LEN = 2
+
+# ipapi.is classifies a range as business | hosting | isp | education |
+# government. Three of those are places people work.
+#
+# `education` and `government` were originally excluded along with hosting and
+# isp, which was an oversight rather than a decision: a procurement officer at
+# IIT Bombay or a state department is a legitimate — often the most valuable —
+# B2B lead, and their range is exactly as employer-owned as a company's. An
+# unrecognised value fails CLOSED, matching the rest of this module: showing
+# nothing costs less than showing a salesperson something false.
+_EMPLOYER_COMPANY_TYPES = frozenset({"business", "education", "government"})
+
+
+def _tokens(lowered: str) -> set[str]:
+    """Word tokens, with trailing digits and a trailing plural ``s`` removed.
+
+    Both strips exist to defeat trivial evasion of the sets above:
+    ``pool2`` is a pool, and ``Customer Subnets`` is a subnet.
+    """
+    raw = re.findall(r"[a-z0-9]+", lowered)
+    out = set()
+    for word in raw:
+        word = re.sub(r"\d+$", "", word)
+        out.add(word)
+        if len(word) > 3 and word.endswith("s"):
+            out.add(word[:-1])
+    return out
 
 
 def is_usable_company_name(name: str | None) -> bool:
@@ -84,7 +161,13 @@ def is_usable_company_name(name: str | None) -> bool:
     it were the lead's company — they act on it, and it is wrong. A false
     negative shows "not identified", which is merely honest.
     """
-    if not name:
+    # The vendor's payload is untrusted, and `company`/`asn` are already
+    # guarded one level up. A non-string name reaching `.strip()` raised
+    # AttributeError out of fetch_ip_intel, which sits BEFORE the geolocation
+    # lookup in its caller's try block — so one malformed field cost the
+    # session its city and country too. Same guard, same reason, as
+    # company_markup._plausible_name.
+    if not isinstance(name, str):
         return False
     cleaned = name.strip()
     if len(cleaned) < _MIN_COMPANY_NAME_LEN:
@@ -93,15 +176,17 @@ def is_usable_company_name(name: str | None) -> bool:
         return False
 
     lowered = cleaned.lower()
-    if any(brand in lowered for brand in _CARRIER_BRANDS):
-        return False
     if any(phrase in lowered for phrase in _INFRASTRUCTURE_PHRASES):
         return False
-    # Split on non-alphanumerics so "dynamic-pool-42" and "TSBB pool2" both
-    # yield a bare "pool" token. Trailing digits are stripped for the same
-    # reason: "pool2" is a pool.
-    words = {re.sub(r"\d+$", "", w) for w in re.findall(r"[a-z0-9]+", lowered)}
-    return not (_INFRASTRUCTURE_WORDS & words)
+
+    words = _tokens(lowered)
+    if words & _CARRIER_BRAND_WORDS:
+        return False
+    if words & _INFRASTRUCTURE_WORDS:
+        return False
+    if words & _AMBIGUOUS_INFRASTRUCTURE_WORDS:
+        return bool(words & _CORPORATE_SUFFIXES)
+    return True
 
 
 def fetch_ip_intel(ip_address: str) -> dict | None:
@@ -149,9 +234,9 @@ def fetch_ip_intel(ip_address: str) -> dict | None:
     # TWO gates, because either alone is insufficient. The type field lets
     # hosting and ISP ranges through as named companies; the name filter alone
     # would accept a plausible-looking carrier name on an `isp` range. A name
-    # only survives as "the visitor's company" if the vendor calls the range
-    # `business` AND the name could plausibly be an employer.
-    if company_type != "business" or not is_usable_company_name(company_name):
+    # only survives as "the visitor's company" if the range is a type someone
+    # can be employed by AND the name could plausibly be an employer.
+    if company_type not in _EMPLOYER_COMPANY_TYPES or not is_usable_company_name(company_name):
         company_name = None
 
     return {
