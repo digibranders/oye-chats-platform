@@ -4,7 +4,7 @@
 
 **Goal:** Build the company-resolution engine and stop the IP signal from ever presenting a carrier or subnet label as a lead's employer.
 
-**Architecture:** A new `company_profile` table caches one resolved company per registrable domain, shared across all tenants (public web data). A new resolver service turns a domain into a name/description/logo by reusing the existing Spider→Jina crawl and the existing `extract_company_context` LLM helper, caching both successes and failures. A pure sanity filter in `ip_intel_service` rejects ISP and pool labels so tier-4 data can never masquerade as an employer. Everything runs in the background; nothing blocks a visitor request.
+**Architecture:** A new `company_profile` table caches one resolved company per registrable domain, shared across all tenants (public web data). A resolver turns a domain into a name/description/logo by reusing the existing Spider→Jina crawl, then reading the site's **own declared markup** — schema.org `Organization`, then `og:site_name`, then a guarded `<title>` — and only falling back to the existing `extract_company_context` LLM helper when a site declares nothing. Successes and failures are both cached. A pure sanity filter in `ip_intel_service` rejects ISP and pool labels so tier-4 data can never masquerade as an employer. Everything runs in the background; nothing blocks a visitor request.
 
 **Tech Stack:** FastAPI · SQLAlchemy 2.0 · Alembic · httpx (via existing crawl services) · pytest · React 19 + TypeScript · Vitest
 
@@ -26,8 +26,10 @@ Phase A deliberately touches **no file a second developer is currently editing**
 | Create: `api/tests/test_domain_normalizer.py` | Public-suffix edge cases. |
 | Modify: `api/app/db/models.py` | Add `CompanyProfile`. |
 | Create: `api/alembic/versions/<rev>_company_profile.py` | Create the table. |
-| Create: `api/app/services/company_profile_service.py` | Cache-first resolve: lookup → crawl → LLM → validate → store. |
-| Create: `api/tests/test_company_profile_service.py` | Cache hit/miss/stale/failure-backoff, output validation. |
+| Create: `api/app/services/company_markup.py` | HTML → name/description/logo from the site's own markup. Pure, no I/O, no LLM. |
+| Create: `api/tests/test_company_markup.py` | Real captured markup from live lead domains. |
+| Create: `api/app/services/company_profile_service.py` | Cache-first resolve: lookup → crawl → markup → LLM fallback → validate → store. |
+| Create: `api/tests/test_company_profile_service.py` | Cache hit/miss/stale/failure-backoff, markup-before-LLM ordering. |
 | Modify: `api/app/services/ip_intel_service.py` | Add `is_usable_company_name()`; apply it in `fetch_ip_intel`. |
 | Modify: `api/tests/test_visitor_intelligence_shapes.py` | Cover the sanity filter. |
 | Modify: `api/app/api/chat_routes.py` | Guard `_resolve_and_update_location` to one lookup per session. |
@@ -291,7 +293,325 @@ git commit -m "feat: company_profile table — cross-tenant domain cache"
 
 ---
 
-## Task 3: Company profile resolver
+## Task 3: Company identity from the site's own markup
+
+**Files:**
+- Create: `api/app/services/company_markup.py`
+- Test: `api/tests/test_company_markup.py`
+
+Most business sites state who they are in machine-readable markup. Measured against
+real lead domains: 3 of 4 carried `og:site_name`, 2 of 4 carried a schema.org
+`Organization` block, and the 4th had a clean `<title>`. These beat an LLM inference on
+accuracy — they are the publisher's own declaration, not a guess from page copy — and
+they cost nothing. The LLM becomes a fallback for sites without markup.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `api/tests/test_company_markup.py`:
+
+```python
+"""Company identity from a site's own markup, no LLM.
+
+Fixtures are the REAL markup patterns captured from live lead domains on
+2026-08-10 — do not "simplify" them into idealised HTML. Today's two shipped
+bugs both came from tests asserting an invented payload shape.
+"""
+
+import pytest
+
+from app.services.company_markup import extract_from_markup
+
+# fynix.digital — og:site_name only, title carries a tagline after a pipe.
+FYNIX = """
+<html><head>
+<title>Fynix Digital | A digital marketing company</title>
+<meta property="og:site_name" content="Fynix Digital">
+<meta property="og:description" content="Branding, design and performance marketing.">
+<meta property="og:image" content="https://fynix.digital/og.png">
+</head><body></body></html>
+"""
+
+# cleanstart.com — schema.org carries the LEGAL entity; the title is pure SEO copy.
+CLEANSTART = """
+<html><head>
+<title>Verified, zero-CVE container images and linux packages</title>
+<meta property="og:site_name" content="CleanStart">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Organization","name":"CleanStart, Inc.",
+ "url":"https://cleanstart.com"}
+</script>
+</head><body></body></html>
+"""
+
+# digibranders.com — brand sits AFTER the separator in the title.
+DIGIBRANDERS = """
+<html><head>
+<title>Digital Marketing Company | Digibranders</title>
+<meta property="og:site_name" content="Digibranders">
+</head><body></body></html>
+"""
+
+# zomato.com — no markup at all; a clean one-word title is the only signal.
+ZOMATO = "<html><head><title>Zomato</title></head><body></body></html>"
+
+# A site with nothing usable — must fall through to the LLM.
+BARE = "<html><head><title>Home</title></head><body>Welcome!</body></html>"
+
+
+def test_schema_org_organization_wins_over_og_site_name():
+    """schema.org gives the legal entity, which is the more precise answer."""
+    result = extract_from_markup(CLEANSTART, "cleanstart.com")
+    assert result["name"] == "CleanStart, Inc."
+
+
+def test_og_site_name_used_when_no_schema_org():
+    result = extract_from_markup(FYNIX, "fynix.digital")
+    assert result["name"] == "Fynix Digital"
+    assert result["description"] == "Branding, design and performance marketing."
+    assert result["logo_url"] == "https://fynix.digital/og.png"
+
+
+def test_title_is_the_last_resort_and_picks_the_brand_segment():
+    """'Digital Marketing Company | Digibranders' → the brand, not the tagline."""
+    html = DIGIBRANDERS.replace('<meta property="og:site_name" content="Digibranders">', "")
+    assert extract_from_markup(html, "digibranders.com")["name"] == "Digibranders"
+
+
+def test_single_word_title_is_accepted():
+    assert extract_from_markup(ZOMATO, "zomato.com")["name"] == "Zomato"
+
+
+def test_seo_sentence_title_is_rejected_rather_than_guessed():
+    """cleanstart's title is a sentence, not a name. Without og/schema we must
+    return nothing and let the LLM try, rather than store a sentence."""
+    html = CLEANSTART.split("<script")[0] + "</head><body></body></html>"
+    html = html.replace('<meta property="og:site_name" content="CleanStart">', "")
+    assert extract_from_markup(html, "cleanstart.com") is None
+
+
+@pytest.mark.parametrize("junk_title", ["Home", "Welcome", "Index", "Untitled", "   ", "404"])
+def test_generic_titles_are_rejected(junk_title):
+    html = f"<html><head><title>{junk_title}</title></head></html>"
+    assert extract_from_markup(html, "x.com") is None
+
+
+def test_nothing_usable_returns_none():
+    assert extract_from_markup(BARE, "bare.com") is None
+    assert extract_from_markup("", "x.com") is None
+    assert extract_from_markup(None, "x.com") is None
+
+
+def test_relative_logo_is_absolutised():
+    html = '<html><head><meta property="og:site_name" content="Acme">' \
+           '<meta property="og:image" content="/static/logo.png"></head></html>'
+    assert extract_from_markup(html, "acme.com")["logo_url"] == "https://acme.com/static/logo.png"
+
+
+def test_schema_org_inside_a_graph_is_found():
+    """Many CMSs emit @graph rather than a bare Organization node."""
+    html = """<html><head><script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[
+      {"@type":"WebSite","name":"Some Site"},
+      {"@type":"Organization","name":"Graph Corp"}]}
+    </script></head></html>"""
+    assert extract_from_markup(html, "graph.com")["name"] == "Graph Corp"
+
+
+def test_malformed_json_ld_does_not_raise():
+    html = '<html><head><script type="application/ld+json">{not json</script>' \
+           '<meta property="og:site_name" content="Fallback Co"></head></html>'
+    assert extract_from_markup(html, "x.com")["name"] == "Fallback Co"
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd api && uv run pytest tests/test_company_markup.py -q`
+Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.company_markup'`
+
+- [ ] **Step 3: Implement**
+
+Create `api/app/services/company_markup.py`:
+
+```python
+"""Read a company's identity out of its own HTML. No LLM, no network.
+
+Order is deliberate, most-authoritative first:
+
+1. schema.org ``Organization.name`` — the legal entity the publisher declares.
+2. ``og:site_name`` — the brand the publisher declares.
+3. ``<title>`` — last resort, and frequently SEO copy rather than a name, so
+   it is heavily guarded.
+
+Anything this returns is a *declaration*, which is why it outranks the LLM
+fallback: the model can only infer a name from page copy, and inference is
+where wrong answers come from. When nothing here is usable we return None and
+let the caller spend an LLM call.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+_MAX_NAME_LEN = 80
+_TITLE_SEPARATORS = re.compile(r"\s*[|•·—–]\s*|\s+::\s+")
+_GENERIC_TITLES = {
+    "home", "welcome", "index", "untitled", "home page", "homepage",
+    "404", "not found", "page not found", "main", "default",
+}
+
+
+def _clean(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = " ".join(value.split())
+    return cleaned or None
+
+
+def _plausible_name(value: str | None) -> bool:
+    """A name must be short, contain letters, and not be a generic page label."""
+    if not value:
+        return False
+    if len(value) > _MAX_NAME_LEN:
+        return False
+    if not any(ch.isalpha() for ch in value):
+        return False
+    return value.strip().lower() not in _GENERIC_TITLES
+
+
+def _walk_for_organization(node) -> str | None:
+    """Find an Organization name anywhere in a JSON-LD document.
+
+    Handles a bare node, a list of nodes, and the ``@graph`` wrapper most
+    CMS plugins emit.
+    """
+    if isinstance(node, list):
+        for item in node:
+            found = _walk_for_organization(item)
+            if found:
+                return found
+        return None
+    if not isinstance(node, dict):
+        return None
+
+    node_type = node.get("@type")
+    types = node_type if isinstance(node_type, list) else [node_type]
+    if any(isinstance(t, str) and t.lower() == "organization" for t in types):
+        name = _clean(node.get("name"))
+        if _plausible_name(name):
+            return name
+
+    for key in ("@graph", "mainEntity", "publisher", "author"):
+        if key in node:
+            found = _walk_for_organization(node[key])
+            if found:
+                return found
+    return None
+
+
+def _schema_org_name(soup: BeautifulSoup) -> str | None:
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = tag.string or tag.get_text() or ""
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            continue  # malformed JSON-LD is common; just move on
+        found = _walk_for_organization(data)
+        if found:
+            return found
+    return None
+
+
+def _meta(soup: BeautifulSoup, prop: str) -> str | None:
+    tag = soup.find("meta", attrs={"property": prop}) or soup.find("meta", attrs={"name": prop})
+    return _clean(tag.get("content")) if tag and tag.get("content") else None
+
+
+def _name_from_title(soup: BeautifulSoup) -> str | None:
+    """Pick the brand segment out of a title.
+
+    Titles are written either "Brand | Tagline" or "Tagline | Brand", so the
+    position of the brand is not fixed — but the brand is almost always the
+    SHORTER side. A title with no separator is only accepted if it is short
+    enough to be a name on its own.
+    """
+    title = _clean(soup.title.get_text() if soup.title else None)
+    if not title:
+        return None
+
+    segments = [s for s in (_clean(p) for p in _TITLE_SEPARATORS.split(title)) if s]
+    if not segments:
+        return None
+
+    candidate = min(segments, key=len) if len(segments) > 1 else segments[0]
+    # A single-segment title that reads as a sentence is not a company name.
+    if len(segments) == 1 and len(candidate.split()) > 5:
+        return None
+    return candidate if _plausible_name(candidate) else None
+
+
+def _absolutise(url: str | None, domain: str) -> str | None:
+    if not url:
+        return None
+    if url.startswith("//"):
+        return f"https:{url}"
+    if url.startswith("/"):
+        return f"https://{domain}{url}"
+    return url if url.startswith("http") else None
+
+
+def extract_from_markup(html: str | None, domain: str) -> dict | None:
+    """Return ``{"name", "description", "logo_url"}`` or None.
+
+    None means "this page did not declare an identity" — the caller should
+    fall back to the LLM. Never raises: malformed markup is the norm, not an
+    exceptional case.
+    """
+    if not html:
+        return None
+
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        logger.debug("markup parse failed for %s", domain, exc_info=True)
+        return None
+
+    name = _schema_org_name(soup)
+    if not _plausible_name(name):
+        name = _meta(soup, "og:site_name")
+    if not _plausible_name(name):
+        name = _name_from_title(soup)
+    if not _plausible_name(name):
+        return None
+
+    return {
+        "name": name,
+        "description": _meta(soup, "og:description") or _meta(soup, "description"),
+        "logo_url": _absolutise(_meta(soup, "og:image"), domain),
+    }
+```
+
+- [ ] **Step 4: Run it to verify it passes**
+
+Run: `cd api && uv run pytest tests/test_company_markup.py -q`
+Expected: PASS
+
+- [ ] **Step 5: Lint, format, commit**
+
+```bash
+cd api && uv run ruff check app/services/company_markup.py tests/test_company_markup.py && uv run ruff format app/services/company_markup.py tests/test_company_markup.py
+git add api/app/services/company_markup.py api/tests/test_company_markup.py
+git commit -m "feat: read company identity from a site's own markup, no LLM"
+```
+
+---
+
+## Task 4: Company profile resolver
 
 **Files:**
 - Create: `api/app/services/company_profile_service.py`
@@ -320,7 +640,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _crawled(html="<html><title>Acme Corp</title><body>We do logistics.</body></html>"):
+MARKED_UP = (
+    '<html><head><meta property="og:site_name" content="Acme Corp">'
+    '<meta property="og:description" content="Acme Corp does logistics."></head></html>'
+)
+NO_MARKUP = "<html><head><title>Best logistics software in India for growing teams</title></head></html>"
+
+
+def _crawled(html=MARKED_UP):
     return patch.object(svc, "_fetch_site_html", return_value=html)
 
 
@@ -334,6 +661,22 @@ def test_miss_crawls_and_stores(db):
     assert profile.name == "Acme Corp"
     assert crawl.call_count == 1
     assert db.get(CompanyProfile, "acme.com") is not None
+
+
+def test_markup_is_used_and_the_llm_is_never_called(db):
+    """The whole point of the markup pass: a site that declares its own name
+    must not cost an LLM round-trip."""
+    with _crawled(MARKED_UP), _extracted() as llm:
+        profile = svc.resolve_company("marked.com", db)
+    assert profile.name == "Acme Corp"
+    assert llm.call_count == 0, "markup was available — the LLM must be skipped"
+
+
+def test_llm_is_the_fallback_when_markup_is_absent(db):
+    with _crawled(NO_MARKUP), _extracted() as llm:
+        profile = svc.resolve_company("bare.com", db)
+    assert profile.name == "Acme Corp"
+    assert llm.call_count == 1
 
 
 def test_second_lead_on_same_domain_does_not_crawl(db):
@@ -393,7 +736,8 @@ def test_crawl_failure_records_backoff_rather_than_raising(db):
     ],
 )
 def test_junk_llm_output_is_rejected_and_cached_as_failure(db, bad):
-    with _crawled(), patch.object(svc, "extract_company_context", return_value=bad):
+    # NO_MARKUP forces the LLM path so the junk guard is what's under test.
+    with _crawled(NO_MARKUP), patch.object(svc, "extract_company_context", return_value=bad):
         profile = svc.resolve_company("junk.com", db)
     assert profile is None
     assert db.get(CompanyProfile, "junk.com").resolution_failed is True
@@ -445,6 +789,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.db.models import CompanyProfile
+from app.services.company_markup import extract_from_markup
 from app.services.llm_service import extract_company_context
 
 logger = logging.getLogger(__name__)
@@ -494,22 +839,22 @@ def _valid_name(name: str | None) -> bool:
     return cleaned.lower() not in _PROMPT_ECHOES
 
 
-def _extract_logo(html: str, domain: str) -> str | None:
-    """Best-effort logo: og:image, else apple-touch-icon. None if neither."""
-    for pattern in (
-        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
-        r'<link[^>]+rel=["\']apple-touch-icon["\'][^>]+href=["\']([^"\']+)',
-    ):
-        match = re.search(pattern, html, re.IGNORECASE)
-        if match:
-            url = match.group(1).strip()
-            if url.startswith("//"):
-                return f"https:{url}"
-            if url.startswith("/"):
-                return f"https://{domain}{url}"
-            if url.startswith("http"):
-                return url
-    return None
+def _logo_from_markup(html: str, domain: str) -> str | None:
+    """Logo for the LLM path, where `extract_from_markup` returned no name.
+
+    The page may still carry an og:image even when it declares no identity, so
+    this recovers it rather than losing the logo just because the name needed
+    a model.
+    """
+    match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html, re.IGNORECASE)
+    if not match:
+        return None
+    url = match.group(1).strip()
+    if url.startswith("//"):
+        return f"https:{url}"
+    if url.startswith("/"):
+        return f"https://{domain}{url}"
+    return url if url.startswith("http") else None
 
 
 def _record_failure(session: Session, domain: str) -> None:
@@ -551,23 +896,34 @@ def resolve_company(domain: str, session: Session) -> CompanyProfile | None:
         _record_failure(session, domain)
         return None
 
-    extracted = extract_company_context(html)
+    # Markup first. A site that declares its own identity gives a more
+    # accurate answer than an LLM inference AND costs nothing, so the model
+    # is only worth spending on sites that declare nothing.
+    source = "markup"
+    extracted = extract_from_markup(html, domain)
+    logo_url = extracted.get("logo_url") if extracted else None
+
     if not extracted or not _valid_name(extracted.get("name")):
-        _record_failure(session, domain)
-        return None
+        source = "llm"
+        extracted = extract_company_context(html)
+        if not extracted or not _valid_name(extracted.get("name")):
+            _record_failure(session, domain)
+            return None
+        # The LLM returns no logo; recover it from the markup regardless.
+        logo_url = logo_url or _logo_from_markup(html, domain)
 
     if row is None:
         row = CompanyProfile(domain=domain)
         session.add(row)
     row.name = extracted["name"].strip()
     row.description = (extracted.get("description") or "").strip() or None
-    row.logo_url = _extract_logo(html, domain)
+    row.logo_url = logo_url
     row.resolution_failed = False
     row.retry_after = None
     row.refresh_after = now + REFRESH_INTERVAL
     session.commit()
 
-    logger.info("company resolved | domain=%s | name=%s", domain, row.name)
+    logger.info("company resolved | domain=%s | name=%s | via=%s", domain, row.name, source)
     return row
 ```
 
@@ -586,7 +942,7 @@ git commit -m "feat: cache-first company profile resolver"
 
 ---
 
-## Task 4: IP company-name sanity filter
+## Task 5: IP company-name sanity filter
 
 **Files:**
 - Modify: `api/app/services/ip_intel_service.py`
@@ -742,7 +1098,7 @@ git commit -m "fix: never present an ISP or subnet label as a visitor's company"
 
 ---
 
-## Task 5: One IP lookup per session
+## Task 6: One IP lookup per session
 
 **Files:**
 - Modify: `api/app/api/chat_routes.py`
@@ -833,12 +1189,12 @@ git commit -m "perf: resolve visitor IP intel once per session, not once per mes
 
 ---
 
-## Task 6: Present tier 4 as a network signal, not a company
+## Task 7: Present tier 4 as a network signal, not a company
 
 **Files:**
 - Modify: `app/src/features/leads/VisitorIntelligenceSection.tsx`
 
-With Task 4 in place, `company_name` arrives as `null` for every ISP and pool label, so the panel's company card will simply not render for them. This task makes the *remaining* presentation honest.
+With Task 5 in place, `company_name` arrives as `null` for every ISP and pool label, so the panel's company card will simply not render for them. This task makes the *remaining* presentation honest.
 
 - [ ] **Step 1: Rename the section and split the two ideas**
 
@@ -892,7 +1248,7 @@ git commit -m "fix(leads): present IP data as network context, never as the comp
 
 ---
 
-## Task 7: Full verification
+## Task 8: Full verification
 
 - [ ] **Step 1: Backend**
 
@@ -926,10 +1282,12 @@ Expected: `development`.
 
 ## Self-Review
 
-**1. Spec coverage.** Phase A items in the spec map to tasks: domain normaliser → Task 1; `company_profile` table → Task 2; cache-first resolver with failure backoff, stale serving, and output validation → Task 3; IP sanity filter → Task 4; tier-4 display separation → Task 6. The per-session IP guard (Task 5) is not in the spec's phase list — it is included because it lives in the same function Task 4 touches, and leaving a measured 33% waste in place while editing that file would be perverse. Phase B items (`lead_info` columns, `chat_routes` wiring, tiers 2 and 3) are explicitly out of scope and called out at the top.
+**1. Spec coverage.** Phase A items map to tasks: domain normaliser → Task 1; `company_profile` table → Task 2; markup-first identity extraction → Task 3; cache-first resolver with failure backoff, stale serving, and output validation → Task 4; IP sanity filter → Task 5; tier-4 display separation → Task 7. The per-session IP guard (Task 6) is not in the spec's phase list — it is included because it lives in the same function Task 5 touches, and leaving a measured 33% waste in place while editing that file would be perverse. Phase B items (`lead_info` columns, `chat_routes` wiring, tiers 2 and 3) are explicitly out of scope and called out at the top.
 
-**2. Placeholder scan.** No TBD/TODO. Every code step carries complete code. The one intentionally non-literal token is `<rev>` in the migration filename, which Alembic generates, and `<local Postgres>` for a connection string that varies per machine.
+**2. Placeholder scan.** No TBD/TODO. Every code step carries complete code. The only intentionally non-literal tokens are `<rev>` in the migration filename, which Alembic generates, and `<local Postgres>` for a connection string that varies per machine.
 
-**3. Type consistency.** `registrable_domain` / `domain_from_email` (Task 1) are used nowhere else in Phase A — they are consumed in Phase B, which is correct and deliberate. `resolve_company(domain, session) -> CompanyProfile | None` (Task 3) matches its tests. `is_usable_company_name(name) -> bool` (Task 4) matches both its tests and its call site inside `fetch_ip_intel`. `CompanyProfile` field names in the model (Task 2) match every reference in Task 3's implementation and tests: `domain`, `name`, `description`, `logo_url`, `resolution_failed`, `retry_after`, `refresh_after`.
+**3. Type consistency.** `registrable_domain` / `domain_from_email` (Task 1) are used nowhere else in Phase A — they are consumed in Phase B, which is correct and deliberate. `extract_from_markup(html, domain) -> dict | None` (Task 3) is imported and called by the resolver in Task 4, and the dict keys it returns — `name`, `description`, `logo_url` — are exactly the ones Task 4 reads. `resolve_company(domain, session) -> CompanyProfile | None` (Task 4) matches its tests. `is_usable_company_name(name) -> bool` (Task 5) matches both its tests and its call site inside `fetch_ip_intel`. `CompanyProfile` field names in the model (Task 2) match every reference in Task 4: `domain`, `name`, `description`, `logo_url`, `resolution_failed`, `retry_after`, `refresh_after`.
 
-**4. Known consequence to watch.** Task 4 changes an existing test's expectation (`test_nested_company_object_is_flattened_to_primitives` asserts `company_name == "Google LLC"` on a `type=hosting` payload). Step 5 of that task calls this out explicitly so it is updated deliberately rather than discovered as a surprise failure.
+**4. Model choice.** The LLM fallback keeps the existing default — `extract_company_context` resolves through `runtime_config.get_gate_model()`, which is `gemini/gemini-2.5-flash` on production (verified: `GATE_MODEL` is set explicitly in the prod `.env`). No model override is introduced. GPT-5.4-mini remains the primary for visitor-facing chat; background extraction has always run on the gate tier, and this plan does not change that split. The saving here comes from **skipping the model entirely** on sites that declare their own identity, not from downgrading it.
+
+**5. Known consequence to watch.** Task 5 changes an existing test's expectation (`test_nested_company_object_is_flattened_to_primitives` asserts `company_name == "Google LLC"` on a `type=hosting` payload). Step 5 of that task calls this out explicitly so it is updated deliberately rather than discovered as a surprise failure.
