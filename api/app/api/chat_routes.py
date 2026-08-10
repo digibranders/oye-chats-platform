@@ -291,6 +291,44 @@ def _parse_request_context(fastapi_request: Request):
     return ip_address, formatted_device
 
 
+def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
+    """What this session has already resolved FOR THIS IP: (intel, location).
+
+    Both call sites fire this resolver on every message, so a ten-turn
+    conversation used to spend ten ipapi.is lookups plus ten geolocation
+    lookups on one unchanging IP — measured at 6 calls for 4 sessions even on
+    short conversations. The answer cannot change between turns, so all but the
+    first is waste, and ipapi.is is metered.
+
+    Keyed on the IP, not merely on presence, so a visitor who moves from wifi
+    to mobile data mid-conversation is still re-resolved once. A missing
+    session row means "not yet" and must NOT be read as "already done": the row
+    is INSERTed by rag_pipeline on the very request that spawned this thread,
+    and can legitimately not exist yet.
+    """
+    try:
+        with get_session() as session:
+            row = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if row is None:
+                return False, False
+            metadata = row.visitor_metadata or {}
+            intel = metadata.get("ip_intel") or {}
+            has_intel = isinstance(intel, dict) and intel.get("resolved_for_ip") == ip_address
+            # A resolved location is written as "<city>, <country> | <ip>", so
+            # the trailing IP is the whole test. That deliberately excludes the
+            # bare "IP: x.x.x.x" stamp the request handler writes synchronously
+            # before this thread runs — counting that as resolved would mean
+            # geolocation never ran at all.
+            location = row.location or ""
+            has_location = location.endswith(f"| {ip_address}")
+            return has_intel, has_location
+    except Exception:
+        # A failed check must never SUPPRESS resolution — fall through and do
+        # the work rather than silently skipping it.
+        logger.debug("could not read prior resolution for session %s", session_id, exc_info=True)
+        return False, False
+
+
 def _resolve_and_update_location(session_id: str, ip_address: str):
     """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
     try:
@@ -310,8 +348,15 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             # there is no meaningful visitor geolocation to resolve.
             return
 
-        ip_intel = fetch_ip_intel(ip_address)
+        has_intel, has_location = _already_resolved(session_id, ip_address)
+        if has_intel and has_location:
+            return
+
+        ip_intel = None if has_intel else fetch_ip_intel(ip_address)
         if ip_intel:
+            # Recorded so a later turn can tell "already done" from "done for a
+            # different IP" — see _already_resolved.
+            ip_intel["resolved_for_ip"] = ip_address
             for _ in range(5):
                 with get_session() as session:
                     chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -333,7 +378,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
                         break
                 time.sleep(0.5)
 
-        if not ip_address:
+        if not ip_address or has_location:
             return
 
         location = None

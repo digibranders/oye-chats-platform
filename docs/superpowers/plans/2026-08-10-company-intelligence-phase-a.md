@@ -20,8 +20,8 @@
 | 2 · `company_profile` table | **done, reviewed** | `43c0fb4` + follow-up |
 | 3 · Markup extractor | **done, reviewed twice** | `c88af6a`, hardened in `2ec0cce` |
 | 4 · Resolver | **done, reviewed twice** | `c9f9765`, hardened in a follow-up |
-| 5 · IP sanity filter | not started | — |
-| 6 · One IP lookup per session | not started | — |
+| 5 · IP sanity filter | **done, reviewed** | `c189061`, hardened in `31cac20` |
+| 6 · One IP lookup per session | **done** | in progress → review pending |
 | 7 · Tier-4 display separation | not started | — |
 | 8 · Verification | not started | — |
 
@@ -68,6 +68,13 @@
 >   `CITEXT` key, a length CHECK, and two partial indexes. **Task 4's code
 >   below has been updated for these** — it upserts rather than inserting, and
 >   prefers a cached name over a stale failure flag.
+
+> **Pre-existing production data is explicitly OUT OF SCOPE.** The production
+> database will be wiped and reseeded before market launch, and everything in
+> it today is test data. So none of these tasks needs a backfill, a data
+> migration, or a cleanup script for rows written before the fix — earlier
+> notes in this plan asking for a decision on that are resolved as won't-do.
+> Build the feature correctly going forward; the old rows disappear.
 
 ---
 
