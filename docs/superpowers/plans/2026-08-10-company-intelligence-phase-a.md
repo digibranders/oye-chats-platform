@@ -19,7 +19,7 @@
 | 1 · Registrable-domain normaliser | **done, reviewed twice** | `c787b8e`, hardened in `c88af6a` + `2ec0cce` |
 | 2 · `company_profile` table | **done, reviewed** | `43c0fb4` + follow-up |
 | 3 · Markup extractor | **done, reviewed twice** | `c88af6a`, hardened in `2ec0cce` |
-| 4 · Resolver | not started | — |
+| 4 · Resolver | **done, reviewed twice** | `c9f9765`, hardened in a follow-up |
 | 5 · IP sanity filter | not started | — |
 | 6 · One IP lookup per session | not started | — |
 | 7 · Tier-4 display separation | not started | — |
@@ -41,6 +41,29 @@
 >   attributed every Shopify-hosted lead on the platform to "Shopify".
 > * `extract_company_domain` now delegates to `registrable_domain`; the two
 >   previously disagreed on the same input.
+> **Task 4's code block below is ALSO superseded.** Two review rounds found
+> the shipped draft unsafe to wire in. Read the source. The load-bearing
+> changes, all of which the plan's draft got wrong:
+> * `resolve_company` takes **no session** — it opens its own. Taking one and
+>   committing it made a half-built `LeadInfo` durable and turned the caller's
+>   `rollback()` into a no-op. It returns a detached `ResolvedCompany`, not an
+>   ORM row.
+> * It holds **no DB connection across the crawl or the LLM**. Reading the
+>   cache in the same session pinned a pooled connection `idle in transaction`
+>   for the whole window, against a pool of 5 shared with request handling.
+> * **Failures are attributed before they are stored.** This is the subtle one
+>   and it took two rounds. `spider_service.fetch_html` and
+>   `extract_company_context` both collapse *every* failure to `None`, so an
+>   expired API key is indistinguishable from a parked domain — and this table
+>   is cross-tenant, so caching that verdict would blacklist every domain the
+>   broken key touched, compounding to 90 days. Hence the new
+>   `spider_service.fetch_html_outcome` (reports whether Spider *answered*) and
+>   `extract_company_context(strict=True)` (raises instead of returning None).
+>   Our failures get a flat 15-minute `INDETERMINATE_COOLDOWN` that never sets
+>   `resolution_failed` and never feeds the exponential backoff.
+> * Both network legs are bounded (15s crawl per leg, 20s × 1 retry LLM) and
+>   the response body is capped at 2 MB before anything parses it. The
+>   background pool has three workers, shared platform-wide.
 > * `company_profile` gained `failure_count`, `source`, and `resolved_at`, a
 >   `CITEXT` key, a length CHECK, and two partial indexes. **Task 4's code
 >   below has been updated for these** — it upserts rather than inserting, and

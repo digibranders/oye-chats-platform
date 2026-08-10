@@ -12,26 +12,54 @@ background thread behind lead capture and must never surface to a visitor, so
 every failure path returns ``None``. ``None`` means "no company identified",
 not "an error occurred".
 
-It returns a plain :class:`ResolvedCompany`, not an ORM row, and **owns its own
-database session**. Both matter: an earlier version accepted the caller's
+It returns a plain :class:`ResolvedCompany`, not an ORM row, and **owns its
+database sessions**. Both matter: an earlier version accepted the caller's
 session and committed it, which made a half-built ``LeadInfo`` durable and
 turned the caller's own ``rollback()`` into a no-op. Enrichment must never
 decide someone else's transaction boundary. Returning a detached snapshot also
-frees the caller from this session's lifetime.
+frees the caller from those sessions' lifetimes.
+
+## Whose fault was it?
+
+The table is a CROSS-TENANT cache — one row per domain, read by every
+customer. So the single most damaging thing this module can do is write "no
+company here" against a domain that is fine, because *we* were broken. An
+expired Spider key would otherwise blacklist every domain it saw, and the
+exponential backoff would compound that to 90 days.
+
+Every failure is therefore classified before it is stored:
+
+* **The target's fault** — Spider answered and there was nothing usable there
+  (parked domain, 404, empty body), or a page we did read describes no
+  company. Cached with compounding backoff, which is the point of the cache.
+* **Ours** — no API key, an expired key, quota exhausted, Spider or the model
+  provider down or unreachable. Never attributed to the domain. It gets a
+  short flat :data:`INDETERMINATE_COOLDOWN` instead, which bounds the retry
+  storm during an outage without poisoning anything: the cache self-heals
+  within minutes of the outage ending, and the worst case of a
+  misclassification here is a few minutes of delay rather than a 90-day
+  blackout.
+
+This is why the module calls ``spider_service.fetch_html_outcome`` rather than
+``fetch_html``, and passes ``strict=True`` to the extractor. Both plain
+variants collapse every failure to ``None``, which makes the distinction above
+impossible to recover.
 
 ## Order of work
 
-1. Cache read. A stored name wins immediately — including over a later failure
-   flag, so one transient 503 cannot hide a good profile for a whole backoff
-   window. A profile past ``refresh_after`` is re-resolved, falling back to the
-   stale value if the re-crawl fails.
-2. Crawl the domain root, under a short timeout.
+1. Cache read, in its own short transaction. A stored name wins immediately —
+   including over a later failure flag, so one transient 503 cannot hide a good
+   profile for a whole backoff window. A profile past ``refresh_after`` is
+   re-resolved, falling back to the stale value if the re-crawl fails.
+2. Crawl the domain root, under a short timeout, holding NO database
+   connection. The pool is shared with request handling.
 3. Read the site's own declared markup (schema.org, then ``og:site_name``).
    Free, and more accurate than inference because it is a declaration.
 4. Only if the site declares nothing, spend an LLM call.
-5. Upsert. Never a read-then-insert: two leads from one company arriving
-   together is the normal case, and the loser of that race would raise
-   ``IntegrityError`` straight through the "never raises" contract.
+5. Upsert, in a second short transaction. Never a read-then-insert: two leads
+   from one company arriving together is the normal case, and the loser of that
+   race would raise ``IntegrityError`` straight through the "never raises"
+   contract.
 """
 
 from __future__ import annotations
@@ -58,12 +86,29 @@ REFRESH_INTERVAL = timedelta(days=90)
 FAILURE_BACKOFF = timedelta(days=1)
 # Cap the doubling so a domain is still retried eventually, just rarely.
 MAX_FAILURE_BACKOFF = timedelta(days=90)
+# Applied when WE failed, not the domain. Short and flat: long enough that an
+# outage cannot turn every arriving lead into a crawl, short enough that the
+# cache recovers on its own once the outage ends. Deliberately does not set
+# `resolution_failed` and does not touch `failure_count`.
+INDETERMINATE_COOLDOWN = timedelta(minutes=15)
 
 # One root page, not a crawl. ``SPIDER_TIMEOUT`` is ~1600s because it is tuned
 # for a full multi-page site crawl; inheriting it here let a single
 # black-holing domain occupy one of the three shared background workers for
 # almost half an hour, starving geolocation and BANT extraction alongside it.
+# This bounds EACH leg, so the crawl phase is at most 2× this.
 FETCH_TIMEOUT_SECONDS = 15.0
+
+# The LLM leg needs its own bound for the same reason. The module defaults
+# (60s × 3 attempts ≈ 180s) are sized for the request path, where one user is
+# waiting on their own request; here three threads are shared platform-wide.
+LLM_TIMEOUT_SECONDS = 20.0
+LLM_NUM_RETRIES = 1
+
+# Cap the fetched body before anything parses or holds it. A visitor can name
+# any domain they like, and BeautifulSoup costs several times the string in
+# RSS. Matches the existing convention in ``brand_color_extractor``.
+MAX_CONTENT_BYTES = 2 * 1024 * 1024
 
 # Longest plausible company name. Past this the model is narrating, not naming.
 _MAX_NAME_LEN = 120
@@ -79,7 +124,8 @@ class ResolvedCompany:
     name: str
     description: str | None
     logo_url: str | None
-    source: str
+    # None for rows written before `source` existed, or by a bulk backfill.
+    source: str | None
 
 
 @dataclass(frozen=True)
@@ -87,15 +133,17 @@ class _Fetched:
     """Crawl outcome.
 
     ``infrastructure_ok`` separates "the site had nothing for us" from "OUR
-    crawler could not run". Only the former is a property of the domain, and
-    only the former may be cached as a failure — otherwise an expired API key
-    or a wiring mistake silently poisons a cache every tenant reads, and the
-    backoff compounds it to 90 days.
+    crawler could not run" — see the module docstring. It is derived from what
+    Spider actually reported, not inferred from a bare ``None``.
     """
 
     content: str | None
     is_html: bool
     infrastructure_ok: bool
+
+
+class _ProviderUnavailable(Exception):
+    """Our side failed. Never attributable to the domain."""
 
 
 def _fetch_site_html(domain: str) -> _Fetched:
@@ -107,43 +155,62 @@ def _fetch_site_html(domain: str) -> _Fetched:
     from app.services import jina_service, spider_service
 
     url = f"https://{domain}"
-    reachable = False
+    # Starts False: absent positive evidence that a provider answered ABOUT
+    # this domain, we have no standing to record anything against it.
+    answered = False
 
-    async def _spider() -> str | None:
+    async def _spider() -> spider_service.ScrapeOutcome:
         async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
-            return await asyncio.wait_for(spider_service.fetch_html(url, _client=client), timeout=FETCH_TIMEOUT_SECONDS)
+            return await asyncio.wait_for(
+                spider_service.fetch_html_outcome(url, _client=client), timeout=FETCH_TIMEOUT_SECONDS
+            )
 
     async def _jina() -> dict:
         return await asyncio.wait_for(jina_service.fetch_urls([url]), timeout=FETCH_TIMEOUT_SECONDS)
 
     try:
-        html = asyncio.run(_spider())
-        reachable = True
-        if html:
-            return _Fetched(content=html, is_html=True, infrastructure_ok=True)
+        outcome = asyncio.run(_spider())
+        answered = outcome.answered
+        if outcome.content:
+            return _Fetched(content=_capped(outcome.content), is_html=True, infrastructure_ok=True)
     except TimeoutError:
-        reachable = True  # we reached the network; the SITE was too slow
-        logger.debug("spider fetch timed out for %s", domain)
+        # We could not get an answer in time. That is OUR failure to observe,
+        # not a fact about the domain — Spider's own API may be the thing
+        # hanging, and we cannot tell from here.
+        logger.warning("spider fetch timed out for %s", domain)
+    except RuntimeError as exc:  # pragma: no cover - guarded at the entry point
+        raise _ProviderUnavailable(str(exc)) from exc
     except Exception:
-        logger.debug("spider fetch failed for %s", domain, exc_info=True)
+        logger.warning("spider fetch failed for %s", domain, exc_info=True)
 
+    # Jina is a bonus leg: it can only ever UPGRADE the outcome to a success.
+    # Its client also collapses every failure to an empty result list, so a
+    # miss here is never taken as evidence about the domain.
     try:
         result = asyncio.run(_jina())
-        reachable = True
         pages = result.get("results") or []
         if pages and pages[0].get("content"):
             # Jina returns MARKDOWN, not HTML. Flagged so the markup reader is
             # skipped rather than run against content it can never match —
             # which previously meant every Jina-served domain silently took the
             # LLM path and never got a logo.
-            return _Fetched(content=pages[0]["content"], is_html=False, infrastructure_ok=True)
+            return _Fetched(content=_capped(pages[0]["content"]), is_html=False, infrastructure_ok=True)
     except TimeoutError:
-        reachable = True
-        logger.debug("jina fetch timed out for %s", domain)
+        logger.warning("jina fetch timed out for %s", domain)
+    except RuntimeError as exc:  # pragma: no cover - guarded at the entry point
+        raise _ProviderUnavailable(str(exc)) from exc
     except Exception:
-        logger.debug("jina fetch failed for %s", domain, exc_info=True)
+        logger.warning("jina fetch failed for %s", domain, exc_info=True)
 
-    return _Fetched(content=None, is_html=False, infrastructure_ok=reachable)
+    return _Fetched(content=None, is_html=False, infrastructure_ok=answered)
+
+
+def _capped(content: str) -> str:
+    """Truncate a fetched body before anything parses or retains it."""
+    if len(content) <= MAX_CONTENT_BYTES:
+        return content
+    logger.info("fetched body truncated from %d to %d bytes", len(content), MAX_CONTENT_BYTES)
+    return content[:MAX_CONTENT_BYTES]
 
 
 def _valid_name(name: object) -> bool:
@@ -158,9 +225,10 @@ def _valid_name(name: object) -> bool:
 def _record_failure(session: Session, domain: str) -> None:
     """Mark a domain unresolvable, with backoff that GROWS per attempt.
 
-    Upsert, not read-then-insert — see the module docstring. Flat backoff would
-    leave a permanently-dead domain re-crawled on a fixed cadence forever,
-    which is the per-domain cost leak this cache exists to prevent.
+    Only for failures attributable to the TARGET — see the module docstring.
+    Upsert, not read-then-insert. Flat backoff would leave a permanently-dead
+    domain re-crawled on a fixed cadence forever, which is the per-domain cost
+    leak this cache exists to prevent.
     """
     base = FAILURE_BACKOFF.total_seconds()
     cap = MAX_FAILURE_BACKOFF.total_seconds()
@@ -187,6 +255,31 @@ def _record_failure(session: Session, domain: str) -> None:
                 "resolution_failed": True,
                 "failure_count": CompanyProfile.failure_count + 1,
                 "retry_after": func.now() + grown_interval,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    session.commit()
+
+
+def _record_cooldown(session: Session, domain: str) -> None:
+    """Back off briefly after OUR failure, without blaming the domain.
+
+    Writes ``retry_after`` only. ``resolution_failed`` and ``failure_count``
+    are deliberately untouched, so an outage leaves no lasting verdict and
+    contributes nothing to the exponential backoff.
+    """
+    session.execute(
+        pg_insert(CompanyProfile)
+        .values(
+            domain=domain,
+            retry_after=func.now() + INDETERMINATE_COOLDOWN,
+            updated_at=func.now(),
+        )
+        .on_conflict_do_update(
+            index_elements=["domain"],
+            set_={
+                "retry_after": func.now() + INDETERMINATE_COOLDOWN,
                 "updated_at": func.now(),
             },
         )
@@ -237,70 +330,138 @@ def _snapshot(row: CompanyProfile | None) -> ResolvedCompany | None:
         name=row.name,
         description=row.description,
         logo_url=row.logo_url,
-        source=row.source or "unknown",
+        source=row.source,
     )
 
 
-def _resolve(domain: str, session: Session) -> ResolvedCompany | None:
-    now = datetime.now(UTC)
-    row = session.get(CompanyProfile, domain)
-    stale_fallback: ResolvedCompany | None = None
+@dataclass(frozen=True)
+class _CacheRead:
+    """What the cache had to say. Exactly one of these is acted on."""
 
-    if row is not None:
-        # A CACHED NAME WINS, including over a failure flag. `_record_failure`
-        # leaves identity fields intact, so a domain that resolved once and
-        # later hit a transient failure still holds a good profile. Checking
-        # `resolution_failed` first would return None for the whole backoff
-        # window and throw that away.
+    # Serve this and stop — either fresh, or backing off a failed refresh.
+    hit: ResolvedCompany | None
+    # Nothing to serve and we are inside a backoff window: spend nothing.
+    blocked: bool
+    # Serve this only if the re-resolve below fails.
+    stale_fallback: ResolvedCompany | None
+
+
+def _read_cache(domain: str) -> _CacheRead:
+    """Read the cache in its OWN short transaction.
+
+    Deliberately not folded into the write session. ``session.get`` autobegins
+    a transaction, so holding one session across the crawl and the LLM pinned a
+    pooled connection ``idle in transaction`` for the whole window — measured
+    at one connection per in-flight resolution, against a pool of 5 shared with
+    request handling. Three concurrent resolutions could starve the API.
+    """
+    now = datetime.now(UTC)
+    with get_session() as session:
+        row = session.get(CompanyProfile, domain)
+        if row is None:
+            return _CacheRead(hit=None, blocked=False, stale_fallback=None)
+
+        # A CACHED NAME WINS, including over a failure flag. The failure writers
+        # leave identity fields intact, so a domain that resolved once and later
+        # hit a transient failure still holds a good profile. Checking the
+        # failure state first would return None for the whole backoff window and
+        # throw that away.
         if row.name:
-            if not row.refresh_after or row.refresh_after > now:
-                return _snapshot(row)
+            # A NULL `refresh_after` means "never refreshed" (a backfilled or
+            # hand-inserted row), which is stale, not fresh-forever.
+            if row.refresh_after and row.refresh_after > now:
+                return _CacheRead(hit=_snapshot(row), blocked=False, stale_fallback=None)
             # Past its refresh horizon. Re-resolve — this already runs on a
             # background thread, so nothing user-facing is waiting — but keep
-            # the old value to serve if the re-crawl fails. Without this the
-            # column is write-only and a company that rebrands is served wrong
-            # to every tenant forever.
+            # the old value to serve if the re-crawl fails.
             #
-            # A failed refresh still sets `retry_after`, and it must be honoured
-            # HERE as well: a stale domain that has gone permanently unreachable
-            # would otherwise re-crawl on every single lead, since
-            # `refresh_after` stays in the past and only a success moves it.
+            # A failed refresh sets `retry_after`, and it must be honoured HERE
+            # as well: only a SUCCESS moves `refresh_after`, so a stale domain
+            # gone permanently dark would otherwise re-crawl on every lead.
             if row.retry_after and row.retry_after > now:
-                return _snapshot(row)
-            stale_fallback = _snapshot(row)
-        elif row.resolution_failed and row.retry_after and row.retry_after > now:
-            return None  # never resolved, still inside backoff — spend nothing
+                return _CacheRead(hit=_snapshot(row), blocked=False, stale_fallback=None)
+            return _CacheRead(hit=None, blocked=False, stale_fallback=_snapshot(row))
 
-    fetched = _fetch_site_html(domain)
-    if not fetched.content:
-        if fetched.infrastructure_ok:
-            _record_failure(session, domain)
-        else:
-            # Our crawler could not run. That says nothing about the domain, so
-            # it must not be cached as "this company does not exist".
-            logger.warning("crawl infrastructure unavailable; not caching a failure for %s", domain)
-        return stale_fallback
+        # No name yet. `retry_after` alone gates the retry, whether it was set
+        # by the domain's own failure or by our cooldown.
+        if row.retry_after and row.retry_after > now:
+            return _CacheRead(hit=None, blocked=True, stale_fallback=None)
+        return _CacheRead(hit=None, blocked=False, stale_fallback=None)
 
+
+def _extract(fetched: _Fetched, domain: str) -> tuple[dict, str, str | None]:
+    """Turn fetched content into ``(extracted, source, logo_url)``.
+
+    Raises :class:`_ProviderUnavailable` if the MODEL was the thing that
+    failed, so the caller does not record that against the domain. Returns an
+    empty dict when the content genuinely describes no company.
+    """
     # Markup first: a site that declares its own identity gives a more accurate
     # answer than an LLM inference AND costs nothing, so the model is only
     # worth spending on sites that declare nothing. Skipped for Jina content,
     # which is markdown and carries no meta tags to read.
-    source = "markup"
     extracted = extract_from_markup(fetched.content, domain) if fetched.is_html else None
-    logo_url = extracted.get("logo_url") if extracted else None
+    if extracted and _valid_name(extracted.get("name")):
+        return extracted, "markup", extracted.get("logo_url")
 
-    if not extracted or not _valid_name(extracted.get("name")):
-        source = "llm"
-        extracted = extract_company_context(fetched.content)
-        if not extracted or not _valid_name(extracted.get("name")):
-            _record_failure(session, domain)
+    logo_url = extracted.get("logo_url") if extracted else None
+    try:
+        llm_result = extract_company_context(
+            fetched.content,
+            timeout=LLM_TIMEOUT_SECONDS,
+            num_retries=LLM_NUM_RETRIES,
+            strict=True,
+        )
+    except Exception as exc:
+        # The model was unreachable / out of quota / erroring. That says
+        # nothing about the content, so it must not be cached against the
+        # domain — the same rule as the crawl leg.
+        raise _ProviderUnavailable(f"company-context extraction failed: {exc}") from exc
+
+    if not llm_result or not _valid_name(llm_result.get("name")):
+        return {}, "llm", logo_url
+    if logo_url is None and fetched.is_html:
+        logo_url = extract_logo(fetched.content, domain)
+    return llm_result, "llm", logo_url
+
+
+def _resolve(domain: str) -> ResolvedCompany | None:
+    cached = _read_cache(domain)
+    if cached.hit is not None:
+        return cached.hit
+    if cached.blocked:
+        return None
+    stale_fallback = cached.stale_fallback
+
+    # No database connection is held across the network calls below.
+    try:
+        fetched = _fetch_site_html(domain)
+        if not fetched.content:
+            if fetched.infrastructure_ok:
+                with get_session() as session:
+                    _record_failure(session, domain)
+            else:
+                logger.warning("crawl unavailable; cooling down rather than blaming %s", domain)
+                with get_session() as session:
+                    _record_cooldown(session, domain)
             return stale_fallback
-        if logo_url is None and fetched.is_html:
-            logo_url = extract_logo(fetched.content, domain)
+
+        extracted, source, logo_url = _extract(fetched, domain)
+    except _ProviderUnavailable as exc:
+        logger.warning("provider unavailable while resolving %s: %s", domain, exc)
+        with get_session() as session:
+            _record_cooldown(session, domain)
+        return stale_fallback
+
+    if not extracted:
+        with get_session() as session:
+            _record_failure(session, domain)
+        return stale_fallback
 
     name = extracted["name"].strip()
     description = (extracted.get("description") or "").strip() or None
-    _store_success(session, domain, name, description, logo_url, source)
+    with get_session() as session:
+        _store_success(session, domain, name, description, logo_url, source)
 
     logger.info("company resolved | domain=%s | name=%s | via=%s", domain, name, source)
     return ResolvedCompany(
@@ -318,6 +479,11 @@ def resolve_company(domain: str | None) -> ResolvedCompany | None:
     ``None`` means "no company could be identified" — never an error the caller
     must handle. This function does not raise.
 
+    **Call this from a worker thread, not from async code.** It is synchronous
+    and drives the async crawl clients with ``asyncio.run``, which raises
+    inside a running event loop. That is checked explicitly below rather than
+    left to fail as an unattributable ``None``.
+
     ``domain`` is normalised through
     :func:`domain_normalizer.registrable_domain` before anything else, so a raw
     host, a ``www.`` prefix, or a trailing dot all collapse to the one cache
@@ -326,16 +492,26 @@ def resolve_company(domain: str | None) -> ResolvedCompany | None:
     **There is deliberately no ``session`` parameter.** An earlier version took
     one, and wiring it into lead capture meant this function committed the
     caller's transaction: a half-built ``LeadInfo`` became durable and the
-    caller's own ``rollback()`` turned into a no-op. Opening its own session is
+    caller's own ``rollback()`` turned into a no-op. Opening its own sessions is
     not merely the default — it is the only option, so that regression cannot
-    be reintroduced by a call site. Tests reach ``_resolve`` directly.
+    be reintroduced by a call site.
     """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # the expected case: a plain worker thread
+    else:
+        logger.error(
+            "resolve_company called from an event loop; it is synchronous and would "
+            "deadlock. Dispatch it with submit_background / run_in_executor instead."
+        )
+        return None
+
     try:
         key = registrable_domain(domain)
         if not key:
             return None
-        with get_session() as own_session:
-            return _resolve(key, own_session)
+        return _resolve(key)
     except Exception:
         logger.warning("company resolution failed for %r", domain, exc_info=True)
         return None

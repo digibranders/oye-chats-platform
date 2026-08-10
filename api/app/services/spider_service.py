@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import httpx
 
@@ -220,26 +221,46 @@ async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: as
     return None
 
 
-async def fetch_html(
+@dataclass(frozen=True)
+class ScrapeOutcome:
+    """The result of one ``/scrape``, *and whether we managed to ask at all*.
+
+    ``answered`` is the part callers cannot otherwise recover. ``content=None``
+    conflates two completely different situations:
+
+    * Spider answered about the URL and there was nothing usable there — a
+      parked domain, a 404, an empty body. That is a fact about the **target**.
+    * We never got an answer: no API key, an expired key (401), quota exhausted
+      (402/429), Spider itself 5xx'd, or the request to Spider failed. That is a
+      fact about **us**, and says nothing whatsoever about the target.
+
+    Any caller that persists "this URL yielded nothing" must distinguish them,
+    or one expired key silently writes that verdict against every URL it sees.
+    ``fetch_html`` keeps returning a bare ``str | None`` because its own callers
+    are log-only side channels that genuinely do not care.
+    """
+
+    content: str | None
+    answered: bool
+
+
+# Spider's own failures, as opposed to Spider reporting on the target. 402 and
+# 429 are billing/quota, 5xx is Spider being down; 408 is Spider's fetch of the
+# target timing out, which we cannot attribute to the target either.
+_SPIDER_SELF_FAILURE_STATUSES = frozenset({401, 402, 403, 408, 429})
+
+
+async def fetch_html_outcome(
     url: str,
     *,
     use_js: bool = False,
     _client: httpx.AsyncClient | None = None,
-) -> str | None:
-    """Fetch the raw HTML of a single URL via Spider ``/scrape``.
-
-    Unlike :func:`fetch_urls`, this asks Spider for ``return_format=html`` and
-    disables readability so the DOM comes back intact — needed by the footer
-    harvester, which isolates ``<footer>`` / ``[role=contentinfo]`` regions
-    from the raw markup that the main markdown crawl would otherwise strip.
-
-    Returns the HTML body on success, or ``None`` on any failure (missing API
-    key, HTTP error, empty body). Best-effort by design — the caller is a
-    log-only, non-billable side channel and must never abort a real crawl.
-    """
+) -> ScrapeOutcome:
+    """:func:`fetch_html`, but reporting whether Spider answered — see
+    :class:`ScrapeOutcome` for why that distinction has to be available."""
     if not SPIDER_API_KEY:
         logger.debug("fetch_html skipped for %s — SPIDER_API_KEY not configured", url)
-        return None
+        return ScrapeOutcome(content=None, answered=False)
 
     payload = {
         "url": url,
@@ -257,15 +278,41 @@ async def fetch_html(
             resp = await client.post(f"{SPIDER_API_URL}/scrape", json=payload, headers=headers)
         except httpx.HTTPError as exc:
             logger.warning("fetch_html %s: HTTP error %s", url, exc)
-            return None
+            return ScrapeOutcome(content=None, answered=False)
+        if resp.status_code in _SPIDER_SELF_FAILURE_STATUSES or resp.status_code >= 500:
+            logger.warning("fetch_html %s: Spider returned %s (our side)", url, resp.status_code)
+            return ScrapeOutcome(content=None, answered=False)
         if resp.status_code >= 400:
             logger.warning("fetch_html %s returned %s", url, resp.status_code)
-            return None
+            return ScrapeOutcome(content=None, answered=True)
         content, _upstream = _extract_page_content(resp)
-        return content
+        return ScrapeOutcome(content=content, answered=True)
     finally:
         if owns_client:
             await client.aclose()
+
+
+async def fetch_html(
+    url: str,
+    *,
+    use_js: bool = False,
+    _client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Fetch the raw HTML of a single URL via Spider ``/scrape``.
+
+    Unlike :func:`fetch_urls`, this asks Spider for ``return_format=html`` and
+    disables readability so the DOM comes back intact — needed by the footer
+    harvester, which isolates ``<footer>`` / ``[role=contentinfo]`` regions
+    from the raw markup that the main markdown crawl would otherwise strip.
+
+    Returns the HTML body on success, or ``None`` on any failure (missing API
+    key, HTTP error, empty body). Best-effort by design — the caller is a
+    log-only, non-billable side channel and must never abort a real crawl. A
+    caller that needs to tell those failures apart wants
+    :func:`fetch_html_outcome`.
+    """
+    outcome = await fetch_html_outcome(url, use_js=use_js, _client=_client)
+    return outcome.content
 
 
 async def fetch_urls(

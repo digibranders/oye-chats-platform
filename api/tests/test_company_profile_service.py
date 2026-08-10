@@ -328,20 +328,21 @@ def test_concurrent_resolution_of_a_new_domain_does_not_raise(db):
 
     def worker(idx: int) -> None:
         try:
-            with (
-                patch.object(svc, "_fetch_site_html", side_effect=gated_fetch),
-                _extracted(),
-            ):
-                svc.resolve_company("race.com")
+            svc.resolve_company("race.com")
             results[idx] = "OK"
         except Exception as exc:  # noqa: BLE001 — an empty result set IS the assertion
             results[idx] = f"{type(exc).__name__}: {exc}"
 
-    threads = [threading.Thread(target=worker, args=(i,)) for i in (1, 2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=30)
+    # Patched ONCE, around both threads. patch.object is not thread-safe:
+    # entering it per-thread makes T2 record T1's mock as the "original" and
+    # restore it on exit, leaving a MagicMock installed for the rest of the
+    # session — an ordering-dependent flake.
+    with patch.object(svc, "_fetch_site_html", side_effect=gated_fetch), _extracted():
+        threads = [threading.Thread(target=worker, args=(i,)) for i in (1, 2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
 
     assert set(results.values()) == {"OK"}, results
     # And exactly one row, not two.
@@ -416,9 +417,33 @@ def test_our_own_outage_is_not_cached_against_the_domain(db):
         assert svc.resolve_company("innocent.com") is None
 
     db.expire_all()
-    assert db.get(CompanyProfile, "innocent.com") is None, (
-        "an infrastructure failure was cached as a property of the domain"
+    row = db.get(CompanyProfile, "innocent.com")
+    # A row IS written — but as a short cooldown, not a verdict. Writing no row
+    # at all would mean re-crawling this domain on every single lead for the
+    # whole duration of our outage.
+    assert row is not None
+    assert row.resolution_failed is False, "our outage was recorded as the domain's failure"
+    assert row.failure_count == 0, "our outage fed the domain's exponential backoff"
+    assert row.name is None
+    cooldown = row.retry_after - datetime.now(UTC)
+    assert cooldown < timedelta(hours=1), (
+        f"our outage locked the domain out for {cooldown}; it must be a short, flat cooldown"
     )
+
+
+def test_the_cooldown_after_our_outage_expires_and_the_domain_resolves(db):
+    """The self-healing half: once we recover, nothing is left behind."""
+    with _crawl_failed(infrastructure_ok=False):
+        assert svc.resolve_company("recovers.com") is None
+
+    db.expire_all()
+    row = db.get(CompanyProfile, "recovers.com")
+    row.retry_after = datetime.now(UTC) - timedelta(seconds=1)  # cooldown elapsed
+    db.commit()
+
+    with _crawled(), _extracted():
+        profile = svc.resolve_company("recovers.com")
+    assert profile is not None and profile.name == "Acme Corp"
 
 
 def test_the_sites_own_failure_is_cached(db):
@@ -491,3 +516,164 @@ def test_a_stale_profile_whose_refresh_fails_backs_off(db):
     with _crawl_failed() as second:
         assert svc.resolve_company("gone-dark.com").name == "Gone Dark Ltd"
     assert second.call_count == 0, "the recorded backoff was ignored — every lead re-crawls"
+
+
+# ── The fetch seam itself ────────────────────────────────────────────────────
+#
+# Everything above patches `_fetch_site_html`. These tests exercise it, because
+# patching over it is exactly how a whole class of bug survived a review: the
+# vendor clients return None for BOTH "the site had nothing" and "we could not
+# ask", so an `infrastructure_ok` derived from a bare None was inert.
+
+
+def _spider_returns(outcome):
+    from app.services import spider_service
+
+    async def _fake(url, **kwargs):
+        return outcome
+
+    return patch.object(spider_service, "fetch_html_outcome", side_effect=_fake)
+
+
+def _jina_returns(payload):
+    from app.services import jina_service
+
+    async def _fake(urls, **kwargs):
+        return payload
+
+    return patch.object(jina_service, "fetch_urls", side_effect=_fake)
+
+
+def test_an_expired_spider_key_is_not_blamed_on_the_domain():
+    """The regression that made the first fix inert.
+
+    `spider_service.fetch_html` returns None for a missing key, a 401, an HTTP
+    error AND a genuine 404 — so a caller that persists "nothing here" would
+    blacklist every domain it saw the moment the key expired. This asserts the
+    outcome the resolver actually keys on.
+    """
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        _spider_returns(ScrapeOutcome(content=None, answered=False)),
+        _jina_returns({"results": []}),
+    ):
+        fetched = svc._fetch_site_html("real-company.com")
+
+    assert fetched.content is None
+    assert fetched.infrastructure_ok is False, "an expired key would poison the cross-tenant cache"
+
+
+def test_a_domain_that_answers_with_nothing_is_blamed_on_the_domain():
+    """The contrast case: Spider reached the site and there was nothing there."""
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        _spider_returns(ScrapeOutcome(content=None, answered=True)),
+        _jina_returns({"results": []}),
+    ):
+        fetched = svc._fetch_site_html("parked-for-sale.com")
+
+    assert fetched.content is None
+    assert fetched.infrastructure_ok is True
+
+
+def test_spider_html_is_preferred_and_flagged_as_html():
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        _spider_returns(ScrapeOutcome(content=MARKED_UP, answered=True)),
+        _jina_returns({"results": [{"url": "x", "content": "# markdown"}]}) as jina,
+    ):
+        fetched = svc._fetch_site_html("html-site.com")
+
+    assert fetched.content == MARKED_UP
+    assert fetched.is_html is True
+    assert jina.call_count == 0, "jina must not be paid for when spider already answered"
+
+
+def test_jina_is_the_fallback_and_its_content_is_flagged_as_markdown():
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        _spider_returns(ScrapeOutcome(content=None, answered=True)),
+        _jina_returns({"results": [{"url": "x", "content": "# Acme"}]}),
+    ):
+        fetched = svc._fetch_site_html("jina-site.com")
+
+    assert fetched.content == "# Acme"
+    assert fetched.is_html is False, "markdown must not be handed to the HTML markup reader"
+
+
+def test_a_giant_response_body_is_capped_before_anything_parses_it():
+    """A visitor can name any domain. Without a cap, one 50 MB homepage is
+    parsed by BeautifulSoup at several times that in RSS, on a shared pool."""
+    from app.services.spider_service import ScrapeOutcome
+
+    giant = "<html>" + ("x" * (svc.MAX_CONTENT_BYTES + 5000))
+    with _spider_returns(ScrapeOutcome(content=giant, answered=True)), _jina_returns({"results": []}):
+        fetched = svc._fetch_site_html("enormous.com")
+
+    assert len(fetched.content) == svc.MAX_CONTENT_BYTES
+
+
+def test_the_llm_is_called_with_a_bound_far_below_the_module_default(db):
+    """`extract_company_context` defaults to 60s x 3 attempts (~180s), sized for
+    the request path. Three of those on the 3-worker background pool is the
+    starvation H2 was raised about — the crawl bound alone does not close it."""
+    from app.services import llm_service
+
+    captured = {}
+
+    def _fake(content, **kwargs):
+        captured.update(kwargs)
+        return {"name": "Acme Corp", "description": "d"}
+
+    with _crawled(NO_MARKUP), patch.object(svc, "extract_company_context", side_effect=_fake):
+        svc.resolve_company("bounded.com")
+
+    assert captured["timeout"] <= 30
+    assert captured["num_retries"] <= 1
+    assert captured["strict"] is True, "without strict= a provider outage is indistinguishable from 'no company'"
+    # And the bound is genuinely tighter than what the shared helper defaults to.
+    assert captured["timeout"] < llm_service._LLM_TIMEOUT_S
+
+
+def test_an_llm_outage_is_not_blamed_on_the_domain(db):
+    """The LLM leg had the identical bug as the crawl leg: litellm being down,
+    out of quota, or misconfigured is indistinguishable from 'this page
+    describes no company' unless the extractor is asked to raise."""
+    with (
+        _crawled(NO_MARKUP),
+        patch.object(svc, "extract_company_context", side_effect=RuntimeError("litellm 429")),
+    ):
+        assert svc.resolve_company("llm-outage.com") is None
+
+    db.expire_all()
+    row = db.get(CompanyProfile, "llm-outage.com")
+    assert row is not None
+    assert row.resolution_failed is False, "a model outage was cached as a fact about the domain"
+    assert row.failure_count == 0
+
+
+def test_a_page_that_describes_no_company_is_blamed_on_the_domain(db):
+    """The contrast: the model answered, and the answer was 'nothing here'."""
+    with _crawled(NO_MARKUP), patch.object(svc, "extract_company_context", return_value=None):
+        assert svc.resolve_company("no-company-here.com") is None
+
+    db.expire_all()
+    row = db.get(CompanyProfile, "no-company-here.com")
+    assert row.resolution_failed is True
+    assert row.failure_count == 1
+
+
+def test_resolve_company_refuses_to_run_inside_an_event_loop():
+    """It is synchronous and drives async clients with asyncio.run(), which
+    raises inside a running loop. Failing loudly beats returning None forever
+    with only a debug line to show for it."""
+    import asyncio as _asyncio
+
+    async def _from_a_loop():
+        return svc.resolve_company("acme.com")
+
+    assert _asyncio.run(_from_a_loop()) is None

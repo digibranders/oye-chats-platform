@@ -7,7 +7,7 @@ earlier the same day because tests asserted an invented payload shape.
 
 import pytest
 
-from app.services.company_markup import extract_from_markup
+from app.services.company_markup import extract_from_markup, extract_logo
 
 # fynix.digital — og:site_name only, title carries a tagline after a pipe.
 FYNIX = """
@@ -307,3 +307,49 @@ def test_logo_url_is_bounded():
         f'<meta property="og:image" content="https://cdn.example/{"a" * 900}.png"></head></html>'
     )
     assert extract_from_markup(html, "acme.com")["logo_url"] is None
+
+
+# ── extract_logo ─────────────────────────────────────────────────────────────
+#
+# Added with the resolver's LLM path, which uses it to recover a logo from a
+# page that declared no NAME. It shares parsing with extract_from_markup
+# precisely because the hand-rolled regex it replaced mishandled attribute
+# order, `name=` vs `property=`, and HTML entities — the last of which wrote a
+# broken URL into a cache every tenant renders.
+
+
+def test_extract_logo_absolutises_a_relative_og_image():
+    html = '<html><head><meta property="og:image" content="/img/logo.png"></head></html>'
+    assert extract_logo(html, "acme.com") == "https://acme.com/img/logo.png"
+
+
+def test_extract_logo_decodes_html_entities():
+    """`&amp;` reaching a browser as a literal `&amp;` is a broken image."""
+    html = '<html><head><meta property="og:image" content="/a&amp;b.png"></head></html>'
+    assert extract_logo(html, "acme.com") == "https://acme.com/a&b.png"
+
+
+def test_extract_logo_accepts_the_name_attribute_spelling():
+    """Plenty of real sites write `name=` rather than `property=`."""
+    html = '<html><head><meta name="og:image" content="https://cdn.acme.com/l.png"></head></html>'
+    assert extract_logo(html, "acme.com") == "https://cdn.acme.com/l.png"
+
+
+def test_extract_logo_is_indifferent_to_attribute_order():
+    html = '<html><head><meta content="https://cdn.acme.com/l.png" property="og:image"></head></html>'
+    assert extract_logo(html, "acme.com") == "https://cdn.acme.com/l.png"
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "",
+        None,
+        "<html><head></head></html>",
+        '<html><head><meta property="og:image" content=""></head></html>',
+        '<html><head><meta property="og:image" content="javascript:alert(1)"></head></html>',
+        '<html><head><meta property="og:image" content="data:image/png;base64,AAAA"></head></html>',
+    ],
+)
+def test_extract_logo_returns_none_rather_than_a_junk_url(html):
+    assert extract_logo(html, "acme.com") is None
