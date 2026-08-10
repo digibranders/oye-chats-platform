@@ -14,9 +14,19 @@
 
 ## Scope boundary
 
-Phase A deliberately touches **no file a second developer is currently editing** (visitor-name capture / handoff inputs, unpushed). Excluded from this plan and deferred to Phase B: `lead_info` column additions, `chat_routes.lead_capture_endpoint` wiring, tier 2, and tier 3.
+Phase A was scoped to avoid a second developer's unpushed work. **That work has now merged** (`28ed846`, visitor-name capture), so the constraint is lifted — but the phase split is kept because it is still a sensible build order, and Phase A's tasks remain independently shippable.
 
-**Migration rule:** if another migration lands before this one merges, rebase this migration's `down_revision` onto the new head. Never allow two alembic heads — this repo has already suffered one fork (`7cb7db6`).
+**Migration head is now `a7f3c1e94b26`** (was `b7c31f0a49de`). Task 2's migration must chain from it. Verified after merge: a single head, and `alembic check` reports no drift.
+
+### What the merge changed for this plan
+
+| Change | Effect |
+|---|---|
+| `LeadInfo` rows are now created **name-only, no email** (3 call sites in `rag_service.resolve_name_flow`) | Phase B's enrichment trigger can no longer assume a lead row implies an email. Company resolution must key off the **email being set**, not off row creation. |
+| "Anonymous visitor" largely disappears from the Leads list | The Company column becomes materially more useful — a named lead with a company is a real record, where before most rows were anonymous. |
+| `_extract_visitor_name` / `resolve_visitor_name` exist as a worked pattern | Tier 3 should mirror their structure (extract → clean → validate → persist, best-effort, never raising) rather than inventing a different shape. |
+| He extracts names with **regex**, not an LLM | Deliberately not copied for company: personal names follow tight patterns ("I'm X", "call me X"), company mentions do not. Tier 3 keeps the LLM approach, riding the existing BANT call. |
+| Mid-chat rename overwrites `LeadInfo.name` | Precedent worth following: a visitor-stated value beats an inferred one, and can be corrected later. Consistent with Tier 2 outranking Tier 3. |
 
 ## File Structure
 
@@ -268,7 +278,24 @@ Expected: a new file under `api/alembic/versions/` creating `company_profile`.
 
 - [ ] **Step 3: Review the generated migration by hand**
 
-Open the generated file. Confirm it ONLY creates `company_profile` — autogenerate sometimes sweeps in unrelated drift. Delete any operation that is not this table. Confirm `down_revision` points at the current head (`uv run alembic heads`).
+Open the generated file. Confirm it ONLY creates `company_profile` — autogenerate sometimes sweeps in unrelated drift. Delete any operation that is not this table.
+
+Confirm `down_revision` is **`a7f3c1e94b26`** (the head after the visitor-name merge). Re-check with `uv run alembic heads` rather than trusting this document — if another branch has landed since, chain from whatever is actually head. Never leave two heads.
+
+Guard the create the way `a7f3c1e94b26` does. `app/main.py` calls `Base.metadata.create_all()` at startup, so by the time a migration runs on an existing environment the table may already exist:
+
+```python
+def _table_exists() -> bool:
+    from sqlalchemy import inspect
+
+    return inspect(op.get_bind()).has_table("company_profile")
+
+
+def upgrade() -> None:
+    if _table_exists():
+        return
+    op.create_table(...)
+```
 
 - [ ] **Step 4: Apply and verify**
 
