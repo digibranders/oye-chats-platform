@@ -59,14 +59,27 @@ def test_og_site_name_used_when_no_schema_org():
     assert result["logo_url"] == "https://fynix.digital/og.png"
 
 
-def test_title_is_the_last_resort_and_picks_the_brand_segment():
-    """'Digital Marketing Company | Digibranders' → the brand, not the tagline."""
-    html = DIGIBRANDERS.replace('<meta property="og:site_name" content="Digibranders">', "")
-    assert extract_from_markup(html, "digibranders.com")["name"] == "Digibranders"
-
-
-def test_single_word_title_is_accepted():
-    assert extract_from_markup(ZOMATO, "zomato.com")["name"] == "Zomato"
+@pytest.mark.parametrize(
+    ("title", "domain"),
+    [
+        # Every one of these was a reproduced false positive when <title> was
+        # mined as a third tier. They must now all fall through to the LLM.
+        ("Digital Marketing Company | Digibranders", "digibranders.com"),
+        ("Zomato", "zomato.com"),
+        ("Kumar Textiles | Surat", "kumartextiles.com"),
+        ("Shah Industries | Steel Supplier | Mumbai", "mumbaisteel.com"),
+        ("Sitio en construcción", "x.com"),
+        ("Just another WordPress site", "x.com"),
+        ("Diese Domain ist reserviert", "x.com"),
+    ],
+)
+def test_title_is_never_a_source(title, domain):
+    """`<title>` is written for search engines, not machines — nothing in it is
+    a declaration. Three separate classes of wrong answer came out of mining
+    it, so it was removed rather than tuned further. See the module docstring.
+    """
+    html = f"<html><head><title>{title}</title></head></html>"
+    assert extract_from_markup(html, domain) is None
 
 
 def test_seo_sentence_title_is_rejected_rather_than_guessed():
@@ -242,3 +255,55 @@ def test_deeply_nested_json_ld_does_not_raise():
         '<meta property="og:site_name" content="Deep Co"></head></html>'
     )
     assert extract_from_markup(html, "x.com")["name"] == "Deep Co"
+
+
+def test_name_length_cap_is_enforced():
+    """_MAX_NAME_LEN could previously be raised to any value without a single
+    test noticing."""
+    long_name = "A" * 200
+    html = f'<html><head><meta property="og:site_name" content="{long_name}"></head></html>'
+    assert extract_from_markup(html, "x.com") is None
+
+
+def test_json_ld_walker_depth_guard_bites():
+    """The existing nesting test passes because json.loads itself raises before
+    the walker is reached. This exercises the walker's OWN guard via a deep
+    @graph chain, which parses fine."""
+    node = '{"@type":"Organization","name":"Too Deep"}'
+    for _ in range(60):
+        node = '{"@graph":' + node + "}"
+    html = (
+        f'<html><head><script type="application/ld+json">{node}</script>'
+        '<meta property="og:site_name" content="Shallow Co"></head></html>'
+    )
+    # The deep Organization is beyond the depth cap, so og:site_name wins.
+    assert extract_from_markup(html, "x.com")["name"] == "Shallow Co"
+
+
+@pytest.mark.parametrize(
+    "real_company",
+    [
+        "Apache Corporation",
+        "Sparked",
+        "Sedona Systems",
+        "Trial and Error Films",
+        "Forbidden Planet",
+        "GoDaddy",
+        "Namecheap",
+    ],
+)
+def test_real_companies_are_not_caught_by_the_interstitial_blocklist(real_company):
+    """Unanchored substring matching rejected these: 'Sparked' contains
+    'parked', 'Sedona' contains 'sedo', 'Apache Corporation' is a Fortune 500
+    oil company, not a web server."""
+    html = f'<html><head><meta property="og:site_name" content="{real_company}"></head></html>'
+    result = extract_from_markup(html, "x.com")
+    assert result is not None and result["name"] == real_company
+
+
+def test_logo_url_is_bounded():
+    html = (
+        '<html><head><meta property="og:site_name" content="Acme">'
+        f'<meta property="og:image" content="https://cdn.example/{"a" * 900}.png"></head></html>'
+    )
+    assert extract_from_markup(html, "acme.com")["logo_url"] is None

@@ -37,9 +37,11 @@ def test_platform_hosted_domains_keep_the_customer_label():
     assert extract_company_domain("bob@acme.myshopify.com") == "acme.myshopify.com"
 
 
-def test_public_suffix_alone_is_not_a_company():
+def test_icann_suffix_alone_is_not_a_company():
+    """Nobody is reachable at co.uk. A PLATFORM apex is different — Squarespace
+    has staff — so that case is covered in test_domain_normalizer."""
     assert extract_company_domain("bob@co.uk") is None
-    assert extract_company_domain("bob@myshopify.com") is None
+    assert extract_company_domain("bob@com.co") is None
 
 
 def test_ip_literal_is_not_a_company():

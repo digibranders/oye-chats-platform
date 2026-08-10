@@ -1,27 +1,43 @@
 """Read a company's identity out of its own HTML. No LLM, no network.
 
-Order is deliberate, most-authoritative first:
+Two sources only, most-authoritative first:
 
 1. schema.org ``Organization`` (and its subtypes) — the entity the publisher
    declares, preferring one whose ``url`` matches the domain we fetched.
 2. ``og:site_name`` — the brand the publisher declares.
-3. ``<title>`` — last resort, and frequently SEO copy, a nav label, or a
-   hosting interstitial rather than a name, so it is heavily guarded.
 
-Anything returned here is a *declaration*, which is why it outranks the LLM
-fallback: a model can only infer a name from page copy, and inference is where
-wrong answers come from. Measured against real lead domains, 3 of 4 carried
-``og:site_name`` and 2 of 4 carried a schema.org Organization block.
+Both are *declarations*, which is why they outrank the LLM fallback: a model
+can only infer a name from page copy, and inference is where wrong answers
+come from. Measured against real lead domains, 3 of 4 carried ``og:site_name``
+and 2 of 4 carried a schema.org Organization block.
+
+## Why ``<title>`` is deliberately NOT a source
+
+An earlier version mined the ``<title>`` as a third tier. Adversarial review
+reproduced three separate classes of wrong answer from it, all in the
+expensive direction:
+
+* ``"Kumar Textiles | Surat"`` → ``"Surat"``. The brand is usually the shorter
+  segment, except when it isn't, and "Brand | City" is a standard shape in
+  this platform's market.
+* ``"Shah Industries | Steel | Mumbai"`` on ``mumbaisteel.com`` → ``"Mumbai"``,
+  because a city that appears in the domain satisfies any domain-echo check.
+* ``"Sitio en construcción"``, ``"Just another WordPress site"`` → returned
+  verbatim. A blocklist of interstitial phrases can only ever cover the
+  languages and CMS defaults someone thought to enumerate.
+
+Each fix produced another variant of the same bug, which is the signal that
+the heuristic itself is unsound rather than under-tuned. A title is written
+for search engines and humans, not for machines, so nothing in it is a
+declaration. Dropping it costs coverage on sites that declare nothing — those
+now fall through to the LLM, which is exactly the cheap direction.
 
 ## Failing closed
 
-A false negative is cheap — the caller falls back to the LLM, and a domain
-that resolves to nothing is cached as a failure. A false POSITIVE is
-expensive: the name is written to a cross-tenant cache and shown to a
-salesperson as fact. Every guard below is therefore biased toward returning
-None. In particular a parked, suspended, or bot-walled page must NOT yield a
-name — doing so would short-circuit the resolver's failure-caching path and
-attribute every Cloudflare-challenged lead domain to "Cloudflare".
+A false negative is cheap: the caller falls back to the LLM, and a domain that
+resolves to nothing is cached as a failure. A false POSITIVE is expensive —
+the name is written to a cross-tenant cache and shown to a salesperson as
+fact. Every guard below is therefore biased toward returning None.
 """
 
 from __future__ import annotations
@@ -29,6 +45,7 @@ from __future__ import annotations
 import html as html_lib
 import json
 import logging
+import re
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
@@ -37,13 +54,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_NAME_LEN = 80
 _MAX_DESCRIPTION_LEN = 500
+_MAX_URL_LEN = 500
 _MAX_JSON_LD_DEPTH = 40
-
-# Split only on characters that genuinely separate a brand from a tagline.
-# A plain hyphen is excluded on purpose — it appears inside real company names.
-_TITLE_SEPARATOR_CHARS = "|•·—–"
-_TITLE_SEPARATOR_RUN = " :: "
-_MAX_TITLE_WORDS = 5
 
 # schema.org types that denote the site's owning organisation.
 _ORG_TYPES = {
@@ -55,49 +67,83 @@ _ORG_TYPES = {
 _GENERIC_TITLES = {
     "home", "welcome", "index", "untitled", "home page", "homepage",
     "404", "not found", "page not found", "main", "default", "new page",
+    "forbidden", "unauthorized", "403 forbidden", "401 unauthorized",
+    "access denied", "error", "server error", "500 internal server error",
 }  # fmt: skip
 
-# Substrings that mark a page as an interstitial, error, parked, or
-# for-sale placeholder rather than a company site.
-_INTERSTITIAL_MARKERS = (
-    "cloudflare",
+# Interstitial detection is split in two so matching can be anchored.
+#
+# WORDS are matched on token boundaries. A raw substring test rejected real
+# companies — "Sparked" contains "parked", "Sedona" contains "sedo".
+_INTERSTITIAL_WORDS = frozenset(
+    {
+        "cloudflare", "captcha", "recaptcha",
+        "parked", "suspended", "webmaster", "plesk", "cpanel", "htdocs",
+        "baustelle", "wartung", "mantenimiento", "manutencao", "manutenzione",
+    }
+)  # fmt: skip
+# NOTE "forbidden" and "unauthorized" are NOT here. As standalone words they
+# belong to real companies — Forbidden Planet is a UK retail chain — so they
+# are matched exactly via _GENERIC_TITLES instead, alongside the "403
+# forbidden" phrase below. A bare status word is a status page; the same word
+# inside a longer name is a name.
+
+# PHRASES are matched as substrings; each is long enough to be unambiguous.
+# Includes the common non-English and default-CMS titles, because a parked
+# page in Spanish is exactly as wrong as one in English.
+_INTERSTITIAL_PHRASES = (
     "just a moment",
     "attention required",
     "access denied",
-    "forbidden",
-    "unauthorized",
-    "not found",
     "bad gateway",
     "gateway timeout",
     "service unavailable",
     "temporarily unavailable",
+    "403 forbidden",
+    "401 unauthorized",
+    "internal server error",
     "coming soon",
     "under construction",
     "site maintenance",
     "maintenance mode",
-    "account suspended",
-    "suspended",
     "default page",
     "default web page",
-    "nginx",
-    "apache",
+    "welcome to nginx",
+    "apache2 ",
     "iis windows",
-    "parked",
+    "buy this domain",
     "buy domain",
     "domain for sale",
-    "this domain",
-    "sedo",
-    "godaddy",
-    "namecheap",
-    "hostgator",
-    "bluehost",
+    "this domain is",
+    "domain is parked",
     "are you a robot",
-    "captcha",
     "security check",
-    "redirecting",
-    "enable javascript",
+    "please enable javascript",
     "page not available",
-    "error",
+    "page not found",
+    "not found",
+    "index of /",
+    "site title",
+    "just another wordpress",
+    "wordpress site",
+    "wix.com site",
+    "untitled document",
+    "test page",
+    "hello world",
+    "en construccion",
+    "en construcción",
+    "en maintenance",
+    "im aufbau",
+    "in costruzione",
+    "em construcao",
+    "em construção",
+    "diese domain",
+    "esta web",
+    "site en cours",
+    "该域名",
+    "域名停放",
+    "припаркован",
+    "заглушка",
 )
 
 # Page/nav labels. Common as the SHORT side of a "Label | Brand" title, which
@@ -126,8 +172,19 @@ def _clean(value: object) -> str | None:
 
 
 def _looks_like_interstitial(value: str) -> bool:
+    """Does this read as a parked / error / bot-wall page rather than a company?
+
+    Matched on WORD boundaries, not raw substrings. Unanchored matching
+    rejected real companies whose names merely contain a marker — "Sparked"
+    and "Sedona Systems" tripped "parked"/"sedo", "Trial and Error Films"
+    tripped "error", and "Apache Corporation" (a Fortune 500 oil company) was
+    dropped by the web-server blocklist.
+    """
+    words = set(re.findall(r"[a-z0-9]+", value.lower()))
     lowered = value.lower()
-    return any(marker in lowered for marker in _INTERSTITIAL_MARKERS)
+    if _INTERSTITIAL_WORDS & words:
+        return True
+    return any(phrase in lowered for phrase in _INTERSTITIAL_PHRASES)
 
 
 def _plausible_name(value: str | None) -> bool:
@@ -244,59 +301,14 @@ def _meta(soup: BeautifulSoup, prop: str) -> str | None:
     return _clean(tag.get("content")) if tag else None
 
 
-def _split_title(title: str) -> list[str]:
-    normalised = title.replace(_TITLE_SEPARATOR_RUN, "|")
-    for char in _TITLE_SEPARATOR_CHARS:
-        normalised = normalised.replace(char, "|")
-    return [s for s in (_clean(part) for part in normalised.split("|")) if s]
-
-
-def _name_from_title(soup: BeautifulSoup, domain: str) -> str | None:
-    """Pick the brand segment out of a title, or give up.
-
-    The shortest-segment rule only holds for TWO segments ("Brand | Tagline"
-    either way round). With three or more — "Brand | Category | City", the
-    standard shape for this platform's market — the shortest segment is the
-    city, so we require a segment that matches the domain instead and return
-    None when none does.
-    """
-    head = soup.head or soup
-    title_tag = head.find("title", recursive=True)
-    if title_tag is not None and title_tag.find_parent("svg") is not None:
-        title_tag = None
-    title = _clean(title_tag.get_text()) if title_tag else None
-    if not title:
-        return None
-
-    # A whole title that reads as an interstitial disqualifies every segment.
-    if _looks_like_interstitial(title):
-        return None
-
-    segments = _split_title(title)
-    if not segments:
-        return None
-
-    if len(segments) == 1:
-        candidate = segments[0]
-        if len(candidate.split()) > _MAX_TITLE_WORDS:
-            return None  # a sentence, not a name
-        return candidate if _plausible_name(candidate) else None
-
-    if len(segments) == 2:
-        candidate = min(segments, key=len)
-        return candidate if _plausible_name(candidate) else None
-
-    # 3+ segments: only trust one that echoes the domain's own label.
-    root_label = domain.lower().removeprefix("www.").split(".")[0]
-    for segment in segments:
-        squashed = segment.lower().replace(" ", "")
-        if root_label and (root_label in squashed or squashed in root_label) and _plausible_name(segment):
-            return segment
-    return None
-
-
 def _absolutise(url: str | None, domain: str) -> str | None:
-    if not url:
+    """Resolve a logo URL, or None.
+
+    Bounded like every other stored field: this value is written to the
+    cache and rendered as an ``<img>`` in the admin UI, so an unbounded
+    string is both a column-size problem and an easy tracking pixel.
+    """
+    if not url or len(url) > _MAX_URL_LEN:
         return None
     if url.startswith("//"):
         url = f"https:{url}"
@@ -325,8 +337,6 @@ def extract_from_markup(html: str | None, domain: str) -> dict | None:
         name = _schema_org_name(soup, domain)
         if not _plausible_name(name):
             name = _meta(soup, "og:site_name")
-        if not _plausible_name(name):
-            name = _name_from_title(soup, domain)
         if not _plausible_name(name):
             return None
 

@@ -19,11 +19,20 @@ every other customer's lead under that suffix then reads. Concretely:
 Shopify-hosted lead on the platform to "Shopify".
 
 So the set covers BOTH sections of the PSL that matter here — the ccTLD
-second-levels AND the private section (hosting platforms) — and, as a backstop
-for whatever is still missing, :data:`_NEVER_A_COMPANY` rejects a computed
-result that is itself a known public suffix. An unknown suffix therefore
-degrades to ``None`` (a cheap miss the caller falls back from) rather than to a
-poisoned shared key.
+second-levels AND the private section (hosting platforms).
+
+For whatever is still missing, there is a backstop: a two-label result whose
+first label is generic (:data:`_SUFFIX_LIKE_LABELS` — ``co``, ``asso``,
+``nom``, ``gob``, ``nhs``…) under a TLD that does not register flat
+(:data:`_FLAT_GTLDS`) is almost certainly a public suffix we do not carry, and
+returns ``None``. So ``acme.asso.fr`` yields nothing rather than handing back
+``asso.fr`` as a key shared by every French association on the platform.
+
+An unrecognised suffix therefore degrades to a cheap miss the caller falls
+back from, never to a poisoned shared key. An earlier version claimed this
+protection via a constant that was provably inert — emptying it failed no
+tests — so the guarantee is now expressed as a rule with tests that fail when
+it is weakened.
 
 ## Scope
 
@@ -66,14 +75,20 @@ _ICANN_MULTI_PART: frozenset[str] = frozenset(
 # ── PSL private section: hosting platforms ─────────────────────────────────
 # Without these, every site hosted on a platform collapses onto the PLATFORM,
 # which is the worst outcome for a cross-tenant cache.
+#
+# NOTE these are suffixes, not exclusions: the apex itself is usually a real
+# company (someone does work at squarespace.com), so `squarespace.com` returns
+# ITSELF while `acme.squarespace.com` returns `acme.squarespace.com`. Only the
+# ICANN entries above are never-a-company at the apex — nobody is reachable
+# at `co.uk`.
 _PLATFORM_SUFFIXES: frozenset[str] = frozenset(
     {
         "myshopify.com", "shopifypreview.com",
-        "github.io", "gitlab.io", "pages.github.com",
+        "github.io", "gitlab.io",
         "vercel.app", "netlify.app", "netlify.com", "pages.dev", "workers.dev",
         "web.app", "firebaseapp.com", "appspot.com",
         "herokuapp.com", "azurewebsites.net", "cloudapp.net",
-        "amazonaws.com", "elasticbeanstalk.com",
+        "amazonaws.com", "cloudfront.net", "elasticbeanstalk.com", "pythonanywhere.com",
         "wixsite.com", "editorx.io", "squarespace.com", "weebly.com",
         "blogspot.com", "wordpress.com", "tumblr.com", "ghost.io",
         "notion.site", "webflow.io", "framer.website", "carrd.co",
@@ -85,22 +100,40 @@ _PLATFORM_SUFFIXES: frozenset[str] = frozenset(
 
 _MULTI_PART_SUFFIXES: frozenset[str] = _ICANN_MULTI_PART | _PLATFORM_SUFFIXES
 
-# Backstop. If the computed registrable domain is ITSELF a known public
-# suffix, the input carried a suffix we do not recognise and we must fail
-# closed rather than hand back a key shared by every tenant under it.
-_NEVER_A_COMPANY: frozenset[str] = _MULTI_PART_SUFFIXES
-
 # Hosts under these TLDs are never public companies.
 _RESERVED_TLDS: frozenset[str] = frozenset(
     {"local", "internal", "localdomain", "localhost", "test", "invalid", "example", "onion", "arpa"}
 )
 
-# A generic second-level that is almost certainly a public suffix we do not
-# know, e.g. "acme.co.zz" → "acme.co.zz" would be right, but "co.zz" alone is
-# not a company. Used to reject a two-label result made only of these.
+# gTLDs that register FLAT — every second level is a real registrable domain,
+# so the unknown-suffix backstop below must not swallow web.com, go.com
+# (Disney), or info.com.
+#
+# ccTLDs are deliberately absent. Many of them (.fr, .br, .in, .jp, .uk, .at)
+# carry second-level structures — asso.fr, nom.br, res.in, ed.jp, nhs.uk,
+# gv.at — that we cannot enumerate exhaustively without the full PSL. Under a
+# ccTLD a generic second label therefore fails closed. That loses the odd real
+# domain such as web.de, which is a cheap false negative; returning `asso.fr`
+# as a company would be an expensive shared-key collision.
+_FLAT_GTLDS: frozenset[str] = frozenset(
+    {
+        "com", "net", "org", "io", "app", "dev", "ai", "me", "xyz", "tech",
+        "digital", "agency", "studio", "cloud", "shop", "store", "online", "site",
+        "biz", "info", "inc", "llc", "ltd", "group", "team", "works", "solutions",
+        "email", "world", "life", "live", "news", "blog", "design", "software",
+    }
+)  # fmt: skip
+
+# Generic second-level labels. A two-label result made of one of these under an
+# UNKNOWN TLD ("co.zz", "gob.pe" before it was listed) is almost certainly a
+# public suffix we do not carry, and must not become a shared cache key.
 _SUFFIX_LIKE_LABELS: frozenset[str] = frozenset(
-    {"co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go", "web", "info", "biz"}
-)
+    {
+        "co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go", "web",
+        "info", "biz", "gob", "gouv", "asso", "nom", "res", "ind", "firm", "gen",
+        "in", "ed", "gv", "nhs", "sch", "plc", "ltd", "govt", "mil", "int",
+    }
+)  # fmt: skip
 
 _LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _MAX_HOST_LEN = 253
@@ -118,6 +151,9 @@ def registrable_domain(host: str | None) -> str | None:
         return None
 
     value = host.strip().lower().rstrip(".")
+    # Strip www BEFORE any suffix logic — otherwise www.medium.com becomes its
+    # own key alongside medium.com, and the platform branch never fires.
+    value = value.removeprefix("www.")
     if not value or "." not in value or len(value) > _MAX_HOST_LEN:
         return None
 
@@ -146,20 +182,20 @@ def registrable_domain(host: str | None) -> str | None:
     # Longest known multi-part suffix wins, so acme.co.uk beats a .uk reading.
     last_two = ".".join(labels[-2:])
     if last_two in _MULTI_PART_SUFFIXES:
-        if len(labels) < 3:
-            return None  # the suffix alone — no registrable name below it
-        candidate = ".".join(labels[-3:])
-    elif len(labels) >= 2:
-        candidate = last_two
-    else:
+        if len(labels) >= 3:
+            return ".".join(labels[-3:])
+        # The input IS the suffix. For an ICANN suffix that is never a company
+        # (nobody is reachable at co.uk); for a platform apex it is the
+        # platform's own company (someone does work at squarespace.com).
+        return last_two if last_two in _PLATFORM_SUFFIXES else None
+
+    if len(labels) < 2:
         return None
 
-    # Fail closed on a suffix we evidently do not know about.
-    if candidate in _NEVER_A_COMPANY:
-        return None
-    parts = candidate.split(".")
-    if len(parts) == 2 and parts[0] in _SUFFIX_LIKE_LABELS:
-        # "co.zz" / "com.zz" — a generic second-level under an unknown TLD.
+    # Backstop for a multi-part suffix we do not carry. Returning `in.th` or
+    # `asso.fr` here would hand back a key shared by every tenant under it, so
+    # a generic second-level under an unfamiliar TLD fails closed instead.
+    if labels[-2] in _SUFFIX_LIKE_LABELS and labels[-1] not in _FLAT_GTLDS:
         return None
 
-    return candidate
+    return last_two
