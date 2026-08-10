@@ -8,13 +8,12 @@ export interface OyeChatsMarkProps {
 }
 
 /**
- * OyeChatsMark - the original brand glyph.
+ * OyeChatsMark - the brand glyph, theme-aware.
  *
- * The source PNG (`/oye_final.png`) is the full lockup (icon + wordmark); we
- * scale it up and translate so only the planet+bubble glyph sits inside the
- * bounding box. `invert dark:invert-0` keeps it legible on both themes: the
- * dark-on-transparent source is inverted to light in light mode and shown
- * as-is in dark mode.
+ * Two purpose-made logos (transparent background): `logo-light.png` for light
+ * mode and `logo-dark.png` for dark mode. Both render, and Tailwind's
+ * class-based `dark:` variant toggles which is visible, so the mark always has
+ * contrast against the sidebar. Rendered `object-contain` (no invert/crop).
  */
 export function OyeChatsMark({ size = 32, className = '' }: OyeChatsMarkProps): ReactElement {
   return (
@@ -25,15 +24,16 @@ export function OyeChatsMark({ size = 32, className = '' }: OyeChatsMarkProps): 
       style={{ width: size, height: size }}
     >
       <img
-        src="/oye_final.png"
+        src="/logo-light.png?v=6"
         alt=""
         draggable={false}
-        className="pointer-events-none absolute left-1/2 top-1/2 max-w-none select-none invert dark:invert-0"
-        style={{
-          width: size * 3.2,
-          height: size * 3.2,
-          transform: 'translate(-50%, -42%)',
-        }}
+        className="pointer-events-none h-full w-full select-none object-contain block dark:hidden"
+      />
+      <img
+        src="/logo-dark.png?v=6"
+        alt=""
+        draggable={false}
+        className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain hidden dark:block"
       />
     </div>
   );
