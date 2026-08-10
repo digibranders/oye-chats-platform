@@ -321,6 +321,26 @@ def _absolutise(url: str | None, domain: str) -> str | None:
     return url if parsed.scheme in ("http", "https") and parsed.netloc else None
 
 
+def extract_logo(html: str | None, domain: str) -> str | None:
+    """The site's logo, independent of whether it declared a name.
+
+    A page can carry an ``og:image`` while declaring no identity, so the logo
+    should not be lost merely because the name needed an LLM. Shares the
+    parsing and absolutising rules with :func:`extract_from_markup` — a
+    separate regex here previously mishandled attribute order, ``name=``
+    instead of ``property=``, and HTML entities, the last of which wrote a
+    broken URL into a cache every tenant renders.
+    """
+    if not html:
+        return None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        return _absolutise(_meta(soup, "og:image"), domain)
+    except Exception:
+        logger.debug("logo extraction failed for %s", domain, exc_info=True)
+        return None
+
+
 def extract_from_markup(html: str | None, domain: str) -> dict | None:
     """Return ``{"name", "description", "logo_url"}`` or None.
 
