@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-system';
+import { useAnimatedProgress } from '../../hooks/useAnimatedProgress';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
 
 /**
@@ -273,6 +274,15 @@ function Header({
 // ── Donut ───────────────────────────────────────────────────────────────────
 
 function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: number }): ReactElement {
+  // Tally the centre "Chat Opens" figure up from 0 when the page loads (and
+  // whenever it changes), matching the count-up used on the other metric tiles.
+  // One continuous eased progress drives both the centre figure and the ring so
+  // they move as one. Using a float (not a rounded count) keeps the arc sweep
+  // buttery smooth every frame rather than stepping in whole-number jumps;
+  // `Math.round` still gives the figure its odometer feel. Restarts when the
+  // total changes (e.g. a data refresh).
+  const progress = useAnimatedProgress(1400, total);
+  const animatedTotal = Math.round(total * progress);
   // Precompute each segment's start offset + length along the donut ring.
   // reduce() gives us a pure walk that satisfies React Compiler's
   // immutability rule (a `let cursor` reassigned inside .map() trips it).
@@ -289,6 +299,14 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
       [],
     );
   }, [outcomes, total]);
+
+  // Draw the ring in step with the centre count-up: as the figure tallies from
+  // 0 → total, the coloured arc sweeps clockwise from 12 o'clock to its full
+  // length. `usedArc` is how much of the ring the segments actually occupy, so
+  // the sweep completes exactly as the number lands. Reduced-motion users get
+  // `animatedTotal === total` on the first frame, so the ring renders complete.
+  const usedArc = useMemo(() => segments.reduce((sum, seg) => sum + seg.length, 0), [segments]);
+  const revealFront = progress * usedArc;
 
   return (
     <div
@@ -310,27 +328,31 @@ function Donut({ outcomes, total }: { outcomes: readonly Outcome[]; total: numbe
         />
         {/* Rotate the group -90° so segment #1 starts at 12 o'clock. */}
         <g transform={`rotate(-90 ${DONUT_VB / 2} ${DONUT_VB / 2})`}>
-          {segments.map((seg) => (
-            <circle
-              key={seg.key}
-              cx={DONUT_VB / 2}
-              cy={DONUT_VB / 2}
-              r={DONUT_R}
-              fill="none"
-              stroke={seg.fill}
-              strokeWidth={DONUT_STROKE}
-              strokeDasharray={`${seg.length} ${DONUT_CIRC}`}
-              strokeDashoffset={-seg.offset}
-              strokeLinecap="butt"
-            />
-          ))}
+          {segments.map((seg) => {
+            // How much of this segment has been reached by the sweep front.
+            const drawn = Math.max(0, Math.min(seg.length, revealFront - seg.offset));
+            return (
+              <circle
+                key={seg.key}
+                cx={DONUT_VB / 2}
+                cy={DONUT_VB / 2}
+                r={DONUT_R}
+                fill="none"
+                stroke={seg.fill}
+                strokeWidth={DONUT_STROKE}
+                strokeDasharray={`${drawn} ${DONUT_CIRC}`}
+                strokeDashoffset={-seg.offset}
+                strokeLinecap="butt"
+              />
+            );
+          })}
         </g>
       </svg>
       {/* Centre label — total chat opens. Absolutely positioned so it
           sits pixel-perfect in the middle of the ring. */}
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
         <p className="tabular-nums text-[18px] font-semibold leading-none text-[var(--ds-text)]">
-          {total.toLocaleString()}
+          {animatedTotal.toLocaleString()}
         </p>
         <p className="mt-1 text-[10px] text-[var(--ds-text-muted)]">Chat Opens</p>
       </div>

@@ -18,6 +18,8 @@ export interface BrandingSectionProps {
   /** Non-null when the last upload failed. */
   uploadError: string | null;
   onUpload: (file: File) => void;
+  /** True when the previewed avatar matches what's currently live in production. */
+  avatarIsLive: boolean;
 }
 
 /**
@@ -32,6 +34,7 @@ export function BrandingSection({
   uploading,
   uploadError,
   onUpload,
+  avatarIsLive,
 }: BrandingSectionProps): ReactElement {
   const { hasFeature } = useEntitlements();
   const { openUpgradeModal } = useUpgradeModal();
@@ -76,6 +79,7 @@ export function BrandingSection({
           onChangeOrbColor={(c) => onChange({ orbColor: c })}
           onUpload={onUpload}
           onRemoveLogo={() => onChange({ botLogo: null })}
+          avatarIsLive={avatarIsLive}
         />
         {uploadError && (
           <p role="alert" className="text-[12px] text-[var(--ds-danger)]">
@@ -85,10 +89,6 @@ export function BrandingSection({
       </section>
 
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
-        <SectionHeader
-          title="Powered by OyeChats"
-          description="Show or hide the OyeChats footer at the bottom of the chat widget."
-        />
         <Card className="flex items-center justify-between gap-4 p-4">
           <div className="flex min-w-0 items-start gap-3">
             {!canRemoveBranding && (
