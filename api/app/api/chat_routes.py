@@ -316,9 +316,20 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
                 with get_session() as session:
                     chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
                     if chat_session:
-                        chat_session.visitor_metadata = ip_intel
+                        # MERGE under a namespaced key — never overwrite the whole
+                        # blob. ``visitor_metadata`` predates this feature and is
+                        # also read by the operator console's session panel, which
+                        # looks for user-agent keys (browser/os). Assigning a fresh
+                        # dict (rather than mutating in place) is what makes
+                        # SQLAlchemy flush the JSONB change.
+                        existing = dict(chat_session.visitor_metadata or {})
+                        existing["ip_intel"] = ip_intel
+                        chat_session.visitor_metadata = existing
                         session.commit()
-                        logger.info(f"IP intel resolved | session={session_id} | company={ip_intel.get('company')}")
+                        logger.info(
+                            f"IP intel resolved | session={session_id} | "
+                            f"company={ip_intel.get('company_name')} type={ip_intel.get('company_type')}"
+                        )
                         break
                 time.sleep(0.5)
 
@@ -415,14 +426,13 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
 
     from app.db.models import LeadInfo
     from app.services.email_domain_service import extract_company_domain
+    from app.services.reoon_service import is_obviously_undeliverable, verify_email
 
     domain = extract_company_domain(email)
 
     validation = None
     with get_session() as session:
         if bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session):
-            from app.services.reoon_service import verify_email
-
             validation = verify_email(email)
 
     with get_session() as session:
@@ -434,7 +444,12 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
         if domain:
             lead.company = domain
         if validation:
-            lead.is_valid_email = validation.get("is_safe_to_send", False)
+            # Use the SAME predicate the widget's blur check uses. Storing
+            # Reoon's strict ``is_safe_to_send`` here instead meant a lead the
+            # widget had just accepted (catch-all corporate domain) was stored
+            # as invalid and could then never be sent a follow-up — the widget
+            # and the follow-up gate disagreed about the same address.
+            lead.is_valid_email = not is_obviously_undeliverable(validation)
             lead.email_score = validation.get("overall_score")
 
         try:
@@ -828,20 +843,13 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         if not is_email_validation_enabled_for_bot(bot.id, session):
             return {"valid": True}
 
-    from app.services.reoon_service import verify_email
+    from app.services.reoon_service import is_obviously_undeliverable, verify_email
 
     validation = verify_email(email)
     if validation is None:
         return {"valid": True}
 
-    is_junk = (
-        not validation.get("is_valid_syntax", True)
-        or validation.get("is_disposable") is True
-        or validation.get("is_spamtrap") is True
-        or validation.get("status") == "invalid"
-        or validation.get("mx_accepts_mail") is False
-    )
-    if is_junk:
+    if is_obviously_undeliverable(validation):
         return {"valid": False, "reason": "This email address doesn't look right — mind double-checking it?"}
     return {"valid": True}
 

@@ -573,11 +573,31 @@ def send_manual_follow_up(
 
         lead_info = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
 
-        # Gate 1 — hard stop, no override. No email captured, or Reoon
-        # never confirmed it's safe to send (covers "not yet validated"
-        # and "flagged unsafe" identically — both mean don't send).
-        if not lead_info or not lead_info.email or lead_info.is_valid_email is not True:
-            raise HTTPException(status_code=400, detail="Lead is not eligible — no validated, safe-to-send email.")
+        # Gate 1a — hard stop, no override. Nothing to send to.
+        if not lead_info or not lead_info.email:
+            raise HTTPException(status_code=400, detail="Lead is not eligible — no email address was captured.")
+
+        # Gate 1b — hard stop, no override. Reoon positively flagged this
+        # address as junk (bad syntax / disposable / spamtrap / dead MX).
+        # Sending here is what gets a sending domain blacklisted.
+        if lead_info.is_valid_email is False:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead is not eligible — this address failed email validation and cannot be contacted.",
+            )
+
+        # Gate 1c — SOFT stop, operator can override. ``None`` means "never
+        # validated", not "known bad": the lead predates this feature, was
+        # captured on a plan without email validation, or Reoon was
+        # unreachable at capture time. Treating that identically to
+        # "flagged unsafe" (as this gate originally did) permanently locked
+        # follow-up for every such lead with no way out — the operator can
+        # see the address on screen, so let them take responsibility for it.
+        if lead_info.is_valid_email is None and not confirm_override:
+            raise HTTPException(
+                status_code=409,
+                detail=("This address hasn't been checked for deliverability. Double-check it before sending."),
+            )
 
         # Gate 2 — soft stop, operator can override.
         if lead_info.last_followup_sent_at:
@@ -585,7 +605,10 @@ def send_manual_follow_up(
             if elapsed < FOLLOWUP_COOLDOWN and not confirm_override:
                 raise HTTPException(
                     status_code=409,
-                    detail=(f"Already followed up {elapsed.days} day(s) ago. Resend with confirm_override to proceed."),
+                    detail=(
+                        f"You already followed up with this lead {elapsed.days} day(s) ago. "
+                        "Sending again this soon may feel like spam."
+                    ),
                 )
 
         # Gate 3 — hard stop, no override, ever. Scoped to THIS bot —
