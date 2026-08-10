@@ -21,6 +21,7 @@ from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
     add_chat_message,
     count_documents_for_bot,
+    create_or_update_lead_info,
     ensure_chat_session,
     get_all_documents_for_bot,
     get_bot_media_urls,
@@ -2669,6 +2670,373 @@ def _background_bant_extraction(
 _MEDIA_PROMPT_VERSION = 10
 
 
+# ── Visitor name capture ────────────────────────────────────────────────────
+# The LLM only ever sees the last 5 history messages, so a name the visitor
+# gave early scrolls out of context in a longer chat and the bot "forgets" it.
+# To keep it for the WHOLE session we extract the name once, persist it on the
+# lead, and re-inject it into the system prompt every turn (see
+# ``build_hybrid_prompt``'s ``visitor_name`` argument), which lives outside the
+# history window. Extraction is a cheap synchronous heuristic — no LLM call.
+
+# Distinctive lowercase phrases from the TWO ways the bot asks for the name — the
+# short appended question (``_NAME_ASK_TEXT``) and the full turn-1 request
+# (``_NAME_REQUEST_MESSAGE``). Detection must match BOTH: the turn-2 logic (name
+# capture + deferred-answer recovery) keys off "did a prior bot turn ask for the
+# name", and if the phrase we look for isn't the one we actually sent, the whole
+# flow silently no-ops (the bug where "Our Services" was never answered after the
+# name, and the captured name never reached the lead / handoff form).
+_NAME_ASK_SIGNATURES = (
+    "what name should i use to address you",
+    "may i know your name so i can address you",
+)
+# Back-compat alias: some call sites still reference the primary phrase directly.
+_NAME_ASK_MARKER = _NAME_ASK_SIGNATURES[0]
+
+
+def _is_name_ask_message(content: str) -> bool:
+    """True when a message is (or contains) one of the bot's name requests."""
+    low = (content or "").lower()
+    return any(sig in low for sig in _NAME_ASK_SIGNATURES)
+
+
+# Replies to the name ask that are refusals / placeholders, not real names.
+_NAME_NON_ANSWERS = {
+    "no",
+    "nope",
+    "nah",
+    "none",
+    "skip",
+    "later",
+    "anonymous",
+    "anon",
+    "idk",
+    "dunno",
+    "why",
+    "who",
+    "what",
+    "stop",
+    "nothing",
+    "private",
+    "secret",
+    "guest",
+    "user",
+    "visitor",
+    "human",
+    "nobody",
+    "na",
+    "yes",
+    "yeah",
+    "ok",
+    "okay",
+    "sure",
+    "hi",
+    "hello",
+    "hey",
+}
+
+_NAME_INTRO_PATTERNS = [
+    re.compile(
+        r"\bmy name(?:'s| is)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:i am|i'm|im|call me|this is|it's|its|name's|you can call me)\s+"
+        r"([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        re.IGNORECASE,
+    ),
+]
+
+_NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'.\-]*$")
+
+# Explicit mid-chat rename requests ("rename it to Jason", "change my name to
+# Jason", "actually I'm Jason"). Kept separate from intros so we only ever
+# OVERWRITE a stored name on a clear request, never on a stray word.
+_NAME_RENAME_PATTERNS = [
+    re.compile(
+        r"\b(?:rename|change|update|correct|fix)\b[^A-Za-z]*(?:it|me|my name|the name|that)?\s*"
+        r"(?:to|as|into)\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:actually|no)[,\s]+\s*(?:i'm|i am|im|it's|call me|my name(?:'s| is))\s+"
+        r"([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*)?)",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _clean_visitor_name(raw: str) -> str | None:
+    """Normalize an extracted name candidate, or None if it isn't a plausible name."""
+    name = " ".join((raw or "").split()).strip(" .,!?;:\"'")
+    if not name or any(ch.isdigit() for ch in name) or len(name) > 40:
+        return None
+    if name.lower() in _NAME_NON_ANSWERS:
+        return None
+    tokens = name.split()
+    if not 1 <= len(tokens) <= 2:
+        return None
+    # Title-case only tokens the visitor left lowercase; preserve intentional
+    # inner capitals (e.g. "McCarthy", "O'Brien").
+    return " ".join(t if t[:1].isupper() else t[:1].upper() + t[1:] for t in tokens)
+
+
+def _extract_name_change(question: str) -> str | None:
+    """Detect an EXPLICIT request to change/correct the name mid-chat
+    ("rename it to Jason", "actually I'm Jason", "call me Jason", "my name is
+    Jason"). Only explicit rename/intro phrasing counts — never a bare word — so
+    a stored name is overwritten only on clear intent. Returns the new name or None."""
+    q = (question or "").strip()
+    if not q:
+        return None
+    for pattern in (*_NAME_RENAME_PATTERNS, *_NAME_INTRO_PATTERNS):
+        match = pattern.search(q)
+        if match:
+            cleaned = _clean_visitor_name(match.group(1))
+            if cleaned:
+                return cleaned
+    return None
+
+
+_NAME_DECLINE_STARTS = (
+    "no ",
+    "nope",
+    "nah",
+    "why ",
+    "rather not",
+    "prefer not",
+    "i'd rather",
+    "id rather",
+    "don't want",
+    "dont want",
+    "not telling",
+    "no thanks",
+    "no thank",
+    "pass",
+    "skip",
+    "keep it",
+    "private",
+    "anonymous",
+    "none of",
+    "not comfortable",
+    "won't",
+    "wont",
+)
+
+
+def _is_name_decline(question: str) -> bool:
+    """True when the visitor's reply to the name ask is a refusal or filler rather
+    than a name or a fresh question (e.g. "no", "why do you need it", "rather not
+    say"). Used to still answer their original question when they decline."""
+    low = " ".join((question or "").lower().split()).strip(" ?.!,")
+    if not low:
+        return True
+    if low in _NAME_NON_ANSWERS:
+        return True
+    return low.startswith(_NAME_DECLINE_STARTS)
+
+
+def _extract_visitor_name(question: str, history: list) -> str | None:
+    """Best-effort synchronous extraction of the visitor's name from their
+    current message. Matches explicit intros ("my name is …", "I'm …") anywhere,
+    and — when the previous bot turn asked for the name — a bare short reply.
+    Returns a cleaned name or None. No LLM call."""
+    q = (question or "").strip()
+    if not q:
+        return None
+    for pattern in _NAME_INTRO_PATTERNS:
+        match = pattern.search(q)
+        if match:
+            cleaned = _clean_visitor_name(match.group(1))
+            if cleaned:
+                return cleaned
+    # Bare reply to the name ask: find the most recent bot/operator turn.
+    last_bot = ""
+    for message in reversed(history or []):
+        role = getattr(message, "role", None)
+        if role is None and isinstance(message, dict):
+            role = message.get("role")
+        if role in ("bot", "assistant", "operator"):
+            content = getattr(message, "content", None)
+            if content is None and isinstance(message, dict):
+                content = message.get("content")
+            last_bot = (content or "").lower()
+            break
+    if _is_name_ask_message(last_bot):
+        words = q.split()
+        if 1 <= len(words) <= 2 and all(_NAME_TOKEN_RE.match(w) for w in words):
+            return _clean_visitor_name(q)
+    return None
+
+
+def resolve_visitor_name(session, session_id: str, bot_id, client_id, question: str, history: list) -> str | None:
+    """Return the visitor's name for this session, extracting + persisting it on
+    first sight. A name already stored on the lead wins (so it survives the whole
+    session); otherwise we try to extract one from the current message and, when
+    found, save it to ``lead_info`` so later turns stay personalized even after
+    the message scrolls out of the history window. Never raises into the chat
+    path — any failure just yields ``None``."""
+    try:
+        existing = get_lead_info_by_session(session, session_id)
+        if existing is not None and getattr(existing, "name", None):
+            return existing.name
+        if bot_id is None:
+            return None
+        found = _extract_visitor_name(question, history)
+        if not found:
+            return None
+        create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, name=found)
+        return found
+    except Exception:  # noqa: BLE001 — personalization is best-effort, never fatal
+        logger.warning("resolve_visitor_name failed for session %s", session_id, exc_info=True)
+        return None
+
+
+# The exact wording the bot appends to greet-and-ask on its first reply.
+_NAME_ASK_TEXT = "What name should I use to address you?"
+
+
+def _should_ask_visitor_name(visitor_name: str | None, history: list) -> bool:
+    """True when the bot should append the name question THIS turn: only on its
+    first reply of the session, and only when the name isn't known yet. We append
+    it deterministically rather than instruct the LLM, because the prompt's own
+    "answer only what's asked / don't add follow-ups" rules reliably suppress it."""
+    if visitor_name:
+        return False
+    for message in history or []:
+        role = getattr(message, "role", None)
+        if role is None and isinstance(message, dict):
+            role = message.get("role")
+        if role in ("bot", "assistant", "operator"):
+            return False
+    return True
+
+
+def _maybe_append_name_ask(
+    text: str,
+    session,
+    session_id: str,
+    bot_id,
+    client_id,
+    question: str,
+    history: list | None = None,
+) -> str:
+    """Append the name question to an EARLY-RETURN reply (the intent-router
+    greeting/ack handler and the QA cache), so those paths greet-and-ask too.
+    The main generation path appends inline; these short-circuit before it, so
+    without this a first message like "hi" (answered by the intent router) would
+    never get the question. First reply + unknown name only. Best-effort."""
+    try:
+        if resolve_visitor_name(session, session_id, bot_id, client_id, question, history or []):
+            return text
+        hist = (
+            history
+            if history is not None
+            else get_chat_history(session, session_id, client_id=client_id, limit=5, bot_id=bot_id)
+        )
+        if _should_ask_visitor_name(None, hist) and not _is_name_ask_message(text):
+            return (text.rstrip() if text else "") + f"\n\n{_NAME_ASK_TEXT}"
+    except Exception:  # noqa: BLE001 — personalization is best-effort, never fatal
+        logger.warning("name-ask append failed for session %s", session_id, exc_info=True)
+    return text
+
+
+# Turn-1 reply: ask the visitor's name BEFORE answering, so the entire first
+# response is just this. The real question is deferred and answered next turn.
+_NAME_REQUEST_MESSAGE = "Hi there! Before I help you out, may I know your name so I can address you properly?"
+
+
+def _msg_role(message) -> str | None:
+    return getattr(message, "role", None) or (message.get("role") if isinstance(message, dict) else None)
+
+
+def _msg_content(message) -> str:
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+    return content or ""
+
+
+def _recover_deferred_question(history: list) -> str | None:
+    """The visitor's original question: the last USER message BEFORE the most
+    recent bot "what's your name" turn (history is chronological, oldest first)."""
+    idx_ask = None
+    for i in range(len(history) - 1, -1, -1):
+        if _msg_role(history[i]) in ("bot", "assistant") and _is_name_ask_message(_msg_content(history[i])):
+            idx_ask = i
+            break
+    if idx_ask is None:
+        return None
+    for j in range(idx_ask - 1, -1, -1):
+        if _msg_role(history[j]) == "user":
+            return _msg_content(history[j]).strip() or None
+    return None
+
+
+def resolve_name_flow(session, session_id, bot_id, client_id, question, company_name=None):
+    """Two-step name capture gate. Returns ``(ask_message, effective_question, visitor_name, just_named)``:
+
+    - ``ask_message`` set   → TURN 1: emit it and STOP; the real answer is deferred.
+    - ``effective_question`` set → TURN 2: answer THIS (the original question) instead
+      of the visitor's name reply, now that the name is known.
+    - ``visitor_name`` → the known / just-captured / just-renamed name (for prompt injection).
+    - ``just_named`` → True when the name was SET or CHANGED this turn, so the reply
+      should warmly acknowledge it.
+
+    Best-effort: on any failure returns ``(None, None, None, False)`` so the normal flow runs.
+    """
+    try:
+        existing = get_lead_info_by_session(session, session_id)
+        known = existing.name if existing is not None and getattr(existing, "name", None) else None
+        history = get_chat_history(session, session_id, client_id=client_id, limit=6, bot_id=bot_id)
+
+        # Mid-chat rename: an EXPLICIT "rename it to X" / "call me X" overwrites the
+        # stored name so the visitor is never locked to the first one they gave.
+        if bot_id is not None:
+            renamed = _extract_name_change(question)
+            if renamed and renamed != known:
+                create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, name=renamed)
+                return (None, None, renamed, True)
+
+        if known:
+            return (None, None, known, False)
+
+        asked_before = any(
+            _msg_role(m) in ("bot", "assistant") and _is_name_ask_message(_msg_content(m)) for m in history
+        )
+        if not asked_before:
+            # First bot reply of the session (no prior bot/operator turn): ask the
+            # name and defer. Requires a real bot so anonymous/preview paths skip.
+            first_reply = not any(_msg_role(m) in ("bot", "assistant", "operator") for m in history)
+            if first_reply and bot_id is not None:
+                return (_NAME_REQUEST_MESSAGE, None, None, False)
+            return (None, None, None, False)
+
+        # We asked previously and still have no stored name → this turn may BE it.
+        name = _extract_visitor_name(question, history)
+        if name:
+            create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, name=name)
+            deferred = _recover_deferred_question(history)
+            # Only re-answer a genuine deferred question. If the original message
+            # was itself a greeting/ack (intent router would handle it), let the
+            # current turn flow normally so the visitor is simply greeted by name.
+            if deferred and route_intent(deferred, company_name) is None:
+                return (None, deferred, name, True)
+            return (None, None, name, True)
+
+        # They didn't give a name. If they DECLINED (or sent filler), still answer
+        # their original deferred question so their first query is never dropped.
+        # If they instead asked something new, let that current message flow
+        # normally (topic change).
+        if _is_name_decline(question):
+            deferred = _recover_deferred_question(history)
+            if deferred and route_intent(deferred, company_name) is None:
+                return (None, deferred, None, False)
+        return (None, None, None, False)
+    except Exception:  # noqa: BLE001 — name flow is best-effort, never fatal
+        logger.warning("resolve_name_flow failed for session %s", session_id, exc_info=True)
+        return (None, None, None, False)
+
+
 def build_hybrid_prompt(
     client,
     question: str,
@@ -2689,6 +3057,8 @@ def build_hybrid_prompt(
     services: list[str | dict] | None = None,
     services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
     team_connect_offer: bool = False,
+    visitor_name: str | None = None,
+    visitor_just_named: bool = False,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -3656,6 +4026,43 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
         custom_prompt_section = ""
     tone_section = f"\n\nBRAND TONE: {brand_tone[:300]}" if brand_tone else ""
 
+    # Personalization: when we already know the visitor's name (resolved from the
+    # lead and re-injected every turn), tell the bot to use it and never ask
+    # again. Otherwise fall back to the "ask on the first reply" instructions.
+    if visitor_name and visitor_just_named:
+        # The visitor JUST told us their name this turn (right after we asked).
+        # Force a warm by-name opener on THIS reply so the introduction lands,
+        # instead of the light-touch guidance that lets the model skip it.
+        _safe_visitor_name = " ".join(str(visitor_name).split())[:40]
+        personalization_section = (
+            "PERSONALIZATION (the visitor just introduced themselves):\n"
+            f"- The visitor just told you their name is {_safe_visitor_name}. You MUST open THIS reply by warmly "
+            f'addressing them by name (e.g. "Thanks, {_safe_visitor_name}!" or "Great to meet you, {_safe_visitor_name},"), '
+            "then answer their question in the same message.\n"
+            "- Keep using their name naturally after this, but a light touch — do NOT repeat it every line.\n"
+            '- NEVER ask for their name again and never ask "What name should I use to address you?".'
+        )
+    elif visitor_name:
+        _safe_visitor_name = " ".join(str(visitor_name).split())[:40]
+        personalization_section = (
+            "PERSONALIZATION (you already know who you're talking to):\n"
+            f"- The visitor's name is {_safe_visitor_name}. Address them by it naturally now and then "
+            "(a light touch, like opening a reply with their name). Do NOT overuse it or repeat it every line.\n"
+            '- You already have their name, so NEVER ask for it again and never ask "What name should I use to address you?".'
+        )
+    else:
+        # The name question itself is appended deterministically after generation
+        # (see _should_ask_visitor_name), so we do NOT tell the LLM to ask here -
+        # that would fight RULE 1 ("answer only what's asked") and get dropped, or
+        # double up with the appended question. We only cover using a name once given.
+        personalization_section = (
+            "PERSONALIZATION (address the visitor by their name):\n"
+            '- You may not know the visitor\'s name yet. The moment they tell you (e.g. "I\'m Sam", "my name is '
+            'Priya", or a short one-word reply to a name question), start addressing them by it naturally from then '
+            "on (a light touch, like opening a reply with their name) and NEVER ask for it again.\n"
+            "- Never invent or assume a name. Only ever use a name the visitor actually gave you."
+        )
+
     # Resolve display name: prefer company_name over bot name
     display_name = company_name or client.name
     resolved_bot_name = bot_name or client.name
@@ -3793,6 +4200,8 @@ VOICE:
 - You are a confident, warm representative of this company — never a search interface or FAQ bot.
 - For ON-SCOPE questions where a specific detail is missing, never expose internal limitations ("I don't have information", "no data available", "not in my knowledge base"). Instead pivot: share related on-scope facts you do have and offer to connect the visitor with the team. (For OFF-SCOPE questions, use the SCOPE refusal above instead — do not pivot.)
 - Match the energy of whoever you're talking to — casual if they're casual, professional if they're formal.
+
+{personalization_section}
 
 Answer visitor questions using the information provided below.
 
@@ -4509,6 +4918,9 @@ def rag_pipeline(
     lf = get_langfuse()
 
     def _run_pipeline():
+        # ``question`` may be rebound to the visitor's deferred (original) question
+        # by the two-step name gate below; it lives on the enclosing scope.
+        nonlocal question
         with get_session() as session:
             bot = (
                 session.query(Bot).options(joinedload(Bot.client)).get(bid)
@@ -4550,6 +4962,27 @@ def rag_pipeline(
             )
             session.commit()
 
+            # ── Two-step name capture (ask first, answer next turn) ──────
+            # On the visitor's FIRST message the bot replies ONLY with a name
+            # request and defers the real answer; once they reply with a name we
+            # answer their original question, addressed by name.
+            _ask_msg, _deferred_q, _flow_name, _just_named = resolve_name_flow(
+                session, session_id, bid, cid, question, company_name=_company_name
+            )
+            if _ask_msg is not None:
+                _name_bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_ask_msg, bot_id=bid
+                )
+                session.commit()
+                return {
+                    "answer": _ask_msg,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _name_bot_msg.id,
+                }
+            if _deferred_q is not None:
+                question = _deferred_q
+
             # ── Deterministic intent router ──────────────────────────────
             # Greetings ("hi"), acks ("thanks"), and identity questions
             # ("are you AI?", "what's your name?") get a deterministic
@@ -4567,12 +5000,13 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
+                _intent_answer = _maybe_append_name_ask(_intent.answer, session, session_id, bid, cid, question)
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_intent.answer, bot_id=bid
+                    session, session_id, client_id=cid, role="bot", content=_intent_answer, bot_id=bid
                 )
                 session.commit()
                 return {
-                    "answer": _intent.answer,
+                    "answer": _intent_answer,
                     "sources": [],
                     "session_id": session_id,
                     "message_id": _bot_msg.id,
@@ -4651,12 +5085,15 @@ def rag_pipeline(
                         )
                     else:
                         logger.info(f"QA cache hit | bot_id={bid} | session={session_id}")
+                        _cached_answer = _maybe_append_name_ask(
+                            cached_qa["answer"], session, session_id, bid, cid, question
+                        )
                         bot_msg = add_chat_message(
-                            session, session_id, client_id=cid, role="bot", content=cached_qa["answer"], bot_id=bid
+                            session, session_id, client_id=cid, role="bot", content=_cached_answer, bot_id=bid
                         )
                         session.commit()
                         return {
-                            "answer": cached_qa["answer"],
+                            "answer": _cached_answer,
                             "sources": cached_qa.get("sources", []),
                             "session_id": session_id,
                             "message_id": bot_msg.id,
@@ -4673,6 +5110,7 @@ def rag_pipeline(
             chat_session = session.query(ChatSession).filter(*_cs_filters).first()
             current_bant = _build_bant_state(chat_session)
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            visitor_name = resolve_visitor_name(session, session_id, bid, cid, question, history)
 
             # ── CAG-lite: skip retrieval for small knowledge bases ──────────
             _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
@@ -4888,6 +5326,8 @@ def rag_pipeline(
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
                 team_connect_offer=_team_connect_offer,
+                visitor_name=visitor_name,
+                visitor_just_named=_just_named,
             )
 
             # temperature=0.3: low enough that "what services do you offer"
@@ -5065,6 +5505,12 @@ def rag_pipeline(
             if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
                 _meeting_card_detected = False
                 logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
+
+            # Deterministic name ask on the bot's FIRST reply, mirroring the
+            # streaming path: append the question when the visitor's name isn't
+            # known yet so it reliably shows and is persisted.
+            if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(answer):
+                answer = answer.rstrip() + f"\n\n{_NAME_ASK_TEXT}"
 
             bot_msg = add_chat_message(
                 session,
@@ -5344,6 +5790,27 @@ async def rag_pipeline_stream(
             )
             session.commit()
 
+            # ── Two-step name capture (ask first, answer next turn) ──────────
+            # First message → reply ONLY with a name request and defer the real
+            # answer; the following turn (their name) answers the original
+            # question, addressed by name. Mirrors the non-stream path.
+            _ask_msg, _deferred_q, _flow_name, _just_named = resolve_name_flow(
+                session, session_id, bid, cid, question, company_name=_company_name
+            )
+            if _ask_msg is not None:
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _ask_msg
+                _name_bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_ask_msg, bot_id=bid
+                )
+                session.flush()
+                _name_msg_id = _name_bot_msg.id
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _name_msg_id})}\n"
+                return
+            if _deferred_q is not None:
+                question = _deferred_q
+
             # ── Deterministic intent router (streaming path) ─────────────────
             # Mirrors the non-stream path: greetings/acks/identity questions
             # short-circuit before retrieval so visitors don't hit the relevance
@@ -5357,10 +5824,11 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                _intent_answer = _maybe_append_name_ask(_intent.answer, session, session_id, bid, cid, question)
                 yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _intent.answer
+                yield _intent_answer
                 _bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=_intent.answer, bot_id=bid
+                    session, session_id, client_id=cid, role="bot", content=_intent_answer, bot_id=bid
                 )
                 session.flush()
                 _msg_id = _bot_msg.id
@@ -5442,7 +5910,9 @@ async def rag_pipeline_stream(
                         )
                     else:
                         logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
-                        cached_answer = cached_qa["answer"]
+                        cached_answer = _maybe_append_name_ask(
+                            cached_qa["answer"], session, session_id, bid, cid, question
+                        )
                         cached_sources = cached_qa.get("sources", [])
                         yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
                         yield cached_answer
@@ -5466,6 +5936,7 @@ async def rag_pipeline_stream(
             chat_session = session.query(ChatSession).filter(*_cs_filters_stream).first()
             current_bant = _build_bant_state(chat_session)
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            visitor_name = resolve_visitor_name(session, session_id, bid, cid, question, history)
 
             # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
             # The two DB helpers below run inside ``asyncio.to_thread`` so they MUST
@@ -5700,6 +6171,8 @@ async def rag_pipeline_stream(
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
                 team_connect_offer=_team_connect_offer,
+                visitor_name=visitor_name,
+                visitor_just_named=_just_named,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -5964,6 +6437,16 @@ async def rag_pipeline_stream(
                     # _resolve_meeting_booking returned {} (provider URL missing or
                     # already booked) — don't flip to card-shown state.
                     _meeting_card_detected = False
+            # Deterministic name ask: on the bot's FIRST reply, when we don't yet
+            # know the visitor's name, append the question so it reliably appears
+            # (the LLM's own "answer only what's asked" rules otherwise drop it).
+            # Streamed live AND folded into full_answer so the saved transcript
+            # matches what the visitor saw.
+            if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(full_answer):
+                _name_ask_chunk = f"\n\n{_NAME_ASK_TEXT}"
+                full_answer = full_answer.rstrip() + _name_ask_chunk
+                yield _name_ask_chunk
+
             try:
                 if not _stream_error or full_answer:
                     bot_msg = add_chat_message(

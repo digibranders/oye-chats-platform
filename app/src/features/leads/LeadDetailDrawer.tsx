@@ -9,6 +9,7 @@
  * and returned to the trigger on close, and a click-away scrim.
  */
 import { type ReactElement, useEffect, useRef, useState } from 'react';
+import Markdown from 'react-markdown';
 import {
   AlertCircle,
   Building2,
@@ -137,9 +138,19 @@ function ContactRow({ icon: Icon, value }: { icon: typeof Mail; value: string })
   );
 }
 
+/** Short clock time (e.g. "2:34 PM") for a message's timestamp; empty if absent. */
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) return '';
+  return new Date(parsed).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
 function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
   const text = message.content ?? message.message ?? '';
   const isVisitor = message.role === 'user';
+  const roleLabel = isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot';
+  const time = formatClock(message.created_at);
   return (
     <div className={cn('flex', isVisitor ? 'justify-end' : 'justify-start')}>
       <div
@@ -150,10 +161,26 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
             : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text)]',
         )}
       >
-        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-          {isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot'}
+        <p className="mb-0.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+          <span>{roleLabel}</span>
+          {time && (
+            <span className="font-normal normal-case tracking-normal opacity-80">{time}</span>
+          )}
         </p>
-        {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>}
+        {text ? (
+          isVisitor ? (
+            // Visitor text is plain: render verbatim so their exact input shows.
+            <p className="whitespace-pre-wrap break-words">{text}</p>
+          ) : (
+            // Bot/operator replies are markdown (bold, lists, links) - render it
+            // so the transcript reads like the live chat, not raw `**asterisks**`.
+            <div className="break-words [&_a]:underline [&_a]:underline-offset-2 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-0 [&_p]:empty:hidden [&_strong]:font-semibold [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4">
+              <Markdown>{text}</Markdown>
+            </div>
+          )
+        ) : (
+          <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>
+        )}
       </div>
     </div>
   );
@@ -531,10 +558,19 @@ export function LeadDetailDrawer({
             {/* Conversation transcript — the ONLY thing the "View chat" face shows */}
             {view === 'chat' && (
             <section className="space-y-3">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                <MessageSquare size={13} aria-hidden="true" />
-                Conversation
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+                  <MessageSquare size={13} aria-hidden="true" />
+                  Conversation
+                </h3>
+                {detail.messages && detail.messages.length > 0 && (
+                  <span className="text-[11px] text-[var(--ds-text-subtle)]">
+                    {formatDateTime(
+                      detail.messages[detail.messages.length - 1].created_at ?? detail.last_active_at,
+                    )}
+                  </span>
+                )}
+              </div>
               {detail.messages && detail.messages.length > 0 ? (
                 <div className="space-y-2.5">
                   {detail.messages.map((message) => (

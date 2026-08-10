@@ -154,6 +154,10 @@ interface TrieVizNode {
    *  sequence index. */
   seqIndices: ReadonlySet<number>;
   side: 'pre' | 'post';
+  /** Starting page (depth-0 ancestor path) of this node's branch. Only
+   *  meaningful pre-side: clicking a pre node filters the diagram to the
+   *  journeys that began on this page, mirroring an outcome click. */
+  startPage?: string;
 }
 
 interface TrieVizEdge {
@@ -486,6 +490,16 @@ function layoutTrie(
   const rootStyle = SOURCE_STYLES[0];
   paint(root, rootStyle.tone, rootStyle.icon);
 
+  // Starting page of a node's branch: walk up to the depth-0 ancestor.
+  // Every sequence passing through a node shares its prefix, so this is
+  // the single page their journey began on — the value a pre-node click
+  // filters by.
+  const rootPageOf = (bn: TrieBuildNode): string => {
+    let c = bn;
+    while (c.parent && c.depth > 0) c = c.parent;
+    return c.path;
+  };
+
   // Recursively assign vertical positions using leaf-count weighting:
   // each subtree occupies vertical space proportional to its leaves.
   let cursorSlot = 0;
@@ -520,6 +534,7 @@ const x = xStart + n.depth * colW;
           depth: n.depth,
           seqIndices: n.seqIndices,
           side,
+          startPage: rootPageOf(n),
         });
         // Leaf anchor: right edge of the card (both sides). Only the
         // pre-side actually renders these anchors as chatbot
@@ -558,8 +573,10 @@ const x = xStart + n.depth * colW;
         x: cardX,
         y,
         width: cardW,
+        depth: n.depth,
         seqIndices: n.seqIndices,
         side,
+        startPage: rootPageOf(n),
       });
     }
     return { yCenter };
@@ -1309,7 +1326,23 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             height={CARD_H}
             opacity={nodeVisible(node.id)}
             style={{ cursor: 'pointer' }}
-            onClick={() => toggleRow(node.id)}
+            onClick={() => {
+              // Pre-chat page click = FILTER the diagram to journeys that
+              // began on this page, mirroring how clicking an outcome
+              // filters to journeys that ended there. This re-renders a
+              // focused, non-empty view instead of the in-place highlight
+              // (which, on sparse data, dimmed everything and hid the
+              // outcome connectors — reading as "nothing happened").
+              // Post-chat nodes keep the highlight: they have no single
+              // starting page to filter by.
+              if (node.side === 'pre' && node.startPage != null) {
+                const page = node.startPage;
+                setStartFilter((prev) => (prev === page ? null : page));
+                setSelectedRowId(null);
+              } else {
+                toggleRow(node.id);
+              }
+            }}
           >
             <FlowCard
               node={{
