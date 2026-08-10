@@ -201,7 +201,7 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
       )}
     >
       {/* Brand */}
-      <div className="flex h-16 shrink-0 items-center gap-2.5 px-4">
+      <div className="flex h-16 shrink-0 items-center gap-1.5 px-4">
         <OyeChatsMark size={32} />
         {showLabels && (
           <span className="text-[15px] font-bold tracking-tight text-[var(--ds-text)]">
