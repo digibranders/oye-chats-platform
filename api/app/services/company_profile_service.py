@@ -158,56 +158,82 @@ class _ProviderUnavailable(Exception):
 
 
 def _fetch_site_html(domain: str) -> _Fetched:
-    """Fetch the domain's root page. Spider (HTML) first, Jina (markdown) after.
+    """Fetch the domain's root page, honouring the configured crawl provider.
+
+    Which backend goes first is a runtime setting (``crawl.provider_primary``,
+    written by the super-admin Models & RAG page), and this must respect it: an
+    operator switching to Jina *because Spider is having an outage* would
+    otherwise still have every uncached lead hit Spider first — the wrong
+    behaviour at precisely the wrong moment.
+
+    Attribution is a separate question from content. Only Spider can tell us
+    whether a failure was the target's fault (see :class:`ScrapeOutcome`); Jina
+    drops pages silently and reports nothing. So Spider stays the sole oracle
+    for ``infrastructure_ok`` regardless of the order, and when Jina answers
+    first the question does not arise, because we have content.
 
     Isolated as its own function so tests patch one seam instead of two async
     HTTP clients.
     """
-    from app.services import jina_service, spider_service
+    from app.services import jina_service, runtime_config, spider_service
 
     url = f"https://{domain}"
     # Starts False: absent positive evidence that a provider answered ABOUT
     # this domain, we have no standing to record anything against it.
     answered = False
 
-    async def _spider() -> spider_service.ScrapeOutcome:
+    async def _spider_call() -> spider_service.ScrapeOutcome:
         async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
             return await asyncio.wait_for(
                 spider_service.fetch_html_outcome(url, _client=client), timeout=FETCH_TIMEOUT_SECONDS
             )
 
-    async def _jina() -> dict:
+    async def _jina_call() -> dict:
         return await asyncio.wait_for(jina_service.fetch_urls([url]), timeout=FETCH_TIMEOUT_SECONDS)
 
-    try:
-        outcome = asyncio.run(_spider())
-        answered = outcome.answered
-        if outcome.content:
-            return _Fetched(content=_capped(outcome.content), is_html=True, infrastructure_ok=True)
-    except TimeoutError:
-        # We could not get an answer in time. That is OUR failure to observe,
-        # not a fact about the domain — Spider's own API may be the thing
-        # hanging, and we cannot tell from here.
-        logger.warning("spider fetch timed out for %s", domain)
-    except Exception:
-        logger.warning("spider fetch failed for %s", domain, exc_info=True)
+    def _spider() -> _Fetched | None:
+        nonlocal answered
+        try:
+            outcome = asyncio.run(_spider_call())
+            answered = outcome.answered
+            if outcome.content:
+                return _Fetched(content=_capped(outcome.content), is_html=True, infrastructure_ok=True)
+        except TimeoutError:
+            # We could not get an answer in time. That is OUR failure to
+            # observe, not a fact about the domain — Spider's own API may be
+            # the thing hanging, and we cannot tell from here.
+            logger.warning("spider fetch timed out for %s", domain)
+        except Exception:
+            logger.warning("spider fetch failed for %s", domain, exc_info=True)
+        return None
 
-    # Jina is a bonus leg: it can only ever UPGRADE the outcome to a success.
-    # Its client also collapses every failure to an empty result list, so a
-    # miss here is never taken as evidence about the domain.
+    def _jina() -> _Fetched | None:
+        try:
+            result = asyncio.run(_jina_call())
+            pages = result.get("results") or []
+            if pages and pages[0].get("content"):
+                # Jina returns MARKDOWN, not HTML. Flagged so the markup reader
+                # is skipped rather than run against content it can never match
+                # — which previously meant every Jina-served domain silently
+                # took the LLM path and never got a logo.
+                return _Fetched(content=_capped(pages[0]["content"]), is_html=False, infrastructure_ok=True)
+        except TimeoutError:
+            logger.warning("jina fetch timed out for %s", domain)
+        except Exception:
+            logger.warning("jina fetch failed for %s", domain, exc_info=True)
+        return None
+
     try:
-        result = asyncio.run(_jina())
-        pages = result.get("results") or []
-        if pages and pages[0].get("content"):
-            # Jina returns MARKDOWN, not HTML. Flagged so the markup reader is
-            # skipped rather than run against content it can never match —
-            # which previously meant every Jina-served domain silently took the
-            # LLM path and never got a logo.
-            return _Fetched(content=_capped(pages[0]["content"]), is_html=False, infrastructure_ok=True)
-    except TimeoutError:
-        logger.warning("jina fetch timed out for %s", domain)
+        jina_first = runtime_config.get_crawl_provider_primary() == "jina"
     except Exception:
-        logger.warning("jina fetch failed for %s", domain, exc_info=True)
+        # A config read must never decide whether enrichment runs at all.
+        logger.debug("could not read crawl provider order; defaulting", exc_info=True)
+        jina_first = False
+
+    for leg in (_jina, _spider) if jina_first else (_spider, _jina):
+        fetched = leg()
+        if fetched is not None:
+            return fetched
 
     return _Fetched(content=None, is_html=False, infrastructure_ok=answered)
 

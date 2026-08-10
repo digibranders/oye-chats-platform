@@ -583,10 +583,14 @@ def test_a_domain_that_answers_with_nothing_is_blamed_on_the_domain():
     assert fetched.infrastructure_ok is True
 
 
-def test_spider_html_is_preferred_and_flagged_as_html():
+def test_under_spider_primary_html_wins_and_jina_is_not_paid_for():
+    """Order comes from `crawl.provider_primary` (env default: jina), so a test
+    about ordering has to pin it rather than assume."""
+    from app.services import runtime_config
     from app.services.spider_service import ScrapeOutcome
 
     with (
+        patch.object(runtime_config, "get_crawl_provider_primary", return_value="spider"),
         _spider_returns(ScrapeOutcome(content=MARKED_UP, answered=True)),
         _jina_returns({"results": [{"url": "x", "content": "# markdown"}]}) as jina,
     ):
@@ -598,9 +602,11 @@ def test_spider_html_is_preferred_and_flagged_as_html():
 
 
 def test_jina_is_the_fallback_and_its_content_is_flagged_as_markdown():
+    from app.services import runtime_config
     from app.services.spider_service import ScrapeOutcome
 
     with (
+        patch.object(runtime_config, "get_crawl_provider_primary", return_value="spider"),
         _spider_returns(ScrapeOutcome(content=None, answered=True)),
         _jina_returns({"results": [{"url": "x", "content": "# Acme"}]}),
     ):
@@ -736,9 +742,11 @@ def test_a_spider_timeout_is_not_blamed_on_the_domain(db):
 
 def test_jina_rescues_a_domain_spider_could_not_reach():
     """Jina is a bonus leg: it can only ever UPGRADE the outcome."""
+    from app.services import runtime_config
     from app.services.spider_service import ScrapeOutcome
 
     with (
+        patch.object(runtime_config, "get_crawl_provider_primary", return_value="spider"),
         _spider_returns(ScrapeOutcome(content=None, answered=False)),
         _jina_returns({"results": [{"url": "x", "content": "# Acme"}]}),
     ):
@@ -810,3 +818,52 @@ def test_a_good_stale_profile_survives_a_database_failure_on_the_write(db):
     assert profile is not None and profile.name == "Known Good Ltd", (
         "a transient DB failure threw away a good cached profile"
     )
+
+
+def test_the_configured_primary_provider_is_honoured(db):
+    """`crawl.provider_primary` is a runtime setting an operator flips, often
+    BECAUSE one provider is having an outage. Ignoring it here meant every
+    uncached lead still hit the broken provider first."""
+    from app.services import runtime_config
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        patch.object(runtime_config, "get_crawl_provider_primary", return_value="jina"),
+        _spider_returns(ScrapeOutcome(content=MARKED_UP, answered=True)) as spider,
+        _jina_returns({"results": [{"url": "x", "content": "# Acme"}]}),
+    ):
+        fetched = svc._fetch_site_html("jina-primary.com")
+
+    assert fetched.content == "# Acme"
+    assert spider.call_count == 0, "spider was called despite jina being the configured primary"
+
+
+def test_spider_remains_the_attribution_oracle_under_either_order(db):
+    """Jina reports nothing about WHY it failed, so it can never supply
+    evidence for caching a failure — but it must not suppress Spider's either."""
+    from app.services import runtime_config
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        patch.object(runtime_config, "get_crawl_provider_primary", return_value="jina"),
+        _spider_returns(ScrapeOutcome(content=None, answered=True)),
+        _jina_returns({"results": []}),
+    ):
+        fetched = svc._fetch_site_html("both-empty.com")
+
+    assert fetched.content is None
+    assert fetched.infrastructure_ok is True, "spider's verdict was lost when jina went first"
+
+
+def test_an_unreadable_provider_setting_does_not_stop_enrichment(db):
+    from app.services import runtime_config
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        patch.object(runtime_config, "get_crawl_provider_primary", side_effect=RuntimeError("db down")),
+        _spider_returns(ScrapeOutcome(content=MARKED_UP, answered=True)),
+        _jina_returns({"results": []}),
+    ):
+        fetched = svc._fetch_site_html("config-broken.com")
+
+    assert fetched.content == MARKED_UP
