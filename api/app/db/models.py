@@ -621,6 +621,38 @@ class LeadInfo(Base):
     followup_sent_by = relationship("Operator")
 
 
+class CompanyProfile(Base):
+    """One resolved company per registrable domain, shared across ALL tenants.
+
+    Deliberately not scoped to a client. It holds only public web data about a
+    company, so there is nothing to leak between tenants, and sharing means a
+    popular domain is crawled once for the whole platform instead of once per
+    customer. The key is the registrable domain from
+    ``domain_normalizer.registrable_domain`` — every employee of one company,
+    on whatever mail subdomain, must collapse to a single row.
+
+    Failures are cached too. A dead, parked, or bot-walled domain records
+    ``resolution_failed`` with a ``retry_after`` backoff, so one bad domain
+    costs a single crawl rather than one per lead arriving from it.
+    """
+
+    __tablename__ = "company_profile"
+
+    domain = Column(String, primary_key=True)
+    name = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String, nullable=True)
+
+    resolution_failed = Column(Boolean, nullable=False, server_default="false")
+    # Set only when resolution_failed — gates re-crawl attempts.
+    retry_after = Column(DateTime(timezone=True), nullable=True)
+    # Lazy refresh horizon for a SUCCESSFUL profile.
+    refresh_after = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id = Column(String, primary_key=True)
