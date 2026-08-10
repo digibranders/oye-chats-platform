@@ -5,14 +5,24 @@ public web data about a company, so there is nothing to leak between
 customers, and sharing means a popular domain is crawled once for the whole
 platform rather than once per customer.
 
-Failures are cached alongside successes (``resolution_failed`` +
-``retry_after``) so a dead or parked domain costs a single crawl instead of one
-per lead arriving from it.
+Failures are cached alongside successes (``resolution_failed`` /
+``failure_count`` / ``retry_after``) so a dead or parked domain costs a single
+crawl instead of one per lead arriving from it.
 
-The create is guarded: ``app/main.py`` calls ``Base.metadata.create_all()`` at
-startup, so on any environment that has booted since the model landed the table
-already exists and a bare ``op.create_table`` would fail the deploy. Same
-pattern as ``a7f3c1e94b26``.
+## Why the create is guarded, and why the guard checks COLUMNS
+
+``app/main.py`` calls ``Base.metadata.create_all()`` at startup, so on any
+environment that has booted since the model landed the table already exists and
+a bare ``op.create_table`` would fail the deploy.
+
+An existence-only guard is not enough. ``create_all`` creates missing TABLES
+but never missing COLUMNS, so a table built by an older model would be silently
+accepted, stamped head, and then raise ``UndefinedColumn`` at runtime on every
+query — a green deploy that 500s for users. This repo has already been bitten
+by exactly that shape (see ``a7f3c1e94b26``, which exists because a table
+drifted from its migration). So the guard compares the column set and raises on
+a mismatch rather than returning quietly: a loud failure at deploy time is
+strictly better than a silent one in production.
 
 Revision ID: 1da557cae107
 Revises: a7f3c1e94b26
@@ -23,7 +33,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 
-from alembic import op
+from alembic import context, op
 
 revision: str = "1da557cae107"
 down_revision: str | Sequence[str] | None = "a7f3c1e94b26"
@@ -32,29 +42,83 @@ depends_on: str | Sequence[str] | None = None
 
 TABLE = "company_profile"
 
+_EXPECTED_COLUMNS = {
+    "domain",
+    "name",
+    "description",
+    "logo_url",
+    "resolution_failed",
+    "retry_after",
+    "failure_count",
+    "refresh_after",
+    "source",
+    "resolved_at",
+    "created_at",
+    "updated_at",
+}
 
-def _table_exists() -> bool:
-    return sa.inspect(op.get_bind()).has_table(TABLE)
+
+def _existing_columns() -> set[str] | None:
+    """Column names of an existing table, or None when it does not exist.
+
+    Returns None in offline (``--sql``) mode too: a MockConnection cannot be
+    inspected, and emitting the CREATE is the right output for a SQL script.
+    """
+    if context.is_offline_mode():
+        return None
+    inspector = sa.inspect(op.get_bind())
+    if not inspector.has_table(TABLE):
+        return None
+    return {col["name"] for col in inspector.get_columns(TABLE)}
 
 
 def upgrade() -> None:
-    """Create the table if it does not already exist."""
-    if _table_exists():
-        # Already present (e.g. built by an earlier create_all run). No-op.
+    existing = _existing_columns()
+
+    if existing is not None:
+        missing = _EXPECTED_COLUMNS - existing
+        if missing:
+            raise RuntimeError(
+                f"{TABLE} exists but is missing columns {sorted(missing)}. It was most likely "
+                "created by Base.metadata.create_all() from an older model. create_all does not "
+                "add columns to an existing table, so continuing would stamp this revision as "
+                "applied and then fail at runtime with UndefinedColumn. Drop the table and "
+                "re-run, or add the columns by hand."
+            )
+        # Present and correctly shaped — nothing to do.
         return
 
     op.create_table(
         TABLE,
-        sa.Column("domain", sa.String(), nullable=False),
+        sa.Column("domain", sa.dialects.postgresql.CITEXT(), nullable=False),
         sa.Column("name", sa.String(), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("logo_url", sa.String(), nullable=True),
         sa.Column("resolution_failed", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("retry_after", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("failure_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("refresh_after", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("source", sa.String(), nullable=True),
+        sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
         sa.PrimaryKeyConstraint("domain"),
+        sa.CheckConstraint(
+            "length(domain) BETWEEN 1 AND 253",
+            name="chk_company_profile_domain_length",
+        ),
+    )
+    op.create_index(
+        "ix_company_profile_refresh_due",
+        TABLE,
+        ["refresh_after"],
+        postgresql_where=sa.text("NOT resolution_failed"),
+    )
+    op.create_index(
+        "ix_company_profile_retry_due",
+        TABLE,
+        ["retry_after"],
+        postgresql_where=sa.text("resolution_failed"),
     )
 
 
@@ -63,6 +127,9 @@ def downgrade() -> None:
 
     Every row can be regenerated by re-crawling the domain, so losing it costs
     one crawl per domain rather than any real data.
+
+    Note this is only durable while the app is stopped: the next boot's
+    ``create_all()`` will recreate the table from the model.
     """
-    if _table_exists():
+    if context.is_offline_mode() or sa.inspect(op.get_bind()).has_table(TABLE):
         op.drop_table(TABLE)

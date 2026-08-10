@@ -52,6 +52,30 @@ jobs:
           ~/.local/bin/uv run ruff check .
           ~/.local/bin/uv run ruff format --check .
 
+      # The test suite builds its schema with ``Base.metadata.create_all()``
+      # (tests/conftest.py), so it NEVER executes a migration. Nothing else in
+      # CI ran alembic either, which is how a migration whose upgrade() did not
+      # match its own name reached production once already. This gate runs the
+      # real chain against a throwaway database:
+      #   upgrade head  → every migration actually executes, in order
+      #   check         → the resulting schema matches the models (no drift)
+      #   downgrade -1  → the newest migration is reversible
+      # A separate database keeps it clear of the create_all schema the tests use.
+      - name: Migrations apply, match the models, and reverse
+        working-directory: api
+        env:
+          GOOGLE_API_KEY: test-key
+          APP_ENV: testing
+        run: |
+          PGPASSWORD=test psql -h localhost -U test -d test \
+            -c "DROP DATABASE IF EXISTS migrations_check" \
+            -c "CREATE DATABASE migrations_check"
+          export DB_URL=postgresql://test:test@localhost:5432/migrations_check
+          ~/.local/bin/uv run alembic upgrade head
+          ~/.local/bin/uv run alembic check
+          ~/.local/bin/uv run alembic downgrade -1
+          ~/.local/bin/uv run alembic upgrade head
+
       - name: Run tests
         working-directory: api
         env:

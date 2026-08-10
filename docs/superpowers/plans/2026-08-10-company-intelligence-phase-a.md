@@ -12,6 +12,42 @@
 
 ---
 
+## Status
+
+| Task | State | Commit |
+|---|---|---|
+| 1 · Registrable-domain normaliser | **done, reviewed twice** | `c787b8e`, hardened in `c88af6a` + `2ec0cce` |
+| 2 · `company_profile` table | **done, reviewed** | `43c0fb4` + follow-up |
+| 3 · Markup extractor | **done, reviewed twice** | `c88af6a`, hardened in `2ec0cce` |
+| 4 · Resolver | not started | — |
+| 5 · IP sanity filter | not started | — |
+| 6 · One IP lookup per session | not started | — |
+| 7 · Tier-4 display separation | not started | — |
+| 8 · Verification | not started | — |
+
+> **The code blocks in Tasks 1–3 below are the ORIGINAL drafts and are now
+> superseded.** Adversarial review found 14 defects across them — read the
+> shipped source, not this document, for those three. The drafts are kept
+> because their surrounding rationale still explains *why* each piece exists.
+>
+> What changed, and why it matters for Task 4:
+> * The `<title>` tier was **removed entirely** from `company_markup`. Three
+>   rounds of fixes each produced a new variant of the same false positive
+>   ("Kumar Textiles | Surat" → "Surat"), which is the signal that the
+>   heuristic is unsound rather than under-tuned. Only schema.org and
+>   `og:site_name` remain — both are declarations; a title is not.
+> * `domain_normalizer` gained the PSL private section and a fail-closed
+>   backstop, because `acme.myshopify.com` → `myshopify.com` would have
+>   attributed every Shopify-hosted lead on the platform to "Shopify".
+> * `extract_company_domain` now delegates to `registrable_domain`; the two
+>   previously disagreed on the same input.
+> * `company_profile` gained `failure_count`, `source`, and `resolved_at`, a
+>   `CITEXT` key, a length CHECK, and two partial indexes. **Task 4's code
+>   below has been updated for these** — it upserts rather than inserting, and
+>   prefers a cached name over a stale failure flag.
+
+---
+
 ## Scope boundary
 
 Phase A was scoped to avoid a second developer's unpushed work. **That work has now merged** (`28ed846`, visitor-name capture), so the constraint is lifted — but the phase split is kept because it is still a sensible build order, and Phase A's tasks remain independently shippable.
@@ -813,6 +849,8 @@ import logging
 import re
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.db.models import CompanyProfile
@@ -822,7 +860,9 @@ from app.services.llm_service import extract_company_context
 logger = logging.getLogger(__name__)
 
 REFRESH_INTERVAL = timedelta(days=90)
-FAILURE_BACKOFF = timedelta(days=7)
+FAILURE_BACKOFF = timedelta(days=1)
+# Cap the exponential growth so a domain is retried eventually, but rarely.
+MAX_FAILURE_BACKOFF = timedelta(days=90)
 
 # Longest plausible company name. Anything past this is the LLM narrating.
 _MAX_NAME_LEN = 120
@@ -885,13 +925,42 @@ def _logo_from_markup(html: str, domain: str) -> str | None:
 
 
 def _record_failure(session: Session, domain: str) -> None:
-    row = session.get(CompanyProfile, domain)
+    """Mark a domain unresolvable, with backoff that GROWS per attempt.
+
+    Must be an upsert, not read-then-insert: two background threads resolving
+    the same new domain concurrently is the normal case, not an edge case
+    (two leads from one company arriving together), and the loser of a plain
+    INSERT race raises IntegrityError out of a function documented as never
+    raising.
+    """
     now = datetime.now(UTC)
-    if row is None:
-        row = CompanyProfile(domain=domain)
-        session.add(row)
-    row.resolution_failed = True
-    row.retry_after = now + FAILURE_BACKOFF
+    backoff = FAILURE_BACKOFF  # doubled per consecutive failure, capped below
+    stmt = (
+        pg_insert(CompanyProfile)
+        .values(
+            domain=domain,
+            resolution_failed=True,
+            failure_count=1,
+            retry_after=now + backoff,
+            updated_at=now,
+        )
+        .on_conflict_do_update(
+            index_elements=["domain"],
+            set_={
+                "resolution_failed": True,
+                "failure_count": CompanyProfile.failure_count + 1,
+                # Exponential, capped: a permanently-dead domain must stop
+                # costing a crawl on a fixed cadence forever.
+                "retry_after": now
+                + func.least(
+                    backoff * func.power(2, CompanyProfile.failure_count),
+                    MAX_FAILURE_BACKOFF,
+                ),
+                "updated_at": now,
+            },
+        )
+    )
+    session.execute(stmt)
     session.commit()
 
 
@@ -908,15 +977,16 @@ def resolve_company(domain: str, session: Session) -> CompanyProfile | None:
     row = session.get(CompanyProfile, domain)
 
     if row is not None:
-        if row.resolution_failed:
-            if row.retry_after and row.retry_after > now:
-                return None  # inside backoff — do not spend a crawl
-        elif row.name:
-            if not row.refresh_after or row.refresh_after > now:
-                return row
-            # Stale: serve it now. A refresh is a separate concern; blocking a
-            # caller on a re-crawl to freshen a 90-day-old name is a bad trade.
+        # A CACHED NAME WINS over a failure flag. `_record_failure` leaves the
+        # identity fields intact, so a domain that once resolved and later hit
+        # one transient failure (503, bot wall, Spider hiccup) still holds a
+        # good profile. Checking `resolution_failed` first would return None
+        # for the whole backoff window and throw that away — strictly worse
+        # than the "serve stale" rule the spec mandates for the 90-day case.
+        if row.name:
             return row
+        if row.resolution_failed and row.retry_after and row.retry_after > now:
+            return None  # never resolved, still inside backoff — spend nothing
 
     html = _fetch_site_html(domain)
     if not html:
@@ -939,19 +1009,33 @@ def resolve_company(domain: str, session: Session) -> CompanyProfile | None:
         # The LLM returns no logo; recover it from the markup regardless.
         logo_url = logo_url or _logo_from_markup(html, domain)
 
-    if row is None:
-        row = CompanyProfile(domain=domain)
-        session.add(row)
-    row.name = extracted["name"].strip()
-    row.description = (extracted.get("description") or "").strip() or None
-    row.logo_url = logo_url
-    row.resolution_failed = False
-    row.retry_after = None
-    row.refresh_after = now + REFRESH_INTERVAL
+    # Upsert, not add: see _record_failure. Two threads resolving the same new
+    # domain concurrently must not make one of them raise.
+    values = {
+        "domain": domain,
+        "name": extracted["name"].strip(),
+        "description": (extracted.get("description") or "").strip() or None,
+        "logo_url": logo_url,
+        "resolution_failed": False,
+        "retry_after": None,
+        "failure_count": 0,
+        "refresh_after": now + REFRESH_INTERVAL,
+        "source": source,
+        "resolved_at": now,
+        "updated_at": now,
+    }
+    session.execute(
+        pg_insert(CompanyProfile)
+        .values(**values)
+        .on_conflict_do_update(
+            index_elements=["domain"],
+            set_={k: v for k, v in values.items() if k != "domain"},
+        )
+    )
     session.commit()
 
-    logger.info("company resolved | domain=%s | name=%s | via=%s", domain, row.name, source)
-    return row
+    logger.info("company resolved | domain=%s | name=%s | via=%s", domain, values["name"], source)
+    return session.get(CompanyProfile, domain)
 ```
 
 - [ ] **Step 4: Run it to verify it passes**

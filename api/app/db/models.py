@@ -638,7 +638,11 @@ class CompanyProfile(Base):
 
     __tablename__ = "company_profile"
 
-    domain = Column(String, primary_key=True)
+    # CITEXT, not String: this is the shared key, and Acme.com / acme.com
+    # fragmenting into two rows means two crawls and two possibly-different
+    # answers for one company. ``registrable_domain`` already lowercases, but
+    # the type stops a future caller that forgets. Matches ``ReferralCode.code``.
+    domain = Column(CITEXT, primary_key=True)
     name = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     logo_url = Column(String, nullable=True)
@@ -646,11 +650,45 @@ class CompanyProfile(Base):
     resolution_failed = Column(Boolean, nullable=False, server_default="false")
     # Set only when resolution_failed — gates re-crawl attempts.
     retry_after = Column(DateTime(timezone=True), nullable=True)
+    # Consecutive failures, so backoff can grow. ``retry_after`` alone cannot
+    # encode attempt depth, which would leave a permanently-dead domain
+    # re-crawled at a fixed rate forever — the per-domain cost leak this table
+    # exists to prevent, merely slowed.
+    failure_count = Column(Integer, nullable=False, server_default="0")
     # Lazy refresh horizon for a SUCCESSFUL profile.
     refresh_after = Column(DateTime(timezone=True), nullable=True)
 
+    # Provenance. Every tenant reads this row, so a regressed extractor or a
+    # bad prompt must be invalidatable surgically ("DELETE WHERE source='llm'")
+    # rather than by truncating the whole platform's cache.
+    source = Column(String, nullable=True)  # "markup" | "llm"
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # NOTE app-side only, like every other model here — a raw UPDATE will not
+    # bump it. The likely future writer is a bulk "refresh stale rows" sweep,
+    # which must set this explicitly.
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # A btree PK errors above ~2704 bytes, and an empty key is meaningless.
+        CheckConstraint(
+            "length(domain) BETWEEN 1 AND 253",
+            name="chk_company_profile_domain_length",
+        ),
+        # The two sweeps this table implies — refresh stale, retry failed —
+        # would otherwise be full scans as the cache grows.
+        Index(
+            "ix_company_profile_refresh_due",
+            "refresh_after",
+            postgresql_where=text("NOT resolution_failed"),
+        ),
+        Index(
+            "ix_company_profile_retry_due",
+            "retry_after",
+            postgresql_where=text("resolution_failed"),
+        ),
+    )
 
 
 class ChatSession(Base):
