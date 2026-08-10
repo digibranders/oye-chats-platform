@@ -37,12 +37,33 @@ def fetch_ip_intel(ip_address: str) -> dict | None:
         logger.warning(f"ipapi.is returned error for {ip_address}: {data.get('error')}")
         return None
 
+    # ipapi.is nests ``company`` and ``asn`` as OBJECTS, not strings:
+    #   "company": {"name": "Google LLC", "domain": "google.com", "type": "hosting", ...}
+    #   "asn":     {"asn": 15169, "org": "Google LLC", "descr": "GOOGLE - ...", ...}
+    # Flatten them here, at the boundary, so no consumer has to know the
+    # vendor's payload shape. Returning the raw nested dicts previously made
+    # the Leads UI render "no company signal" on every lead, because it read
+    # these keys as plain strings. Residential IPs omit ``company`` entirely,
+    # so both lookups must tolerate a missing/None object.
+    company = data.get("company") or {}
+    asn = data.get("asn") or {}
+    if not isinstance(company, dict):
+        company = {}
+    if not isinstance(asn, dict):
+        asn = {}
+
     return {
-        "company": data.get("company"),
-        "asn": data.get("asn"),
-        "is_vpn": data.get("is_vpn", False),
-        "is_proxy": data.get("is_proxy", False),
-        "is_tor": data.get("is_tor", False),
-        "is_datacenter": data.get("is_datacenter", False),
-        "is_abuser": data.get("is_abuser", False),
+        "company_name": company.get("name"),
+        "company_domain": company.get("domain"),
+        # "business" | "hosting" | "isp" | "education" | "government" —
+        # drives whether the company name means "the visitor's employer"
+        # or just "the ISP that routed them".
+        "company_type": company.get("type"),
+        "asn": asn.get("asn"),
+        "asn_org": asn.get("org") or asn.get("descr"),
+        "is_vpn": bool(data.get("is_vpn", False)),
+        "is_proxy": bool(data.get("is_proxy", False)),
+        "is_tor": bool(data.get("is_tor", False)),
+        "is_datacenter": bool(data.get("is_datacenter", False)),
+        "is_abuser": bool(data.get("is_abuser", False)),
     }

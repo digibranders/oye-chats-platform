@@ -60,25 +60,68 @@ function LockedTeaser(): ReactElement {
   );
 }
 
-function CompanySignal({ metadata }: { metadata: Record<string, unknown> }): ReactElement | null {
-  const company = asString(metadata.company);
-  const asn = asString(metadata.asn) ?? asString(metadata.org);
-  const isVpn = metadata.is_vpn === true || metadata.is_proxy === true;
-  if (!company && !asn && !isVpn) return null;
+/**
+ * The IP signal, read from the flattened shape `ip_intel_service` produces
+ * (`company_name` / `company_domain` / `company_type` / `asn_org`, plus the
+ * risk booleans). It is namespaced under `visitor_metadata.ip_intel` because
+ * that column is shared with the operator console's user-agent fields.
+ */
+/** Is there anything worth rendering in this IP signal? Kept separate from the
+ * component so the caller can pick between the signal and its empty state — a
+ * component that returns `null` is still a truthy JSX element to the caller,
+ * so `<CompanySignal/> ?? fallback` would silently never show the fallback. */
+function hasCompanySignal(intel: Record<string, unknown>): boolean {
+  return Boolean(
+    asString(intel.company_name) ||
+      asString(intel.asn_org) ||
+      intel.is_vpn === true ||
+      intel.is_proxy === true ||
+      intel.is_tor === true,
+  );
+}
+
+function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElement | null {
+  const companyName = asString(intel.company_name);
+  const companyDomain = asString(intel.company_domain);
+  const companyType = asString(intel.company_type);
+  const asnOrg = asString(intel.asn_org);
+  const isVpn = intel.is_vpn === true || intel.is_proxy === true || intel.is_tor === true;
+  const isHosting = companyType === 'hosting' || companyType === 'isp' || intel.is_datacenter === true;
+
+  if (!hasCompanySignal(intel)) return null;
+
+  // An ISP/hosting-owned IP tells you who ROUTED the visitor, not who
+  // employs them. Labelling that as "the visitor's company" is the single
+  // most misleading thing this panel could do, so it is called out inline.
+  const isEmployerSignal = Boolean(companyName) && !isHosting && !isVpn;
 
   return (
     <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
-      {company && (
-        <div className="flex items-center gap-2.5 text-[13px] text-[var(--ds-text)]">
-          <Building2 size={15} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-          <span className="break-words">{company}</span>
+      {companyName && (
+        <div className="flex items-start gap-2.5 text-[13px] text-[var(--ds-text)]">
+          <Building2 size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
+          <span className="min-w-0">
+            <span className="block break-words font-medium">{companyName}</span>
+            {companyDomain && (
+              <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{companyDomain}</span>
+            )}
+          </span>
         </div>
       )}
-      {asn && !company && <p className="text-[12px] text-[var(--ds-text-subtle)]">Network: {asn}</p>}
+      {!companyName && asnOrg && (
+        <p className="text-[12px] text-[var(--ds-text-subtle)]">Network: {asnOrg}</p>
+      )}
+      {companyName && !isEmployerSignal && (
+        <p className="text-[12px] text-[var(--ds-text-subtle)]">
+          This is the network operator, not necessarily the visitor&rsquo;s employer.
+        </p>
+      )}
       {isVpn && (
-        <div className="flex items-center gap-2 text-[12px]">
-          <AlertTriangle size={13} className="shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
-          <span className="text-[var(--ds-warning)]">Connecting via VPN/proxy — company signal may be unreliable</span>
+        <div className="flex items-start gap-2 text-[12px]">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
+          <span className="text-[var(--ds-warning)]">
+            Connecting via VPN/proxy — company signal is unreliable
+          </span>
         </div>
       )}
     </div>
@@ -113,16 +156,28 @@ function EmailValidityBadge({ isValid, score }: { isValid: boolean | null | unde
 
 interface FollowUpActionProps {
   sessionId: string;
-  eligible: boolean;
+  /** Reoon's verdict: true = deliverable, false = known junk, null/undefined = never checked. */
+  isValidEmail: boolean | null | undefined;
 }
 
 /** The manual "Send Follow-up" button — the only send path in this system;
- * there is no automatic/timed send anywhere. Every server-side gate can
- * still reject the click (409 cooldown offers a one-click override retry;
- * 400/403/423 surface as a plain error with no retry). */
-function FollowUpAction({ sessionId, eligible }: FollowUpActionProps): ReactElement {
-  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error' | 'cooldown'>('idle');
+ * there is no automatic/timed send anywhere.
+ *
+ * The button is ALWAYS rendered (unless there is literally no address to
+ * send to). It previously returned nothing whenever `is_valid_email` wasn't
+ * exactly `true`, which silently hid the feature on every lead captured
+ * before validation existed — indistinguishable, to the operator, from the
+ * feature being broken. A disabled button with a reason is honest; an
+ * invisible one is not.
+ *
+ * Server-side gates remain authoritative and can still reject the click:
+ * 409 (cooldown, or an unvalidated address) offers a one-click confirmed
+ * retry; 400/403/423 are terminal and surface as a plain error. */
+function FollowUpAction({ sessionId, isValidEmail }: FollowUpActionProps): ReactElement {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error' | 'confirm'>('idle');
   const [message, setMessage] = useState<string | null>(null);
+
+  const blockedByValidation = isValidEmail === false;
 
   async function send(confirmOverride: boolean): Promise<void> {
     setState('sending');
@@ -133,30 +188,38 @@ function FollowUpAction({ sessionId, eligible }: FollowUpActionProps): ReactElem
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Could not send the follow-up.';
       const status = (err as { status?: number } | undefined)?.status;
-      if (status === 409) {
-        setState('cooldown');
-        setMessage(detail);
-      } else {
-        setState('error');
-        setMessage(detail);
-      }
+      // 409 is the server's "are you sure?" — a cooldown that hasn't elapsed,
+      // or an address Reoon never got to validate. Both are recoverable with
+      // an explicit confirm, so offer that instead of a dead end.
+      setState(status === 409 ? 'confirm' : 'error');
+      setMessage(detail);
     }
   }
-
-  if (!eligible) return <></>;
 
   return (
     <div className="space-y-2">
       <Button
         size="sm"
         variant="outline"
-        disabled={state === 'sending' || state === 'sent'}
+        disabled={state === 'sending' || state === 'sent' || blockedByValidation}
         onClick={() => void send(false)}
       >
         <Send size={14} aria-hidden="true" />
-        {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Sent' : 'Send follow-up email'}
+        {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Follow-up sent' : 'Send follow-up email'}
       </Button>
-      {state === 'cooldown' && message && (
+
+      {blockedByValidation && (
+        <p className="text-[12px] text-[var(--ds-text-subtle)]">
+          This address failed email validation, so it can&rsquo;t be contacted.
+        </p>
+      )}
+      {!blockedByValidation && isValidEmail !== true && state === 'idle' && (
+        <p className="text-[12px] text-[var(--ds-text-subtle)]">
+          This address hasn&rsquo;t been validated — you&rsquo;ll be asked to confirm.
+        </p>
+      )}
+
+      {state === 'confirm' && message && (
         <div className="space-y-1.5">
           <p className="text-[12px] text-[var(--ds-warning)]">{message}</p>
           <Button size="sm" variant="ghost" onClick={() => void send(true)}>
@@ -178,25 +241,27 @@ export function VisitorIntelligenceSection({
 }): ReactElement {
   if (!unlocked) return <LockedTeaser />;
 
-  const metadata = asRecord(detail.visitor_metadata);
-  const hasCompanySignal = Object.keys(metadata).length > 0;
+  // IP intel lives under a namespaced key — `visitor_metadata` itself is a
+  // shared blob (the operator console stores user-agent fields alongside).
+  const intel = asRecord(asRecord(detail.visitor_metadata).ip_intel);
   const isValidEmail = detail.contact?.is_valid_email;
   const emailScore = detail.contact?.email_score;
-  const eligibleForFollowUp = Boolean(detail.contact?.email) && isValidEmail === true;
+  const email = detail.contact?.email;
 
   return (
     <section className="space-y-3">
       <SectionTitle>Visitor Intelligence</SectionTitle>
       <div className="space-y-3">
-        {hasCompanySignal ? (
-          <CompanySignal metadata={metadata} />
+        {hasCompanySignal(intel) ? (
+          <CompanySignal intel={intel} />
         ) : (
           <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-subtle)]">
-            No company signal resolved for this visitor's IP yet.
+            No company signal resolved for this visitor&rsquo;s IP. Most home and mobile
+            connections can&rsquo;t be traced to an employer.
           </p>
         )}
-        {detail.contact?.email && <EmailValidityBadge isValid={isValidEmail} score={emailScore} />}
-        <FollowUpAction sessionId={detail.session_id} eligible={eligibleForFollowUp} />
+        {email && <EmailValidityBadge isValid={isValidEmail} score={emailScore} />}
+        {email && <FollowUpAction sessionId={detail.session_id} isValidEmail={isValidEmail} />}
       </div>
     </section>
   );

@@ -50,3 +50,34 @@ def verify_email(email: str) -> dict | None:
         "is_spamtrap": data.get("is_spamtrap", False),
         "mx_accepts_mail": data.get("mx_accepts_mail", True),
     }
+
+
+def is_obviously_undeliverable(validation: dict) -> bool:
+    """True only for addresses Reoon flags as unambiguously bad.
+
+    THE single definition of "this email is junk", shared by every caller:
+    the widget's real-time blur check (``/chat/validate-email``) and the
+    background enrichment that persists ``LeadInfo.is_valid_email``.
+
+    Deliberately lenient — it does NOT use Reoon's ``is_safe_to_send``.
+    That flag is False for catch-all and ``unknown`` results, which is
+    correct for "can Reoon *prove* deliverability?" but wrong as a gate on
+    real B2B leads: plenty of legitimate corporate domains run catch-all
+    gateways Reoon can never confirm either way. Using the strict flag here
+    previously meant the widget accepted a lead the follow-up feature could
+    then never email — two different answers to the same question. Keep
+    these two behaviours identical by calling this from both paths.
+
+    Returns False when ``validation`` is falsy so an unreachable Reoon
+    fails OPEN, matching the "never block a real visitor on our own infra
+    hiccup" policy.
+    """
+    if not validation:
+        return False
+    return bool(
+        not validation.get("is_valid_syntax", True)
+        or validation.get("is_disposable") is True
+        or validation.get("is_spamtrap") is True
+        or validation.get("status") == "invalid"
+        or validation.get("mx_accepts_mail") is False
+    )

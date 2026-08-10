@@ -591,9 +591,14 @@ class TestSendManualFollowUp:
         assert response.status_code == 400
         mock_send.assert_not_called()
 
-    def test_gate1_blocks_when_email_never_validated(self, monkeypatch):
-        """None (still validating / Reoon never ran) must be treated the
-        same as "unsafe" — never as "safe by default"."""
+    def test_gate1_soft_blocks_when_email_never_validated(self, monkeypatch):
+        """``None`` means "never validated", NOT "known bad".
+
+        It must not send unprompted (409, not 200), but it must stay
+        recoverable via confirm_override — treating it as a hard 400 the way
+        this gate originally did permanently locked follow-up for every lead
+        captured before validation existed, with no way out.
+        """
         from app.api import lead_routes
 
         session = MagicMock()
@@ -602,6 +607,49 @@ class TestSendManualFollowUp:
 
         with patch("app.api.lead_routes.send_email_async") as mock_send:
             response = TestClient(_build_app(auth_override=_client_auth())).post("/leads/lead-1/follow-up")
+
+        assert response.status_code == 409
+        assert "deliverability" in response.json()["detail"].lower()
+        mock_send.assert_not_called()
+
+    def test_gate1_unvalidated_email_sends_with_override(self, monkeypatch):
+        """The operator can see the address on screen — an explicit confirm
+        is enough to take responsibility for an unvalidated one."""
+        from app.api import lead_routes
+
+        lead = _lead_info(is_valid_email=None)
+        session = MagicMock()
+        _install_scalars_chain(
+            session,
+            [1],
+            _chat_session_row(),
+            lead,
+            None,  # not suppressed
+            _bot_row(),  # not paused
+        )
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post(
+                "/leads/lead-1/follow-up", json={"confirm_override": True}
+            )
+
+        assert response.status_code == 200
+        mock_send.assert_called_once()
+
+    def test_gate1_hard_blocks_known_bad_email_even_with_override(self, monkeypatch):
+        """is_valid_email=False is Reoon positively flagging junk. No
+        override — this is the case that gets a sending domain blacklisted."""
+        from app.api import lead_routes
+
+        session = MagicMock()
+        _install_scalars_chain(session, [1], _chat_session_row(), _lead_info(is_valid_email=False))
+        monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+
+        with patch("app.api.lead_routes.send_email_async") as mock_send:
+            response = TestClient(_build_app(auth_override=_client_auth())).post(
+                "/leads/lead-1/follow-up", json={"confirm_override": True}
+            )
 
         assert response.status_code == 400
         mock_send.assert_not_called()
