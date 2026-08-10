@@ -110,3 +110,21 @@ describe('VisitorIntelligenceSection', () => {
     expect(queryByText('Infosys Limited')).not.toBeInTheDocument();
   });
 });
+
+describe('VisitorIntelligenceSection section naming', () => {
+  /* The panel shows network context, not "intelligence about the visitor", and
+     the locked teaser advertises the same section to plans that cannot see it.
+     If the two ever drift apart, an upgrade lands the user somewhere that
+     appears to be a different feature. */
+  it('titles the section "Network & risk" whether unlocked or locked', () => {
+    const detail = leadWith({ company_name: 'Infosys Limited', company_type: 'business' });
+
+    const unlockedTitle = render(<VisitorIntelligenceSection detail={detail} unlocked />)
+      .container.querySelector('h3')?.textContent;
+    const lockedTitle = render(<VisitorIntelligenceSection detail={detail} unlocked={false} />)
+      .container.querySelector('h3')?.textContent;
+
+    expect(unlockedTitle).toBe('Network & risk');
+    expect(lockedTitle).toBe('Network & risk');
+  });
+});

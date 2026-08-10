@@ -228,3 +228,78 @@ def test_a_failed_state_read_resolves_rather_than_skipping(db):
 
     with patch("app.api.chat_routes.get_session", side_effect=RuntimeError("db down")):
         assert _already_resolved("any-session", "8.8.8.8") == (False, False)
+
+
+def _geo_response(city="Delhi", country="India"):
+    """A successful ipwho.is body, as urlopen would deliver it."""
+    import json as _json
+    from unittest.mock import MagicMock
+
+    payload = _json.dumps({"success": True, "city": city, "country": country}).encode()
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = payload
+    return response
+
+
+def test_the_geolocation_vendors_are_skipped_once_the_location_is_known(db):
+    """The headline saving, and it had no test.
+
+    Every other test in this file patches urlopen to raise, so none of them
+    could tell whether the geo half was skipped or merely failing. Deleting
+    the `or has_location` guard passed the whole suite.
+    """
+    session_id = _seed(db, client_id=20, bot_key="bot-geo1", session_id="s-geo")
+
+    with (
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
+        patch("app.api.chat_routes.urllib.request.urlopen", return_value=_geo_response()) as geo,
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8")
+        assert geo.call_count == 1, "the first turn must resolve the location"
+
+        _resolve_and_update_location(session_id, "8.8.8.8")
+        _resolve_and_update_location(session_id, "8.8.8.8")
+
+    assert geo.call_count == 1, "the geolocation vendors were re-hit for a known location"
+    assert db.query(ChatSession).filter(ChatSession.id == session_id).first().location == "Delhi, India | 8.8.8.8"
+
+
+def test_a_new_ip_replaces_a_stale_resolved_location(db):
+    """The writer only overwrote an empty or "IP:"-prefixed value, so a visitor
+    who changed network kept their first city forever — and because the guard
+    then never saw a location matching the new IP, BOTH geo vendors were re-hit
+    on every subsequent message and the answer thrown away each time."""
+    session_id = _seed(db, client_id=21, bot_key="bot-geo2", session_id="s-geo-move")
+
+    with (
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
+        patch("app.api.chat_routes.urllib.request.urlopen", return_value=_geo_response("Delhi", "India")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8")
+
+    with (
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp"}),
+        patch("app.api.chat_routes.urllib.request.urlopen", return_value=_geo_response("Mumbai", "India")) as geo,
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "1.1.1.1")
+        # ...and the new value must now latch, so a third message is free.
+        _resolve_and_update_location(session_id, "1.1.1.1")
+
+    assert db.query(ChatSession).filter(ChatSession.id == session_id).first().location == "Mumbai, India | 1.1.1.1"
+    assert geo.call_count == 1, "the re-resolved location did not latch; every message re-hits the vendors"
+
+
+def test_a_hand_written_location_is_never_clobbered(db):
+    """The other half of the same rule. Widening the overwrite to "anything
+    with a pipe in it" would eat a human's note."""
+    from app.api.chat_routes import _is_resolver_owned_location
+
+    assert _is_resolver_owned_location("") is True
+    assert _is_resolver_owned_location("IP: 8.8.8.8") is True
+    assert _is_resolver_owned_location("Delhi, India | 8.8.8.8") is True
+    # Not ours: the trailing segment has to parse as a real IP.
+    assert _is_resolver_owned_location("Head office | Mumbai") is False
+    assert _is_resolver_owned_location("Verified on-site") is False

@@ -91,6 +91,11 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
   // `company_name` now arrives already filtered: the API strips it for every
   // hosting range, ISP range, carrier brand and subnet label, so anything that
   // reaches this component is a range someone can actually be employed by.
+  // `ip_intel_service.fetch_ip_intel` is the ONLY sanctioned writer of
+  // `visitor_metadata.ip_intel` — anything else writing that key must apply
+  // the same gates, or this component starts asserting something it cannot
+  // back up. (An alembic backfill was a second, unfiltered writer until it was
+  // made to share the gates.)
   // That is why there is no longer an "is this really an employer?" test here
   // — the old inline disclaimer was deciding, in the UI, a question the API
   // now answers. Two DIFFERENT things are rendered, never one thing hedged:

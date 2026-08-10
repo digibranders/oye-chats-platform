@@ -291,6 +291,30 @@ def _parse_request_context(fastapi_request: Request):
     return ip_address, formatted_device
 
 
+def _is_resolver_owned_location(current: str) -> bool:
+    """May this resolver overwrite ``current``?
+
+    True for the empty string, for the ``"IP: x.x.x.x"`` stamp the request
+    handler writes synchronously, and for any value in this resolver's own
+    output shape — ``"<city>, <country> | <ip>"``. The last is what lets a
+    genuinely new IP replace a stale resolved city.
+
+    False for anything else, so a manually-set or future-resolver value is
+    never clobbered. The trailing segment must parse as a real IP rather than
+    merely contain a pipe, so a human writing "Head office | Mumbai" keeps it.
+    """
+    if not current or current.startswith("IP:"):
+        return True
+    _, separator, tail = current.rpartition("|")
+    if not separator:
+        return False
+    try:
+        ipaddress.ip_address(tail.strip())
+    except ValueError:
+        return False
+    return True
+
+
 def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
     """What this session has already resolved FOR THIS IP: (intel, location).
 
@@ -305,6 +329,17 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
     session row means "not yet" and must NOT be read as "already done": the row
     is INSERTed by rag_pipeline on the very request that spawned this thread,
     and can legitimately not exist yet.
+
+    **This is read-then-act, not atomic, and it only deduplicates SEQUENTIAL
+    turns.** Two messages whose background threads overlap — a double-send, a
+    widget retry, /chat and /chat/stream racing — both read "not resolved" and
+    both pay. The window is the width of the whole resolution (up to ~11s of
+    vendor timeouts and row-wait retries), so it is not narrow. That is
+    accepted rather than fixed: this is a cost optimisation, the duplicate
+    write is an idempotent upsert of the same answer, and an advisory lock or
+    conditional UPDATE would add a failure mode to a path that must never
+    affect the visitor. Said plainly here so nobody reads the guard as a
+    guarantee.
     """
     try:
         with get_session() as session:
@@ -349,9 +384,6 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             return
 
         has_intel, has_location = _already_resolved(session_id, ip_address)
-        if has_intel and has_location:
-            return
-
         ip_intel = None if has_intel else fetch_ip_intel(ip_address)
         if ip_intel:
             # Recorded so a later turn can tell "already done" from "done for a
@@ -435,14 +467,28 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             with get_session() as session:
                 chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
                 if chat_session:
-                    # Only overwrite the raw "IP: …" stamp left by the request
-                    # handler. If something else (manual edit, future resolver)
-                    # has already set a richer value, leave it alone.
+                    # Overwrite only values THIS resolver owns: the raw "IP: …"
+                    # stamp from the request handler, or an earlier resolved
+                    # value of ours. Anything else (a manual edit, a future
+                    # resolver) is left alone.
+                    #
+                    # "or an earlier resolved value of ours" is load-bearing.
+                    # Without it a visitor who changes network mid-conversation
+                    # kept their FIRST city forever: the new value was silently
+                    # dropped here, `_already_resolved` then never saw a
+                    # location matching the new IP, and so every subsequent
+                    # message re-ran both geo vendors and threw the answer away
+                    # — on a 10k/month free tier.
                     current = chat_session.location or ""
-                    if not current or current.startswith("IP:"):
+                    if _is_resolver_owned_location(current):
                         chat_session.location = location
                         session.commit()
                         logger.info(f"Background geolocation resolved | session={session_id} | location={location}")
+                    else:
+                        logger.info(
+                            f"Background geolocation: leaving a non-resolver location alone | "
+                            f"session={session_id} | current={current!r}"
+                        )
                     return
             time.sleep(0.5)
 
