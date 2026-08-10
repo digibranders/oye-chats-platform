@@ -71,6 +71,18 @@ function LockedTab({ label, onClick }: LockedTabProps): ReactElement {
   );
 }
 
+/** Format an ISO date as "Jun 19, 2026"; null when absent or unparseable. */
+function formatCreatedDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 /**
  * AgentShell - the per-agent chrome (rendered inside <AgentProvider>). A header
  * naming the active agent, a horizontal tab row that routes to each section,
@@ -79,6 +91,7 @@ function LockedTab({ label, onClick }: LockedTabProps): ReactElement {
  */
 function AgentShell(): ReactElement {
   const { agent, agentId, loading, error } = useAgent();
+  const createdDate = agent ? formatCreatedDate(agent.created_at) : null;
   // Free-plan tab gating. `loading` guards the initial entitlements fetch (which
   // defaults to the restrictive Free fallback) so a paid workspace never flashes
   // a locked tab before its real plan resolves.
@@ -107,9 +120,13 @@ function AgentShell(): ReactElement {
               <h1 className="truncate text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
                 {agent.name}
               </h1>
-              {agent.website ? (
-                <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">{agent.website}</p>
-              ) : null}
+              {(createdDate || agent.website) && (
+                <div className="flex items-center gap-1.5 truncate text-[12px] text-[var(--ds-text-subtle)]">
+                  {createdDate && <span className="whitespace-nowrap">Created {createdDate}</span>}
+                  {createdDate && agent.website && <span aria-hidden="true">•</span>}
+                  {agent.website && <span className="truncate">{agent.website}</span>}
+                </div>
+              )}
             </div>
           ) : (
             <h1 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">

@@ -51,6 +51,10 @@ def _allow_subscription(monkeypatch):
 
     monkeypatch.setattr(chat_routes, "bot_subscription_status", lambda _client_id, subscription_id=None: "active")
     monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
+    # Email verification is also gated on the per-agent opt-in (AI Agent →
+    # Advanced); default it ON here so TestValidateEmail's Reoon-result
+    # assertions exercise the verification path rather than the skip path.
+    monkeypatch.setattr(chat_routes, "_agent_email_verification_opt_in", lambda *_a, **_k: True)
 
 
 def _default_bot(**overrides):

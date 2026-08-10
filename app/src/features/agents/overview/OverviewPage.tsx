@@ -21,7 +21,6 @@ import { useAgent } from '../../../context/AgentContext';
 import { type Bot } from '../../../types/domain';
 import { deriveAgentHealth } from './agent-health';
 import { useOverviewData, type AgentStats } from './overview-data';
-import { AgentOverviewHero } from './AgentOverviewHero';
 import { HealthHero } from './HealthHero';
 import { AgentSnapshotCards } from './AgentSnapshotCards';
 import { TopQuestions } from './TopQuestions';
@@ -171,8 +170,6 @@ function OverviewContent({ agent }: { readonly agent: Bot }): ReactElement {
         </Button>
       }
     >
-      <AgentOverviewHero agent={agent} health={health} agentBasePath={agentBasePath} />
-
       <HealthHero health={health} agentBasePath={agentBasePath} />
 
       {status === 'error' && error ? (

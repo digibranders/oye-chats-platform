@@ -124,24 +124,32 @@ def test_lead_source_attribution_is_per_bot(db):
     assert ent.is_lead_source_attribution_enabled_for_bot(bot_starter.id, db) is False
 
 
-def test_email_validation_is_enabled_on_every_paid_plan(db):
-    """Email validation is a paid-tier baseline: Starter counts, and so does
-    any custom paid slug provisioned for an enterprise deal. Only Free is out."""
+def test_email_validation_is_enabled_only_on_standard_and_professional(db):
+    """Email verification is a metered feature scoped to Standard + Professional.
+
+    Starter and any custom paid slug are excluded — the gate is an explicit
+    allow-list (:data:`ent.EMAIL_VERIFICATION_SLUGS`), mirroring the
+    Professional-only Visitor Intelligence gate, so a lower or bespoke tier
+    can't silently switch the paid feature on."""
     client = _client(db, "emailval-perbot@e.com")
     starter = _plan(db, "starter", price=44900, bant=False)
     standard = _plan(db, "standard", price=94900, bant=True)
+    professional = _plan(db, "professional", price=199900, bant=True)
     custom = _plan(db, "enterprise-custom", price=500000, bant=True)
     bot_starter = _bot(db, client, "bot-emailval-starter")
     bot_std = _bot(db, client, "bot-emailval-std")
+    bot_pro = _bot(db, client, "bot-emailval-pro")
     bot_custom = _bot(db, client, "bot-emailval-custom")
     _sub(db, client, starter, bot_id=bot_starter.id)
     _sub(db, client, standard, bot_id=bot_std.id)
+    _sub(db, client, professional, bot_id=bot_pro.id)
     _sub(db, client, custom, bot_id=bot_custom.id)
     db.flush()
 
-    assert ent.is_email_validation_enabled_for_bot(bot_starter.id, db) is True
     assert ent.is_email_validation_enabled_for_bot(bot_std.id, db) is True
-    assert ent.is_email_validation_enabled_for_bot(bot_custom.id, db) is True
+    assert ent.is_email_validation_enabled_for_bot(bot_pro.id, db) is True
+    assert ent.is_email_validation_enabled_for_bot(bot_starter.id, db) is False
+    assert ent.is_email_validation_enabled_for_bot(bot_custom.id, db) is False
 
 
 def test_email_validation_is_denied_on_free(db):

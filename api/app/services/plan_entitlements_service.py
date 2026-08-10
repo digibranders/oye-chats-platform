@@ -578,27 +578,28 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
     return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
 
 
-# ── Real-time email validation gate (every PAID plan) ───────────────────────
+# ── Email verification gate (Standard + Professional) ───────────────────────
 #
-# The widget calls POST /chat/validate-email on the email field's blur event
-# to block obviously-fake addresses before a visitor can submit the handoff
-# or lead-capture form. Lead quality is the baseline value of paying at all,
-# so every paid tier gets it — Starter included. Only Free is excluded, and
-# a Free bot skips the Reoon call entirely (rather than making it and hiding
-# the result), so we never pay for a check that can't be acted on.
-#
-# Expressed as "not free" rather than a slug allow-list, matching
-# ``is_lead_intelligence_enabled``: a custom paid slug provisioned for an
-# enterprise deal is a paid plan and must not silently lose the feature.
+# Reoon email verification powers both the widget's real-time blur check
+# (``POST /chat/validate-email``) and the background lead-enrichment check that
+# persists ``LeadInfo.is_valid_email`` / ``email_score``. It is a metered,
+# credit-costing feature (``credit_cost.email_verification``), so it is scoped
+# to the Standard and Professional tiers — Free and Starter are excluded and
+# skip the Reoon call entirely (rather than paying for a check they can't act
+# on). A slug allow-list (not "not free") keeps this boundary explicit so a
+# future Starter change can't silently switch the paid feature on.
+EMAIL_VERIFICATION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
 
 
 def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
-    """True iff the plan funding THIS bot is a paid plan (any tier above Free).
+    """True iff the plan funding THIS bot includes email verification.
 
     Bot-scoped (mirrors :func:`is_lead_source_attribution_enabled_for_bot`)
     because the gated call sites — ``POST /chat/validate-email`` and the
     background lead-enrichment Reoon check — are both authenticated via
-    ``X-Bot-Key``, not a client session. Denies on any resolver error.
+    ``X-Bot-Key``, not a client session. Restricted to the Standard and
+    Professional tiers (see :data:`EMAIL_VERIFICATION_SLUGS`). Denies on any
+    resolver error.
     """
     try:
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
@@ -609,7 +610,7 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug != "free"
+    return entitlements.plan_slug in EMAIL_VERIFICATION_SLUGS
 
 
 def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:

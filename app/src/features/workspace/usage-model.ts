@@ -50,12 +50,16 @@ function parseBreakdown(value: unknown): UsageBreakdownEntry {
   };
 }
 
-/** The four metered activity buckets the backend returns for each pool. */
+/** The metered activity buckets the backend returns for each pool. */
 export interface UsageBuckets {
   readonly aiChat: UsageBreakdownEntry;
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
   readonly emailSend: UsageBreakdownEntry;
+  /** Reoon email verification (Standard + Professional), 10 credits each. */
+  readonly emailVerification: UsageBreakdownEntry;
+  /** IP → company lookup / Visitor Intelligence (Professional), 10 credits each. */
+  readonly companyName: UsageBreakdownEntry;
 }
 
 function parseUsageBuckets(value: unknown): UsageBuckets {
@@ -67,6 +71,8 @@ function parseUsageBuckets(value: unknown): UsageBuckets {
     // email_send is a metered, credit-costing activity
     // (subscription_routes.py:1693) - omitting it under-reports spend.
     emailSend: parseBreakdown(usage.email_send),
+    emailVerification: parseBreakdown(usage.email_verification),
+    companyName: parseBreakdown(usage.company_name),
   };
 }
 
@@ -119,7 +125,9 @@ function poolCreditsUsed(usage: UsageBuckets): number {
     usage.aiChat.creditsUsed +
     usage.documentUpload.creditsUsed +
     usage.urlScan.creditsUsed +
-    usage.emailSend.creditsUsed
+    usage.emailSend.creditsUsed +
+    usage.emailVerification.creditsUsed +
+    usage.companyName.creditsUsed
   );
 }
 
@@ -245,6 +253,8 @@ export interface CreditBalance {
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
   readonly emailSend: UsageBreakdownEntry;
+  readonly emailVerification: UsageBreakdownEntry;
+  readonly companyName: UsageBreakdownEntry;
   /** Credits consumed this period across every metered activity. */
   readonly periodCreditsUsed: number;
   /**
@@ -325,6 +335,8 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       documentUpload: addBreakdown(acc.documentUpload, pool.usage.documentUpload),
       urlScan: addBreakdown(acc.urlScan, pool.usage.urlScan),
       emailSend: addBreakdown(acc.emailSend, pool.usage.emailSend),
+      emailVerification: addBreakdown(acc.emailVerification, pool.usage.emailVerification),
+      companyName: addBreakdown(acc.companyName, pool.usage.companyName),
     }),
     {
       monthlyGrant: 0,
@@ -337,6 +349,8 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       documentUpload: empty,
       urlScan: empty,
       emailSend: empty,
+      emailVerification: empty,
+      companyName: empty,
     },
   );
 
@@ -361,11 +375,15 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     documentUpload: aggregate.documentUpload,
     urlScan: aggregate.urlScan,
     emailSend: aggregate.emailSend,
+    emailVerification: aggregate.emailVerification,
+    companyName: aggregate.companyName,
     periodCreditsUsed:
       aggregate.aiChat.creditsUsed +
       aggregate.documentUpload.creditsUsed +
       aggregate.urlScan.creditsUsed +
-      aggregate.emailSend.creditsUsed,
+      aggregate.emailSend.creditsUsed +
+      aggregate.emailVerification.creditsUsed +
+      aggregate.companyName.creditsUsed,
     botCredits,
     accountPool,
   };
@@ -395,6 +413,8 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
       documentUpload: balance.documentUpload,
       urlScan: balance.urlScan,
       emailSend: balance.emailSend,
+      emailVerification: balance.emailVerification,
+      companyName: balance.companyName,
     },
     planLimits: null,
     limitUsage: null,

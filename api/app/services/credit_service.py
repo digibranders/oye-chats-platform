@@ -137,6 +137,16 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # plan limits (Free 30 pages = 150 credits worst case).
     "credit_cost.url_scan": 5,
     "credit_cost.email_send": 1,
+    # Reoon power-mode email verification, charged once per background lead
+    # enrichment (never on the real-time widget blur check). Gated to
+    # Standard + Professional plans and to the ``feature.email_verification_enabled``
+    # kill switch below; skipped silently when the ledger can't cover it.
+    "credit_cost.email_verification": 10,
+    # IP → company-name / firmographic lookup (Visitor Intelligence), charged
+    # once per resolved visitor. Professional-only and gated to the
+    # ``feature.company_name_enabled`` kill switch; skipped silently on an
+    # empty balance.
+    "credit_cost.company_name": 10,
     # Per-file knowledge base upload — legacy flat rate. Retained as the
     # fallback / small-doc minimum; the real cost now scales with document
     # size via ``credit_cost.document_upload_tiers`` (see below).
@@ -157,45 +167,58 @@ _DEFAULT_PRICING: dict[str, Any] = {
         {"max_words": None, "credits": 150},
     ],
     "seat_price_cents": 1500,
-    "topup_expiry_months": 12,
+    # Lifetime top-ups: 0 (or any non-positive value) means top-up grants never
+    # expire — ``grant_topup`` writes ``expires_at=None`` and the daily
+    # ``expire_old_topups`` sweep skips them entirely. One-time purchase, credits
+    # carry forward forever.
+    "topup_expiry_months": 0,
     "low_balance_warn_pct": 20,
     "kill_switch": False,
-    # Top-up packs charge in INR via Razorpay but advertise USD prices in
-    # the modal — see the ``a2c3e4f5b6d7_topup_packs_usd_reprice`` migration
-    # for the contract.
+    # Master on/off switches for the two metered enrichment features, editable
+    # from the super-admin pricing panel (pricing_config KV). When False the
+    # feature is skipped for everyone regardless of plan — no lookup, no charge.
+    "feature.email_verification_enabled": True,
+    # Company lookup is built and wired but NOT launched — kept off ("Coming
+    # soon" in the customer UI) until product flips this on. Off = no lookup,
+    # no charge, anywhere.
+    "feature.company_name_enabled": False,
+    # One-time top-up packs (lifetime credits). Charged in INR via Razorpay;
+    # ``usd`` is a display-only headline for non-INR buyers (never charged).
+    # ``bonus_pct`` / ``badge`` are marketing metadata, fully super-admin
+    # editable. Priced per the 2026-08 credit reprice.
     "topup_packs": [
         {
-            "amount": 1599,
-            "currency": "INR",
-            "display_amount": 19,
-            "display_currency": "USD",
-            "credits": 3000,
+            "inr": 3999,
+            "usd": 49,
+            "credits": 6000,
             "bonus_pct": 0,
+            "stripe_price_id": None,
+            "razorpay_plan_id": None,
         },
         {
-            "amount": 3999,
-            "currency": "INR",
-            "display_amount": 49,
-            "display_currency": "USD",
-            "credits": 8000,
-            "bonus_pct": 7,
+            "inr": 10000,
+            "usd": 119,
+            "credits": 36000,
+            "bonus_pct": 140,
+            "stripe_price_id": None,
+            "razorpay_plan_id": None,
         },
         {
-            "amount": 7999,
-            "currency": "INR",
-            "display_amount": 99,
-            "display_currency": "USD",
-            "credits": 24000,
-            "bonus_pct": 60,
-            "badge": "Best value",
-        },
-        {
-            "amount": 19999,
-            "currency": "INR",
-            "display_amount": 249,
-            "display_currency": "USD",
+            "inr": 20000,
+            "usd": 239,
             "credits": 75000,
-            "bonus_pct": 100,
+            "bonus_pct": 150,
+            "badge": "Best value",
+            "stripe_price_id": None,
+            "razorpay_plan_id": None,
+        },
+        {
+            "inr": 30000,
+            "usd": 359,
+            "credits": 100000,
+            "bonus_pct": 120,
+            "stripe_price_id": None,
+            "razorpay_plan_id": None,
         },
     ],
 }
@@ -328,6 +351,18 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
 def is_kill_switch_active(session: Session) -> bool:
     """Return True when global credit deductions are halted by super admin."""
     return bool(get_pricing(session).get("kill_switch", False))
+
+
+def is_feature_enabled(session: Session, feature: str) -> bool:
+    """Return the super-admin on/off state for a metered feature.
+
+    Reads ``feature.<name>`` from pricing config (e.g. ``email_verification``,
+    ``company_name``). Fails OPEN (defaults to True) so a missing/malformed key
+    behaves like the shipped default rather than silently disabling a paid
+    feature — the plan gate and credit balance are the hard guards, this switch
+    is a platform-wide convenience kill.
+    """
+    return bool(get_pricing(session).get(f"feature.{feature}", True))
 
 
 # ── Balance queries ───────────────────────────────────────────────────────────
@@ -667,11 +702,14 @@ def grant_topup(
     bot_id: int | None = None,
     reference_id: int | None = None,
 ) -> CreditLedger:
-    """Grant top-up credits with an N-calendar-month expiry from now.
+    """Grant top-up credits, expiring N calendar months from now (0 = lifetime).
 
-    Uses calendar-month arithmetic (``add_months``) not 30-day approximations,
-    so a top-up bought on Jun 10 expires on Jun 10 the next year — not Jun 5
-    (which the old ``months * 30`` day count would produce, losing 5 days).
+    When ``topup_expiry_months`` is positive, uses calendar-month arithmetic
+    (``add_months``) not 30-day approximations, so a top-up bought on Jun 10
+    expires on Jun 10 the next year — not Jun 5 (which the old ``months * 30``
+    day count would produce, losing 5 days). When it is 0 (or negative) the
+    grant is written with ``expires_at=None`` — a lifetime, one-time top-up
+    that never expires.
 
     Per-bot top-ups land in that bot's isolated ledger when ``bot_id`` is
     set; account-level top-ups (``bot_id=None``) land in the client pool.
@@ -683,8 +721,11 @@ def grant_topup(
     if amount <= 0:
         raise ValueError("grant_topup requires positive amount")
     pricing = get_pricing(session)
-    months = int(pricing.get("topup_expiry_months", 12))
-    expires_at = add_months(datetime.now(UTC), months)
+    months = int(pricing.get("topup_expiry_months", 0) or 0)
+    # months <= 0 → lifetime top-up: no expiry row is ever written, so
+    # ``expire_old_topups`` (which filters ``expires_at IS NOT NULL``) never
+    # sweeps it and the credits carry forward forever.
+    expires_at = add_months(datetime.now(UTC), months) if months > 0 else None
     _acquire_client_lock(session, client_id, bot_id)
     entry = CreditLedger(
         client_id=client_id,

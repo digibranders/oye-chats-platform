@@ -14,9 +14,9 @@
  *     score, so a second numeric scale in the same drawer competes with that
  *     verdict. We surface it qualitatively (Low/Medium/High) instead.
  */
-import { type ReactElement } from 'react';
-import { Activity, Compass } from 'lucide-react';
-import { StatusBadge } from '../../design-system';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { Activity, Compass, Maximize2 } from 'lucide-react';
+import { Modal, StatusBadge, cn } from '../../design-system';
 import { type LeadDetail } from './useLeadDetail';
 
 // ── Safe readers over the loosely-typed `source` / `behavioral` JSON ─────────
@@ -77,6 +77,112 @@ function buildJourneyRows(journey: unknown[]): JourneyRow[] {
   });
 }
 
+interface JourneyGroup {
+  key: string;
+  label: string;
+  items: Array<{ row: JourneyRow; index: number }>;
+}
+
+/** A friendly day bucket for a journey timestamp ("Today" / "Yesterday" / date). */
+function dayBucket(ts: string | null): { key: string; label: string } {
+  if (!ts) return { key: 'unknown', label: 'Unknown date' };
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return { key: 'unknown', label: 'Unknown date' };
+  const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const label = sameDay(d, today)
+    ? 'Today'
+    : sameDay(d, yesterday)
+      ? 'Yesterday'
+      : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return { key, label };
+}
+
+/** Bucket chronological journey rows into consecutive same-day groups. */
+function groupJourneyByDay(rows: JourneyRow[]): JourneyGroup[] {
+  return rows.reduce<JourneyGroup[]>((acc, row, index) => {
+    const { key, label } = dayBucket(row.ts);
+    const last = acc[acc.length - 1];
+    if (last && last.key === key) {
+      last.items.push({ row, index });
+    } else {
+      acc.push({ key, label, items: [{ row, index }] });
+    }
+    return acc;
+  }, []);
+}
+
+/**
+ * JourneyList - the visitor's pre-chat page journey, bucketed by day and
+ * vertically scrollable. Shared between the inline drawer card and the maximised
+ * modal; `maxHeightClass` sets the scroll area's height in each, and
+ * `autoScrollToEnd` jumps to the most recent pages (where the chat opened) on
+ * mount so the compact inline view still leads with the payoff.
+ */
+function JourneyList({
+  rows,
+  maxHeightClass,
+  autoScrollToEnd = false,
+}: {
+  rows: JourneyRow[];
+  maxHeightClass: string;
+  autoScrollToEnd?: boolean;
+}): ReactElement {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (autoScrollToEnd && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [autoScrollToEnd, rows.length]);
+
+  const groups = groupJourneyByDay(rows);
+
+  return (
+    <div ref={scrollRef} className={cn('overflow-y-auto pr-1', maxHeightClass)}>
+      <div className="space-y-3">
+        {groups.map((group) => (
+          <div key={`${group.key}-${group.items[0]?.index ?? 0}`}>
+            <div className="mb-1.5 flex items-baseline gap-2">
+              <span className="text-[11px] font-semibold text-[var(--ds-text)]">{group.label}</span>
+              <span className="text-[10.5px] text-[var(--ds-text-subtle)]">
+                {group.items.length} {group.items.length === 1 ? 'page' : 'pages'}
+              </span>
+            </div>
+            <ol className="space-y-1.5">
+              {group.items.map(({ row, index }) => (
+                <li
+                  key={`${row.path}-${row.ts ?? index}`}
+                  className="flex items-start gap-2 text-[12px]"
+                >
+                  <span className="w-9 shrink-0 tabular-nums text-[var(--ds-text-muted)]">
+                    {index + 1}.
+                  </span>
+                  <span className="flex-1 break-all text-[var(--ds-text)]">{row.path || '-'}</span>
+                  {row.isLast ? (
+                    <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
+                      opened chat here
+                    </span>
+                  ) : row.durationLabel ? (
+                    <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-muted)]">
+                      {row.durationLabel}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Small presentational helpers ─────────────────────────────────────────────
 
 function SectionTitle({ icon: Icon, children }: { icon: typeof Compass; children: string }): ReactElement {
@@ -100,6 +206,7 @@ function AttrRow({ label, value }: { label: string; value: string }): ReactEleme
 // ── Sections ─────────────────────────────────────────────────────────────────
 
 function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | null {
+  const [journeyOpen, setJourneyOpen] = useState(false);
   const source = asRecord(detail.source);
   // `source` is only attached on eligible plans - absent means "not available".
   if (Object.keys(source).length === 0) return null;
@@ -129,8 +236,6 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
   }
 
   const rows = buildJourneyRows(journeyRaw);
-  const visible = rows.slice(-8);
-  const offset = Math.max(0, rows.length - 8);
 
   return (
     <section className="space-y-3">
@@ -153,32 +258,34 @@ function SourceAttribution({ detail }: { detail: LeadDetail }): ReactElement | n
 
       {rows.length > 0 && (
         <div className="rounded-xl border border-[var(--ds-border)] p-4">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
-            Journey before chat · {rows.length} {rows.length === 1 ? 'page' : 'pages'}
-          </p>
-          <ol className="space-y-1.5">
-            {visible.map((row, idx) => (
-              <li key={`${row.path}-${row.ts ?? idx}`} className="flex items-start gap-2 text-[12px]">
-                <span className="shrink-0 tabular-nums text-[var(--ds-text-muted)]">{idx + 1 + offset}.</span>
-                <span className="flex-1 break-all text-[var(--ds-text)]">{row.path || '-'}</span>
-                {row.isLast ? (
-                  <span className="shrink-0 text-[11px] italic text-[var(--ds-accent-text)]">
-                    opened chat here
-                  </span>
-                ) : row.durationLabel ? (
-                  <span className="shrink-0 tabular-nums text-[11px] text-[var(--ds-text-muted)]">
-                    {row.durationLabel}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-          {rows.length > 8 && (
-            <p className="mt-2 text-[11px] text-[var(--ds-text-muted)]">
-              Showing the last 8 of {rows.length} pages.
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-muted)]">
+              Journey before chat · {rows.length} {rows.length === 1 ? 'page' : 'pages'}
             </p>
-          )}
+            <button
+              type="button"
+              onClick={() => setJourneyOpen(true)}
+              aria-label="Maximise journey"
+              title="Maximise journey"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-hover)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+            >
+              <Maximize2 size={14} aria-hidden="true" />
+            </button>
+          </div>
+          <JourneyList rows={rows} maxHeightClass="max-h-64" autoScrollToEnd />
         </div>
+      )}
+
+      {journeyOpen && (
+        <Modal
+          open
+          onClose={() => setJourneyOpen(false)}
+          title="Journey before chat"
+          description={`${rows.length} ${rows.length === 1 ? 'page' : 'pages'} visited before this visitor opened the chat`}
+          size="lg"
+        >
+          <JourneyList rows={rows} maxHeightClass="max-h-[65vh]" />
+        </Modal>
       )}
     </section>
   );

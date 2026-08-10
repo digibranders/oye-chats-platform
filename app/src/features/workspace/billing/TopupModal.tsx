@@ -215,8 +215,8 @@ export function TopupModal({
       title={botName ? `Top up ${botName}` : 'Top up credits'}
       description={
         botName
-          ? `Credits land in ${botName}'s isolated balance. Top-ups roll over for 12 months. Larger packs include bonus credits.`
-          : 'Top-up credits don’t expire for 12 months and roll over month-to-month. Larger packs include bonus credits.'
+          ? `Credits land in ${botName}'s isolated balance. One-time purchase, credits never expire. Larger packs include bonus credits.`
+          : 'One-time purchase — top-up credits never expire and roll over indefinitely. Larger packs include bonus credits.'
       }
     >
       {error && (

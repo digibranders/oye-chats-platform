@@ -2771,7 +2771,7 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
         ).where(
             *scope,
             CreditLedger.delta < 0,
-            CreditLedger.reason.in_(("ai_chat", "url_scan", "email_send", "document_upload")),
+            CreditLedger.reason.in_(_CONSUMPTION_REASONS),
         )
         if period_start is not None:
             usage_q = usage_q.where(CreditLedger.created_at >= period_start)
@@ -2780,12 +2780,8 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             row.reason: {"credits_used": int(row.credits_used), "event_count": int(row.event_count)}
             for row in session.execute(usage_q).all()
         }
-        return period_start, {
-            "ai_chat": usage_by_reason.get("ai_chat", {"credits_used": 0, "event_count": 0}),
-            "url_scan": usage_by_reason.get("url_scan", {"credits_used": 0, "event_count": 0}),
-            "email_send": usage_by_reason.get("email_send", {"credits_used": 0, "event_count": 0}),
-            "document_upload": usage_by_reason.get("document_upload", {"credits_used": 0, "event_count": 0}),
-        }
+        empty = {"credits_used": 0, "event_count": 0}
+        return period_start, {reason: usage_by_reason.get(reason, dict(empty)) for reason in _CONSUMPTION_REASONS}
 
     with get_session() as session:
         # Account-level pool (legacy + Free bot drain from here).
@@ -2896,6 +2892,8 @@ def get_credit_balance(http_request: Request, client: Client = Depends(get_curre
             "url_scan": int(pricing.get("credit_cost.url_scan", 3) or 0),
             "email_send": int(pricing.get("credit_cost.email_send", 1) or 0),
             "document_upload": int(pricing.get("credit_cost.document_upload", 3) or 0),
+            "email_verification": int(pricing.get("credit_cost.email_verification", 10) or 0),
+            "company_name": int(pricing.get("credit_cost.company_name", 10) or 0),
         }
 
         # Stored country first, IP geo as display fallback (Wave 1.2) — the
@@ -2981,7 +2979,14 @@ def get_credit_history(
 # trend and the breakdown agree on what "credits used" means. Deliberately
 # excludes plan_grant (grants + monthly resets), topup, refund, expiry, and
 # manual_adjust — none of which are consumption.
-_CONSUMPTION_REASONS = ("ai_chat", "url_scan", "email_send", "document_upload")
+_CONSUMPTION_REASONS = (
+    "ai_chat",
+    "url_scan",
+    "email_send",
+    "document_upload",
+    "email_verification",
+    "company_name",
+)
 
 
 @credits_router.get("/daily")

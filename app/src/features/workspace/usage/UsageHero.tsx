@@ -74,9 +74,12 @@ export function UsageHero({ balance, onBuyCredits }: UsageHeroProps): ReactEleme
         <div className="flex flex-col gap-4 border-t border-[var(--ds-border)] pt-5 lg:min-w-[220px] lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-1">
             <Fact icon={RefreshCw} label="Plan renews" value={formatDate(balance.resetsAt)} />
-            {balance.topupRemaining > 0 && (
-              <Fact icon={Clock} label="Top-ups expire" value={formatDate(balance.soonestExpiry)} />
-            )}
+            {balance.topupRemaining > 0 &&
+              (balance.soonestExpiry ? (
+                <Fact icon={Clock} label="Top-ups expire" value={formatDate(balance.soonestExpiry)} />
+              ) : (
+                <Fact icon={Clock} label="Top-ups" value="Never expire" />
+              ))}
           </div>
           <Button onClick={onBuyCredits} className="w-full">
             <Wallet size={16} aria-hidden="true" />

@@ -4,9 +4,10 @@ The super-admin-tunable credit economics for a fresh database: per-action credit
 costs, the extra-seat price, top-up packs, and the kill switch. Values are JSONB.
 
 Aligned with the marketing site (oyechats.com/pricing):
-* 1 AI reply = 1 credit, 1 crawled page = 5, 1 document = 3, emails are free.
+* 1 AI reply = 1 credit, 1 crawled page = 5, 1 document = 3, customer emails free.
+* 1 email verification = 10 credits, 1 company-name lookup = 10 credits.
 * Extra seat = ₹499 (49900 paise).
-* Top-up packs carry both INR and USD headline prices.
+* Top-up packs are one-time, lifetime (topup_expiry_months=0); INR + USD headline.
 
 Idempotent: every key is upserted (insert or update-in-place). Keys not listed
 here are left untouched so a super admin can add tunables without this script
@@ -38,31 +39,47 @@ _CONFIG: dict[str, object] = {
     "credit_cost.url_scan": 5,
     "credit_cost.document_upload": 3,
     "credit_cost.email_send": 0,  # customer-facing emails are free
+    "credit_cost.email_verification": 10,  # Reoon power-mode check, once per lead enrichment
+    "credit_cost.company_name": 10,  # IP → company lookup (Visitor Intelligence)
     # Extra-seat add-on price (INR paise). The actual charge is governed by the
     # Razorpay seat plan (RAZORPAY_SEAT_PLAN_ID); this is the displayed price.
     "seat_price_cents": 49900,  # ₹499
-    # Credit / balance behaviour.
-    "topup_expiry_months": 12,
+    # Credit / balance behaviour. topup_expiry_months=0 → lifetime top-ups
+    # (one-time purchase, credits never expire).
+    "topup_expiry_months": 0,
     "low_balance_warn_pct": 20,
     "kill_switch": False,
-    # Top-up packs (headline INR + USD; provider ids resolved lazily at purchase).
+    # Master on/off switches for the two metered enrichment features. When
+    # False the feature is skipped platform-wide (no lookup, no charge).
+    # Company lookup stays off until launch ("Coming soon" in the UI).
+    "feature.email_verification_enabled": True,
+    "feature.company_name_enabled": False,
+    # One-time top-up packs, lifetime credits (headline INR + USD; provider ids
+    # resolved lazily at purchase). bonus_pct/badge are marketing metadata.
     "topup_packs": [
-        {"inr": 1599, "usd": 19, "credits": 3000, "bonus_pct": 0, "stripe_price_id": None, "razorpay_plan_id": None},
-        {"inr": 3999, "usd": 49, "credits": 8000, "bonus_pct": 7, "stripe_price_id": None, "razorpay_plan_id": None},
+        {"inr": 3999, "usd": 49, "credits": 6000, "bonus_pct": 0, "stripe_price_id": None, "razorpay_plan_id": None},
         {
-            "inr": 7999,
-            "usd": 99,
-            "credits": 24000,
-            "bonus_pct": 60,
+            "inr": 10000,
+            "usd": 119,
+            "credits": 36000,
+            "bonus_pct": 140,
+            "stripe_price_id": None,
+            "razorpay_plan_id": None,
+        },
+        {
+            "inr": 20000,
+            "usd": 239,
+            "credits": 75000,
+            "bonus_pct": 150,
             "badge": "Best value",
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },
         {
-            "inr": 19999,
-            "usd": 249,
-            "credits": 75000,
-            "bonus_pct": 100,
+            "inr": 30000,
+            "usd": 359,
+            "credits": 100000,
+            "bonus_pct": 120,
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },

@@ -36,7 +36,10 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.ip_intel_service import fetch_ip_intel
-from app.services.plan_entitlements_service import is_email_validation_enabled_for_bot
+from app.services.plan_entitlements_service import (
+    is_email_validation_enabled_for_bot,
+    is_visitor_intelligence_enabled_for_bot,
+)
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -291,8 +294,84 @@ def _parse_request_context(fastapi_request: Request):
     return ip_address, formatted_device
 
 
-def _resolve_and_update_location(session_id: str, ip_address: str):
-    """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
+def _agent_email_verification_opt_in(bot_id: int | None) -> bool:
+    """True when the agent's owner has enabled email verification (Advanced tab).
+
+    Per-agent customer opt-in that sits on top of the plan gate and the
+    super-admin feature switch. Defaults OFF (``Bot.email_verification_enabled``
+    server_default false), so a new agent never verifies until the customer
+    turns it on. Denies on any error — same deny-by-default posture as the plan
+    gates.
+    """
+    if bot_id is None:
+        return False
+    try:
+        with get_session() as session:
+            bot = session.query(Bot).filter(Bot.id == bot_id).first()
+            return bool(bot and bot.email_verification_enabled)
+    except Exception:
+        logger.warning("email_verification opt-in lookup failed for bot=%s", bot_id, exc_info=True)
+        return False
+
+
+def _charge_for_enrichment(bot_id: int | None, action: str) -> bool:
+    """Reserve credits for a metered enrichment lookup. Return True to proceed.
+
+    Skips silently (returns ``False``) when the super-admin feature switch is
+    off, the bot can't be resolved, or the ledger can't cover the cost — the
+    lead / conversation has already been captured, so a billing shortfall must
+    never break it, only drop the optional enrichment. ``action`` doubles as the
+    ledger ``reason`` and the ``feature.<action>`` toggle key.
+
+    Runs in its own committed session so the charge is durable independently of
+    the enrichment write that follows. Never raises.
+    """
+    if bot_id is None:
+        return False
+    from app.services import credit_service
+
+    try:
+        with get_session() as session:
+            if not credit_service.is_feature_enabled(session, action):
+                return False
+            bot = session.query(Bot).filter(Bot.id == bot_id).first()
+            if bot is None:
+                return False
+            cost = credit_service.get_credit_cost(session, action)
+            if cost <= 0:
+                return True  # priced to 0 (or misconfigured) — nothing to charge
+            try:
+                credit_service.check_and_deduct(
+                    session,
+                    bot.client_id,
+                    cost,
+                    reason=action,
+                    reference_id=bot_id,
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                )
+            except (credit_service.InsufficientCredits, credit_service.KillSwitchActive):
+                return False
+            session.commit()
+            return True
+    except Exception:
+        logger.warning(
+            "Enrichment charge failed | bot_id=%s action=%s — skipping",
+            bot_id,
+            action,
+            exc_info=True,
+        )
+        return False
+
+
+def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int | None = None):
+    """Fire-and-forget: resolve geolocation from IP and update the session in DB.
+
+    ``bot_id`` gates the paid Visitor-Intelligence company lookup
+    (``fetch_ip_intel``): it fires only for a Professional bot, when the
+    ``company_name`` feature switch is on, and only after 10 credits are
+    successfully reserved — otherwise it is skipped silently. The free
+    geolocation below always runs regardless of plan.
+    """
     try:
         # Validate IP format to prevent SSRF via crafted X-Forwarded-For values.
         # Without this, an attacker could inject arbitrary strings (e.g. path
@@ -310,7 +389,14 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             # there is no meaningful visitor geolocation to resolve.
             return
 
-        ip_intel = fetch_ip_intel(ip_address)
+        # Visitor Intelligence company lookup — Professional-only, feature-gated,
+        # and metered (10 credits). Gate on the plan first (cheap DB read), then
+        # reserve credits; either failing skips the paid ipapi.is call entirely.
+        ip_intel = None
+        with get_session() as session:
+            vi_enabled = bot_id is not None and is_visitor_intelligence_enabled_for_bot(bot_id, session)
+        if vi_enabled and _charge_for_enrichment(bot_id, "company_name"):
+            ip_intel = fetch_ip_intel(ip_address)
         if ip_intel:
             for _ in range(5):
                 with get_session() as session:
@@ -410,11 +496,13 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
     """Fire-and-forget: free domain extraction + Reoon power-mode validation.
 
     Two independent checks, not chained — the domain is free and always
-    attempted regardless of plan; Reoon validation (paid plans only, any
-    tier above Free — checked via ``is_email_validation_enabled_for_bot``)
-    determines is_valid_email/email_score but never blocks the domain from
-    being written, and neither one ever blocks lead capture itself (that
-    already succeeded before this was scheduled). Power mode can take
+    attempted regardless of plan; Reoon validation (Standard + Professional
+    only — checked via ``is_email_validation_enabled_for_bot`` — and metered
+    at ``credit_cost.email_verification``, so skipped when the feature switch
+    is off or the ledger can't cover it) determines is_valid_email/email_score
+    but never blocks the domain from being written, and neither one ever blocks
+    lead capture itself (that already succeeded before this was scheduled).
+    Power mode can take
     seconds to over a minute per Reoon's own docs — that's fine here since
     nothing is waiting on this thread. ``bot_id`` is optional only for
     backward-compat with any already-queued background task from before
@@ -432,8 +520,17 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
 
     validation = None
     with get_session() as session:
-        if bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session):
-            validation = verify_email(email)
+        plan_allows_verification = bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session)
+    # Reoon is a metered call (10 credits): only fire it when the plan allows it,
+    # the agent has opted in (AI Agent → Advanced), the feature switch is on, AND
+    # the credits are reserved — otherwise skip silently (domain extraction below
+    # still runs; lead capture already succeeded).
+    if (
+        plan_allows_verification
+        and _agent_email_verification_opt_in(bot_id)
+        and _charge_for_enrichment(bot_id, "email_verification")
+    ):
+        validation = verify_email(email)
 
     with get_session() as session:
         lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
@@ -635,7 +732,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         session_id = _resolve_session_id(body.session_id, bot.id)
 
         # Fire-and-forget geolocation (saves 2-8s per request)
-        submit_background(_resolve_and_update_location, session_id, ip_address)
+        submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
 
         logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
@@ -777,7 +874,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     session_id = _resolve_session_id(body.session_id, bot.id)
 
     # Fire-and-forget geolocation
-    submit_background(_resolve_and_update_location, session_id, ip_address)
+    submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
 
     logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
@@ -839,7 +936,18 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         return {"valid": False, "reason": "Please enter a valid email address."}
 
     with get_session() as session:
-        if not is_email_validation_enabled_for_bot(bot.id, session):
+        # Plan gate (Standard + Professional), the per-agent customer opt-in, AND
+        # the super-admin feature switch. This real-time blur check is NOT metered
+        # — it's a pre-submit UX helper, not the billable per-lead verification —
+        # but it must respect the same on/off controls so it never calls Reoon
+        # for an agent that has verification turned off.
+        from app.services import credit_service
+
+        if (
+            not is_email_validation_enabled_for_bot(bot.id, session)
+            or not credit_service.is_feature_enabled(session, "email_verification")
+            or not _agent_email_verification_opt_in(bot.id)
+        ):
             return {"valid": True}
 
     from app.services.reoon_service import is_obviously_undeliverable, verify_email
