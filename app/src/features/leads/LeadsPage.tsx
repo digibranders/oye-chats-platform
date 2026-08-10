@@ -13,6 +13,7 @@
 import { type ReactElement, useCallback, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  BadgeCheck,
   Bell,
   ChevronRight,
   Download,
@@ -50,6 +51,7 @@ import {
   TIER_ORDER,
   filterLeads,
   formatDateTime,
+  formatLocation,
   humanizeDimension,
   leadDisplayName,
   leadInitials,
@@ -119,7 +121,7 @@ function buildSelectedLeadsCsv(leads: Lead[], tagsFor: (sessionId: string) => re
       csvField(lead.contact?.company),
       csvField(tier.label),
       csvField(lead.score),
-      csvField(lead.location),
+      csvField(formatLocation(lead.location)),
       csvField(tagsFor(lead.session_id).join('; ')),
       csvField(formatDateTime(lead.last_active_at)),
     ].join(',');
@@ -195,6 +197,36 @@ function BantSignal({ lead }: { lead: Lead }): ReactElement {
       })}
     </div>
   );
+}
+
+/**
+ * EmailValidityMark - a one-glance deliverability marker beside a lead's email.
+ *
+ * Renders NOTHING when `is_valid_email` is absent: the field is only present
+ * on plans that include Visitor Intelligence, and `null` there legitimately
+ * means "not checked yet" rather than "bad". Only a definitive verdict earns
+ * a mark, so the column never implies a judgement the backend didn't make.
+ */
+function EmailValidityMark({ isValid }: { isValid?: boolean | null }): ReactElement | null {
+  if (isValid === true) {
+    return (
+      <BadgeCheck
+        size={12}
+        aria-label="Email verified as deliverable"
+        className="shrink-0 text-[var(--ds-success)]"
+      />
+    );
+  }
+  if (isValid === false) {
+    return (
+      <AlertCircle
+        size={12}
+        aria-label="Email failed validation - cannot be contacted"
+        className="shrink-0 text-[var(--ds-danger)]"
+      />
+    );
+  }
+  return null;
 }
 
 /**
@@ -435,8 +467,9 @@ export function LeadsPage(): ReactElement {
                   </span>
                 </div>
                 {lead.contact?.email && (
-                  <p className="truncate text-[12px] text-[var(--ds-text-subtle)]">
-                    {lead.contact.email}
+                  <p className="flex items-center gap-1 truncate text-[12px] text-[var(--ds-text-subtle)]">
+                    <span className="truncate">{lead.contact.email}</span>
+                    <EmailValidityMark isValid={lead.contact.is_valid_email} />
                   </p>
                 )}
                 {tags.length > 0 && (
@@ -458,6 +491,28 @@ export function LeadsPage(): ReactElement {
                 )}
               </div>
             </div>
+          );
+        },
+      },
+      {
+        key: 'company',
+        header: 'Company',
+        // Derived free of charge from the lead's email domain
+        // (`email_domain_service.extract_company_domain`) — personal-provider
+        // addresses correctly yield nothing, so an em-dash here means
+        // "consumer email", not "lookup failed".
+        render: (lead) => {
+          const company = lead.contact?.company?.trim();
+          if (!company) {
+            return <span className="text-[12px] text-[var(--ds-text-subtle)]">&mdash;</span>;
+          }
+          return (
+            <span
+              title={company}
+              className="block max-w-[12rem] truncate text-[12px] text-[var(--ds-text)]"
+            >
+              {company}
+            </span>
           );
         },
       },
@@ -501,7 +556,7 @@ export function LeadsPage(): ReactElement {
           isFree ? (
             <LockedValue onUpgrade={() => openUpgradeModal('view_leads')} />
           ) : (
-            <span className="text-[12px] text-[var(--ds-text-muted)]">{lead.location || '-'}</span>
+            <span className="text-[12px] text-[var(--ds-text-muted)]">{formatLocation(lead.location)}</span>
           ),
       },
       {
