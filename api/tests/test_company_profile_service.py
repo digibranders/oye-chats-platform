@@ -321,6 +321,7 @@ def test_concurrent_resolution_of_a_new_domain_does_not_raise(db):
     """
     barrier = threading.Barrier(2)
     results: dict[int, str] = {}
+    profiles: dict[int, object] = {}
 
     def gated_fetch(_domain: str):
         barrier.wait(timeout=15)
@@ -328,7 +329,7 @@ def test_concurrent_resolution_of_a_new_domain_does_not_raise(db):
 
     def worker(idx: int) -> None:
         try:
-            svc.resolve_company("race.com")
+            profiles[idx] = svc.resolve_company("race.com")
             results[idx] = "OK"
         except Exception as exc:  # noqa: BLE001 — an empty result set IS the assertion
             results[idx] = f"{type(exc).__name__}: {exc}"
@@ -345,6 +346,10 @@ def test_concurrent_resolution_of_a_new_domain_does_not_raise(db):
             t.join(timeout=30)
 
     assert set(results.values()) == {"OK"}, results
+    # The real cost of losing this race is not an exception — `resolve_company`
+    # swallows those — it is a lead silently getting no company. Both threads
+    # must come back with the profile.
+    assert [p and p.name for p in profiles.values()] == ["Acme Corp", "Acme Corp"], profiles
     # And exactly one row, not two.
     db.expire_all()
     assert db.get(CompanyProfile, "race.com") is not None
@@ -669,11 +674,139 @@ def test_a_page_that_describes_no_company_is_blamed_on_the_domain(db):
 
 def test_resolve_company_refuses_to_run_inside_an_event_loop():
     """It is synchronous and drives async clients with asyncio.run(), which
-    raises inside a running loop. Failing loudly beats returning None forever
-    with only a debug line to show for it."""
+    raises inside a running loop.
+
+    Asserting only `is None` would be vacuous: WITHOUT the guard the return is
+    also None (asyncio.run raises, that becomes _ProviderUnavailable, a
+    cooldown is written and the stale fallback — None — is returned). So this
+    asserts the guard's observable effect instead: it bails out BEFORE
+    touching the database at all.
+    """
     import asyncio as _asyncio
 
-    async def _from_a_loop():
-        return svc.resolve_company("acme.com")
+    with patch.object(svc, "_read_cache") as read_cache:
 
-    assert _asyncio.run(_from_a_loop()) is None
+        async def _from_a_loop():
+            return svc.resolve_company("acme.com")
+
+        assert _asyncio.run(_from_a_loop()) is None
+
+    assert read_cache.call_count == 0, (
+        "the guard did not fire: resolution proceeded inside an event loop and "
+        "would have written a spurious cooldown row"
+    )
+
+
+def test_a_spider_exception_is_not_blamed_on_the_domain(db):
+    """The `answered = False` initialiser. Every other fetch test lets
+    `fetch_html_outcome` return normally, so the initialiser is immediately
+    overwritten and the exception paths go unexercised — which is how the
+    first version of this fix shipped inert."""
+    from app.services import spider_service
+
+    async def _boom(url, **kwargs):
+        raise RuntimeError("spider client exploded")
+
+    with (
+        patch.object(spider_service, "fetch_html_outcome", side_effect=_boom),
+        _jina_returns({"results": []}),
+    ):
+        fetched = svc._fetch_site_html("innocent-bystander.com")
+
+    assert fetched.content is None
+    assert fetched.infrastructure_ok is False
+
+
+def test_a_spider_timeout_is_not_blamed_on_the_domain(db):
+    """We could not get an answer in time. Spider's own API may be the thing
+    hanging; from here that is indistinguishable, so the domain is not blamed."""
+    from app.services import spider_service
+
+    async def _hang(url, **kwargs):
+        raise TimeoutError
+
+    with (
+        patch.object(spider_service, "fetch_html_outcome", side_effect=_hang),
+        _jina_returns({"results": []}),
+    ):
+        fetched = svc._fetch_site_html("slow.com")
+
+    assert fetched.infrastructure_ok is False
+
+
+def test_jina_rescues_a_domain_spider_could_not_reach():
+    """Jina is a bonus leg: it can only ever UPGRADE the outcome."""
+    from app.services.spider_service import ScrapeOutcome
+
+    with (
+        _spider_returns(ScrapeOutcome(content=None, answered=False)),
+        _jina_returns({"results": [{"url": "x", "content": "# Acme"}]}),
+    ):
+        fetched = svc._fetch_site_html("spider-blind.com")
+
+    assert fetched.content == "# Acme"
+    assert fetched.infrastructure_ok is True
+
+
+def test_our_cooldown_never_shortens_a_backoff_the_domain_earned(db):
+    """A plain assignment would let OUR outage shorten someone else's penalty.
+
+    500 long-dead domains sitting on 30-90 day retries, all knocked back to 15
+    minutes by one Spider outage and then re-crawled every quarter hour for its
+    duration — the cost leak the backoff exists to prevent, triggered by the
+    mechanism meant to protect against a different one.
+    """
+    earned = datetime.now(UTC) + timedelta(days=60)
+    db.add(
+        CompanyProfile(
+            domain="long-dead.com",
+            resolution_failed=True,
+            failure_count=8,
+            retry_after=earned,
+        )
+    )
+    db.commit()
+
+    svc._record_cooldown(db, "long-dead.com")
+    db.expire_all()
+    row = db.get(CompanyProfile, "long-dead.com")
+    assert row.retry_after == earned, "our outage shortened a backoff the domain had earned"
+    assert row.failure_count == 8, "our outage must not touch the streak either"
+
+
+def test_a_cooldown_still_applies_when_it_is_the_longer_wait(db):
+    """The contrast: extending, not merely never-writing."""
+    svc._record_cooldown(db, "fresh-cooldown.com")
+    db.expire_all()
+    row = db.get(CompanyProfile, "fresh-cooldown.com")
+    wait = row.retry_after - datetime.now(UTC)
+    assert timedelta(minutes=10) < wait <= svc.INDETERMINATE_COOLDOWN
+    assert row.resolution_failed is False
+
+
+def test_a_good_stale_profile_survives_a_database_failure_on_the_write(db):
+    """The write blocks used to sit outside the handler.
+
+    A pool timeout on `_store_success` — on the very pool this module contends
+    for — discarded BOTH the freshly resolved name and the perfectly good stale
+    one, returning None for a company we already knew.
+    """
+    db.add(
+        CompanyProfile(
+            domain="db-blip.com",
+            name="Known Good Ltd",
+            refresh_after=datetime.now(UTC) - timedelta(days=1),
+        )
+    )
+    db.commit()
+
+    with (
+        _crawled(),
+        _extracted(),
+        patch.object(svc, "_store_success", side_effect=RuntimeError("QueuePool limit reached")),
+    ):
+        profile = svc.resolve_company("db-blip.com")
+
+    assert profile is not None and profile.name == "Known Good Ltd", (
+        "a transient DB failure threw away a good cached profile"
+    )

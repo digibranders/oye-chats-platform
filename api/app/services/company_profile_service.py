@@ -29,16 +29,21 @@ exponential backoff would compound that to 90 days.
 
 Every failure is therefore classified before it is stored:
 
-* **The target's fault** — Spider answered and there was nothing usable there
-  (parked domain, 404, empty body), or a page we did read describes no
-  company. Cached with compounding backoff, which is the point of the cache.
-* **Ours** — no API key, an expired key, quota exhausted, Spider or the model
-  provider down or unreachable. Never attributed to the domain. It gets a
-  short flat :data:`INDETERMINATE_COOLDOWN` instead, which bounds the retry
-  storm during an outage without poisoning anything: the cache self-heals
-  within minutes of the outage ending, and the worst case of a
-  misclassification here is a few minutes of delay rather than a 90-day
-  blackout.
+* **The target's fault** — the target itself answered 404/410, or a page we
+  genuinely read describes no company. Cached with compounding backoff, which
+  is the point of the cache.
+* **Ours, or nobody's** — *everything else*. No API key, an expired key, quota
+  exhausted, Spider down, its endpoint moved, our request malformed, a proxy
+  error page, the target 5xx'ing today, the model unreachable. Never
+  attributed to the domain. It gets a short :data:`INDETERMINATE_COOLDOWN`
+  instead, which bounds the retry storm during an outage without poisoning
+  anything: the cache self-heals within minutes of the outage ending.
+
+The classification is **fail-closed** — a lasting verdict requires positive
+evidence, and anything unrecognised lands in the second bucket. That asymmetry
+is deliberate, because the two mistakes do not cost the same: wrongly blaming
+ourselves costs one repeated crawl, while wrongly blaming a real company
+hides it from every tenant for up to 90 days.
 
 This is why the module calls ``spider_service.fetch_html_outcome`` rather than
 ``fetch_html``, and passes ``strict=True`` to the extractor. Both plain
@@ -105,9 +110,15 @@ FETCH_TIMEOUT_SECONDS = 15.0
 LLM_TIMEOUT_SECONDS = 20.0
 LLM_NUM_RETRIES = 1
 
-# Cap the fetched body before anything parses or holds it. A visitor can name
-# any domain they like, and BeautifulSoup costs several times the string in
-# RSS. Matches the existing convention in ``brand_color_extractor``.
+# Cap on what we RETAIN and parse. A visitor can name any domain they like,
+# and BeautifulSoup costs several times the string in RSS. Matches the size
+# used by ``brand_color_extractor``.
+#
+# Honest about its limit: the vendor clients have already downloaded and
+# decoded the whole body by the time this runs, so this bounds the parse and
+# the LLM input, NOT peak download memory. Capping at the transport would mean
+# a byte limit inside spider_service/jina_service, which is a wider change than
+# this feature should make to a shared crawl path.
 MAX_CONTENT_BYTES = 2 * 1024 * 1024
 
 # Longest plausible company name. Past this the model is narrating, not naming.
@@ -178,8 +189,6 @@ def _fetch_site_html(domain: str) -> _Fetched:
         # not a fact about the domain — Spider's own API may be the thing
         # hanging, and we cannot tell from here.
         logger.warning("spider fetch timed out for %s", domain)
-    except RuntimeError as exc:  # pragma: no cover - guarded at the entry point
-        raise _ProviderUnavailable(str(exc)) from exc
     except Exception:
         logger.warning("spider fetch failed for %s", domain, exc_info=True)
 
@@ -197,8 +206,6 @@ def _fetch_site_html(domain: str) -> _Fetched:
             return _Fetched(content=_capped(pages[0]["content"]), is_html=False, infrastructure_ok=True)
     except TimeoutError:
         logger.warning("jina fetch timed out for %s", domain)
-    except RuntimeError as exc:  # pragma: no cover - guarded at the entry point
-        raise _ProviderUnavailable(str(exc)) from exc
     except Exception:
         logger.warning("jina fetch failed for %s", domain, exc_info=True)
 
@@ -206,11 +213,19 @@ def _fetch_site_html(domain: str) -> _Fetched:
 
 
 def _capped(content: str) -> str:
-    """Truncate a fetched body before anything parses or retains it."""
-    if len(content) <= MAX_CONTENT_BYTES:
+    """Truncate a fetched body before we parse or retain it.
+
+    Measured in BYTES, not characters. ``len()`` on a ``str`` counts code
+    points, so a page carrying astral-plane characters is held at 4 bytes each
+    internally — a "2 MB" character cap would admit up to 8 MB of RSS.
+    """
+    encoded = content.encode("utf-8", errors="ignore")
+    if len(encoded) <= MAX_CONTENT_BYTES:
         return content
-    logger.info("fetched body truncated from %d to %d bytes", len(content), MAX_CONTENT_BYTES)
-    return content[:MAX_CONTENT_BYTES]
+    logger.info("fetched body truncated from %d to %d bytes", len(encoded), MAX_CONTENT_BYTES)
+    # Decode back with errors="ignore" so a cut through a multi-byte sequence
+    # drops that character rather than raising.
+    return encoded[:MAX_CONTENT_BYTES].decode("utf-8", errors="ignore")
 
 
 def _valid_name(name: object) -> bool:
@@ -268,7 +283,17 @@ def _record_cooldown(session: Session, domain: str) -> None:
     Writes ``retry_after`` only. ``resolution_failed`` and ``failure_count``
     are deliberately untouched, so an outage leaves no lasting verdict and
     contributes nothing to the exponential backoff.
+
+    It EXTENDS rather than assigns. A plain assignment would let our own
+    outage *shorten* a backoff the domain had legitimately earned: 500 dead
+    domains sitting on 30-90 day retries, knocked back to 15 minutes each by
+    one Spider outage, then re-crawled every quarter hour for its duration.
+    A cooldown may only ever push the next attempt further out.
     """
+    extended = func.greatest(
+        func.coalesce(CompanyProfile.retry_after, func.now()),
+        func.now() + INDETERMINATE_COOLDOWN,
+    )
     session.execute(
         pg_insert(CompanyProfile)
         .values(
@@ -279,7 +304,7 @@ def _record_cooldown(session: Session, domain: str) -> None:
         .on_conflict_do_update(
             index_elements=["domain"],
             set_={
-                "retry_after": func.now() + INDETERMINATE_COOLDOWN,
+                "retry_after": extended,
                 "updated_at": func.now(),
             },
         )
@@ -433,8 +458,14 @@ def _resolve(domain: str) -> ResolvedCompany | None:
         return None
     stale_fallback = cached.stale_fallback
 
-    # No database connection is held across the network calls below.
+    # Everything below is wrapped, and every exit returns `stale_fallback`
+    # rather than None. A good cached name must survive ANY failure here, not
+    # just the ones we anticipated: the write blocks can raise too (a pool
+    # timeout on the connection pool this very module contends for), and
+    # losing a perfectly good profile to a transient DB blip is a strictly
+    # worse outcome than serving it a day stale.
     try:
+        # No database connection is held across the network calls below.
         fetched = _fetch_site_html(domain)
         if not fetched.content:
             if fetched.infrastructure_ok:
@@ -447,21 +478,27 @@ def _resolve(domain: str) -> ResolvedCompany | None:
             return stale_fallback
 
         extracted, source, logo_url = _extract(fetched, domain)
+
+        if not extracted:
+            with get_session() as session:
+                _record_failure(session, domain)
+            return stale_fallback
+
+        name = extracted["name"].strip()
+        description = (extracted.get("description") or "").strip() or None
+        with get_session() as session:
+            _store_success(session, domain, name, description, logo_url, source)
     except _ProviderUnavailable as exc:
         logger.warning("provider unavailable while resolving %s: %s", domain, exc)
-        with get_session() as session:
-            _record_cooldown(session, domain)
+        try:
+            with get_session() as session:
+                _record_cooldown(session, domain)
+        except Exception:
+            logger.warning("could not record cooldown for %s", domain, exc_info=True)
         return stale_fallback
-
-    if not extracted:
-        with get_session() as session:
-            _record_failure(session, domain)
+    except Exception:
+        logger.warning("resolution of %s failed; serving cached value if any", domain, exc_info=True)
         return stale_fallback
-
-    name = extracted["name"].strip()
-    description = (extracted.get("description") or "").strip() or None
-    with get_session() as session:
-        _store_success(session, domain, name, description, logo_url, source)
 
     logger.info("company resolved | domain=%s | name=%s | via=%s", domain, name, source)
     return ResolvedCompany(

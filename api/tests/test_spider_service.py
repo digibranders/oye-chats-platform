@@ -156,19 +156,36 @@ async def test_logs_page_count_for_cost_tracking(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
-async def test_fetch_html_outcome_reports_a_real_404_as_answered(monkeypatch):
+async def test_fetch_html_outcome_reports_a_target_404_as_answered(monkeypatch):
+    """Spider reports the TARGET's status in the per-page `status` field, and
+    returns 200 for the call itself. That is the only channel that carries
+    evidence about the target."""
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"url": "https://gone.test", "content": None, "status": 404}])
+
+    outcome = await spider_service.fetch_html_outcome("https://gone.test", _client=_mock_client(handler))
+    assert outcome.content is None
+    assert outcome.answered is True, "the target itself said 404; that is the target's problem"
+
+
+@pytest.mark.asyncio
+async def test_a_bare_404_on_the_scrape_endpoint_is_ours(monkeypatch):
+    """A 404 on POST /scrape means the endpoint moved, not that the target is
+    gone. Treating it as the target's fault would blacklist every domain the
+    platform sees the moment SPIDER_API_URL goes stale."""
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
 
-    outcome = await spider_service.fetch_html_outcome("https://gone.test", _client=_mock_client(handler))
-    assert outcome.content is None
-    assert outcome.answered is True, "Spider answered about the target; that is the target's problem"
+    outcome = await spider_service.fetch_html_outcome("https://fine.test", _client=_mock_client(handler))
+    assert outcome.answered is False
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [401, 402, 403, 408, 429, 500, 502, 503])
+@pytest.mark.parametrize("status", [301, 307, 400, 401, 402, 403, 408, 429, 451, 500, 502, 503])
 async def test_fetch_html_outcome_reports_spiders_own_failures_as_unanswered(monkeypatch, status):
     """Expired key, exhausted quota, Spider down, Spider's own fetch timing
     out — none of these are evidence about the target."""
@@ -223,3 +240,71 @@ async def test_fetch_html_still_returns_a_bare_string_for_its_existing_callers(m
         return httpx.Response(200, json=[{"url": "https://acme.test", "content": "<html>hi</html>"}])
 
     assert await spider_service.fetch_html("https://acme.test", _client=_mock_client(handler)) == "<html>hi</html>"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        ("<html>a proxy error page</html>", "unparseable body — a WAF or captive portal, not the target"),
+        ("[]", "Spider returned no page object at all"),
+        ('{"error": "insufficient credits"}', "a 200-wrapped billing error is ours"),
+    ],
+)
+async def test_a_200_that_carries_no_page_object_is_not_evidence(monkeypatch, body, why):
+    """`answered` is fail-CLOSED. A 200 alone proves nothing: it has to carry a
+    parseable page whose upstream status the target itself produced."""
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    outcome = await spider_service.fetch_html_outcome("https://fine.test", _client=_mock_client(handler))
+    assert outcome.answered is False, why
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream", [500, 502, 503, 504, 403, 429, None])
+async def test_an_empty_page_with_a_non_target_upstream_status_is_not_evidence(monkeypatch, upstream):
+    """A 5xx means the target is broken TODAY, not absent. `_scrape_one` in
+    this same module retries exactly this condition three times — it must not
+    become a permanent verdict somewhere else. 403 is usually the target's WAF
+    refusing Spider, which must not blacklist a real company."""
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"url": "https://x.test", "content": "", "status": upstream}])
+
+    outcome = await spider_service.fetch_html_outcome("https://x.test", _client=_mock_client(handler))
+    assert outcome.answered is False
+
+
+@pytest.mark.asyncio
+async def test_an_empty_page_with_upstream_200_is_treated_as_transient(monkeypatch):
+    """`_scrape_one` documents 200-with-empty-content as "usually a transient
+    upstream 5xx; worth a retry". Same evidence, same conclusion."""
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"url": "https://x.test", "content": "", "status": 200}])
+
+    outcome = await spider_service.fetch_html_outcome("https://x.test", _client=_mock_client(handler))
+    assert outcome.answered is False
+
+
+@pytest.mark.asyncio
+async def test_a_spider_5xx_is_ours_even_when_it_carries_a_page_payload(monkeypatch):
+    """Pins the status guard itself.
+
+    Without the `2xx only` check the code still behaves for a bare error
+    response (an empty body parses to no page, and fail-closed catches it) —
+    but a Spider 5xx that echoes a cached page envelope would be read as the
+    target's own 404 and blacklist a live domain.
+    """
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json=[{"url": "https://live.test", "content": None, "status": 404}])
+
+    outcome = await spider_service.fetch_html_outcome("https://live.test", _client=_mock_client(handler))
+    assert outcome.answered is False, "a Spider-side 503 was read as the target's 404"

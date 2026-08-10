@@ -228,14 +228,23 @@ class ScrapeOutcome:
     ``answered`` is the part callers cannot otherwise recover. ``content=None``
     conflates two completely different situations:
 
-    * Spider answered about the URL and there was nothing usable there — a
-      parked domain, a 404, an empty body. That is a fact about the **target**.
-    * We never got an answer: no API key, an expired key (401), quota exhausted
-      (402/429), Spider itself 5xx'd, or the request to Spider failed. That is a
-      fact about **us**, and says nothing whatsoever about the target.
+    * Spider answered about the URL and the **target** said there is nothing
+      there — a 404 or a 410 on a parked or retired domain. A fact about the
+      target.
+    * We never got a usable answer: no API key, an expired key, quota
+      exhausted, Spider down, Spider's endpoint moved, our request malformed,
+      a proxy in the way, or the target merely broken today. Facts about
+      **us** (or about nothing), which say nothing about the target.
 
     Any caller that persists "this URL yielded nothing" must distinguish them,
     or one expired key silently writes that verdict against every URL it sees.
+
+    **``answered`` is fail-CLOSED**: it is True only on positive evidence — a
+    2xx from Spider, a parseable page object, and a per-page upstream status
+    the target itself produced. Anything unrecognised is our problem, because
+    the cost of wrongly blaming a real company is a lasting cache entry while
+    the cost of wrongly blaming ourselves is one repeated crawl.
+
     ``fetch_html`` keeps returning a bare ``str | None`` because its own callers
     are log-only side channels that genuinely do not care.
     """
@@ -244,10 +253,18 @@ class ScrapeOutcome:
     answered: bool
 
 
-# Spider's own failures, as opposed to Spider reporting on the target. 402 and
-# 429 are billing/quota, 5xx is Spider being down; 408 is Spider's fetch of the
-# target timing out, which we cannot attribute to the target either.
-_SPIDER_SELF_FAILURE_STATUSES = frozenset({401, 402, 403, 408, 429})
+# Per-page upstream statuses that mean THE TARGET answered and there is
+# genuinely nothing there. Deliberately tiny, because this set is the only way
+# a caller is permitted to record a lasting verdict about a domain.
+#
+# Notably absent:
+#   * 2xx-with-empty-content — ``_scrape_one`` in this same module documents
+#     that as "usually a transient upstream 5xx; worth a retry", and retries it
+#     three times. It must not become a permanent fact somewhere else.
+#   * 5xx — the target is broken today, not absent.
+#   * 403 — usually the target's WAF refusing Spider specifically. A real
+#     company behind Cloudflare must not be blacklisted for it.
+_TARGET_ATTRIBUTABLE_UPSTREAM = frozenset({404, 410})
 
 
 async def fetch_html_outcome(
@@ -279,14 +296,26 @@ async def fetch_html_outcome(
         except httpx.HTTPError as exc:
             logger.warning("fetch_html %s: HTTP error %s", url, exc)
             return ScrapeOutcome(content=None, answered=False)
-        if resp.status_code in _SPIDER_SELF_FAILURE_STATUSES or resp.status_code >= 500:
+
+        # Anything that is not a clean 2xx is about OUR call to Spider, not
+        # about the target: 401/402/429 are key and quota, 5xx is Spider down,
+        # 400 is our malformed request, 3xx and 404 mean the endpoint moved.
+        # Spider reports the TARGET's status in the per-page `status` field,
+        # never as the HTTP status of this call.
+        if not (200 <= resp.status_code < 300):
             logger.warning("fetch_html %s: Spider returned %s (our side)", url, resp.status_code)
             return ScrapeOutcome(content=None, answered=False)
-        if resp.status_code >= 400:
-            logger.warning("fetch_html %s returned %s", url, resp.status_code)
-            return ScrapeOutcome(content=None, answered=True)
-        content, _upstream = _extract_page_content(resp)
-        return ScrapeOutcome(content=content, answered=True)
+
+        content, upstream = _extract_page_content(resp)
+        if content:
+            return ScrapeOutcome(content=content, answered=True)
+
+        # 2xx but nothing usable. `upstream is None` means the body did not
+        # parse at all (a proxy error page, a WAF interstitial, an empty list)
+        # — no evidence about the target whatsoever.
+        answered = upstream in _TARGET_ATTRIBUTABLE_UPSTREAM
+        logger.warning("fetch_html %s: empty content, upstream=%s answered=%s", url, upstream, answered)
+        return ScrapeOutcome(content=None, answered=answered)
     finally:
         if owns_client:
             await client.aclose()
