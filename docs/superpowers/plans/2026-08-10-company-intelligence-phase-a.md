@@ -21,9 +21,9 @@
 | 3 · Markup extractor | **done, reviewed twice** | `c88af6a`, hardened in `2ec0cce` |
 | 4 · Resolver | **done, reviewed twice** | `c9f9765`, hardened in a follow-up |
 | 5 · IP sanity filter | **done, reviewed** | `c189061`, hardened in `31cac20` |
-| 6 · One IP lookup per session | **done** | in progress → review pending |
-| 7 · Tier-4 display separation | not started | — |
-| 8 · Verification | not started | — |
+| 6 · One IP lookup per session | **done** | `f3bae03` |
+| 7 · Tier-4 display separation | **done** | `7c81a7e` |
+| 8 · Verification | **done, one caveat** | see Task 8 result below |
 
 > **The code blocks in Tasks 1–3 below are the ORIGINAL drafts and are now
 > superseded.** Adversarial review found 14 defects across them — read the
@@ -68,6 +68,33 @@
 >   `CITEXT` key, a length CHECK, and two partial indexes. **Task 4's code
 >   below has been updated for these** — it upserts rather than inserting, and
 >   prefers a cached name over a stale failure flag.
+
+### Task 8 result
+
+| Gate | Result |
+|---|---|
+| `ruff check .` | clean |
+| `ruff format --check .` | clean (487 files) |
+| `uv run pytest` | **3638 passed, 2 skipped** |
+| `alembic heads` | exactly one — `1da557cae107` |
+| Migration chain (upgrade → check → downgrade -1 → upgrade) | clean against a throwaway DB; no model drift |
+| `app`: `npm run lint` | clean |
+| `app`: `npm run build` | clean |
+| `app`: `npx vitest run` | **120 passed, 19 files** |
+| `app`: `npx tsc --noEmit` | ⚠️ **3 errors, all pre-existing** |
+
+The `tsc` caveat is real and is NOT from this work — the same three errors
+reproduce on a clean HEAD with this plan's changes stashed:
+
+* `KnowledgePage.tsx(31,58)` TS2305 — imports `getKnowledgeState`, which
+  `services/api` does not export. That binding is `undefined` at runtime, so
+  the call throws whenever that path runs. `npm run build` hides it because
+  Vite does not typecheck. Spun out as its own task; **likely a live bug.**
+* `UsagePage.tsx` TS6133 ×2 — an unused `Zap` import and an `ActivityCard`
+  defined but never rendered, which may be a dropped section rather than
+  dead code.
+
+---
 
 > **Pre-existing production data is explicitly OUT OF SCOPE.** The production
 > database will be wiped and reseeded before market launch, and everything in
