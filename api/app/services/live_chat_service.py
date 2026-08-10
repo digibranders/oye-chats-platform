@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from fastapi import WebSocket
 from sqlalchemy import select
+from starlette.websockets import WebSocketDisconnect
 
 from app.db.models import Bot, ChatSession, Operator
 from app.db.repository import get_lead_info_by_session
@@ -15,6 +16,36 @@ from app.services import operator_presence_service as presence
 from app.services.session_state_machine import InvalidTransitionError, transition_session
 
 logger = logging.getLogger(__name__)
+
+
+# Starlette raises a bare ``RuntimeError`` (not a typed exception) when you
+# touch a socket the client has already closed. Matching on its message is
+# unpleasant but it is the only signal available, so keep the list EXACT —
+# a broad substring here would silently demote real bugs to DEBUG.
+_CLIENT_GONE_RUNTIME_MESSAGES = (
+    'websocket is not connected. need to call "accept" first.',
+    'cannot call "send" once a close message has been sent.',
+)
+
+
+def is_client_gone(exc: BaseException) -> bool:
+    """True when ``exc`` means "the visitor's socket is already closed".
+
+    A browser tab closing is the single most common thing that happens to a
+    chat widget. It is not an error, and logging it as one buries genuine
+    failures and inflates Sentry volume. Callers use this to pick a log level;
+    NOTHING here swallows the exception.
+
+    Deliberately narrow: only the disconnect exception itself, the two
+    Starlette runtime messages for an already-closed socket, and the OS-level
+    peer-hangup errors. Anything else — including other ``RuntimeError``s — is
+    treated as a real problem and still logs loudly.
+    """
+    if isinstance(exc, WebSocketDisconnect | ConnectionResetError | BrokenPipeError):
+        return True
+    if isinstance(exc, RuntimeError):
+        return str(exc).strip().lower() in _CLIENT_GONE_RUNTIME_MESSAGES
+    return False
 
 
 class ConnectionManager:
@@ -206,7 +237,17 @@ class ConnectionManager:
     def disconnect_visitor(self, session_id: str):
         was_waiting = session_id in self.waiting_queue
         was_in_live_chat = session_id in self.assignments
-        self.visitor_connections.pop(session_id, None)
+        had_connection = self.visitor_connections.pop(session_id, None) is not None
+
+        # Idempotency guard. One disconnect legitimately reaches this method
+        # twice: ``_send_to_visitor`` cleans up when a send fails, and then the
+        # same underlying exception bubbles to the WS route's handler, which
+        # cleans up again. With nothing left to release, the second pass used
+        # to re-emit "Visitor disconnected" — making a single tab-close look
+        # like two events in the logs and in any metric derived from them.
+        if not (had_connection or was_waiting or was_in_live_chat):
+            return
+
         self._cancel_timeout(session_id)
 
         if was_waiting:
@@ -1413,7 +1454,16 @@ class ConnectionManager:
             try:
                 await ws.send_json(data)
             except Exception as e:
-                logger.warning(f"Failed to send to visitor {session_id}: {e}")
+                # Always name the exception CLASS: ``WebSocketDisconnect`` never
+                # passes a message to ``Exception.__init__``, so interpolating
+                # only ``{e}`` produced "Failed to send to visitor <id>:" with
+                # nothing after the colon — a log line that says nothing.
+                detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                if is_client_gone(e):
+                    # The visitor closed their tab. Expected, not a failure.
+                    logger.debug(f"Visitor {session_id} already disconnected, message dropped ({detail})")
+                else:
+                    logger.warning(f"Failed to send to visitor {session_id}: {detail}")
                 self.disconnect_visitor(session_id)
         else:
             logger.info(f"No WS for visitor {session_id}, message dropped: {data.get('type', 'unknown')}")

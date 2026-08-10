@@ -14,7 +14,7 @@ from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
-from app.services.live_chat_service import manager
+from app.services.live_chat_service import is_client_gone, manager
 from app.services.plan_service import get_client_subscription
 from app.services.session_state_machine import InvalidTransitionError, transition_session
 
@@ -557,7 +557,17 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
     except Exception as e:
         heartbeat_task.cancel()
-        logger.error(f"Visitor WS error for {session_id}: {type(e).__name__}: {e}")
+        # A visitor closing their tab reaches here as a bare RuntimeError from
+        # Starlette ("WebSocket is not connected...") rather than
+        # WebSocketDisconnect, because the socket died mid-operation. That is
+        # routine, not an incident — logging it at ERROR buried genuine
+        # failures and inflated Sentry. Real protocol errors still log at
+        # ERROR; nothing is swallowed either way.
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        if is_client_gone(e):
+            logger.debug(f"Visitor WS closed by client for {session_id} ({detail})")
+        else:
+            logger.error(f"Visitor WS error for {session_id}: {detail}")
         manager.disconnect_visitor(session_id)
 
 
@@ -852,7 +862,13 @@ async def operator_websocket(
         await manager.disconnect_operator_and_broadcast(operator_id)
     except Exception as e:
         heartbeat_task.cancel()
-        logger.error(f"Operator WS error for operator {operator_id}: {type(e).__name__}: {e}")
+        # Same reasoning as the visitor handler above: an operator closing
+        # their console tab is routine, not an incident.
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        if is_client_gone(e):
+            logger.debug(f"Operator WS closed by client for operator {operator_id} ({detail})")
+        else:
+            logger.error(f"Operator WS error for operator {operator_id}: {detail}")
         await manager.disconnect_operator_and_broadcast(operator_id)
 
 
