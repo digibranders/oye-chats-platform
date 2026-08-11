@@ -46,8 +46,12 @@ class TestTheStampItself:
     def test_REMOVING_an_avatar_also_stamps_it_manual(self, db):
         """The case the column exists for. Clearing leaves exactly the row
         state of an agent that never had one, so if this did not stamp, the
-        next crawl would put the picture straight back."""
-        bot = _bot(db, 8302, bot_logo="logos/mine.png", bot_logo_source=AVATAR_SOURCE_MANUAL)
+        next crawl would put the picture straight back.
+
+        Starts from `derived` on purpose — a customer deleting the avatar the
+        crawl gave them is the exact scenario, and seeding `manual` here would
+        let a stamp that never runs pass the assertion."""
+        bot = _bot(db, 8302, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
         stamp_manual_avatar(bot, {"bot_logo": None, "launcher_logo": None})
         assert bot.bot_logo_source == AVATAR_SOURCE_MANUAL
 
@@ -72,6 +76,14 @@ class TestTheStampItself:
         stamp_manual_avatar(bot, {"launcher_logo": "logos/mine.png"})
         assert bot.bot_logo_source == AVATAR_SOURCE_MANUAL
 
+    def test_clearing_via_launcher_logo_alone_stamps_too(self, db):
+        """The falsy-value trap: a removal sends None, so a stamp written as
+        `if update_data.get(...)` would skip precisely the case this exists
+        for. Membership is the test, not truthiness."""
+        bot = _bot(db, 8310, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
+        stamp_manual_avatar(bot, {"launcher_logo": None})
+        assert bot.bot_logo_source == AVATAR_SOURCE_MANUAL
+
 
 class TestBothSettingsRoutesStamp:
     """Two live routes write these columns, and an avatar removed through
@@ -83,7 +95,7 @@ class TestBothSettingsRoutesStamp:
     def test_the_primary_bot_patch_stamps_a_removal(self, db):
         from app.api.bot_routes import UpdateBotRequest, update_bot
 
-        bot = _bot(db, 8306, bot_logo="logos/mine.png", bot_logo_source=AVATAR_SOURCE_MANUAL)
+        bot = _bot(db, 8306, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
 
         update_bot(
             bot.id,
@@ -130,7 +142,7 @@ class TestBothSettingsRoutesStamp:
         from app.api.client_routes import update_client_settings
         from app.schemas.client import ClientSettingsUpdate
 
-        bot = _bot(db, 8307, bot_logo="logos/mine.png", bot_logo_source=AVATAR_SOURCE_MANUAL)
+        bot = _bot(db, 8307, bot_logo="logos/favicon.png", bot_logo_source=AVATAR_SOURCE_DERIVED)
 
         update_client_settings(
             ClientSettingsUpdate(bot_logo=None),
