@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import io
 import os
+import socket
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -126,19 +127,25 @@ class TestEveryByteComesFromTheGuardedHelpers:
 
         from app.services import favicon_extractor
 
-        async def _forbidden(*args, **kwargs):
+        def _forbidden(*args, **kwargs):
             raise AssertionError(
                 "unguarded egress: a hand-rolled client bypasses per-hop redirect revalidation and DNS pinning"
             )
 
-        # Every transport the module could reach for. aiohttp funnels all
-        # requests through `_request`; httpx (what the original version used)
-        # funnels through `AsyncClient.send`.
-        monkeypatch.setattr(aiohttp.ClientSession, "_request", _forbidden)
+        async def _forbidden_async(*args, **kwargs):
+            _forbidden()
+
+        # aiohttp funnels every request through `_request`; httpx (what the
+        # original version used) through `AsyncClient.send`. `socket.connect`
+        # is the backstop that catches a rewrite using any other client —
+        # requests, urllib, a raw socket — since the guarded helpers are
+        # stubbed here and nothing legitimate should reach the network at all.
+        monkeypatch.setattr(aiohttp.ClientSession, "_request", _forbidden_async)
+        monkeypatch.setattr(socket.socket, "connect", _forbidden)
         with contextlib.suppress(ImportError):
             import httpx
 
-            monkeypatch.setattr(httpx.AsyncClient, "send", _forbidden)
+            monkeypatch.setattr(httpx.AsyncClient, "send", _forbidden_async)
 
         html = '<html><head><link rel="apple-touch-icon" href="/apple.png"></head></html>'
         png = _image_bytes("PNG")
@@ -161,10 +168,12 @@ class TestEveryByteComesFromTheGuardedHelpers:
         monkeypatch.setattr(favicon_extractor, "fetch_bytes_safely", guarded)
 
         assert await favicon_extractor.fetch_favicon_image("https://acme.com") is None
-        # Every candidate — the declared link-local one and both root
-        # fallbacks — went through the guard rather than around it.
-        assert guarded.await_count >= 1
-        assert all(call.args[1].startswith(("http://", "https://")) for call in guarded.await_args_list)
+        # The link-local URL was handed to the guard rather than filtered out
+        # upstream: the extractor does not judge candidate hosts itself, so if
+        # this download were not routed through `fetch_bytes_safely` the
+        # metadata endpoint would simply be fetched.
+        attempted = [call.args[1] for call in guarded.await_args_list]
+        assert "http://169.254.169.254/latest/meta-data/" in attempted
 
 
 class TestTheCandidateListIsBounded:
@@ -224,24 +233,39 @@ class TestIcoIsRejectedRatherThanWinning:
         assert _usable_by_the_avatar_pipeline(_image_bytes("PNG")) is True
 
     @pytest.mark.parametrize("load_truncated", [False, True])
-    @pytest.mark.parametrize("fmt", ["PNG", "ICO", "BMP", "GIF"])
-    def test_the_predicate_agrees_with_the_pipeline_it_is_predicting(self, fmt, load_truncated, monkeypatch):
+    @pytest.mark.parametrize("case", ["PNG", "ICO", "BMP", "GIF", "truncated", "decompression-bomb"])
+    def test_the_predicate_agrees_with_the_pipeline_it_is_predicting(self, case, load_truncated, monkeypatch):
         """A prediction that disagrees with the thing it predicts is worse than
-        no prediction: a false yes stops the candidate loop on bytes the upload
-        then rejects, and a false no discards an icon that would have worked.
+        no prediction: a false yes STOPS the candidate loop on bytes the upload
+        then rejects, so the site gets no avatar and the perfectly good
+        lower-ranked candidate is never tried.
+
+        The fixtures are chosen to cover all three of the pipeline's rejection
+        paths, because modelling only the first is how the predicate drifted:
+        format (ICO), truncated data, and the decompression-bomb ceiling. A
+        9000x9000 solid PNG is ~78 KB, so it passes the byte cap and
+        `_decode_is_valid_image` — `verify()` never decompresses — and used to
+        be declared usable here.
 
         Parametrised over `ImageFile.LOAD_TRUNCATED_IMAGES` because it is a
         process-global that importing weasyprint (the invoice-PDF renderer)
-        flips to True for everyone. `process_image_for_logo` pins it per decode
-        via `_strict_decode_limits`; the predicate does not, so the two must be
-        shown to agree under both states rather than only under whichever one
-        the test process happens to be in.
+        flips to True for everyone, and the truncated fixture is what makes
+        that parametrisation mean anything.
         """
         from app.services.favicon_extractor import _usable_by_the_avatar_pipeline
         from app.services.r2_service import UnsupportedImage, process_image_for_logo
 
         monkeypatch.setattr(ImageFile, "LOAD_TRUNCATED_IMAGES", load_truncated)
-        data = _image_bytes(fmt)
+        if case == "truncated":
+            whole = _image_bytes("PNG")
+            data = whole[: len(whole) // 2]
+        elif case == "decompression-bomb":
+            buf = io.BytesIO()
+            Image.new("L", (9000, 9000), 0).save(buf, format="PNG")
+            data = buf.getvalue()
+            assert len(data) < 2 * 1024 * 1024, "must stay under the fetcher's body cap to be a real threat"
+        else:
+            data = _image_bytes(case)
 
         predicted = _usable_by_the_avatar_pipeline(data)
         try:
@@ -249,7 +273,20 @@ class TestIcoIsRejectedRatherThanWinning:
             actual = True
         except UnsupportedImage:
             actual = False
-        assert predicted is actual, f"{fmt}: predicate says {predicted}, pipeline says {actual}"
+        assert predicted is actual, f"{case}: predicate says {predicted}, pipeline says {actual}"
+
+    def test_a_decompression_bomb_does_not_stop_the_candidate_loop(self):
+        """The consequence the agreement property exists to prevent, stated
+        directly: an oversized icon must be refused by `_download_icon` so the
+        loop moves on, not accepted and then rejected by the upload."""
+        from app.services.favicon_extractor import _decode_is_valid_image, _usable_by_the_avatar_pipeline
+
+        buf = io.BytesIO()
+        Image.new("L", (9000, 9000), 0).save(buf, format="PNG")
+        bomb = buf.getvalue()
+
+        assert _decode_is_valid_image(bomb) is True, "verify() does not decompress — that is the trap"
+        assert _usable_by_the_avatar_pipeline(bomb) is False
 
 
 class TestDownloadIconAppliesThePipelineCheck:
@@ -364,8 +401,41 @@ class TestTheAvatarWrite:
         written = _reread(db, 8002)
         assert written.bot_logo == _UPLOADED_KEY
         assert written.launcher_logo == _UPLOADED_KEY
-        # `avatar_type` is a style selector, not provenance — it is never touched.
+        # `avatar_type` is a style selector, not provenance. This can't tell
+        # "never touched" from "reassigned to upload" — they're the same row —
+        # but it does fail if the write ever puts a different value there,
+        # which is the mistake that was made once.
         assert written.avatar_type == "upload"
+
+    @pytest.mark.asyncio
+    async def test_the_widget_config_cache_is_dropped_so_the_avatar_appears_now(self, db, monkeypatch):
+        """The widget serves bot_logo / launcher_logo from a 10-minute config
+        cache. Committing without invalidating leaves the customer's site
+        showing the fallback robot for up to `BOT_CONFIG_TTL` after a crawl
+        that reports itself finished."""
+        from app.core.cache import bot_config_key
+
+        bot = _make_bot(db, 8016)
+        dropped: list[str] = []
+        monkeypatch.setattr(orch, "cache_delete", lambda key: dropped.append(key))
+
+        with _favicon_enabled(monkeypatch, fetch=AsyncMock(return_value=_image_bytes("PNG"))):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        assert _reread(db, 8016).bot_logo == _UPLOADED_KEY
+        assert dropped == [bot_config_key("bot-fav8016")]
+
+    @pytest.mark.asyncio
+    async def test_no_write_means_no_cache_churn(self, db, monkeypatch):
+        """The invalidation belongs to the write, not to the attempt."""
+        bot = _make_bot(db, 8017, avatar_type="orb")
+        dropped: list[str] = []
+        monkeypatch.setattr(orch, "cache_delete", lambda key: dropped.append(key))
+
+        with _favicon_enabled(monkeypatch, fetch=AsyncMock(return_value=_image_bytes("PNG"))):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        assert dropped == []
 
     @pytest.mark.asyncio
     async def test_a_custom_launcher_image_is_not_overwritten(self, db, monkeypatch):
@@ -486,16 +556,42 @@ class TestTheAvatarWrite:
         assert _reread(db, 8012).bot_logo is None
 
     @pytest.mark.asyncio
-    async def test_a_failed_upload_writes_nothing(self, db, monkeypatch):
-        """`upload_to_r2` returns None when the image is unusable or R2 rejects
-        it. Writing that would point the widget at an empty key."""
+    async def test_a_raising_upload_is_swallowed(self, db, monkeypatch):
+        """The reachable R2 failure mode today: `upload_to_r2` re-raises on a
+        ClientError, and `process_image_for_logo` raises `UnsupportedImage` for
+        bytes the pipeline won't take — which arrive here straight off a
+        customer-controlled host."""
         bot = _make_bot(db, 8013)
-        fetch = AsyncMock(return_value=_image_bytes("PNG"))
 
-        with _favicon_enabled(monkeypatch, fetch=fetch, upload=lambda *a, **k: None):
+        def _explodes(*args, **kwargs):
+            raise Exception("R2 upload failed (ClientError): AccessDenied")
+
+        with _favicon_enabled(monkeypatch, fetch=AsyncMock(return_value=_image_bytes("PNG")), upload=_explodes):
             await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
 
         assert _reread(db, 8013).bot_logo is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("returned", [None, ""])
+    async def test_a_falsy_upload_key_is_never_written(self, db, monkeypatch, returned):
+        """The `if not logo_key` guard. `upload_to_r2` raises rather than
+        returning falsy today, so this pins the guard against a future version
+        that returns an empty key instead — which would otherwise be written
+        straight onto the bot and point the widget at nothing.
+
+        The empty-string case is what gives this test teeth: with `None`,
+        dropping the guard writes `bot_logo = None`, which is indistinguishable
+        from not writing at all."""
+        bot = _make_bot(db, 8013 if returned is None else 8015)
+
+        with _favicon_enabled(
+            monkeypatch,
+            fetch=AsyncMock(return_value=_image_bytes("PNG")),
+            upload=lambda *a, **k: returned,
+        ):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        assert _reread(db, bot.id).bot_logo is None
 
     @pytest.mark.asyncio
     async def test_the_fetched_bytes_are_what_reaches_the_upload(self, db, monkeypatch):

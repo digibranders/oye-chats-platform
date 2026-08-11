@@ -33,6 +33,7 @@ import time
 from collections.abc import Callable
 
 from app.config import CRAWL_FAVICON_AVATAR_ENABLED, CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
+from app.core.cache import bot_config_key, cache_delete
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
@@ -305,7 +306,14 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
             # while the launcher bubble still showed the fallback robot.
             if not bot.launcher_logo:
                 bot.launcher_logo = logo_key
+            bot_key = bot.bot_key
             session.commit()
+            # The widget reads bot_logo / launcher_logo out of a 10-minute
+            # config cache, so a commit alone leaves the customer's site
+            # showing the fallback robot for up to BOT_CONFIG_TTL. Every
+            # mutating route in `bot_routes` drops this key after its commit;
+            # this write is no different just because a crawl made it.
+            cache_delete(bot_config_key(bot_key))
             logger.info("Set favicon avatar for bot %s from %s", bot_id, url)
     except Exception:
         logger.warning("favicon avatar acquisition failed for bot %s (non-fatal)", bot_id, exc_info=True)
@@ -995,8 +1003,18 @@ async def run_full_crawl(
         # already fetched, ingested and BILLED. The customer's spinner hung
         # forever on completed work, and a retry re-ran the whole crawl.
         #
-        # Now nothing before this point depends on it, and the budget is
-        # absolute regardless of how many candidates a site declares.
+        # Now nothing before this point depends on it, and the budget holds
+        # regardless of how many candidates a site declares.
+        #
+        # One caveat on "bounded", because `wait_for` only interrupts at an
+        # await point: `core/ssrf` resolves DNS with a blocking
+        # `socket.getaddrinfo` (validate + pin, per hop, per candidate). A
+        # blackholed authoritative nameserver stalls the whole event loop past
+        # this budget, and the crawl lock below is released in `finally`, so it
+        # is held for that time too. That is a property of the shared SSRF
+        # helpers rather than of this step, and it applies equally to the
+        # footer harvest and the colour extractor above — but it is the reason
+        # this budget is a backstop, not a guarantee.
         #
         # NOT gated on `ordered_urls`, unlike the footer harvest above. That
         # exclusion exists because a partial re-scrape has an explicit PAGE

@@ -50,8 +50,14 @@ def _allow_list(text: str) -> set[str]:
 
 
 def _env_file_references(text: str) -> set[str]:
-    """Every `${VAR}` / `${VAR:-default}` interpolated into a `"KEY=..."` line."""
-    return set(re.findall(r'"\w+=\$\{(\w+)(?::-[^}]*)?\}"', text))
+    """Every `${VAR}` / `${VAR:-default}` interpolated into a `"KEY=..."` line.
+
+    Deliberately does not require the closing quote right after `}` — a line
+    like `"CORS_ORIGINS=${CORS_ORIGINS},https://x"` is perfectly ordinary, and
+    anchoring on it would silently drop that variable from the comparison and
+    fail the reverse check with a misleading message.
+    """
+    return set(re.findall(r'"\w+=[^"]*?\$\{(\w+)(?::-[^}]*)?\}', text))
 
 
 def test_every_variable_the_env_file_uses_crosses_the_ssh_boundary(workflow):
@@ -70,18 +76,23 @@ def test_nothing_is_forwarded_that_the_env_file_never_uses(workflow):
 
 def test_the_favicon_avatar_flag_is_deployable_and_defaults_off(workflow):
     """The flag this whole plumbing exercise was for. It must be reachable from
-    a GitHub Actions variable AND default to off when that variable is unset —
-    an unset variable interpolates to the empty string, which `config.py` reads
-    as false only because of the `:-false` default written here."""
+    a GitHub Actions variable AND stay off when that variable is unset.
+
+    An unset variable interpolates to the empty string. `config.py`'s `_env`
+    already treats an empty value as absent and falls back to "false", so the
+    `:-false` here is the second of two independent defaults, not the only
+    one — but it is the one that keeps `api/.env` on the droplet readable as
+    a statement of intent rather than a blank."""
     assert "CRAWL_FAVICON_AVATAR_ENABLED: ${{ vars.CRAWL_FAVICON_AVATAR_ENABLED }}" in workflow
     assert "CRAWL_FAVICON_AVATAR_ENABLED" in _allow_list(workflow)
     assert '"CRAWL_FAVICON_AVATAR_ENABLED=${CRAWL_FAVICON_AVATAR_ENABLED:-false}"' in workflow
 
 
-def test_the_flag_is_still_shipped_off_in_code(workflow):
-    """Belt and braces on the same decision from the other side: even a deploy
-    that forwards a stray truthy value has to get past `config.py`'s default,
-    which is what a fresh checkout and every non-deploy environment reads."""
+def test_the_flag_is_still_shipped_off_in_code():
+    """The same decision from the other side. Takes no `workflow` fixture on
+    purpose — this holds in a checkout with no `.github` at all, and skipping
+    it along with the workflow tests would lose the only assertion that the
+    code default itself has not been flipped."""
     from app.config import CRAWL_FAVICON_AVATAR_ENABLED
 
     if os.getenv("CRAWL_FAVICON_AVATAR_ENABLED"):

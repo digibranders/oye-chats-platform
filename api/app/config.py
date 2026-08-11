@@ -606,11 +606,21 @@ CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
 # Actions repository variable of the same name to `true` and redeploy to try it.
 #
 # Known divergence from `docs/superpowers/plans/2026-08-10-derived-chat-avatar.md`:
-# that plan puts provenance in a new `Bot.bot_logo_source` column so a derived
-# avatar is distinguishable from an uploaded one. This implementation has no
-# such column — it instead never touches `avatar_type` and only ever fills a
-# slot that is empty on both fields, so nothing the customer chose is lost. The
-# cost is that a derived avatar looks like an uploaded one in the admin UI.
+# that plan puts provenance in a new `Bot.bot_logo_source` column. This
+# implementation has no such column. It never touches `avatar_type` and only
+# ever fills a slot that is empty on BOTH fields, so it cannot overwrite an
+# avatar the customer currently has — but "empty" is not the same as "never
+# chosen", and without provenance the two are indistinguishable:
+#
+#   * A customer who REMOVES their avatar lands in exactly the empty state
+#     (`AvatarPicker` clears `bot_logo`, `bot_routes` mirrors it into
+#     `launcher_logo`, and `bot_logo` is not in `_AUTO_FILL_FIELDS`, so the
+#     deletion is never recorded in `manual_field_overrides`). Their next
+#     re-crawl re-derives the favicon they deleted.
+#   * A derived avatar is presented in the admin UI as an uploaded one.
+#
+# Neither destroys data, and both are fixed by the plan's provenance column.
+# Weigh them before flipping this on.
 CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "false").strip().lower() in (
     "1",
     "true",
