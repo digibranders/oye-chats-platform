@@ -2869,7 +2869,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         style={{ animation: 'fadeUp 0.3s ease-out' }}
                     >
                         <span className="text-[12px] text-gray-500 leading-snug">
-                            Welcome back! Continue your conversation or start something new.
+                            {(() => {
+                                // Greet by first name when the visitor has given one
+                                // (captured lead, or a name typed into a live-chat/
+                                // offline form). Falls back to the generic greeting.
+                                const fullName = (existingLeadInfo?.name || liveChatState?.capturedName || '').trim();
+                                const firstName = fullName.split(/\s+/)[0];
+                                return firstName
+                                    ? `Welcome back ${firstName}! Continue your conversation or start something new.`
+                                    : 'Welcome back! Continue your conversation or start something new.';
+                            })()}
                         </span>
                         <button
                             onClick={() => setShowWelcomeBackBanner(false)}
