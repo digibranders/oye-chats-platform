@@ -7,11 +7,28 @@ lead-enrichment path are covered.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import get_current_bot
 from app.api.chat_routes import router
+
+
+@pytest.fixture(autouse=True)
+def _no_verdict_cache(monkeypatch):
+    """Take the Reoon verdict cache out of the picture for this module.
+
+    These tests assert whether the VENDOR was called; the endpoint caches that
+    verdict in a live Redis keyed only on the address, so the first run of
+    `test_runs_reoon_when_plan_has_feature_and_agent_opted_in` cached
+    "undeliverable" for `junk@disposable-mail.test` and every run for the rest
+    of the TTL then read the cache and never reached the mock — a test that
+    passed on a clean Redis and failed for hours afterwards. The cache's own
+    behaviour is covered in `test_reoon_verdict_cache.py`.
+    """
+    monkeypatch.setattr("app.core.cache.cache_get", lambda _key: None)
+    monkeypatch.setattr("app.core.cache.cache_set", lambda *_a, **_k: True)
 
 
 def _bot(bot_id: int = 1):

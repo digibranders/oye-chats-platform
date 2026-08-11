@@ -72,9 +72,24 @@ export function AdvancedPage(): ReactElement {
   // Advanced is a paid surface. `loading` guards the initial entitlements fetch
   // (defaults to the restrictive Free fallback) so a paid workspace deep-linking
   // here never flashes the locked card before its real plan resolves.
-  const { isFree, loading: entitlementsLoading, planSlug } = useEntitlements();
-  const emailVerificationPlanAllows = EMAIL_VERIFICATION_PLANS.has(planSlug);
-  const companyLookupPlanAllows = COMPANY_LOOKUP_PLANS.has(planSlug);
+  const { isFree, loading: entitlementsLoading } = useEntitlements();
+  // THIS agent's own plan, straight off the URL-scoped agent. Two sources were
+  // wrong before it:
+  //
+  // * `useEntitlements().planSlug` is the highest-priced plan across every bot
+  //   the client owns, while the server gates on the plan funding THIS bot
+  //   (`is_visitor_intelligence_enabled_for_bot`).
+  // * `useSelectedBotPlanSlug()` resolves against the shell SWITCHER's bot, not
+  //   the `:agentId` in the URL — this page edits the URL agent — and it
+  //   derives the slug from the credit-balance payload, which omits Free
+  //   agents entirely (they have no per-bot ledger), so a Free agent silently
+  //   inherited the account slug.
+  //
+  // `agent.plan_slug` comes from `bot_plan_slug()` on the server: the same
+  // `get_bot_entitlements` the gate itself uses, failing closed to "free".
+  const botPlanSlug = agent?.plan_slug ?? '';
+  const emailVerificationPlanAllows = EMAIL_VERIFICATION_PLANS.has(botPlanSlug);
+  const companyLookupPlanAllows = COMPANY_LOOKUP_PLANS.has(botPlanSlug);
 
   const [draft, setDraft] = useState<AdvancedDraft | null>(null);
   const [initial, setInitial] = useState<AdvancedDraft | null>(null);

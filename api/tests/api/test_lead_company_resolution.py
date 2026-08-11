@@ -321,7 +321,16 @@ class TestItGoesToTheDurableQueue:
         ):
             chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5)
 
-        enqueue.assert_called_once_with("task_resolve_lead_company", "s-q", "infosys.com", 5)
+        # `_job_id` is deterministic per (session, domain) so ARQ collapses the
+        # two posts the widget makes for one visitor — see
+        # `TestTheQueueDedupesToo` in test_enrichment_money_path_e2e.py.
+        enqueue.assert_called_once_with(
+            "task_resolve_lead_company",
+            "s-q",
+            "infosys.com",
+            5,
+            _job_id="resolve-company:s-q:infosys.com",
+        )
         assert pool.call_count == 0, "queued AND run in-process — the work would happen twice"
 
     def test_it_falls_back_to_the_pool_when_the_worker_is_down(self):

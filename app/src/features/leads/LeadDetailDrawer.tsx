@@ -134,20 +134,53 @@ function ContactRow({
   icon: Icon,
   value,
   secondary,
+  logoUrl,
+  description,
 }: {
   icon: typeof Mail;
   value: string;
   /** Quieter line beneath the value — used to keep the raw email domain
    *  visible under a resolved company name, rather than replacing it. */
   secondary?: string;
+  /** Company logo, when the resolver found one. Replaces the generic icon. */
+  logoUrl?: string;
+  /** One-line company description from the resolver. */
+  description?: string;
 }): ReactElement {
+  const [logoBroken, setLogoBroken] = useState(false);
+  const showLogo = Boolean(logoUrl) && !logoBroken;
+
   return (
     <div className="flex items-start gap-2.5 text-[13px] text-[var(--ds-text)]">
-      <Icon size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
+      {showLogo ? (
+        <img
+          src={logoUrl}
+          alt=""
+          // Third-party URL from the company's own site. It can 404, move, or
+          // be hotlink-blocked at any time, so a failure falls back to the
+          // generic icon rather than leaving a broken-image glyph.
+          onError={() => setLogoBroken(true)}
+          // No referrer, matching `ProfileMenu`'s third-party avatar. The
+          // visitor chooses which domain we crawl by typing an email at it,
+          // so a hostile site can set `og:image` to a beacon and read the
+          // operator's IP, UA and the moment they opened the lead. Lazy so it
+          // only fires for a drawer actually scrolled into view.
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          className="mt-0.5 h-[15px] w-[15px] shrink-0 rounded-sm object-contain"
+        />
+      ) : (
+        <Icon size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
+      )}
       <span className="min-w-0">
         <span className="block break-words">{value}</span>
         {secondary && (
           <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{secondary}</span>
+        )}
+        {description && (
+          <span className="mt-1 block text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
+            {description}
+          </span>
         )}
       </span>
     </div>
@@ -491,9 +524,21 @@ export function LeadDetailDrawer({
                   // Resolved name with the raw domain beneath it — never
                   // instead of it. See `companyDisplay`.
                   const company = companyDisplay(detail.contact);
-                  return company ? (
-                    <ContactRow icon={Building2} value={company.value} secondary={company.secondary} />
-                  ) : null;
+                  if (!company) return null;
+                  const logo = detail.contact?.company_logo_url;
+                  return (
+                    <ContactRow
+                      icon={Building2}
+                      value={company.value}
+                      secondary={company.secondary}
+                      // The resolver returns a logo and a description too, and
+                      // both were stored, plan-gated and typed while being
+                      // rendered nowhere — two thirds of what the paid
+                      // enrichment produces was invisible.
+                      logoUrl={typeof logo === 'string' ? logo : undefined}
+                      description={detail.contact?.company_description ?? undefined}
+                    />
+                  );
                 })()}
                 {formatLocation(detail.location) !== 'Unknown' && (
                   <ContactRow icon={MapPin} value={formatLocation(detail.location)} />

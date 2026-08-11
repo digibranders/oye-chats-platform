@@ -404,12 +404,55 @@ class BotResponse(BaseModel):
     session_share_domain: str | None = None
     is_active: bool
     created_at: str
+    # THIS bot's own plan (with account fallback), resolved server-side by
+    # `get_bot_entitlements`. Billing attaches to the Bot, so a workspace can
+    # hold a Professional agent and a Free agent at once, and the admin UI's
+    # per-agent feature gates need the agent's own answer. The frontend used to
+    # infer it from the credit-balance payload, which omits Free agents
+    # entirely (they have no per-bot ledger) — so a Free agent silently
+    # inherited the workspace's highest-priced plan and rendered paid controls
+    # the server then denied. Defaults to "free": fail closed.
+    plan_slug: str = "free"
+    # Display-only sibling of `plan_slug`, resolved in the same call so the
+    # plan chip can never disagree with the feature switch beside it.
+    plan_name: str = "Free"
 
     class Config:
         from_attributes = True
 
 
-def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
+def bot_plan(bot_id: int, session) -> tuple[str, str]:
+    """This bot's own ``(plan_slug, plan_name)``. Fails closed to Free.
+
+    Mirrors the widget-config resolution in ``get_bot_config`` and the gates in
+    ``plan_entitlements_service``: never let a resolution error read as a paid
+    tier. The slug drives gates; the name is display-only, and the two travel
+    together so a chip can never disagree with the switch beside it.
+    """
+    from app.services import plan_entitlements_service
+
+    try:
+        ents = plan_entitlements_service.get_bot_entitlements(bot_id, session)
+        slug, name = ents.plan_slug, ents.plan_name
+    except Exception:
+        logger.warning("bot_plan: entitlements lookup failed for bot %s — defaulting to Free", bot_id)
+        return "free", "Free"
+
+    # Type-checked, not just truthy: a non-string here (a stub, a bad row) would
+    # sail through `or "free"` and reach the response as a value the frontend's
+    # slug comparison can never match — an agent locked out of everything it
+    # pays for, with no error anywhere.
+    safe_slug = slug.lower() if isinstance(slug, str) and slug else "free"
+    safe_name = name if isinstance(name, str) and name else "Free"
+    return safe_slug, safe_name
+
+
+def bot_plan_slug(bot_id: int, session) -> str:
+    """Just the slug from :func:`bot_plan`, for gate-only callers."""
+    return bot_plan(bot_id, session)[0]
+
+
+def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", plan_name: str = "Free") -> BotResponse:
     """Serialize a ``Bot`` row into the public ``BotResponse``.
 
     Single source of truth for the shape returned by ``GET /bots``,
@@ -425,6 +468,8 @@ def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
         ll = f"{base}/files/{ll}"
 
     return BotResponse(
+        plan_slug=plan_slug,
+        plan_name=plan_name,
         id=bot.id,
         bot_key=bot.bot_key,
         name=bot.name,
@@ -1287,6 +1332,7 @@ def list_bots(
         bots = session.execute(stmt).scalars().all()
         bots_response = []
         for b in bots:
+            _b_plan = bot_plan(b.id, session)
             bl = b.bot_logo
             if bl and not bl.startswith("http"):
                 bl = f"{str(request.base_url).rstrip('/')}/files/{bl}"
@@ -1296,6 +1342,8 @@ def list_bots(
 
             bots_response.append(
                 BotResponse(
+                    plan_slug=_b_plan[0],
+                    plan_name=_b_plan[1],
                     id=b.id,
                     bot_key=b.bot_key,
                     name=b.name,
@@ -1400,7 +1448,8 @@ def create_bot(
             # bot for the same site, treat this as a retry and return that bot.
             existing = _find_bot_by_website(session, auth["client_id"], request.website)
             if existing is not None:
-                return _bot_to_response(existing, http_request)
+                _plan = bot_plan(existing.id, session)
+                return _bot_to_response(existing, http_request, plan_slug=_plan[0], plan_name=_plan[1])
             raise HTTPException(
                 status_code=402,
                 detail={
@@ -1464,7 +1513,8 @@ def create_bot(
         # don't need a second round-trip to resolve the created bot — the thin
         # {bot_id, bot_key} envelope is what forced the frontend to re-fetch and
         # select by id, the mistake behind the duplicate-bot onboarding bounce.
-        return _bot_to_response(new_bot, http_request)
+        _plan = bot_plan(new_bot.id, session)
+        return _bot_to_response(new_bot, http_request, plan_slug=_plan[0], plan_name=_plan[1])
 
 
 # ── Per-bot checkout ──────────────────────────────────────────────────────
@@ -1788,7 +1838,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
     """Get details of a specific bot owned by the authenticated workspace."""
     with get_session() as session:
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
-        return _bot_to_response(bot, request)
+        _plan = bot_plan(bot.id, session)
+        return _bot_to_response(bot, request, plan_slug=_plan[0], plan_name=_plan[1])
 
 
 # Auto-fillable fields the website crawl may populate. Edits to these are

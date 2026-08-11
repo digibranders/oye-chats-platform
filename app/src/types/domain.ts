@@ -48,6 +48,19 @@ export interface Bot {
   brand_tone?: string | null;
   business_hours?: Record<string, unknown> | null;
   show_branding?: boolean;
+  /**
+   * THIS agent's own plan slug, resolved server-side by `bot_plan_slug()` in
+   * `bot_routes.py` (the same `get_bot_entitlements` the server's feature gates
+   * use, failing closed to `'free'`).
+   *
+   * Billing attaches to the Bot, so a workspace can hold a Professional agent
+   * and a Free agent at once. Per-agent feature gates MUST read this and not
+   * `useEntitlements().plan_slug`, which reports the highest-priced plan across
+   * the whole workspace.
+   */
+  plan_slug?: string;
+  /** Display name for {@link plan_slug}, resolved in the same server call. */
+  plan_name?: string;
 }
 
 export interface CurrentUser {

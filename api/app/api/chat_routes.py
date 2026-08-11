@@ -724,6 +724,17 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             return
 
         if domain:
+            if lead.company and lead.company != domain:
+                # The visitor corrected their address to a different employer.
+                # `company_name` / description / logo were resolved FROM the old
+                # domain, so they are now simply wrong — and `companyDisplay`
+                # renders the resolved name ABOVE the domain, which would put
+                # "Infosys Limited" over "wipro.com" on a sales rep's screen.
+                # Clearing them here is also what lets the dedup guard in
+                # `_company_already_resolved` recognise this as unanswered.
+                lead.company_name = None
+                lead.company_description = None
+                lead.company_logo_url = None
             lead.company = domain
         if validation:
             # Use the SAME predicate the widget's blur check uses. Storing
@@ -777,9 +788,55 @@ def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: 
     if WORKER_ENABLED:
         from app.worker.enqueue import enqueue_sync
 
-        enqueue_sync("task_resolve_lead_company", session_id, domain, bot_id)
+        # `_job_id` makes ARQ itself reject a duplicate: the widget POSTs
+        # /chat/lead-capture from both the pre-chat and handoff forms, and two
+        # posts landing close together both pass `_company_already_resolved`
+        # (a read) before either writes. The DB guard stops the common
+        # sequential repeat; this stops the concurrent one, so we never pay
+        # our crawl vendor twice for one visitor. Keyed on the domain too, so
+        # a visitor who corrects their address to a different employer still
+        # gets resolved.
+        enqueue_sync(
+            "task_resolve_lead_company",
+            session_id,
+            domain,
+            bot_id,
+            _job_id=f"resolve-company:{session_id}:{domain}",
+        )
     else:
         submit_background(_resolve_lead_company, session_id, domain, bot_id)
+
+
+def _company_already_resolved(session_id: str, domain: str) -> bool:
+    """Has this lead's company already been answered FOR THIS DOMAIN?
+
+    The widget POSTs /chat/lead-capture from TWO places — the pre-chat form and
+    the handoff form — so one visitor produces two runs. The shared ledger key
+    makes the second one free for the CUSTOMER, but nothing stopped it
+    re-crawling on OUR vendor account. This is the IP path's `_already_resolved`
+    guard, which the domain path never had.
+
+    Two things it deliberately does NOT do:
+
+    * It does not skip when the domain has CHANGED. `lead.company` is rewritten
+      on every capture, so a second POST with a different address moves the
+      domain while a name-only guard would freeze the old `company_name` — and
+      `companyDisplay` would then render "Infosys Limited" above "wipro.com",
+      a confidently wrong company on a sales rep's screen.
+    * It does not fail closed. This is a cost optimisation, not a gate: a
+      transient DB error must never SUPPRESS the enrichment, because nothing
+      retries it — the only trigger is another lead-capture POST. Matching
+      `_already_resolved`, an error falls through and does the work.
+    """
+    from app.db.models import LeadInfo
+
+    try:
+        with get_session() as session:
+            existing = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+            return existing is not None and bool(existing.company_name) and existing.company == domain
+    except Exception:
+        logger.warning("company dedup check failed for session=%s — resolving anyway", session_id, exc_info=True)
+        return False
 
 
 def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | None) -> None:
@@ -812,6 +869,8 @@ def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | Non
     from app.services.company_profile_service import resolve_company
 
     try:
+        if _company_already_resolved(session_id, domain):
+            return
         with get_session() as session:
             allowed = is_visitor_intelligence_enabled_for_bot(bot_id, session)
             feature_on = credit_service.is_feature_enabled(session, "company_name")
@@ -1192,6 +1251,15 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 
 
+# A Reoon verdict for a given address does not change day to day, and this
+# check is unmetered, so caching it is the cheapest way to bound vendor spend
+# on a public endpoint.
+_REOON_VERDICT_TTL_S = 24 * 60 * 60
+# A verdict that BLOCKS a visitor is held only long enough to absorb a burst.
+# See `validate_email_endpoint` for why the two are not symmetric.
+_REOON_BLOCKED_TTL_S = 5 * 60
+
+
 @router.post("/chat/validate-email")
 @limiter.limit("20/minute", key_func=key_from_bot_key)
 def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
@@ -1233,13 +1301,52 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         ):
             return {"valid": True}
 
+    from app.core.cache import cache_get, cache_set
     from app.services.reoon_service import is_obviously_undeliverable, verify_email
 
-    validation = verify_email(email)
-    if validation is None:
-        return {"valid": True}
+    # CACHED, because this call is UNMETERED and the endpoint is public.
+    #
+    # It is authenticated only by the widget's bot key — embedded in customer
+    # pages — and rate-limited at 20/min per key, so it was 20 free Reoon calls
+    # a minute per widget, on OyeChats' account, with no ledger row anywhere.
+    # Metering it would be the wrong fix: this is a pre-submit UX helper that
+    # fires on field blur, and charging a customer because a visitor tabbed
+    # through a form twice is indefensible.
+    #
+    # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
+    # directions. A "deliverable" answer is safe to hold for a day: the worst
+    # case is that we let through an address that went bad since. An
+    # "undeliverable" answer BLOCKS the visitor — `HandoffForm` refuses to
+    # submit on it — and `is_obviously_undeliverable` reads a live DNS/SMTP
+    # probe that this codebase already documents as having known false
+    # positives. Holding one of those for 24 hours pins a real person out of
+    # every OyeChats widget on the internet (the key is the address, not the
+    # tenant, because deliverability is a property of the address). A short
+    # window still collapses the abuse case — a loop on the public bot key
+    # hammers the same few addresses within seconds — while letting a
+    # transient false verdict clear on the visitor's next try.
+    #
+    # Keyed on a hash so no raw address is stored in Redis, and prefixed like
+    # every other key this platform writes (`core/cache.PREFIX`) so a shared
+    # Redis can't collide and a prefix flush can reach it.
+    fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:32]
+    cache_key = f"oyechats:reoon:verdict:{fingerprint}"
 
-    if is_obviously_undeliverable(validation):
+    cached = cache_get(cache_key)
+    if isinstance(cached, dict) and "undeliverable" in cached:
+        undeliverable = bool(cached["undeliverable"])
+    else:
+        validation = verify_email(email)
+        if validation is None:
+            # Reoon unreachable — fail OPEN. A visitor must never be blocked
+            # from submitting because our vendor is down. Not cached: the next
+            # attempt should retry rather than inherit an outage.
+            return {"valid": True}
+        undeliverable = is_obviously_undeliverable(validation)
+        ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
+        cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
+
+    if undeliverable:
         return {"valid": False, "reason": "This email address doesn't look right — mind double-checking it?"}
     return {"valid": True}
 

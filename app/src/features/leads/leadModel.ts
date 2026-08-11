@@ -243,6 +243,10 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
         lead.contact?.name,
         lead.contact?.email,
         lead.contact?.company,
+        // The RESOLVED company name, which is what the drawer shows and
+        // therefore what an operator will type. Searching only the raw domain
+        // meant "Infosys Limited" — the name on screen — matched nothing.
+        lead.contact?.company_name,
         lead.location,
         lead.session_id,
       ]

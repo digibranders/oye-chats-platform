@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { companyDisplay, formatLocation } from './leadModel';
+import { companyDisplay, filterLeads, formatLocation } from './leadModel';
 
 /**
  * `ChatSession.location` is stored by the backend as
@@ -93,5 +93,31 @@ describe('companyDisplay', () => {
     expect(companyDisplay({ company: 'infosys.com', company_name: '   ' })).toEqual({
       value: 'infosys.com',
     });
+  });
+});
+
+describe('filterLeads searches the resolved company name', () => {
+  const lead = {
+    session_id: 's-1',
+    status: 'mql',
+    location: null,
+    contact: { name: 'Priya', email: 'priya@infosys.com', company: 'infosys.com', company_name: 'Infosys Limited' },
+  } as unknown as Parameters<typeof filterLeads>[0][number];
+
+  const search = (query: string) => filterLeads([lead], { query, tier: null, contact: null } as never);
+
+  it('matches the name shown in the drawer', () => {
+    /* The operator sees "Infosys Limited" and types that. Searching only the
+       raw domain returned nothing for the text on their screen. */
+    expect(search('Infosys Limited')).toHaveLength(1);
+    expect(search('infosys limited')).toHaveLength(1);
+  });
+
+  it('still matches the raw domain', () => {
+    expect(search('infosys.com')).toHaveLength(1);
+  });
+
+  it('does not match an unrelated term', () => {
+    expect(search('wipro')).toHaveLength(0);
   });
 });
