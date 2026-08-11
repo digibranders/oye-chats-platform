@@ -198,19 +198,25 @@ export interface AdvancedDraft {
   /** null = use the platform default strictness. */
   relevanceThreshold: number | null;
   qualificationFramework: string;
+  /**
+   * Master on/off for lead qualification, bound to the `bant_enabled` Bot
+   * field; defaults ON. When off, the RAG pipeline skips BANT/MEDDIC scoring
+   * entirely (rag_service gates on it), so the framework picker below is moot.
+   */
+  bantEnabled: boolean;
   /** Opaque scoring config; only replaced when the framework changes. */
   bantConfig: Record<string, unknown> | null;
   featureFlags: Record<string, boolean>;
   widgetConfig: Record<string, number>;
   /**
-   * Per-agent opt-OUT for metered Reoon email verification. Bound to the
-   * `email_verification_enabled` Bot field; defaults ON. Only effective on
+   * Per-agent opt-IN for metered Reoon email verification. Bound to the
+   * `email_verification_enabled` Bot field; defaults OFF. Only effective on
    * Standard / Professional plans (enforced server-side).
    */
   emailVerificationEnabled: boolean;
   /**
-   * Per-agent opt-OUT for the metered IP→company lookup. Bound to the
-   * `company_lookup_enabled` Bot field; defaults ON. Professional-only, and
+   * Per-agent opt-IN for the metered IP-to-company lookup. Bound to the
+   * `company_lookup_enabled` Bot field; defaults OFF. Professional-only, and
    * charged only when a company is actually identified.
    */
   companyLookupEnabled: boolean;
@@ -249,14 +255,17 @@ export function parseSettings(raw: Record<string, unknown>): AdvancedDraft {
   return {
     relevanceThreshold: typeof threshold === 'number' ? threshold : null,
     qualificationFramework: typeof framework === 'string' && framework ? framework : 'bant',
+    // `!== false`: the column defaults ON, so an absent field (older API build)
+    // reads as ON rather than silently disabling a customer's live scoring.
+    bantEnabled: raw.bant_enabled !== false,
     bantConfig: isRecord(raw.bant_config) ? raw.bant_config : null,
     featureFlags: mergeFlags(raw.feature_flags),
     widgetConfig: mergeConfig(raw.widget_config),
-    // `!== false`, not `=== true`: the columns default ON, so an absent field
-    // (an older API build, a partial payload) must read as ON. `=== true`
-    // would silently show every agent's paid enrichment as switched off.
-    emailVerificationEnabled: raw.email_verification_enabled !== false,
-    companyLookupEnabled: raw.company_lookup_enabled !== false,
+    // `=== true`, not `!== false`: the columns default OFF, so an absent
+    // field (an older API build, a partial payload) must read as OFF.
+    // Enrichment spends credits, so it stays off until the customer opts in.
+    emailVerificationEnabled: raw.email_verification_enabled === true,
+    companyLookupEnabled: raw.company_lookup_enabled === true,
   };
 }
 

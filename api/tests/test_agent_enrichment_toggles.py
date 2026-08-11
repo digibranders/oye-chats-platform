@@ -1,14 +1,16 @@
-"""The per-agent enrichment toggles: default ON, and a real server-side gate.
+"""The per-agent enrichment toggles: default OFF, and a real server-side gate.
 
 Two metered enrichments — Reoon email verification and the IP→company lookup —
 each sit behind THREE independent gates: the plan, the super-admin kill switch
 (`feature.<name>_enabled`), and the customer's own toggle. All three must pass
 before a credit is spent.
 
-Both toggles default ON. The customer already pays for a plan that includes
-these, so the control worth having is an OFF switch for someone who doesn't
-want the credits spent — not an OFF default that leaves a paid feature
-invisible until they find the Advanced tab.
+Both toggles default OFF (migration `b3d9f1a7c2e5`, which reversed the earlier
+`c3f7a91b2d84`). Enrichment spends credits, so it is an explicit opt-in the
+customer switches on rather than a metered feature left running until they
+find the Advanced tab. The trade-off accepted here is discoverability: a
+Standard or Professional customer sees nothing happen until they opt in, which
+is what the Usage page's credit-cost rows and their deep link exist to solve.
 
 `company_lookup_enabled` did not exist at all before this: the company lookup
 had no customer control, only a super-admin switch and the plan gate, so a
@@ -41,13 +43,13 @@ def _bot(db, bot_id: int, **overrides) -> Bot:
     ("action", "column"),
     [("email_verification", "email_verification_enabled"), ("company_name", "company_lookup_enabled")],
 )
-def test_both_toggles_default_on(db, action, column):
-    """A newly created agent has both enrichments live, with no setup step."""
+def test_both_toggles_default_off(db, action, column):
+    """A newly created agent has both enrichments OFF; enrichment is opt-in."""
     bot = _bot(db, 60 if action == "email_verification" else 61)
-    assert getattr(bot, column) is True
+    assert getattr(bot, column) is False
 
     with patch("app.api.chat_routes.get_session", return_value=_Ctx(db)):
-        assert _agent_enrichment_opt_in(bot.id, action) is True
+        assert _agent_enrichment_opt_in(bot.id, action) is False
 
 
 @pytest.mark.parametrize(

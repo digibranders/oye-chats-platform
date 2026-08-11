@@ -241,10 +241,14 @@ export default function Register() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="relative z-10 flex items-center gap-1"
+          className="relative z-10 flex items-center"
         >
-          <img src="/logo-icon.png" alt="OyeChats" className="h-12 w-auto object-contain" />
-          <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
+          {/* White wordmark for the dark branding panel. */}
+          <img
+            src="/new_white.png"
+            alt="OyeChats"
+            className="h-9 w-auto object-contain"
+          />
         </motion.div>
 
         <div className="relative z-10 my-auto">
@@ -310,18 +314,18 @@ export default function Register() {
       </div>
 
       {/* Right Panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50 overflow-y-auto">
+      <div className="flex-1 flex flex-col p-6 sm:p-10 bg-surface-50 overflow-y-auto">
+        {/* Mobile logo pinned to the top-left; the form stays vertically centered below. */}
+        <div className="flex shrink-0 items-center justify-start pt-2 pb-6 lg:hidden">
+          <img src="/new_dark.png" alt="OyeChats" className="h-8 w-auto object-contain" />
+        </div>
+
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full max-w-[400px] my-auto"
+          className="w-full max-w-[400px] m-auto"
         >
-          <div className="flex items-center gap-1 mb-8 lg:hidden">
-            <img src="/logo-icon.png" alt="OyeChats" className="h-11 w-auto object-contain" />
-            <span className="text-lg font-bold text-surface-900">OyeChats</span>
-          </div>
-
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-surface-900 tracking-tight">Get started free</h1>
             <p className="text-surface-500 mt-2 text-sm">Create your OyeChats account</p>

@@ -96,11 +96,14 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             getJourneyConversionPaths(botId, 'handoff_requested', { period, limit: 5 }),
             getJourneyConversionPaths(botId, 'offline_message_sent', { period, limit: 5 }),
             getJourneyPostChat(botId, { period, limit: 10 }),
-            // Matches the diagram's TRIE_MAX_LEAVES. Must also stay within the
-            // route's own bound — `analytics_routes.py` declares
-            // `limit: int = Query(5, ge=1, le=20)`, so 25 returned 422 and
-            // errored the entire Journey tab on load for every account.
-            getJourneyPreChatSequences(botId, { period, limit: 6 }),
+            // Must cover the LARGEST option the diagram's "Page flows shown"
+            // control offers (`TRIE_MAX_LEAVES`), because that control prunes
+            // what is already fetched — it does not re-fetch. Left at 6 while
+            // the picker gained Top 10 / All, "All" returned the same six flows
+            // as "Top 5" and the control looked broken on exactly the busy
+            // accounts it exists for. The route's ceiling was raised to
+            // `le=50` in the same commit, so 25 is within bounds.
+            getJourneyPreChatSequences(botId, { period, limit: 25 }),
           ]);
 
         if (cancelled) return;

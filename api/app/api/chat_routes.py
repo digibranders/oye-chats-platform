@@ -369,9 +369,11 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
 
 
 # The per-agent customer toggles, by the enrichment action they gate. Both
-# columns default ON: the customer already pays for a plan that includes these,
-# so the useful control is an OFF switch, not an OFF default that hides a paid
-# feature behind a settings page they have to discover.
+# columns default OFF (migration ``b3d9f1a7c2e5``): enrichment spends credits,
+# so it is an explicit opt-in the customer switches on, not a metered feature
+# left running until they find the settings page. This is the third of three
+# independent gates — the plan and the super-admin kill switch still have to
+# pass as well.
 _AGENT_TOGGLE_COLUMN = {
     "email_verification": "email_verification_enabled",
     "company_name": "company_lookup_enabled",

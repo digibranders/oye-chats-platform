@@ -33,6 +33,7 @@ import time
 from collections.abc import Callable
 
 from app.config import CRAWL_FAVICON_AVATAR_ENABLED, CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
+from app.core.cache import bot_config_key, cache_delete
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
@@ -237,10 +238,13 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
     """Set the site's favicon as the bot's avatar when none is chosen yet.
 
     Best-effort and non-fatal — a failure here must never affect the crawl
-    result. Runs only for a bot-scoped full crawl (``ordered_urls`` partial
-    re-scrapes skip it, same as the footer harvest) and only when the customer
-    hasn't already set ``bot_logo``: an explicit avatar is never overwritten,
-    mirroring how ``services_url`` is auto-filled only when empty.
+    result. Runs for any bot-scoped crawl, full or partial: the icon is read
+    from the homepage, so which pages the customer ticked is irrelevant to it.
+    The only gate is an empty avatar slot — ``bot_logo`` unset AND
+    ``avatar_type`` still ``upload`` — so an explicit choice is never
+    overwritten, mirroring how ``services_url`` is auto-filled only when empty.
+    That check is the first thing this does, so a re-crawl of a bot that
+    already has an avatar costs one indexed lookup and no network at all.
 
     The favicon bytes are pushed through the same logo pipeline as a manual
     upload (:func:`upload_to_r2` square-crops + resizes to a 512x512 PNG), so the
@@ -251,9 +255,17 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
         return
     try:
         # Cheap pre-check: skip the network fetch entirely if an avatar exists.
+        # Mirrors the authoritative post-fetch check below rather than being a
+        # weaker subset of it — an orb/mascot bot is never going to pass that
+        # check, and now that this runs on every crawl rather than only full
+        # ones, letting it fetch a homepage and upload to R2 first would burn
+        # the budget on every re-crawl to reach a foregone conclusion.
         with get_session() as session:
             bot = session.get(Bot, bot_id)
             if bot is None or bot.client_id != client_id or bot.bot_logo:
+                return
+            if (bot.avatar_type or "upload") != "upload":
+                logger.info("bot %s uses the %s avatar — leaving it alone", bot_id, bot.avatar_type)
                 return
 
         from app.services.favicon_extractor import fetch_favicon_image
@@ -294,7 +306,14 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
             # while the launcher bubble still showed the fallback robot.
             if not bot.launcher_logo:
                 bot.launcher_logo = logo_key
+            bot_key = bot.bot_key
             session.commit()
+            # The widget reads bot_logo / launcher_logo out of a 10-minute
+            # config cache, so a commit alone leaves the customer's site
+            # showing the fallback robot for up to BOT_CONFIG_TTL. Every
+            # mutating route in `bot_routes` drops this key after its commit;
+            # this write is no different just because a crawl made it.
+            cache_delete(bot_config_key(bot_key))
             logger.info("Set favicon avatar for bot %s from %s", bot_id, url)
     except Exception:
         logger.warning("favicon avatar acquisition failed for bot %s (non-fatal)", bot_id, exc_info=True)
@@ -414,9 +433,16 @@ async def run_full_crawl(
     """
     result_payload: dict | None = None
     started_at = time.time()
-    # Denominator for the UI progress bar: the explicit list length for an
-    # ordered crawl, else the plan-derived page cap (may be None for recursive).
-    progress_max = len(ordered_urls) if ordered_urls else max_pages
+    # Denominator for the UI progress bar. Only ever a real, known page count
+    # (the explicit ordered-crawl list length) — never `max_pages`, which is
+    # a plan/credit-derived *ceiling*, not a discovered total. A small site
+    # with no sitemap (ordered_urls empty) falls into the recursive crawl
+    # below with no discovered count at all; showing that site's progress as
+    # "1/2398 pages" because 2398 happens to be this account's crawl budget
+    # reads as "we found 2398 pages on your 20-page site" and is just wrong.
+    # `None` here means "total unknown" — the UI shows pages crawled so far
+    # with no (fabricated) denominator instead.
+    progress_max = len(ordered_urls) if ordered_urls else None
     crawled_urls: list[str] = []
 
     def _report_page(page_url: str, ok: bool) -> None:
@@ -977,18 +1003,44 @@ async def run_full_crawl(
         # already fetched, ingested and BILLED. The customer's spinner hung
         # forever on completed work, and a retry re-ran the whole crawl.
         #
-        # Now nothing before this point depends on it, and the budget is
-        # absolute regardless of how many candidates a site declares.
-        if not ordered_urls:
-            try:
-                await asyncio.wait_for(
-                    _maybe_apply_favicon_avatar(bot_id, client_id, url),
-                    timeout=_FAVICON_TOTAL_BUDGET_S,
-                )
-            except TimeoutError:
-                logger.info("favicon avatar timed out for bot %s — crawl already complete", bot_id)
-            except Exception:
-                logger.warning("favicon avatar failed for bot %s (non-fatal)", bot_id, exc_info=True)
+        # Now nothing before this point depends on it, and the budget holds
+        # regardless of how many candidates a site declares.
+        #
+        # One caveat on "bounded", because `wait_for` only interrupts at an
+        # await point: `core/ssrf` resolves DNS with a blocking
+        # `socket.getaddrinfo` (validate + pin, per hop, per candidate). A
+        # blackholed authoritative nameserver stalls the whole event loop past
+        # this budget, and the crawl lock below is released in `finally`, so it
+        # is held for that time too. That is a property of the shared SSRF
+        # helpers rather than of this step, and it applies equally to the
+        # footer harvest and the colour extractor above — but it is the reason
+        # this budget is a backstop, not a guarantee.
+        #
+        # NOT gated on `ordered_urls`, unlike the footer harvest above. That
+        # exclusion exists because a partial re-scrape has an explicit PAGE
+        # list, so re-running page-level site work would be off topic. The
+        # favicon is SITE work: it is read from the homepage and has nothing
+        # to do with which pages were ticked. Gating it on `ordered_urls` made
+        # it dead code for the flow that matters — the admin panel pre-ticks
+        # every discovered page, so `ordered_urls` is set on essentially every
+        # crawl started from it, INCLUDING a customer's first one, which is
+        # exactly when the bot has no avatar and this is worth anything.
+        #
+        # The real gate is "this bot has no avatar yet", which
+        # `_maybe_apply_favicon_avatar` already applies as its first cheap
+        # pre-check — one indexed primary-key SELECT, before any network call.
+        # So a re-crawl of a bot that already has an avatar costs one query,
+        # and only a bot still missing one pays for the homepage fetch, capped
+        # at `_FAVICON_TOTAL_BUDGET_S` and after the terminal result is out.
+        try:
+            await asyncio.wait_for(
+                _maybe_apply_favicon_avatar(bot_id, client_id, url),
+                timeout=_FAVICON_TOTAL_BUDGET_S,
+            )
+        except TimeoutError:
+            logger.info("favicon avatar timed out for bot %s — crawl already complete", bot_id)
+        except Exception:
+            logger.warning("favicon avatar failed for bot %s (non-fatal)", bot_id, exc_info=True)
 
         return result_payload
     except CrawlCancelled as exc:

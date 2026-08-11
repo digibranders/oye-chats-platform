@@ -190,10 +190,14 @@ export default function Login() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="relative z-10 flex items-center gap-1"
+          className="relative z-10 flex items-center"
         >
-          <img src="/logo-icon.png" alt="OyeChats" className="h-12 w-auto object-contain" />
-          <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
+          {/* White wordmark for the dark branding panel. */}
+          <img
+            src="/new_white.png"
+            alt="OyeChats"
+            className="h-9 w-auto object-contain"
+          />
         </motion.div>
 
         {/* Hero content */}
@@ -261,19 +265,20 @@ export default function Login() {
       </div>
 
       {/* Right Panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50">
+      <div className="relative flex-1 flex items-center justify-center p-6 sm:p-10 bg-surface-50">
+        {/* Mobile logo pinned to the top-left, taken OUT of flow so the form
+            centers in the full viewport height instead of only the space below
+            it. Hidden on desktop, which has its own hero-panel logo. */}
+        <div className="absolute left-6 top-6 flex items-center lg:hidden sm:left-10 sm:top-10">
+          <img src="/new_dark.png" alt="OyeChats" className="h-8 w-auto object-contain" />
+        </div>
+
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           className="w-full max-w-[400px]"
         >
-          {/* Mobile logo */}
-          <div className="flex items-center gap-1 mb-10 lg:hidden">
-            <img src="/logo-icon.png" alt="OyeChats" className="h-11 w-auto object-contain" />
-            <span className="text-lg font-bold text-surface-900">OyeChats</span>
-          </div>
-
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-surface-900 tracking-tight">
               Welcome back

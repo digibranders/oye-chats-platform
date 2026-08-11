@@ -188,12 +188,28 @@ def _usable_by_the_avatar_pipeline(data: bytes) -> bool:
     declaration on the web. The old code returned the ICO bytes, which STOPPED
     the candidate loop, so a site declaring `/favicon.ico` got no avatar AND
     never reached the `/apple-touch-icon.png` that would have worked.
+
+    Answered by RUNNING the pipeline rather than by re-implementing its
+    admission rules, because a re-implementation drifts and this one did.
+    Reading `ALLOWED_IMAGE_FORMATS` modelled only the first of the pipeline's
+    three rejections and missed the other two — the decompression-bomb guard
+    (`MAX_DECODED_PIXELS`) and the decode failure on truncated data with
+    `LOAD_TRUNCATED_IMAGES` pinned off. A 9000x9000 solid-colour PNG is 78 KB
+    on the wire, sails past the byte cap and past `_decode_is_valid_image`
+    (`verify()` never decompresses), and was declared usable here — which
+    STOPPED the candidate loop, exactly the ICO failure again, and then had
+    `upload_to_r2` raise on it. The site got no avatar and the perfectly good
+    lower-ranked candidate was never tried.
+
+    Running the real thing costs one extra decode of the winning candidate.
+    That decode is bounded by the same 2 MB body cap and the pipeline's own
+    pixel ceiling, and it is dwarfed by the network fetch that produced the
+    bytes.
     """
-    from app.services.r2_service import ALLOWED_IMAGE_FORMATS
+    from app.services.r2_service import process_image_for_logo
 
     try:
-        with Image.open(io.BytesIO(data)) as img:
-            return (img.format or "").upper() in ALLOWED_IMAGE_FORMATS
+        return bool(process_image_for_logo(data))
     except Exception:
         return False
 
