@@ -96,10 +96,10 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             getJourneyConversionPaths(botId, 'handoff_requested', { period, limit: 5 }),
             getJourneyConversionPaths(botId, 'offline_message_sent', { period, limit: 5 }),
             getJourneyPostChat(botId, { period, limit: 10 }),
-            // Fetch 6 so the diagram's MAX_SEQUENCE_ROWS=6 slot has data
-            // to render — asking for 5 while the UI slot allows 6 meant
-            // the sixth row was dead code and never appeared.
-            getJourneyPreChatSequences(botId, { period, limit: 6 }),
+            // Fetch up to 25 pre-chat sequences to match the diagram's
+            // TRIE_MAX_LEAVES=25 cap — the trie prunes to that many leaves,
+            // so sending fewer would bottleneck the flow below its limit.
+            getJourneyPreChatSequences(botId, { period, limit: 25 }),
           ]);
 
         if (cancelled) return;

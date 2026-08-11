@@ -101,7 +101,7 @@ def paths_to_conversion(
     since: datetime,
     until: datetime,
     limit: int = 10,
-    max_seq_len: int = 6,
+    max_seq_len: int = 25,
 ) -> dict:
     """Top pre-chat page sequences that preceded a given conversion event.
 
@@ -226,7 +226,7 @@ def top_pre_chat_sequences(
     since: datetime,
     until: datetime,
     limit: int = 5,
-    max_seq_len: int = 8,
+    max_seq_len: int = 25,
 ) -> dict:
     """Top pre-chat page sequences across ALL sessions, converted or not.
 
@@ -321,12 +321,17 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
     journeys = _fetch_journeys(db, bot_id, since, until)
 
     conversion_counts: Counter[str] = Counter()
-    # Sessions that did nothing after opening chat: no conversion event,
-    # no post-phase page visit. The UI reads this directly for its
-    # drop-off row instead of subtracting (conversions + post-activity)
-    # from total — that subtraction double-counted any session that both
-    # converted AND kept browsing, so drop-off skewed low.
+    # Partition every journey into exactly one outcome bucket so the UI's
+    # right-hand column reconciles with sessions_with_journey:
+    #   converted  → counted per event in conversion_counts
+    #   browsed    → no conversion event but at least one post-phase page
+    #   no_activity→ no conversion event AND no post-phase page (drop-off)
+    # Both remainder buckets are counted directly (not by subtraction):
+    # subtracting (conversions + post-activity) from the total
+    # double-counts any session that BOTH converted AND kept browsing,
+    # which skewed drop-off low. A session is counted once here.
     sessions_no_activity = 0
+    sessions_browsed_no_conversion = 0
     for journey in journeys:
         seen_events: set[str] = set()
         has_post = False
@@ -337,8 +342,11 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
                 seen_events.add(event)
             if not has_post and entry.get("phase") == "post" and entry.get("path"):
                 has_post = True
-        if not seen_events and not has_post:
-            sessions_no_activity += 1
+        if not seen_events:
+            if has_post:
+                sessions_browsed_no_conversion += 1
+            else:
+                sessions_no_activity += 1
 
     leads_captured = db.execute(
         select(LeadInfo).where(
@@ -356,6 +364,7 @@ def summary_counts(db: Session, bot_id: int, since: datetime, until: datetime) -
         "handoff_requested": conversion_counts.get("handoff_requested", 0),
         "offline_message_sent": conversion_counts.get("offline_message_sent", 0),
         "sessions_no_activity": sessions_no_activity,
+        "sessions_browsed_no_conversion": sessions_browsed_no_conversion,
         "leads_captured": len(leads_captured),
     }
 

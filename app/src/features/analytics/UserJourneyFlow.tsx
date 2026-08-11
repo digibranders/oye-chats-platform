@@ -210,7 +210,7 @@ const CHAIN_START_X = 24;
 const CHAIN_END_X = 410; // just before the chatbot circle
 const CHAIN_MIN_CARD_W = 44; // don't shrink below icon-plus-text
 const CHAIN_MAX_CARD_W = 156; // don't grow past the destination CARD_W
-const MAX_CHAIN_LEN = 8;
+const MAX_CHAIN_LEN = 25;
 
 // Post-chat chain lives to the RIGHT of the chatbot, mirroring the
 // pre-chat chain on the left. Each source row grows its own post-chain
@@ -219,7 +219,7 @@ const MAX_CHAIN_LEN = 8;
 // after — reads as one continuous flow.
 const POST_CHAIN_START_X = 595;
 const POST_CHAIN_END_X = 950;
-const MAX_POST_CHAIN_LEN = 6;
+const MAX_POST_CHAIN_LEN = 25;
 /**
  * Vertical distribution of N cards inside a viewport of height ``vbH``.
  * Returns the top-Y of each card. Uses even center-distribution when
@@ -251,6 +251,13 @@ const CONVERSION_DESTINATIONS = [
   { id: 'offline_message_sent', label: 'Offline Message', tone: 'purple' as const, icon: Mail },
 ];
 const EXIT_DESTINATION = { id: 'exit', label: 'Drop-off / Exit', tone: 'gray' as const, icon: LogOut };
+
+// Synthetic pre-chat entry for visitors who opened chat with NO tracked
+// page before it (direct / first-touch). Rendered as one card on the far
+// left so the entry column sums to the center count instead of silently
+// under-counting these sessions. Sentinel — never a real URL path, so
+// clicking it is a no-op rather than a page filter.
+const DIRECT_PATH = 'Direct (no prior page)';
 
 const DEST_COLUMN_X = 990;
 
@@ -329,12 +336,12 @@ function circleExit(index: number, count: number, centerY: number): { x: number;
 
 /** Cap the visible leaf count so the diagram doesn't explode. Matches
  *  the previous MAX_SEQUENCE_ROWS: 6 distinct end-to-end journeys max. */
-const TRIE_MAX_LEAVES = 6;
+const TRIE_MAX_LEAVES = 25;
 /** Cap the depth we merge shared prefixes to. Trie always renders at
  *  most this many columns; deeper hops are truncated (backend already
  *  caps sequences at 8 pages, so this is a safety net not an active
  *  clip in most cases). */
-const TRIE_MAX_DEPTH = 8;
+const TRIE_MAX_DEPTH = 25;
 /** Vertical space per leaf slot: card height + minimum gap. */
 const TRIE_LEAF_H = CARD_H + ROW_MIN_GAP;
 
@@ -825,6 +832,22 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       insertPath(preRoot, clipped, seq.sessions, seqIndex);
     });
     pruneToMaxLeaves(preRoot, TRIE_MAX_LEAVES);
+
+    // Direct visitors — opened chat with no tracked page before it. Only
+    // meaningful in the unfiltered "all paths" view; when a start/outcome
+    // filter is active the diagram already shows a specific sub-population
+    // whose entry pages are known, so a "no prior page" node wouldn't
+    // reconcile against anything. Injected AFTER pruning with a seqIndex
+    // past every real sequence, so it survives the leaf cap and its
+    // cross-highlight set contains only itself.
+    const isUnfilteredView = effectiveStartFilter == null && outcomeFilter == null;
+    const directCount = Math.max(
+      0,
+      data.summary.sessions_with_journey - data.preChatSequences.sessions_with_pre_chat,
+    );
+    if (isUnfilteredView && directCount > 0) {
+      insertPath(preRoot, [DIRECT_PATH], directCount, filteredSequences.length);
+    }
 
     // Build the post-chat TRIE from the SAME filtered sequences.
     // Post-cards carry the WINNING continuation's own session count
@@ -1335,11 +1358,17 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               // outcome connectors — reading as "nothing happened").
               // Post-chat nodes keep the highlight: they have no single
               // starting page to filter by.
-              if (node.side === 'pre' && node.startPage != null) {
+              if (
+                node.side === 'pre' &&
+                node.startPage != null &&
+                node.path !== DIRECT_PATH
+              ) {
                 const page = node.startPage;
                 setStartFilter((prev) => (prev === page ? null : page));
                 setSelectedRowId(null);
               } else {
+                // Direct / post-chat nodes have no single starting page to
+                // filter by — just toggle the highlight for the flow.
                 toggleRow(node.id);
               }
             }}
@@ -1543,7 +1572,6 @@ function FlowCard({
    *  clipped by displayPath(). */
   tooltip?: string;
 }): ReactElement {
-  const Icon = node.icon;
   const tone = TONE[node.tone];
   const compact = node.width < FLOW_CARD_COMPACT_THRESHOLD;
   const borderClass = active
@@ -1573,11 +1601,6 @@ function FlowCard({
             style={{ backgroundColor: tone.icon }}
           />
         )}
-        <Icon
-          size={14}
-          strokeWidth={1.75}
-          className="shrink-0 text-[var(--ds-text-muted)]"
-        />
         <div className="min-w-0 max-w-full text-center">
           <p className="truncate text-[10px] font-medium leading-tight text-[var(--ds-text-muted)]">
             {node.label}
@@ -1602,11 +1625,6 @@ function FlowCard({
           style={{ backgroundColor: tone.icon }}
         />
       )}
-      <Icon
-        size={18}
-        strokeWidth={1.75}
-        className="shrink-0 text-[var(--ds-text-muted)]"
-      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-medium text-[var(--ds-text-muted)]">{node.label}</p>
         <p className="tabular-nums text-[13px] font-semibold leading-tight text-[var(--ds-text)]">

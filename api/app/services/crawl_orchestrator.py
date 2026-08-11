@@ -32,7 +32,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
+from app.config import CRAWL_FAVICON_AVATAR_ENABLED, CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
@@ -225,6 +225,59 @@ def _apply_crawl_metadata_to_bot(
         bot_db.services_url = services_url_suggestion
         written.append("services_url")
     return written
+
+
+async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: str) -> None:
+    """Set the site's favicon as the bot's avatar when none is chosen yet.
+
+    Best-effort and non-fatal — a failure here must never affect the crawl
+    result. Runs only for a bot-scoped full crawl (``ordered_urls`` partial
+    re-scrapes skip it, same as the footer harvest) and only when the customer
+    hasn't already set ``bot_logo``: an explicit avatar is never overwritten,
+    mirroring how ``services_url`` is auto-filled only when empty.
+
+    The favicon bytes are pushed through the same logo pipeline as a manual
+    upload (:func:`upload_to_r2` square-crops + resizes to a 512x512 PNG), so the
+    stored key and ``avatar_type='upload'`` render identically to a hand-uploaded
+    logo everywhere the avatar is shown.
+    """
+    if not CRAWL_FAVICON_AVATAR_ENABLED or not bot_id:
+        return
+    try:
+        # Cheap pre-check: skip the network fetch entirely if an avatar exists.
+        with get_session() as session:
+            bot = session.get(Bot, bot_id)
+            if bot is None or bot.client_id != client_id or bot.bot_logo:
+                return
+
+        from app.services.favicon_extractor import fetch_favicon_image
+
+        image_bytes = await fetch_favicon_image(url)
+        if not image_bytes:
+            return
+
+        from app.services.r2_service import upload_to_r2
+
+        loop = asyncio.get_event_loop()
+        logo_key = await loop.run_in_executor(
+            None,
+            lambda: upload_to_r2(image_bytes, "favicon.png", "image/png"),
+        )
+        if not logo_key:
+            return
+
+        # Re-check under a fresh session: the customer may have uploaded a logo
+        # while we were fetching. Only claim the empty slot — never overwrite.
+        with get_session() as session:
+            bot = session.get(Bot, bot_id)
+            if bot is None or bot.client_id != client_id or bot.bot_logo:
+                return
+            bot.bot_logo = logo_key
+            bot.avatar_type = "upload"
+            session.commit()
+            logger.info("Set favicon avatar for bot %s from %s", bot_id, url)
+    except Exception:
+        logger.warning("favicon avatar acquisition failed for bot %s (non-fatal)", bot_id, exc_info=True)
 
 
 async def _consume_ingest_stream(
@@ -802,6 +855,13 @@ async def run_full_crawl(
                             len(recommended_colors),
                             client_id,
                         )
+
+        # Auto-avatar: harvest the site's favicon and set it as the bot's
+        # avatar when the customer hasn't chosen one. Full crawls only (an
+        # ordered_urls partial re-scrape has no canonical homepage to read an
+        # icon from). Best-effort — never fails the crawl.
+        if not ordered_urls:
+            await _maybe_apply_favicon_avatar(bot_id, client_id, url)
 
         # ``pages_dropped`` is the headline number for the UI: how many URLs
         # we found but couldn't ingest given the plan caps. Compute it

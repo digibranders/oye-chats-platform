@@ -36,6 +36,7 @@ import {
   hostOf,
   normalizeUrl,
 } from './knowledge-utils';
+import { CrawlPageTree } from './CrawlPageTree';
 
 type AddMode = 'website' | 'files';
 
@@ -81,6 +82,9 @@ export function AddKnowledgePanel({
   const [estimate, setEstimate] = useState<CrawlDiscovery | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [websiteError, setWebsiteError] = useState<string | null>(null);
+  // Pages the user has chosen to crawl (all discovered pages by default). Sent
+  // as ``ordered_urls`` so only the ticked pages are fetched + billed.
+  const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
   // JavaScript mode renders SPA sites (Next.js/React) before extracting text.
   const [useJs, setUseJs] = useState(false);
   // Two-step inline confirm for cancelling an in-progress crawl.
@@ -110,6 +114,15 @@ export function AddKnowledgePanel({
   // unscoped crawl started elsewhere can't claim work (or clear inputs) here.
   const crawlIsOurs = crawl.botId === agentId;
 
+  // Discovery returned an explicit, selectable page list (sitemap or link scan).
+  // When empty (sitemap-less site, total_found 0) the crawl falls back to a
+  // recursive link-follow and no page-selection tree is shown.
+  const hasPageList = (estimate?.urls?.length ?? 0) > 0;
+  const selectedCount = selectedUrls.length;
+  const overAffordable =
+    typeof estimate?.max_affordable_pages === 'number' &&
+    selectedCount > estimate.max_affordable_pages;
+
   // Clear the website inputs once our crawl finishes cleanly, so the field is
   // ready for the next site. Reacts to a status transition - not a render-time
   // derivation - and is guarded so it can't loop.
@@ -117,6 +130,7 @@ export function AddKnowledgePanel({
     if (crawlIsOurs && crawl.status === 'done') {
       setSiteUrl('');
       setEstimate(null);
+      setSelectedUrls([]);
       setWebsiteError(null);
     }
   }, [crawl.status, crawlIsOurs]);
@@ -137,9 +151,12 @@ export function AddKnowledgePanel({
     setDiscovering(true);
     setWebsiteError(null);
     setEstimate(null);
+    setSelectedUrls([]);
     try {
       const result = await discoverCrawlUrls(normalizeUrl(trimmed), agentId);
       setEstimate(result);
+      // Pre-tick every discovered page; the user unchecks the ones to skip.
+      setSelectedUrls(result.urls ?? []);
     } catch (err) {
       // Discovery is best-effort - the user can still crawl. Surface a gentle
       // note and fall back to a zero-count estimate that means "follow links".
@@ -155,6 +172,11 @@ export function AddKnowledgePanel({
   async function handleCrawl(): Promise<void> {
     const trimmed = siteUrl.trim();
     if (!trimmed) return;
+    // When the user has a discovered page list, at least one page must be ticked.
+    if (hasPageList && selectedUrls.length === 0) {
+      setWebsiteError('Select at least one page to train on.');
+      return;
+    }
     setWebsiteError(null);
     setCancelConfirm(false);
     setCancelError(null);
@@ -165,7 +187,14 @@ export function AddKnowledgePanel({
         botName: agentName,
         useJs,
       };
-      if (estimate && estimate.total_found > 0) opts.discoveredTotal = estimate.total_found;
+      if (hasPageList) {
+        // Crawl exactly the ticked pages, in the discovered order, and size the
+        // progress bar / credit pre-flight to that count rather than the site total.
+        opts.orderedUrls = selectedUrls;
+        opts.discoveredTotal = selectedUrls.length;
+      } else if (estimate && estimate.total_found > 0) {
+        opts.discoveredTotal = estimate.total_found;
+      }
       await startCrawl(opts);
     } catch (err) {
       setWebsiteError(
@@ -330,6 +359,7 @@ export function AddKnowledgePanel({
                   onChange={(e) => {
                     setSiteUrl(e.target.value);
                     setEstimate(null);
+                    setSelectedUrls([]);
                     setWebsiteError(null);
                   }}
                   placeholder="example.com"
@@ -353,6 +383,7 @@ export function AddKnowledgePanel({
               onClick={() => {
                 setUseJs((v) => !v);
                 setEstimate(null);
+                setSelectedUrls([]);
               }}
               disabled={crawlRunning}
               className={cn(
@@ -395,28 +426,68 @@ export function AddKnowledgePanel({
               </span>
             </button>
 
-            {/* Discovery estimate */}
+            {/* Discovery estimate + page picker */}
             {estimate && !crawlRunning && (
-              <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3 text-[13px] text-[var(--ds-text-muted)]">
-                {estimate.total_found > 0 ? (
-                  <>
-                    Found{' '}
-                    <span className="font-semibold text-[var(--ds-text)]">
-                      {estimate.total_found.toLocaleString()}
-                      {estimate.capped ? '+' : ''} page{estimate.total_found === 1 ? '' : 's'}
-                    </span>
-                    {typeof estimate.cost_per_page === 'number' && (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3 text-[13px] text-[var(--ds-text-muted)]">
+                  {estimate.total_found > 0 ? (
+                    hasPageList ? (
                       <>
-                        {' '}· about{' '}
-                        <span className="font-medium text-[var(--ds-text)]">
-                          {(estimate.total_found * estimate.cost_per_page).toLocaleString()} credits
+                        Found{' '}
+                        <span className="font-semibold text-[var(--ds-text)]">
+                          {estimate.total_found.toLocaleString()}
+                          {estimate.capped ? '+' : ''} page{estimate.total_found === 1 ? '' : 's'}
                         </span>
+                        . Choose which to train on below
+                        {typeof estimate.cost_per_page === 'number' && selectedCount > 0 && (
+                          <>
+                            {' '}· <span className="font-medium text-[var(--ds-text)]">{selectedCount}</span>{' '}
+                            selected ≈{' '}
+                            <span className="font-medium text-[var(--ds-text)]">
+                              {(selectedCount * estimate.cost_per_page).toLocaleString()} credits
+                            </span>
+                          </>
+                        )}
+                        .
                       </>
-                    )}
-                    .
-                  </>
-                ) : (
-                  <>We&apos;ll follow links from the homepage to learn what we can.</>
+                    ) : (
+                      <>
+                        Found{' '}
+                        <span className="font-semibold text-[var(--ds-text)]">
+                          {estimate.total_found.toLocaleString()}
+                          {estimate.capped ? '+' : ''} page{estimate.total_found === 1 ? '' : 's'}
+                        </span>
+                        {typeof estimate.cost_per_page === 'number' && (
+                          <>
+                            {' '}· about{' '}
+                            <span className="font-medium text-[var(--ds-text)]">
+                              {(estimate.total_found * estimate.cost_per_page).toLocaleString()} credits
+                            </span>
+                          </>
+                        )}
+                        .
+                      </>
+                    )
+                  ) : (
+                    <>We&apos;ll follow links from the homepage to learn what we can.</>
+                  )}
+                </div>
+
+                {hasPageList && (
+                  <CrawlPageTree
+                    urls={estimate.urls ?? []}
+                    selected={selectedUrls}
+                    onSelectionChange={setSelectedUrls}
+                    disabled={crawlRunning}
+                  />
+                )}
+
+                {hasPageList && overAffordable && (
+                  <StatusNote tone="warning" icon={AlertCircle}>
+                    You&apos;ve selected more pages than your current credits cover (about{' '}
+                    {estimate?.max_affordable_pages?.toLocaleString()} affordable). We&apos;ll train
+                    as many as your balance allows, in order.
+                  </StatusNote>
                 )}
               </div>
             )}
@@ -503,14 +574,20 @@ export function AddKnowledgePanel({
 
             <div className="flex items-center gap-2">
               {estimate ? (
-                <Button onClick={handleCrawl} disabled={crawlRunning || !siteUrl.trim()}>
+                <Button
+                  onClick={handleCrawl}
+                  disabled={crawlRunning || !siteUrl.trim() || (hasPageList && selectedCount === 0)}
+                >
                   {crawlRunning ? (
                     <>
                       <Loader2 size={16} className="animate-spin" /> Crawling…
                     </>
                   ) : (
                     <>
-                      <Globe size={16} /> Add this website
+                      <Globe size={16} />{' '}
+                      {hasPageList
+                        ? `Train on ${selectedCount} page${selectedCount === 1 ? '' : 's'}`
+                        : 'Add this website'}
                     </>
                   )}
                 </Button>
@@ -849,14 +926,16 @@ function StatusNote({
   icon: Icon,
   children,
 }: {
-  tone: 'success' | 'danger';
+  tone: 'success' | 'danger' | 'warning';
   icon: typeof CheckCircle2;
   children: ReactNode;
 }): ReactElement {
   const styles =
     tone === 'success'
       ? 'border-[var(--ds-success-soft)] bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-      : 'border-[var(--ds-danger-soft)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]';
+      : tone === 'warning'
+        ? 'border-[var(--ds-warning-soft)] bg-[var(--ds-warning-soft)] text-[var(--ds-warning)]'
+        : 'border-[var(--ds-danger-soft)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]';
   return (
     <div className={cn('flex items-start gap-2.5 rounded-lg border px-4 py-3 text-[13px]', styles)}>
       <Icon size={16} className="mt-0.5 shrink-0" aria-hidden="true" />

@@ -278,6 +278,7 @@ class TestSummaryCounts:
         assert out["leads_captured"] == 3
         # Every session converted, none kept browsing → no "no activity" rows
         assert out["sessions_no_activity"] == 0
+        assert out["sessions_browsed_no_conversion"] == 0
 
     def test_sessions_no_activity_counts_true_drop_offs(self):
         # Overlap case: a session that BOTH converted AND kept browsing
@@ -305,6 +306,15 @@ class TestSummaryCounts:
         assert out["sessions_with_journey"] == 3
         assert out["meeting_booked"] == 1
         assert out["sessions_no_activity"] == 1
+        # The post-only, non-converting session is the "kept browsing"
+        # bucket; the converted-and-browsed session must NOT appear here.
+        assert out["sessions_browsed_no_conversion"] == 1
+        # Buckets partition every journey exactly once.
+        converted = out["meeting_booked"] + out["handoff_requested"] + out["offline_message_sent"]
+        assert (
+            converted + out["sessions_browsed_no_conversion"] + out["sessions_no_activity"]
+            == out["sessions_with_journey"]
+        )
 
 
 # ── Routes: plan gate + shape ────────────────────────────────────────────────

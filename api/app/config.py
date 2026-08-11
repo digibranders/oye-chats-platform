@@ -582,3 +582,12 @@ CRAWL_STREAM_INGEST_ENABLED = _env("CRAWL_STREAM_INGEST_ENABLED", "true").strip(
 # Pages per ingestion wave. Small enough to start embedding early and bound
 # memory; large enough that per-wave session/commit overhead stays negligible.
 CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
+
+# When a site is crawled, harvest its favicon / Apple touch icon and set it as
+# the bot's avatar — but only when the customer hasn't already chosen one, so an
+# explicit avatar is never overwritten. Kill switch for the whole favicon path.
+CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
