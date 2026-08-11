@@ -6,18 +6,7 @@ import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { ColorField } from '../../launch-studio/customize/ColorField';
 import { AvatarPicker } from '../../launch-studio/customize/AvatarPicker';
 import { Toggle } from '../advanced/controls';
-import { type ExperienceDraft } from './types';
-
-/** True only for an absolute `http:`/`https:` URL - what the widget's own
- * `brandingLink.js` guard requires before it will use a custom badge link. */
-function isValidBrandingUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
+import { experienceDraftErrors, type ExperienceDraft } from './types';
 
 export interface BrandingSectionProps {
   draft: ExperienceDraft;
@@ -57,13 +46,8 @@ export function BrandingSection({
   const brandingUrlHintId = useId();
   const brandingUrlErrorId = useId();
 
-  const trimmedBrandingUrl = draft.brandingUrl.trim();
-  const brandingUrlError =
-    trimmedBrandingUrl.length > 0 && !isValidBrandingUrl(trimmedBrandingUrl)
-      ? 'Enter a full URL starting with http:// or https://'
-      : null;
-
   const showWhiteLabelFields = canRemoveBranding && draft.showBranding;
+  const brandingUrlError = experienceDraftErrors(draft, showWhiteLabelFields).brandingUrl;
 
   return (
     <div className="space-y-8">
