@@ -26,10 +26,17 @@ const BOT_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Inline style keeps the line unobtrusive without depending on host CSS.
- * Kept in sync by hand with the JSX style object in `attributionAnchorJsx` -
- * same three properties, CSS syntax here vs. JSX object syntax there.
+ * `color:inherit` is deliberate, not a placeholder: a fixed hex colour
+ * reads fine on light backgrounds but can approach invisible on a dark
+ * host footer, and an effectively-invisible link is exactly the hidden-text
+ * pattern Google's link-spam policy penalises - on the customer's domain,
+ * not ours. Inheriting the host's text colour and dimming it with opacity
+ * keeps the line visually subordinate while staying genuinely readable on
+ * any background. Kept in sync by hand with the JSX style object in
+ * `attributionAnchorJsx` - same four properties, CSS syntax here vs. JSX
+ * object syntax there.
  */
-const ANCHOR_CSS = 'font-size:11px;color:#9ca3af;text-decoration:none';
+const ANCHOR_CSS = 'font-size:11px;color:inherit;opacity:0.7;text-decoration:none';
 
 /** Shown for install paths that cannot produce a crawlable anchor. */
 export const MANUAL_ATTRIBUTION_NOTE =
@@ -66,7 +73,7 @@ export function attributionAnchorJsx(botKey: string): string {
   return `<a
   href="${attributionHref(botKey)}"
   rel="nofollow"
-  style={{ fontSize: 11, color: '#9ca3af', textDecoration: 'none' }}
+  style={{ fontSize: 11, color: 'inherit', opacity: 0.7, textDecoration: 'none' }}
 >
   ${ATTRIBUTION_TEXT}
 </a>`;

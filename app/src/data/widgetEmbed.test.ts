@@ -31,6 +31,16 @@ describe('attributionAnchorHtml', () => {
     expect(html).not.toContain('display:none');
   });
 
+  it('carries no invisibility pattern - the anchor must stay genuinely visible', () => {
+    const html = attributionAnchorHtml(KEY);
+    expect(html).not.toContain('display:none');
+    expect(html).not.toContain('visibility:hidden');
+    expect(html).not.toContain('font-size:0');
+    expect(html).not.toMatch(/text-indent:\s*-/);
+    // `opacity:0` as a whole value, not a prefix match against `opacity:0.7`.
+    expect(html).not.toMatch(/opacity:0(?!\.)/);
+  });
+
   it('cannot be used to inject markup via a hostile bot key', () => {
     const hostileKey = 'x" onmouseover="alert(1)';
     const html = attributionAnchorHtml(hostileKey);
