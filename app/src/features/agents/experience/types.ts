@@ -255,3 +255,52 @@ export function settingsFromDraft(
 export function draftsEqual(a: ExperienceDraft, b: ExperienceDraft): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
+
+/** True only for an absolute `http:`/`https:` URL - what the widget's own
+ * `brandingLink.js` guard requires before it will use a custom badge link. */
+export function isValidBrandingUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** Blocking validation errors for the draft, keyed by field. `null` means the
+ * field is valid (or not currently checkable - see `brandingUrl` below). */
+export interface ExperienceDraftErrors {
+  /** Non-null only when the badge-link field is both visible/editable AND
+   * holds a non-empty value that isn't an absolute http(s) URL. An empty
+   * value is valid - `settingsFromDraft` falls back to the default badge URL
+   * for blank input, so clearing the field is "use the default", not a
+   * mistake. */
+  brandingUrl: string | null;
+}
+
+/**
+ * Validation for fields that must block save, computed from the draft plus
+ * whatever external context decides whether that field's editor is even
+ * visible. Currently one field (`brandingUrl`); returns a structured result
+ * rather than a bare boolean so a future field can join without another
+ * refactor.
+ *
+ * `whiteLabelFieldsVisible` must mirror the exact gate BrandingSection uses
+ * to show the badge text/link inputs (`hasFeature('branding_removable') &&
+ * draft.showBranding`). A workspace that isn't entitled, or has branding
+ * switched back on, can't see or edit these fields - so a stale invalid value
+ * left over in the draft from before must never block that workspace from
+ * saving unrelated changes.
+ */
+export function experienceDraftErrors(
+  draft: ExperienceDraft,
+  whiteLabelFieldsVisible: boolean,
+): ExperienceDraftErrors {
+  const trimmedBrandingUrl = draft.brandingUrl.trim();
+  const brandingUrl =
+    whiteLabelFieldsVisible && trimmedBrandingUrl.length > 0 && !isValidBrandingUrl(trimmedBrandingUrl)
+      ? 'Enter a full URL starting with http:// or https://'
+      : null;
+
+  return { brandingUrl };
+}

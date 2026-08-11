@@ -28,13 +28,15 @@ import { QualificationSection } from './QualificationSection';
 import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
 import { LeadEnrichmentSection } from './LeadEnrichmentSection';
+import {
+  planIncludesEmailVerification,
+  planIncludesVisitorIntelligence,
+} from '../../../lib/planGates';
 
 /** Plans whose entitlements include metered Reoon email verification.
  *  Mirrors `EMAIL_VERIFICATION_SLUGS` in `plan_entitlements_service.py`; the
  *  server enforces the same boundary, so this is guidance, not the gate. */
-const EMAIL_VERIFICATION_PLANS = new Set(['standard', 'professional']);
 /** Visitor Intelligence (IP→company) is Professional-only. */
-const COMPANY_LOOKUP_PLANS = new Set(['professional']);
 
 /**
  * Order-independent serialization. `bantConfig` is an opaque server object whose
@@ -88,8 +90,13 @@ export function AdvancedPage(): ReactElement {
   // `agent.plan_slug` comes from `bot_plan_slug()` on the server: the same
   // `get_bot_entitlements` the gate itself uses, failing closed to "free".
   const botPlanSlug = agent?.plan_slug ?? '';
-  const emailVerificationPlanAllows = EMAIL_VERIFICATION_PLANS.has(botPlanSlug);
-  const companyLookupPlanAllows = COMPANY_LOOKUP_PLANS.has(botPlanSlug);
+  // `planGates` mirrors the server's `_paid_tier_includes`, INCLUDING its rule
+  // that a slug off the seeded ladder is a bespoke enterprise deal and gets the
+  // feature. A bare `new Set(['professional'])` here showed an enterprise
+  // customer both switches disabled, under an upsell to a plan below the one
+  // they are on, for enrichments their own API was already running.
+  const emailVerificationPlanAllows = planIncludesEmailVerification(botPlanSlug);
+  const companyLookupPlanAllows = planIncludesVisitorIntelligence(botPlanSlug);
 
   const [draft, setDraft] = useState<AdvancedDraft | null>(null);
   const [initial, setInitial] = useState<AdvancedDraft | null>(null);
