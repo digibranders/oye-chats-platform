@@ -16,8 +16,10 @@ local Chromium — that is the whole point of the migration.
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 
@@ -76,6 +78,14 @@ async def crawl_website(
         logger.info("Spider crawl aborted before start (cancel requested) client=%s", client_id)
         raise CrawlCancelled({"results": [], "recommended_colors": []})
 
+    # Domain scope. Spider's own docs say external_domains/subdomains/tld
+    # default to off, but a real crawl of a page embedding our own widget
+    # script (`<script src="https://cdn.oyechats.com/...">`) escaped onto
+    # cdn.oyechats.com's *host site* and pulled in 2000+ unrelated pages —
+    # whatever Spider's actual default turned out to be in practice, it
+    # wasn't "stay on this domain." `whitelist` is a hard guarantee
+    # regardless: only paths on the seed's own host are ever crawled.
+    seed_netloc = urlparse(url).netloc
     payload: dict = {
         "url": url,
         "limit": int(max_pages) if max_pages else 0,  # 0 = Spider default cap
@@ -83,6 +93,9 @@ async def crawl_website(
         "request": _engine(use_js),
         "readability": True,
         "store_data": False,
+        "subdomains": False,
+        "tld": False,
+        "whitelist": [rf"^https?://(www\.)?{re.escape(seed_netloc.removeprefix('www.'))}(/.*)?$"],
     }
     if max_depth:
         payload["depth"] = int(max_depth)
