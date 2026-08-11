@@ -21,6 +21,7 @@ import {
 import { updateBot, deleteBot, getBotDemoUrl, trackDemoShareClick } from '../../services/api';
 import { type Bot } from '../../types/domain';
 import { cn } from '../../design-system';
+import { DeleteAgentDialog } from './DeleteAgentDialog';
 
 export interface AgentActionsMenuProps {
   /** The agent this menu operates on. */
@@ -46,7 +47,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(bot.name);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
@@ -63,7 +64,6 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
   const closeMenu = useCallback((): void => {
     setOpen(false);
     setRenaming(false);
-    setConfirmDelete(false);
     setCopied(false);
     setError('');
   }, []);
@@ -135,14 +135,13 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
     setError('');
     try {
       await deleteBot(bot.id);
-      closeMenu();
       onChanged();
-      // onChanged() re-fetches and unmounts this tile; leave `busy` set so we
-      // don't fire a needless post-unmount state update.
+      // onChanged() re-fetches and unmounts this tile; leave `busy` set and the
+      // dialog mounted so we don't fire a needless post-unmount state update.
       return;
     } catch (err) {
+      // Keep the dialog open so the operator sees why the delete failed.
       setError(messageFromError(err));
-      setConfirmDelete(false);
       setBusy(false);
     }
   };
@@ -309,48 +308,22 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             </button>
           )}
 
-          {confirmDelete ? (
-            <div className="flex items-center justify-between gap-2 px-3.5 py-2">
-              <span className="text-[12px] text-[var(--ds-text-muted)]">Delete this agent?</span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  aria-label="Confirm delete"
-                  disabled={busy}
-                  onClick={() => void handleDelete()}
-                  className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--ds-danger)] text-white hover:opacity-90 disabled:opacity-60"
-                >
-                  {busy ? (
-                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Check size={13} aria-hidden="true" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  aria-label="Cancel delete"
-                  disabled={busy}
-                  onClick={() => setConfirmDelete(false)}
-                  className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)] hover:bg-[var(--ds-border)] disabled:opacity-50"
-                >
-                  <X size={13} aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              role="menuitem"
-              type="button"
-              className={cn(
-                menuItemClass,
-                'text-[var(--ds-danger)] hover:bg-[var(--ds-danger-soft)] focus-visible:bg-[var(--ds-danger-soft)]',
-              )}
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 size={15} aria-hidden="true" />
-              Delete&hellip;
-            </button>
-          )}
+          <button
+            role="menuitem"
+            type="button"
+            className={cn(
+              menuItemClass,
+              'text-[var(--ds-danger)] hover:bg-[var(--ds-danger-soft)] focus-visible:bg-[var(--ds-danger-soft)]',
+            )}
+            onClick={() => {
+              setError('');
+              setDeleteOpen(true);
+              closeMenu();
+            }}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+            Delete&hellip;
+          </button>
 
           {error && (
             <p className="px-3.5 pt-1.5 text-[12px] text-[var(--ds-danger)]" role="alert">
@@ -358,6 +331,21 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             </p>
           )}
         </div>
+      )}
+
+      {deleteOpen && (
+        <DeleteAgentDialog
+          bot={bot}
+          open
+          busy={busy}
+          error={error}
+          onClose={() => {
+            if (busy) return;
+            setDeleteOpen(false);
+            setError('');
+          }}
+          onConfirm={() => void handleDelete()}
+        />
       )}
     </div>
   );

@@ -52,6 +52,8 @@ import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { type Bot, type Webhook, type WebhookDelivery } from '../../types/domain';
+import { ChannelCard } from '../agents/channels/ChannelCard';
+import { COMING_SOON_CHANNELS } from '../agents/channels/channels.data';
 
 // ── Bot integration fields ────────────────────────────────────────────────────
 // The shared `Bot` shim intentionally types only the core columns. Email routing
@@ -1615,6 +1617,31 @@ export function IntegrationsPage(): ReactElement {
           />
         </div>
       )}
+
+      {/* Roadmap channels - moved here from the agent Channels tab. Connection
+          surfaces we're building next, shown as a quiet non-interactive teaser
+          so owners can see what's coming without being misled into thinking
+          they work today. Persistent below the tabs since it's not agent- or
+          tab-specific. */}
+      <section aria-label="More channels" className="mt-8 space-y-4">
+        <SectionHeader
+          title="More channels"
+          description="We’re bringing your agent to more places soon."
+        />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {COMING_SOON_CHANNELS.map((channel) => (
+            <ChannelCard
+              key={channel.id}
+              icon={channel.icon}
+              iconTone="neutral"
+              brand={channel.brand}
+              name={channel.name}
+              description={channel.description}
+              status={<StatusBadge tone="neutral">Coming soon</StatusBadge>}
+            />
+          ))}
+        </div>
+      </section>
     </PageContainer>
   );
 }

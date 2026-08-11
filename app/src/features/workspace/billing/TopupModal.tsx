@@ -3,7 +3,14 @@ import { ExternalLink, Loader2, Zap } from 'lucide-react';
 import { Modal, cn } from '../../../design-system';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
-import { getTopupPacks, initiateTopup, verifyTopupPayment, recordBillingEvent } from '../../../services/api';
+import {
+  getCreditBalance,
+  getTopupPacks,
+  initiateTopup,
+  verifyTopupPayment,
+  recordBillingEvent,
+} from '../../../services/api';
+import { describeTopupExpiry, parseCreditBalance } from '../usage-model';
 
 interface TopupPack {
   /** INR charge amount (major unit, rupees) - the canonical price on the Razorpay rail. */
@@ -74,6 +81,7 @@ function featuredPackIndex(packs: TopupPack[]): number {
   return best;
 }
 
+
 /**
  * TopupModal - the redesigned one-off credit purchase dialog. Flat-pack only,
  * no referral discount (those track recurring revenue on the plan flow). The
@@ -95,6 +103,28 @@ export function TopupModal({
   const [error, setError] = useState('');
   // Neutral (non-error) feedback — e.g. "you cancelled, nothing was charged".
   const [notice, setNotice] = useState('');
+  // What we can truthfully say about expiry, or null while unknown/unevidenced.
+  const [expiryNote, setExpiryNote] = useState<string | null>(null);
+
+  // Expiry is a term of sale, so it is read from the customer's own ledger
+  // rather than asserted. Deliberately a separate request from the packs one:
+  // it must never delay, block, or fail the purchase path — if it doesn't
+  // arrive, the dialog simply makes no expiry claim.
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setExpiryNote(null);
+    getCreditBalance()
+      .then((raw) => {
+        if (!cancelled) setExpiryNote(describeTopupExpiry(parseCreditBalance(raw)));
+      })
+      .catch(() => {
+        if (!cancelled) setExpiryNote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -205,6 +235,15 @@ export function TopupModal({
   if (!open) return null;
 
   const featuredIndex = featuredPackIndex(packs);
+  const description = [
+    botName
+      ? `Credits land in ${botName}'s isolated balance. One-time purchase.`
+      : 'One-time purchase, on top of your plan.',
+    expiryNote,
+    'Larger packs include bonus credits.',
+  ]
+    .filter((sentence): sentence is string => sentence !== null)
+    .join(' ');
 
   return (
     <Modal
@@ -213,11 +252,7 @@ export function TopupModal({
       dismissible={submittingPack === null}
       size="lg"
       title={botName ? `Top up ${botName}` : 'Top up credits'}
-      description={
-        botName
-          ? `Credits land in ${botName}'s isolated balance. Top-ups roll over for 12 months. Larger packs include bonus credits.`
-          : 'Top-up credits don’t expire for 12 months and roll over month-to-month. Larger packs include bonus credits.'
-      }
+      description={description}
     >
       {error && (
         <div

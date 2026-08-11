@@ -24,6 +24,8 @@ import {
     getSessionKey,
     readWidgetOpen,
     writeWidgetOpen,
+    detectApexDomain,
+    resolveShareDomain,
 } from './storage-keys.js';
 
 const BOT = 'bot-test';
@@ -249,4 +251,48 @@ test('closing on a subdomain expires the shared open cookie everywhere', () => {
     // Back on the apex, the panel is closed too — no stale "open" cookie.
     visitPage('example.com', jar, new Map());
     assert.equal(readWidgetOpen(BOT), false);
+});
+
+// ── Zero-config apex auto-detection ──────────────────────────────────────────
+// With no ``session_share_domain`` set, the widget derives the registrable apex
+// from the current host by probing cookies (broadest that sticks). The jar here
+// accepts any Domain (it can't model a public-suffix list), so these cover the
+// common single/two-level cases; ccTLD rejection is a browser guarantee.
+
+test('detectApexDomain: a subdomain host resolves to the registrable apex', () => {
+    const jar = new CookieJar();
+    visitPage('academy.example.com', jar);
+    assert.equal(detectApexDomain(), 'example.com');
+});
+
+test('detectApexDomain: an apex host resolves to itself', () => {
+    const jar = new CookieJar();
+    visitPage('example.com', jar);
+    assert.equal(detectApexDomain(), 'example.com');
+});
+
+test('detectApexDomain: localhost has no apex → host-only fallback', () => {
+    const jar = new CookieJar();
+    visitPage('localhost', jar);
+    assert.equal(detectApexDomain(), 'localhost');
+});
+
+test('resolveShareDomain: an explicit config always wins over auto-detect', () => {
+    const jar = new CookieJar();
+    visitPage('academy.example.com', jar);
+    assert.equal(resolveShareDomain('deliberate.example.com'), 'deliberate.example.com');
+});
+
+test('auto-detect: session carries apex → subdomain with NO configured domain', () => {
+    const jar = new CookieJar();
+
+    // Apex page, sharing left unconfigured — resolver auto-detects the apex.
+    visitPage('example.com', jar);
+    const shareDomain = resolveShareDomain(undefined);
+    assert.equal(shareDomain, 'example.com');
+    writeSessionId('session_auto', { botKey: BOT, shareDomain });
+
+    // Subdomain: fresh localStorage, so only the auto-scoped cookie can bridge.
+    visitPage('academy.example.com', jar, new Map());
+    assert.equal(readSessionId(BOT), 'session_auto');
 });

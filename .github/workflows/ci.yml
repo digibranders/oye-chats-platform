@@ -52,6 +52,30 @@ jobs:
           ~/.local/bin/uv run ruff check .
           ~/.local/bin/uv run ruff format --check .
 
+      # The test suite builds its schema with ``Base.metadata.create_all()``
+      # (tests/conftest.py), so it NEVER executes a migration. Nothing else in
+      # CI ran alembic either, which is how a migration whose upgrade() did not
+      # match its own name reached production once already. This gate runs the
+      # real chain against a throwaway database:
+      #   upgrade head  → every migration actually executes, in order
+      #   check         → the resulting schema matches the models (no drift)
+      #   downgrade -1  → the newest migration is reversible
+      # A separate database keeps it clear of the create_all schema the tests use.
+      - name: Migrations apply, match the models, and reverse
+        working-directory: api
+        env:
+          GOOGLE_API_KEY: test-key
+          APP_ENV: testing
+        run: |
+          PGPASSWORD=test psql -h localhost -U test -d test \
+            -c "DROP DATABASE IF EXISTS migrations_check" \
+            -c "CREATE DATABASE migrations_check"
+          export DB_URL=postgresql://test:test@localhost:5432/migrations_check
+          ~/.local/bin/uv run alembic upgrade head
+          ~/.local/bin/uv run alembic check
+          ~/.local/bin/uv run alembic downgrade -1
+          ~/.local/bin/uv run alembic upgrade head
+
       - name: Run tests
         working-directory: api
         env:
@@ -82,6 +106,17 @@ jobs:
       - name: Lint
         working-directory: widget
         run: npm run lint
+
+      # 79 tests that nothing was running. `npm test` existed in package.json
+      # and was simply never wired into CI — and had rotted unnoticed while
+      # nothing ran it: the script globbed `src/services/**/*.test.js`, which
+      # only Node >= 22 expands itself. On this runner's Node 20 it resolved to
+      # nothing and exited 1. The script now uses a single-level glob the SHELL
+      # expands, which behaves the same on every Node and every shell. Widget
+      # tests therefore have to live directly in `src/services/`.
+      - name: Test
+        working-directory: widget
+        run: npm test
 
       - name: Build
         working-directory: widget
@@ -117,6 +152,18 @@ jobs:
         run: |
           npm ci
           npm run lint
+
+      # Vite does NOT typecheck — `npm run build` transpiles and strips types,
+      # so a type error builds and ships perfectly happily. Nothing in CI ran
+      # tsc, which is how three errors sat on `development` unnoticed, one of
+      # them an import of a symbol the type shim never declared.
+      - name: Typecheck
+        working-directory: app
+        run: npx tsc --noEmit
+
+      - name: Test
+        working-directory: app
+        run: npx vitest run
 
       - name: Build
         working-directory: app

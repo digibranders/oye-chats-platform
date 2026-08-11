@@ -20,12 +20,21 @@ import {
 import {
   parseSettings,
   presetForFramework,
+  toSettingsPayload,
   type AdvancedDraft,
 } from './advanced.config';
 import { ScopeStrictnessSection } from './ScopeStrictnessSection';
 import { QualificationSection } from './QualificationSection';
 import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
+import { LeadEnrichmentSection } from './LeadEnrichmentSection';
+
+/** Plans whose entitlements include metered Reoon email verification.
+ *  Mirrors `EMAIL_VERIFICATION_SLUGS` in `plan_entitlements_service.py`; the
+ *  server enforces the same boundary, so this is guidance, not the gate. */
+const EMAIL_VERIFICATION_PLANS = new Set(['standard', 'professional']);
+/** Visitor Intelligence (IP→company) is Professional-only. */
+const COMPANY_LOOKUP_PLANS = new Set(['professional']);
 
 /**
  * Order-independent serialization. `bantConfig` is an opaque server object whose
@@ -64,6 +73,23 @@ export function AdvancedPage(): ReactElement {
   // (defaults to the restrictive Free fallback) so a paid workspace deep-linking
   // here never flashes the locked card before its real plan resolves.
   const { isFree, loading: entitlementsLoading } = useEntitlements();
+  // THIS agent's own plan, straight off the URL-scoped agent. Two sources were
+  // wrong before it:
+  //
+  // * `useEntitlements().planSlug` is the highest-priced plan across every bot
+  //   the client owns, while the server gates on the plan funding THIS bot
+  //   (`is_visitor_intelligence_enabled_for_bot`).
+  // * `useSelectedBotPlanSlug()` resolves against the shell SWITCHER's bot, not
+  //   the `:agentId` in the URL — this page edits the URL agent — and it
+  //   derives the slug from the credit-balance payload, which omits Free
+  //   agents entirely (they have no per-bot ledger), so a Free agent silently
+  //   inherited the account slug.
+  //
+  // `agent.plan_slug` comes from `bot_plan_slug()` on the server: the same
+  // `get_bot_entitlements` the gate itself uses, failing closed to "free".
+  const botPlanSlug = agent?.plan_slug ?? '';
+  const emailVerificationPlanAllows = EMAIL_VERIFICATION_PLANS.has(botPlanSlug);
+  const companyLookupPlanAllows = COMPANY_LOOKUP_PLANS.has(botPlanSlug);
 
   const [draft, setDraft] = useState<AdvancedDraft | null>(null);
   const [initial, setInitial] = useState<AdvancedDraft | null>(null);
@@ -161,6 +187,16 @@ export function AdvancedPage(): ReactElement {
     );
   }, []);
 
+  const setEmailVerification = useCallback((next: boolean) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, emailVerificationEnabled: next } : prev));
+  }, []);
+
+  const setCompanyLookup = useCallback((next: boolean) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, companyLookupEnabled: next } : prev));
+  }, []);
+
   const dirty = useMemo(
     () => draft !== null && initial !== null && !draftsEqual(draft, initial),
     [draft, initial],
@@ -206,14 +242,7 @@ export function AdvancedPage(): ReactElement {
       // OR the bant_config changed, keeping the stored `framework` field in sync
       // with the selected framework.
       const tasks: Array<Promise<unknown>> = [
-        updateClientSettings(
-          {
-            relevance_threshold: draft.relevanceThreshold,
-            feature_flags: draft.featureFlags,
-            widget_config: draft.widgetConfig,
-          },
-          agentId,
-        ),
+        updateClientSettings(toSettingsPayload(draft), agentId),
       ];
       if (frameworkChanged || bantConfigChanged) {
         const qualificationPayload: Record<string, unknown> = {
@@ -318,6 +347,17 @@ export function AdvancedPage(): ReactElement {
             <div className="border-t border-[var(--ds-border)]" />
 
             <WidgetBehaviorSection flags={draft.featureFlags} onToggle={toggleFlag} />
+
+            <div className="border-t border-[var(--ds-border)]" />
+
+            <LeadEnrichmentSection
+              emailVerificationEnabled={draft.emailVerificationEnabled}
+              onToggleEmailVerification={setEmailVerification}
+              emailVerificationPlanAllows={emailVerificationPlanAllows}
+              companyLookupEnabled={draft.companyLookupEnabled}
+              onToggleCompanyLookup={setCompanyLookup}
+              companyLookupPlanAllows={companyLookupPlanAllows}
+            />
 
             <div className="border-t border-[var(--ds-border)]" />
 

@@ -82,6 +82,68 @@ function expireCookie(name, cookieDomain) {
     try { document.cookie = cookie; } catch { /* cookies disabled */ }
 }
 
+// ── Automatic apex (registrable-domain) detection ───────────────────────────
+// Cross-subdomain continuity needs a cookie scoped to the shared PARENT domain
+// (``Domain=.example.com``), not to the current host. Deriving that parent from
+// ``location.hostname`` naively (last two labels) is wrong for multi-level
+// public suffixes — ``academy.example.co.uk`` would yield ``co.uk``, which the
+// browser refuses a Domain cookie for anyway. Rather than ship a public-suffix
+// list, we probe: set a throwaway cookie at each candidate parent, narrow → wide,
+// and keep the FIRST that actually sticks. The browser silently drops a
+// candidate that is a public suffix, so the first that survives is exactly the
+// registrable domain. Memoized per hostname — ``location.hostname`` is stable
+// for a real page's lifetime, and each probe touches ``document.cookie``.
+let _apexCache = { host: undefined, value: null };
+
+export function detectApexDomain() {
+    const host = (typeof location !== 'undefined' ? location.hostname || '' : '').toLowerCase();
+    if (_apexCache.host === host) return _apexCache.value;
+
+    let value = null;
+    if (typeof document !== 'undefined' && host) {
+        // Single label (``localhost``) or a raw IPv4 can't carry a Domain
+        // attribute; report the host as-is so ``toCookieDomain`` falls back to a
+        // host-only cookie (which still bridges two ports on the same host — the
+        // local embed-test setup).
+        if (!host.includes('.') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+            value = host;
+        } else {
+            const labels = host.split('.');
+            const probe = '__oye_apex_probe';
+            // i = number of trailing labels in the candidate: 2 (``example.com``),
+            // then 3 (``example.co.uk``), … The first candidate the browser
+            // accepts is the registrable domain; broader ones are public suffixes
+            // it rejects.
+            for (let i = 2; i <= labels.length; i++) {
+                const candidate = labels.slice(labels.length - i).join('.');
+                try {
+                    document.cookie = `${probe}=1; Domain=.${candidate}; Path=/; SameSite=Lax`;
+                } catch {
+                    continue;
+                }
+                if (readCookie(probe) === '1') {
+                    expireCookie(probe, `.${candidate}`); // clean up the probe
+                    value = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    _apexCache = { host, value };
+    return value;
+}
+
+// The effective share domain for a bot: an explicit ``session_share_domain``
+// always wins (lets a customer scope sharing deliberately), and when it's unset
+// we default to the auto-detected apex so cross-subdomain continuity works with
+// zero configuration. Returns null/undefined only when neither is available
+// (e.g. cookies disabled), in which case the callers stay localStorage-only.
+export function resolveShareDomain(configured) {
+    if (configured) return configured;
+    return detectApexDomain();
+}
+
 // Resolve the persisted session id. localStorage wins so same-origin continuity
 // is byte-for-byte what it was before this feature; the domain-scoped cookie is
 // the fallback that carries the session across subdomains where localStorage

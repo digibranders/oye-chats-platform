@@ -1864,9 +1864,11 @@ async def upload_chat_file_route(
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail=f"File type '{file.content_type}' is not allowed.")
 
-    file_data = await file.read()
-    if len(file_data) > MAX_SIZE:
-        raise HTTPException(status_code=400, detail="File exceeds 10 MB limit.")
+    # Bounded read, not read-then-measure: the previous order pulled the whole
+    # body into memory and only then objected to its size.
+    from app.core.upload_guard import read_bounded
+
+    file_data = await read_bounded(file, MAX_SIZE)
 
     # Verify session ownership
     with get_session() as session:

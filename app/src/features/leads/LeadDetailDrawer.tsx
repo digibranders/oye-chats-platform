@@ -9,6 +9,7 @@
  * and returned to the trigger on close, and a click-away scrim.
  */
 import { type ReactElement, useEffect, useRef, useState } from 'react';
+import Markdown from 'react-markdown';
 import {
   AlertCircle,
   Building2,
@@ -33,6 +34,7 @@ import { VisitorIntelligenceSection } from './VisitorIntelligenceSection';
 import {
   SCORE_TONE_VAR,
   TIER_META,
+  companyDisplay,
   formatDateTime,
   formatLocation,
   humanizeDimension,
@@ -128,18 +130,76 @@ function ScoreRing({ score }: { score: number }): ReactElement {
   );
 }
 
-function ContactRow({ icon: Icon, value }: { icon: typeof Mail; value: string }): ReactElement {
+function ContactRow({
+  icon: Icon,
+  value,
+  secondary,
+  logoUrl,
+  description,
+}: {
+  icon: typeof Mail;
+  value: string;
+  /** Quieter line beneath the value — used to keep the raw email domain
+   *  visible under a resolved company name, rather than replacing it. */
+  secondary?: string;
+  /** Company logo, when the resolver found one. Replaces the generic icon. */
+  logoUrl?: string;
+  /** One-line company description from the resolver. */
+  description?: string;
+}): ReactElement {
+  const [logoBroken, setLogoBroken] = useState(false);
+  const showLogo = Boolean(logoUrl) && !logoBroken;
+
   return (
-    <div className="flex items-center gap-2.5 text-[13px] text-[var(--ds-text)]">
-      <Icon size={15} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-      <span className="break-words">{value}</span>
+    <div className="flex items-start gap-2.5 text-[13px] text-[var(--ds-text)]">
+      {showLogo ? (
+        <img
+          src={logoUrl}
+          alt=""
+          // Third-party URL from the company's own site. It can 404, move, or
+          // be hotlink-blocked at any time, so a failure falls back to the
+          // generic icon rather than leaving a broken-image glyph.
+          onError={() => setLogoBroken(true)}
+          // No referrer, matching `ProfileMenu`'s third-party avatar. The
+          // visitor chooses which domain we crawl by typing an email at it,
+          // so a hostile site can set `og:image` to a beacon and read the
+          // operator's IP, UA and the moment they opened the lead. Lazy so it
+          // only fires for a drawer actually scrolled into view.
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          className="mt-0.5 h-[15px] w-[15px] shrink-0 rounded-sm object-contain"
+        />
+      ) : (
+        <Icon size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
+      )}
+      <span className="min-w-0">
+        <span className="block break-words">{value}</span>
+        {secondary && (
+          <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{secondary}</span>
+        )}
+        {description && (
+          <span className="mt-1 block text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
+            {description}
+          </span>
+        )}
+      </span>
     </div>
   );
+}
+
+/** Short clock time (e.g. "2:34 PM") for a message's timestamp; empty if absent. */
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) return '';
+  return new Date(parsed).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
   const text = message.content ?? message.message ?? '';
   const isVisitor = message.role === 'user';
+  const roleLabel = isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot';
+  const time = formatClock(message.created_at);
   return (
     <div className={cn('flex', isVisitor ? 'justify-end' : 'justify-start')}>
       <div
@@ -150,10 +210,26 @@ function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
             : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text)]',
         )}
       >
-        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-          {isVisitor ? 'Visitor' : message.role === 'operator' ? 'Operator' : 'Chatbot'}
+        <p className="mb-0.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+          <span>{roleLabel}</span>
+          {time && (
+            <span className="font-normal normal-case tracking-normal opacity-80">{time}</span>
+          )}
         </p>
-        {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>}
+        {text ? (
+          isVisitor ? (
+            // Visitor text is plain: render verbatim so their exact input shows.
+            <p className="whitespace-pre-wrap break-words">{text}</p>
+          ) : (
+            // Bot/operator replies are markdown (bold, lists, links) - render it
+            // so the transcript reads like the live chat, not raw `**asterisks**`.
+            <div className="break-words [&_a]:underline [&_a]:underline-offset-2 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-0 [&_p]:empty:hidden [&_strong]:font-semibold [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4">
+              <Markdown>{text}</Markdown>
+            </div>
+          )
+        ) : (
+          <p className="italic text-[var(--ds-text-subtle)]">(no text)</p>
+        )}
       </div>
     </div>
   );
@@ -444,9 +520,26 @@ export function LeadDetailDrawer({
                 {detail.contact?.name && <ContactRow icon={User} value={detail.contact.name} />}
                 {detail.contact?.email && <ContactRow icon={Mail} value={detail.contact.email} />}
                 {detail.contact?.phone && <ContactRow icon={Phone} value={detail.contact.phone} />}
-                {detail.contact?.company && (
-                  <ContactRow icon={Building2} value={detail.contact.company} />
-                )}
+                {(() => {
+                  // Resolved name with the raw domain beneath it — never
+                  // instead of it. See `companyDisplay`.
+                  const company = companyDisplay(detail.contact);
+                  if (!company) return null;
+                  const logo = detail.contact?.company_logo_url;
+                  return (
+                    <ContactRow
+                      icon={Building2}
+                      value={company.value}
+                      secondary={company.secondary}
+                      // The resolver returns a logo and a description too, and
+                      // both were stored, plan-gated and typed while being
+                      // rendered nowhere — two thirds of what the paid
+                      // enrichment produces was invisible.
+                      logoUrl={typeof logo === 'string' ? logo : undefined}
+                      description={detail.contact?.company_description ?? undefined}
+                    />
+                  );
+                })()}
                 {formatLocation(detail.location) !== 'Unknown' && (
                   <ContactRow icon={MapPin} value={formatLocation(detail.location)} />
                 )}
@@ -531,10 +624,19 @@ export function LeadDetailDrawer({
             {/* Conversation transcript — the ONLY thing the "View chat" face shows */}
             {view === 'chat' && (
             <section className="space-y-3">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
-                <MessageSquare size={13} aria-hidden="true" />
-                Conversation
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+                  <MessageSquare size={13} aria-hidden="true" />
+                  Conversation
+                </h3>
+                {detail.messages && detail.messages.length > 0 && (
+                  <span className="text-[11px] text-[var(--ds-text-subtle)]">
+                    {formatDateTime(
+                      detail.messages[detail.messages.length - 1].created_at ?? detail.last_active_at,
+                    )}
+                  </span>
+                )}
+              </div>
               {detail.messages && detail.messages.length > 0 ? (
                 <div className="space-y-2.5">
                   {detail.messages.map((message) => (

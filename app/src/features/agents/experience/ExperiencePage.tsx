@@ -234,6 +234,15 @@ export function ExperiencePage(): ReactElement {
                   uploading={uploading}
                   uploadError={uploadError}
                   onUpload={handleUpload}
+                  avatarIsLive={
+                    baseline !== null &&
+                    baseline.avatarType === draft.avatarType &&
+                    (draft.avatarType === 'upload'
+                      ? baseline.botLogo === draft.botLogo
+                      : draft.avatarType === 'orb'
+                        ? baseline.orbColor === draft.orbColor
+                        : true)
+                  }
                 />
               )}
               {activeSection === 'messages' && (

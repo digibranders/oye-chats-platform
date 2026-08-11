@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import html as html_lib
 import ipaddress
 import json
@@ -36,7 +37,10 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.ip_intel_service import fetch_ip_intel
-from app.services.plan_entitlements_service import is_email_validation_enabled_for_bot
+from app.services.plan_entitlements_service import (
+    is_email_validation_enabled_for_bot,
+    is_visitor_intelligence_enabled_for_bot,
+)
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -291,8 +295,184 @@ def _parse_request_context(fastapi_request: Request):
     return ip_address, formatted_device
 
 
-def _resolve_and_update_location(session_id: str, ip_address: str):
-    """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
+def _is_resolver_owned_location(current: str) -> bool:
+    """May this resolver overwrite ``current``?
+
+    True for the empty string, for the ``"IP: x.x.x.x"`` stamp the request
+    handler writes synchronously, and for any value in this resolver's own
+    output shape — ``"<city>, <country> | <ip>"``. The last is what lets a
+    genuinely new IP replace a stale resolved city.
+
+    False for anything else, so a manually-set or future-resolver value is
+    never clobbered. The trailing segment must parse as a real IP rather than
+    merely contain a pipe, so a human writing "Head office | Mumbai" keeps it.
+    """
+    if not current or current.startswith("IP:"):
+        return True
+    _, separator, tail = current.rpartition("|")
+    if not separator:
+        return False
+    try:
+        ipaddress.ip_address(tail.strip())
+    except ValueError:
+        return False
+    return True
+
+
+def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
+    """What this session has already resolved FOR THIS IP: (intel, location).
+
+    Both call sites fire this resolver on every message, so a ten-turn
+    conversation used to spend ten ipapi.is lookups plus ten geolocation
+    lookups on one unchanging IP — measured at 6 calls for 4 sessions even on
+    short conversations. The answer cannot change between turns, so all but the
+    first is waste, and ipapi.is is metered.
+
+    Keyed on the IP, not merely on presence, so a visitor who moves from wifi
+    to mobile data mid-conversation is still re-resolved once. A missing
+    session row means "not yet" and must NOT be read as "already done": the row
+    is INSERTed by rag_pipeline on the very request that spawned this thread,
+    and can legitimately not exist yet.
+
+    **This is read-then-act, not atomic, and it only deduplicates SEQUENTIAL
+    turns.** Two messages whose background threads overlap — a double-send, a
+    widget retry, /chat and /chat/stream racing — both read "not resolved" and
+    both pay. The window is the width of the whole resolution (up to ~11s of
+    vendor timeouts and row-wait retries), so it is not narrow. That is
+    accepted rather than fixed: this is a cost optimisation, the duplicate
+    write is an idempotent upsert of the same answer, and an advisory lock or
+    conditional UPDATE would add a failure mode to a path that must never
+    affect the visitor. Said plainly here so nobody reads the guard as a
+    guarantee.
+    """
+    try:
+        with get_session() as session:
+            row = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if row is None:
+                return False, False
+            metadata = row.visitor_metadata or {}
+            intel = metadata.get("ip_intel") or {}
+            has_intel = isinstance(intel, dict) and intel.get("resolved_for_ip") == ip_address
+            # A resolved location is written as "<city>, <country> | <ip>", so
+            # the trailing IP is the whole test. That deliberately excludes the
+            # bare "IP: x.x.x.x" stamp the request handler writes synchronously
+            # before this thread runs — counting that as resolved would mean
+            # geolocation never ran at all.
+            location = row.location or ""
+            has_location = location.endswith(f"| {ip_address}")
+            return has_intel, has_location
+    except Exception:
+        # A failed check must never SUPPRESS resolution — fall through and do
+        # the work rather than silently skipping it.
+        logger.debug("could not read prior resolution for session %s", session_id, exc_info=True)
+        return False, False
+
+
+# The per-agent customer toggles, by the enrichment action they gate. Both
+# columns default ON: the customer already pays for a plan that includes these,
+# so the useful control is an OFF switch, not an OFF default that hides a paid
+# feature behind a settings page they have to discover.
+_AGENT_TOGGLE_COLUMN = {
+    "email_verification": "email_verification_enabled",
+    "company_name": "company_lookup_enabled",
+}
+
+
+def _agent_enrichment_opt_in(bot_id: int | None, action: str) -> bool:
+    """True when the agent's owner has left this enrichment switched on.
+
+    The THIRD of three independent gates, all of which must pass before a
+    credit is spent: the plan (Standard/Professional), the super-admin kill
+    switch (``feature.<action>_enabled``), and this customer toggle. It is a
+    real server-side gate, not a UI convenience — hiding a switch in the admin
+    app would not stop the charge.
+
+    Denies on any error, and denies an unknown action, matching the
+    deny-by-default posture of the plan gates: failing open here spends the
+    customer's money.
+    """
+    column = _AGENT_TOGGLE_COLUMN.get(action)
+    if bot_id is None or column is None:
+        return False
+    try:
+        with get_session() as session:
+            bot = session.query(Bot).filter(Bot.id == bot_id).first()
+            return bool(bot and getattr(bot, column, False))
+    except Exception:
+        logger.warning("%s opt-in lookup failed for bot=%s", action, bot_id, exc_info=True)
+        return False
+
+
+def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: str | None = None) -> bool:
+    """Reserve credits for a metered enrichment lookup. Return True to proceed.
+
+    Skips silently (returns ``False``) when the super-admin feature switch is
+    off, the bot can't be resolved, or the ledger can't cover the cost — the
+    lead / conversation has already been captured, so a billing shortfall must
+    never break it, only drop the optional enrichment. ``action`` doubles as the
+    ledger ``reason`` and the ``feature.<action>`` toggle key.
+
+    ``idempotency_key`` is REQUIRED in practice, even though it is optional in
+    the signature. Every caller of this function sits on a path that fires more
+    than once per billable unit — ``_resolve_and_update_location`` runs on every
+    chat message, and ``/chat/lead-capture`` is posted by the widget from both
+    the pre-chat form and the handoff form. Without a key, one visitor is
+    charged once per MESSAGE or once per POST instead of once per lead, and the
+    endpoint's rate limit is per bot-key, which is public. The ledger's unique
+    index on the key is what makes "once" durable rather than best-effort.
+
+    Runs in its own committed session so the charge is durable independently of
+    the enrichment write that follows. Never raises.
+    """
+    if idempotency_key is None:
+        logger.warning("enrichment charge for %s has no idempotency key — it may double-charge", action)
+    if bot_id is None:
+        return False
+    from app.services import credit_service
+
+    try:
+        with get_session() as session:
+            if not credit_service.is_feature_enabled(session, action):
+                return False
+            bot = session.query(Bot).filter(Bot.id == bot_id).first()
+            if bot is None:
+                return False
+            cost = credit_service.get_credit_cost(session, action)
+            if cost <= 0:
+                return True  # priced to 0 (or misconfigured) — nothing to charge
+            try:
+                credit_service.check_and_deduct(
+                    session,
+                    bot.client_id,
+                    cost,
+                    reason=action,
+                    reference_id=bot_id,
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                    idempotency_key=idempotency_key,
+                )
+            except (credit_service.InsufficientCredits, credit_service.KillSwitchActive):
+                return False
+            session.commit()
+            return True
+    except Exception:
+        logger.warning(
+            "Enrichment charge failed | bot_id=%s action=%s — skipping",
+            bot_id,
+            action,
+            exc_info=True,
+        )
+        return False
+
+
+def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int | None = None):
+    """Fire-and-forget: resolve geolocation from IP and update the session in DB.
+
+    ``bot_id`` gates the paid Visitor-Intelligence company lookup
+    (``fetch_ip_intel``): it fires only for a Professional bot, when the
+    ``company_name`` feature switch is on, and only after 10 credits are
+    successfully reserved — otherwise it is skipped silently. The free
+    geolocation below always runs regardless of plan.
+    """
     try:
         # Validate IP format to prevent SSRF via crafted X-Forwarded-For values.
         # Without this, an attacker could inject arbitrary strings (e.g. path
@@ -310,8 +490,71 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             # there is no meaningful visitor geolocation to resolve.
             return
 
-        ip_intel = fetch_ip_intel(ip_address)
+        has_intel, has_location = _already_resolved(session_id, ip_address)
+
+        # ORDER IS LOAD-BEARING: dedup, then plan gate, then the lookup, and
+        # the charge LAST — only once we know we have something to sell.
+        #
+        # The metering (a paid, Professional-only lookup costing
+        # `credit_cost.company_name`) and the per-session dedup were written
+        # independently. Git merges them without complaint and either order
+        # compiles, but charging before the dedup bills the customer 10 credits
+        # for EVERY message of a conversation, re-buying an answer that cannot
+        # change: a 15-turn chat would cost 150 credits of enrichment against
+        # 15 credits of actual AI replies, and ~67 such conversations would
+        # exhaust a Professional plan's entire monthly allowance.
+        ip_intel = None
+        if not has_intel:
+            from app.services import credit_service
+
+            with get_session() as session:
+                vi_enabled = bot_id is not None and is_visitor_intelligence_enabled_for_bot(bot_id, session)
+                feature_on = credit_service.is_feature_enabled(session, "company_name")
+
+            # Evaluated lazily inside the `and` chain, not before it: this
+            # opens its own session and SELECTs the bot, and every non-
+            # Professional conversation would otherwise pay for a result the
+            # short-circuit immediately discards.
+            if vi_enabled and feature_on and _agent_enrichment_opt_in(bot_id, "company_name"):
+                ip_intel = fetch_ip_intel(ip_address)
+
+                # CHARGE ONLY IF WE ACTUALLY IDENTIFIED AN EMPLOYER.
+                #
+                # Most visitors cannot be resolved to a company at all: an IP
+                # only names one when that company owns its range. Measured on
+                # production traffic, 10 resolutions produced ZERO usable
+                # names — 9 consumer ISPs and a subnet label — and
+                # `ip_intel_service` correctly nulls `company_name` for every
+                # one of those. Charging before the lookup therefore billed the
+                # full 10 credits for "no company identified" nearly every
+                # time. We eat the vendor call when we fail to deliver; the
+                # customer pays only for an answer.
+                #
+                # The network signal (`asn_org`, VPN/proxy flags) rides along
+                # free — it is the same API response, and the Leads panel
+                # presents it as routing information rather than as a company.
+                identified = bool(ip_intel and ip_intel.get("company_name"))
+                if identified and not _charge_for_enrichment(
+                    # `idempotency_key` is the durable backstop for the dedup
+                    # above, which is a best-effort read: two overlapping
+                    # background threads can both reach here, and the ledger
+                    # accepts only the first.
+                    bot_id,
+                    "company_name",
+                    idempotency_key=f"enrich:company_name:{session_id}",
+                ):
+                    # Out of credits, or the switch flipped off mid-flight.
+                    # Keep the free network signal so the operator still sees
+                    # who routed the visitor and the dedup still latches, but
+                    # withhold the paid identification.
+                    logger.info("company identified but not charged | session=%s — withholding", session_id)
+                    ip_intel = dict(ip_intel)
+                    ip_intel["company_name"] = None
+                    ip_intel["company_domain"] = None
         if ip_intel:
+            # Recorded so a later turn can tell "already done" from "done for a
+            # different IP" — see _already_resolved.
+            ip_intel["resolved_for_ip"] = ip_address
             for _ in range(5):
                 with get_session() as session:
                     chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -333,7 +576,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
                         break
                 time.sleep(0.5)
 
-        if not ip_address:
+        if not ip_address or has_location:
             return
 
         location = None
@@ -390,14 +633,28 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             with get_session() as session:
                 chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
                 if chat_session:
-                    # Only overwrite the raw "IP: …" stamp left by the request
-                    # handler. If something else (manual edit, future resolver)
-                    # has already set a richer value, leave it alone.
+                    # Overwrite only values THIS resolver owns: the raw "IP: …"
+                    # stamp from the request handler, or an earlier resolved
+                    # value of ours. Anything else (a manual edit, a future
+                    # resolver) is left alone.
+                    #
+                    # "or an earlier resolved value of ours" is load-bearing.
+                    # Without it a visitor who changes network mid-conversation
+                    # kept their FIRST city forever: the new value was silently
+                    # dropped here, `_already_resolved` then never saw a
+                    # location matching the new IP, and so every subsequent
+                    # message re-ran both geo vendors and threw the answer away
+                    # — on a 10k/month free tier.
                     current = chat_session.location or ""
-                    if not current or current.startswith("IP:"):
+                    if _is_resolver_owned_location(current):
                         chat_session.location = location
                         session.commit()
                         logger.info(f"Background geolocation resolved | session={session_id} | location={location}")
+                    else:
+                        logger.info(
+                            f"Background geolocation: leaving a non-resolver location alone | "
+                            f"session={session_id} | current={current!r}"
+                        )
                     return
             time.sleep(0.5)
 
@@ -410,11 +667,13 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
     """Fire-and-forget: free domain extraction + Reoon power-mode validation.
 
     Two independent checks, not chained — the domain is free and always
-    attempted regardless of plan; Reoon validation (paid plans only, any
-    tier above Free — checked via ``is_email_validation_enabled_for_bot``)
-    determines is_valid_email/email_score but never blocks the domain from
-    being written, and neither one ever blocks lead capture itself (that
-    already succeeded before this was scheduled). Power mode can take
+    attempted regardless of plan; Reoon validation (Standard + Professional
+    only — checked via ``is_email_validation_enabled_for_bot`` — and metered
+    at ``credit_cost.email_verification``, so skipped when the feature switch
+    is off or the ledger can't cover it) determines is_valid_email/email_score
+    but never blocks the domain from being written, and neither one ever blocks
+    lead capture itself (that already succeeded before this was scheduled).
+    Power mode can take
     seconds to over a minute per Reoon's own docs — that's fine here since
     nothing is waiting on this thread. ``bot_id`` is optional only for
     backward-compat with any already-queued background task from before
@@ -432,8 +691,31 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
 
     validation = None
     with get_session() as session:
-        if bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session):
-            validation = verify_email(email)
+        plan_allows_verification = bot_id is not None and is_email_validation_enabled_for_bot(bot_id, session)
+    # Reoon is a metered call (10 credits): only fire it when the plan allows it,
+    # the agent has opted in (AI Agent → Advanced), the feature switch is on, AND
+    # the credits are reserved — otherwise skip silently (domain extraction below
+    # still runs; lead capture already succeeded).
+    #
+    # Keyed per (session, address) because the widget POSTs /chat/lead-capture
+    # from TWO places — the pre-chat form and the handoff form — so one visitor
+    # who fills the form and then asks for a human produces two calls, one lead,
+    # and would otherwise be billed twice. That endpoint is rate-limited per
+    # BOT KEY, which is embedded in the widget and therefore public, so an
+    # unkeyed charge is also a drain vector: 10/min × 10 credits = 6,000
+    # credits/hour, which empties a Standard plan's monthly allowance in about
+    # 25 minutes.
+    email_fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
+    if (
+        plan_allows_verification
+        and _agent_enrichment_opt_in(bot_id, "email_verification")
+        and _charge_for_enrichment(
+            bot_id,
+            "email_verification",
+            idempotency_key=f"enrich:email_verification:{session_id}:{email_fingerprint}",
+        )
+    ):
+        validation = verify_email(email)
 
     with get_session() as session:
         lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
@@ -442,6 +724,17 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             return
 
         if domain:
+            if lead.company and lead.company != domain:
+                # The visitor corrected their address to a different employer.
+                # `company_name` / description / logo were resolved FROM the old
+                # domain, so they are now simply wrong — and `companyDisplay`
+                # renders the resolved name ABOVE the domain, which would put
+                # "Infosys Limited" over "wipro.com" on a sales rep's screen.
+                # Clearing them here is also what lets the dedup guard in
+                # `_company_already_resolved` recognise this as unanswered.
+                lead.company_name = None
+                lead.company_description = None
+                lead.company_logo_url = None
             lead.company = domain
         if validation:
             # Use the SAME predicate the widget's blur check uses. Storing
@@ -461,6 +754,152 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
         except Exception as e:
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
+
+    # Resolve the domain to the company's own declared identity — QUEUED, not
+    # run here. See `_queue_lead_company_resolution`.
+    _queue_lead_company_resolution(session_id, domain, bot_id)
+
+
+def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: int | None) -> None:
+    """Hand the company resolution to the durable queue, or the pool if it is down.
+
+    This used to be a tail call on this same thread, justified in a comment
+    that was simply wrong: the pool is FIFO, so total worker-seconds are
+    identical either way, and staying on an already-acquired slot lets the
+    crawl BYPASS the queue rather than waiting behind queued geolocation and
+    BANT — worse for the neighbours the comment claimed to protect.
+
+    The real problem it created: `/chat/lead-capture` is authenticated by the
+    widget's bot key, which is public, and the resolution charges only for an
+    ANSWER, so an unresolvable domain costs the caller nothing. Fresh session
+    ids with random domains therefore bought unlimited crawls at ~70s of one
+    worker each, against a `max_workers=3` pool shared platform-wide. One
+    abusive key could stall geolocation and BANT for every bot in the process.
+
+    Same shape as `webhook_service.queue_webhook_delivery`: the durable queue
+    when the ARQ worker is running, the thread pool when it is not, so a
+    single-process deployment still resolves companies.
+    """
+    if not domain or bot_id is None:
+        return
+
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if WORKER_ENABLED:
+        from app.worker.enqueue import enqueue_sync
+
+        # `_job_id` makes ARQ itself reject a duplicate: the widget POSTs
+        # /chat/lead-capture from both the pre-chat and handoff forms, and two
+        # posts landing close together both pass `_company_already_resolved`
+        # (a read) before either writes. The DB guard stops the common
+        # sequential repeat; this stops the concurrent one, so we never pay
+        # our crawl vendor twice for one visitor. Keyed on the domain too, so
+        # a visitor who corrects their address to a different employer still
+        # gets resolved.
+        enqueue_sync(
+            "task_resolve_lead_company",
+            session_id,
+            domain,
+            bot_id,
+            _job_id=f"resolve-company:{session_id}:{domain}",
+        )
+    else:
+        submit_background(_resolve_lead_company, session_id, domain, bot_id)
+
+
+def _company_already_resolved(session_id: str, domain: str) -> bool:
+    """Has this lead's company already been answered FOR THIS DOMAIN?
+
+    The widget POSTs /chat/lead-capture from TWO places — the pre-chat form and
+    the handoff form — so one visitor produces two runs. The shared ledger key
+    makes the second one free for the CUSTOMER, but nothing stopped it
+    re-crawling on OUR vendor account. This is the IP path's `_already_resolved`
+    guard, which the domain path never had.
+
+    Two things it deliberately does NOT do:
+
+    * It does not skip when the domain has CHANGED. `lead.company` is rewritten
+      on every capture, so a second POST with a different address moves the
+      domain while a name-only guard would freeze the old `company_name` — and
+      `companyDisplay` would then render "Infosys Limited" above "wipro.com",
+      a confidently wrong company on a sales rep's screen.
+    * It does not fail closed. This is a cost optimisation, not a gate: a
+      transient DB error must never SUPPRESS the enrichment, because nothing
+      retries it — the only trigger is another lead-capture POST. Matching
+      `_already_resolved`, an error falls through and does the work.
+    """
+    from app.db.models import LeadInfo
+
+    try:
+        with get_session() as session:
+            existing = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+            return existing is not None and bool(existing.company_name) and existing.company == domain
+    except Exception:
+        logger.warning("company dedup check failed for session=%s — resolving anyway", session_id, exc_info=True)
+        return False
+
+
+def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | None) -> None:
+    """Turn the lead's email domain into a company name, description and logo.
+
+    "infosys.com" becomes "Infosys Limited". The work happens in
+    ``company_profile_service``, which crawls the domain root, prefers the
+    site's OWN declared identity (schema.org, then og:site_name) and only
+    spends an LLM call when the site declares nothing. Results are cached in a
+    cross-tenant table keyed by registrable domain, so the second lead from any
+    company — on any customer's bot — is free.
+
+    Gated exactly like the IP→company lookup, because to a customer they are
+    one feature ("who is this visitor's company?") with two signal sources:
+    the plan, the super-admin kill switch, and the per-agent toggle.
+
+    It shares the IP path's IDEMPOTENCY KEY on purpose. A session where the IP
+    already identified an employer has been charged; finding the same answer
+    again from the email domain must not bill twice. Whichever signal gets
+    there first pays, once per session.
+
+    ``lead.company`` keeps the raw domain either way — a failed resolution
+    degrades to "infosys.com", never to nothing.
+    """
+    if not domain or bot_id is None:
+        return
+
+    from app.db.models import LeadInfo
+    from app.services import credit_service
+    from app.services.company_profile_service import resolve_company
+
+    try:
+        if _company_already_resolved(session_id, domain):
+            return
+        with get_session() as session:
+            allowed = is_visitor_intelligence_enabled_for_bot(bot_id, session)
+            feature_on = credit_service.is_feature_enabled(session, "company_name")
+        if not (allowed and feature_on and _agent_enrichment_opt_in(bot_id, "company_name")):
+            return
+
+        company = resolve_company(domain)
+        if company is None:
+            return  # parked domain, unreachable site, or nothing declared
+
+        # Charge only for an answer, same rule as the IP path: we absorb the
+        # crawl when we cannot identify anyone.
+        if not _charge_for_enrichment(bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"):
+            logger.info("company resolved for %s but not charged — withholding", session_id)
+            return
+
+        with get_session() as session:
+            lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+            if lead is None:
+                return
+            lead.company_name = company.name
+            lead.company_description = company.description
+            lead.company_logo_url = company.logo_url
+            session.commit()
+        logger.info("lead company resolved | session=%s | %s -> %s", session_id, domain, company.name)
+    except Exception:
+        # Enrichment must never surface to a visitor, and the lead is already
+        # captured and committed by this point.
+        logger.warning("lead company resolution failed for session=%s", session_id, exc_info=True)
 
 
 _DEFAULT_OFFLINE_MESSAGE = "We're currently away. Please leave a message and we'll get back to you soon."
@@ -635,7 +1074,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
         session_id = _resolve_session_id(body.session_id, bot.id)
 
         # Fire-and-forget geolocation (saves 2-8s per request)
-        submit_background(_resolve_and_update_location, session_id, ip_address)
+        submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
 
         logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
@@ -777,7 +1216,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     session_id = _resolve_session_id(body.session_id, bot.id)
 
     # Fire-and-forget geolocation
-    submit_background(_resolve_and_update_location, session_id, ip_address)
+    submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
 
     logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
@@ -812,6 +1251,15 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 
 
+# A Reoon verdict for a given address does not change day to day, and this
+# check is unmetered, so caching it is the cheapest way to bound vendor spend
+# on a public endpoint.
+_REOON_VERDICT_TTL_S = 24 * 60 * 60
+# A verdict that BLOCKS a visitor is held only long enough to absorb a burst.
+# See `validate_email_endpoint` for why the two are not symmetric.
+_REOON_BLOCKED_TTL_S = 5 * 60
+
+
 @router.post("/chat/validate-email")
 @limiter.limit("20/minute", key_func=key_from_bot_key)
 def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: Bot = Depends(get_current_bot)):
@@ -839,16 +1287,66 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         return {"valid": False, "reason": "Please enter a valid email address."}
 
     with get_session() as session:
-        if not is_email_validation_enabled_for_bot(bot.id, session):
+        # Plan gate (Standard + Professional), the per-agent customer opt-in, AND
+        # the super-admin feature switch. This real-time blur check is NOT metered
+        # — it's a pre-submit UX helper, not the billable per-lead verification —
+        # but it must respect the same on/off controls so it never calls Reoon
+        # for an agent that has verification turned off.
+        from app.services import credit_service
+
+        if (
+            not is_email_validation_enabled_for_bot(bot.id, session)
+            or not credit_service.is_feature_enabled(session, "email_verification")
+            or not _agent_enrichment_opt_in(bot.id, "email_verification")
+        ):
             return {"valid": True}
 
+    from app.core.cache import cache_get, cache_set
     from app.services.reoon_service import is_obviously_undeliverable, verify_email
 
-    validation = verify_email(email)
-    if validation is None:
-        return {"valid": True}
+    # CACHED, because this call is UNMETERED and the endpoint is public.
+    #
+    # It is authenticated only by the widget's bot key — embedded in customer
+    # pages — and rate-limited at 20/min per key, so it was 20 free Reoon calls
+    # a minute per widget, on OyeChats' account, with no ledger row anywhere.
+    # Metering it would be the wrong fix: this is a pre-submit UX helper that
+    # fires on field blur, and charging a customer because a visitor tabbed
+    # through a form twice is indefensible.
+    #
+    # The two verdicts get DIFFERENT lifetimes, because they fail in opposite
+    # directions. A "deliverable" answer is safe to hold for a day: the worst
+    # case is that we let through an address that went bad since. An
+    # "undeliverable" answer BLOCKS the visitor — `HandoffForm` refuses to
+    # submit on it — and `is_obviously_undeliverable` reads a live DNS/SMTP
+    # probe that this codebase already documents as having known false
+    # positives. Holding one of those for 24 hours pins a real person out of
+    # every OyeChats widget on the internet (the key is the address, not the
+    # tenant, because deliverability is a property of the address). A short
+    # window still collapses the abuse case — a loop on the public bot key
+    # hammers the same few addresses within seconds — while letting a
+    # transient false verdict clear on the visitor's next try.
+    #
+    # Keyed on a hash so no raw address is stored in Redis, and prefixed like
+    # every other key this platform writes (`core/cache.PREFIX`) so a shared
+    # Redis can't collide and a prefix flush can reach it.
+    fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:32]
+    cache_key = f"oyechats:reoon:verdict:{fingerprint}"
 
-    if is_obviously_undeliverable(validation):
+    cached = cache_get(cache_key)
+    if isinstance(cached, dict) and "undeliverable" in cached:
+        undeliverable = bool(cached["undeliverable"])
+    else:
+        validation = verify_email(email)
+        if validation is None:
+            # Reoon unreachable — fail OPEN. A visitor must never be blocked
+            # from submitting because our vendor is down. Not cached: the next
+            # attempt should retry rather than inherit an outage.
+            return {"valid": True}
+        undeliverable = is_obviously_undeliverable(validation)
+        ttl = _REOON_BLOCKED_TTL_S if undeliverable else _REOON_VERDICT_TTL_S
+        cache_set(cache_key, {"undeliverable": undeliverable}, ttl)
+
+    if undeliverable:
         return {"valid": False, "reason": "This email address doesn't look right — mind double-checking it?"}
     return {"valid": True}
 

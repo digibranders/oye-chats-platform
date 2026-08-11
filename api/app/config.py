@@ -582,3 +582,35 @@ CRAWL_STREAM_INGEST_ENABLED = _env("CRAWL_STREAM_INGEST_ENABLED", "true").strip(
 # Pages per ingestion wave. Small enough to start embedding early and bound
 # memory; large enough that per-wave session/commit overhead stays negligible.
 CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
+
+# When a site is crawled, harvest its favicon / Apple touch icon and set it as
+# the bot's avatar. Kill switch for the whole favicon path.
+#
+# DEFAULT OFF, deliberately, until the fetcher is rebuilt. Review of the commit
+# that added it found the network-facing half unsafe, and this flag is the
+# cheapest way to keep the rest of that commit while none of the following can
+# fire in production:
+#
+#   * SSRF. `favicon_extractor` builds its own `httpx.AsyncClient` with
+#     `follow_redirects=True`, so a 302 from a customer's site is followed to
+#     an unvalidated host — `validate_public_url` runs once, on the PRE-redirect
+#     URL only, and DNS is re-resolved at connect time. Both docstrings claim
+#     redirects are not followed. `core/ssrf.py` already ships
+#     `fetch_text_safely` with per-hop re-validation and a pinned resolver;
+#     none of it is reused.
+#   * The size caps are decorative: `resp.content` buffers the entire body
+#     before slicing, so a 4GB drip OOMs the crawl worker.
+#   * `_discover_icon_urls` is unbounded (300 <link> tags → 302 candidates,
+#     sequential, 10s each) and is awaited BEFORE the terminal crawl-status
+#     write, so an ARQ timeout mid-favicon leaves the customer's crawl spinner
+#     hung forever on work that was already done and billed.
+#
+# `docs/superpowers/plans/2026-08-10-derived-chat-avatar.md` already specifies
+# this feature properly — streamed `fetch_bytes_safely`, bounded parallel task,
+# provenance in its own column rather than `avatar_type`. Turn this on when the
+# implementation matches that plan.
+CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)

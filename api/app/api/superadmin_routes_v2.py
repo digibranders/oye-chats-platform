@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
 from app.config import APP_URL, IMPERSONATION_ENABLED
@@ -1095,8 +1095,13 @@ def llm_usage(
                 func.coalesce(func.sum(LLMCallLog.cost_cents), 0).label("cost"),
                 func.percentile_disc(0.5).within_group(LLMCallLog.latency_ms).label("p50"),
                 func.percentile_disc(0.95).within_group(LLMCallLog.latency_ms).label("p95"),
-                func.coalesce(func.sum(func.case((LLMCallLog.fallback_used, 1), else_=0)), 0).label("fallbacks"),
-                func.coalesce(func.sum(func.case((LLMCallLog.error.isnot(None), 1), else_=0)), 0).label("errors"),
+                # ``case`` is a standalone SQLAlchemy construct, NOT a member of
+                # ``func``. ``func.case(...)`` builds a generic SQL function named
+                # "case", which rejects ``else_`` with
+                # "Function.__init__() got an unexpected keyword argument 'else_'"
+                # and 500s the whole endpoint.
+                func.coalesce(func.sum(case((LLMCallLog.fallback_used, 1), else_=0)), 0).label("fallbacks"),
+                func.coalesce(func.sum(case((LLMCallLog.error.isnot(None), 1), else_=0)), 0).label("errors"),
             )
             .where(LLMCallLog.created_at >= cutoff)
             .group_by("d", LLMCallLog.model)

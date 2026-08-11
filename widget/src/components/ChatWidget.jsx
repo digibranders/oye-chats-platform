@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import Launcher from './Launcher';
 import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/api';
-import { readSessionId, writeSessionId } from '../services/storage-keys';
+import { readSessionId, writeSessionId, resolveShareDomain } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
 import { readWidgetOpen, writeWidgetOpen } from '../services/storage-keys';
 
@@ -215,7 +215,11 @@ const ChatWidget = () => {
   // ALSO mirrors it into the shared parent-domain cookie so the panel survives a
   // hop from the main domain to a subdomain. `shareDomain` comes from bot
   // settings, so these callbacks re-bind once settings resolve.
-  const shareDomain = settings?.session_share_domain;
+  // An explicit `session_share_domain` (Admin → Channels) always wins; when it's
+  // blank we auto-detect the apex so cross-subdomain continuity works with zero
+  // config. Resolves to null only when neither is available (cookies disabled),
+  // keeping the widget localStorage-only in that case.
+  const shareDomain = resolveShareDomain(settings?.session_share_domain);
 
   const openChat = useCallback(() => {
     if (closeTimer.current) {
@@ -294,6 +298,22 @@ const ChatWidget = () => {
       writeWidgetOpen(true, { shareDomain });
     }
   }, [isVisible, shareDomain]);
+
+  // Same race for the session id. `openChat` mints and persists the session id
+  // the instant the visitor opens the panel — which can happen before bot
+  // settings (and thus `shareDomain`) resolve. In that window `writeSessionId`
+  // ran with `shareDomain` undefined, so it wrote localStorage ONLY and never
+  // set the parent-domain cookie that bridges subdomains. localStorage is
+  // origin-partitioned, so a hop to a subdomain before the first message would
+  // then start a fresh session. Once sharing resolves, re-mirror the persisted
+  // id into the shared cookie so an already-minted session carries across the
+  // domain family. No-op when sharing is off or no session exists yet.
+  useEffect(() => {
+    if (!shareDomain) return;
+    const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY;
+    const sessionId = readSessionId(botKey);
+    if (sessionId) writeSessionId(sessionId, { botKey, shareDomain });
+  }, [shareDomain]);
 
   const toggleChat = useCallback(() => {
     if (isVisible && (isAnimating === true || isAnimating === 'done')) {

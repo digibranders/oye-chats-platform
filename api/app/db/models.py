@@ -342,6 +342,25 @@ class Bot(Base):
     lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
+    # ── Metered lead-enrichment opt-outs (AI Agent → Advanced) ──────────────
+    #
+    # Both default ON. The customer is paying for a plan that includes these,
+    # so the useful control is an OFF switch for someone who does not want the
+    # credits spent — not an OFF default that leaves a paid feature invisible
+    # until they find a settings page. Each is one of THREE independent gates,
+    # all of which must pass before a credit is spent:
+    #   1. the plan  (Standard/Professional — enforced server-side)
+    #   2. the super-admin kill switch (``feature.<name>_enabled``)
+    #   3. this per-agent customer toggle
+    #
+    # Verification runs via Reoon at ``credit_cost.email_verification`` per
+    # captured lead.
+    email_verification_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
+    # The IP→company lookup, at ``credit_cost.company_name`` — charged only
+    # when a company is actually identified (see chat_routes), so leaving this
+    # on costs nothing for the many visitors who resolve to a consumer ISP.
+    company_lookup_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
+
     # Email notification settings
     notification_email = Column(String, nullable=True)  # Legacy single recipient (kept for backward compat)
     notification_emails = Column(
@@ -590,7 +609,22 @@ class LeadInfo(Base):
     name = Column(String, nullable=True)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    # The registrable domain of the captured email, e.g. "infosys.com". Kept as
+    # the raw domain, NOT overwritten with a resolved name: it is free, always
+    # available, and the only thing this column has ever meant. Consumers
+    # (CSV export, webhooks, the leads list) already read it.
     company = Column(String, nullable=True)
+
+    # ── Resolved company identity (company_profile_service) ─────────────────
+    #
+    # Populated from the cross-tenant `company_profile` cache, which turns a
+    # domain into the company's own declared identity — "infosys.com" becomes
+    # "Infosys Limited". Separate columns rather than overwriting `company`
+    # so a failed or pending resolution always degrades to the domain rather
+    # than to nothing, and so an operator can see both.
+    company_name = Column(String, nullable=True)
+    company_description = Column(Text, nullable=True)
+    company_logo_url = Column(String, nullable=True)
 
     metadata_json = Column(JSONB, nullable=True)
     suppression_reason = Column(String, nullable=True)
@@ -619,6 +653,76 @@ class LeadInfo(Base):
     session = relationship("ChatSession", back_populates="lead_info")
     bot = relationship("Bot", back_populates="lead_infos")
     followup_sent_by = relationship("Operator")
+
+
+class CompanyProfile(Base):
+    """One resolved company per registrable domain, shared across ALL tenants.
+
+    Deliberately not scoped to a client. It holds only public web data about a
+    company, so there is nothing to leak between tenants, and sharing means a
+    popular domain is crawled once for the whole platform instead of once per
+    customer. The key is the registrable domain from
+    ``domain_normalizer.registrable_domain`` — every employee of one company,
+    on whatever mail subdomain, must collapse to a single row.
+
+    Failures are cached too. A dead, parked, or bot-walled domain records
+    ``resolution_failed`` with a ``retry_after`` backoff, so one bad domain
+    costs a single crawl rather than one per lead arriving from it.
+    """
+
+    __tablename__ = "company_profile"
+
+    # CITEXT, not String: this is the shared key, and Acme.com / acme.com
+    # fragmenting into two rows means two crawls and two possibly-different
+    # answers for one company. ``registrable_domain`` already lowercases, but
+    # the type stops a future caller that forgets. Matches ``ReferralCode.code``.
+    domain = Column(CITEXT, primary_key=True)
+    name = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String, nullable=True)
+
+    resolution_failed = Column(Boolean, nullable=False, server_default="false")
+    # Set only when resolution_failed — gates re-crawl attempts.
+    retry_after = Column(DateTime(timezone=True), nullable=True)
+    # Consecutive failures, so backoff can grow. ``retry_after`` alone cannot
+    # encode attempt depth, which would leave a permanently-dead domain
+    # re-crawled at a fixed rate forever — the per-domain cost leak this table
+    # exists to prevent, merely slowed.
+    failure_count = Column(Integer, nullable=False, server_default="0")
+    # Lazy refresh horizon for a SUCCESSFUL profile.
+    refresh_after = Column(DateTime(timezone=True), nullable=True)
+
+    # Provenance. Every tenant reads this row, so a regressed extractor or a
+    # bad prompt must be invalidatable surgically ("DELETE WHERE source='llm'")
+    # rather than by truncating the whole platform's cache.
+    source = Column(String, nullable=True)  # "markup" | "llm"
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # NOTE app-side only, like every other model here — a raw UPDATE will not
+    # bump it. The likely future writer is a bulk "refresh stale rows" sweep,
+    # which must set this explicitly.
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # A btree PK errors above ~2704 bytes, and an empty key is meaningless.
+        CheckConstraint(
+            "length(domain) BETWEEN 1 AND 253",
+            name="chk_company_profile_domain_length",
+        ),
+        # The two sweeps this table implies — refresh stale, retry failed —
+        # would otherwise be full scans as the cache grows.
+        Index(
+            "ix_company_profile_refresh_due",
+            "refresh_after",
+            postgresql_where=text("NOT resolution_failed"),
+        ),
+        Index(
+            "ix_company_profile_retry_due",
+            "retry_after",
+            postgresql_where=text("resolution_failed"),
+        ),
+    )
 
 
 class ChatSession(Base):
@@ -1817,6 +1921,8 @@ class CreditLedger(Base):
             "refund",
             "expiry",
             "document_upload",
+            "email_verification",
+            "company_name",
             name="credit_reason",
         ).with_variant(String(), "sqlite"),
         nullable=False,

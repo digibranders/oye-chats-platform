@@ -48,6 +48,19 @@ export interface Bot {
   brand_tone?: string | null;
   business_hours?: Record<string, unknown> | null;
   show_branding?: boolean;
+  /**
+   * THIS agent's own plan slug, resolved server-side by `bot_plan_slug()` in
+   * `bot_routes.py` (the same `get_bot_entitlements` the server's feature gates
+   * use, failing closed to `'free'`).
+   *
+   * Billing attaches to the Bot, so a workspace can hold a Professional agent
+   * and a Free agent at once. Per-agent feature gates MUST read this and not
+   * `useEntitlements().plan_slug`, which reports the highest-priced plan across
+   * the whole workspace.
+   */
+  plan_slug?: string;
+  /** Display name for {@link plan_slug}, resolved in the same server call. */
+  plan_name?: string;
 }
 
 export interface CurrentUser {
@@ -175,6 +188,18 @@ export interface KnowledgeSource {
   duration_seconds?: number;
 }
 
+/** Response of `GET /documents/knowledge-state`.
+ *
+ * `deactivated` is the server's own verdict (`inactive_count > 0`), not
+ * something the client should re-derive — a plan lapse to Free marks chunks
+ * inactive, and this drives the "re-crawl / re-upload to reactivate" banner.
+ */
+export interface KnowledgeState {
+  active_count: number;
+  inactive_count: number;
+  deactivated: boolean;
+}
+
 export interface SourcePage {
   url: string;
   title?: string;
@@ -223,6 +248,15 @@ export interface LeadContact {
   is_valid_email?: boolean | null;
   /** Present only when the caller's plan includes Visitor Intelligence (Professional). */
   email_score?: number | null;
+  /**
+   * The company behind `company`, resolved from the domain's own declared
+   * identity — "infosys.com" becomes "Infosys Limited". Professional-gated,
+   * like the rest of visitor intelligence, because the same paid enrichment
+   * produces it. `company` above stays the raw domain on every plan.
+   */
+  company_name?: string | null;
+  company_description?: string | null;
+  company_logo_url?: string | null;
 }
 
 /** One dimension's decayed value + score inside a lead's framework breakdown. */

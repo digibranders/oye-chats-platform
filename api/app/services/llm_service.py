@@ -520,7 +520,14 @@ Return ONLY the reply text, no quotes or preamble."""
         return None
 
 
-def extract_company_context(content_sample: str, *, metadata: dict | None = None) -> dict | None:
+def extract_company_context(
+    content_sample: str,
+    *,
+    metadata: dict | None = None,
+    timeout: float | None = None,
+    num_retries: int | None = None,
+    strict: bool = False,
+) -> dict | None:
     """Analyze scraped website content and extract the company name and description.
 
     Returns ``{"name": "Acme Corp", "description": "Acme Corp is a ..."}``
@@ -528,6 +535,15 @@ def extract_company_context(content_sample: str, *, metadata: dict | None = None
 
     Uses the gate-tier model (AR-10) — see :func:`classify_brand_tone` for the
     rationale; identical shape of task, identical fix.
+
+    ``timeout`` / ``num_retries`` override the module defaults (60s × 3
+    attempts ≈ 180s worst case). A caller on a small shared thread pool needs a
+    tighter bound than a caller on the request path.
+
+    ``strict=True`` re-raises provider errors instead of returning ``None``.
+    Without it the caller cannot tell "this page describes no company" from
+    "the model was unreachable" — and a caller that PERSISTS the former would
+    otherwise record a provider outage as a permanent fact about the content.
     """
     if not content_sample.strip():
         return None
@@ -557,8 +573,8 @@ Website content:
         }
         _apply_model_family_kwargs(kwargs, _model)
         with langfuse_generation("company-context-extraction", model=_model, prompt=prompt) as gen:
-            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
-            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
+            kwargs.setdefault("timeout", timeout if timeout is not None else _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", num_retries if num_retries is not None else _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
             text = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=text)
@@ -593,6 +609,8 @@ Website content:
         return None
     except Exception as e:
         logger.warning(f"Company context extraction failed (non-blocking): {e}")
+        if strict:
+            raise
         return None
 
 

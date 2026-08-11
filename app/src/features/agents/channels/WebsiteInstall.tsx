@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Bot,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -9,7 +10,6 @@ import {
   EyeOff,
   Key,
   Link2,
-  Sparkles,
 } from 'lucide-react';
 import {
   platforms,
@@ -17,7 +17,7 @@ import {
   categoryOrder,
 } from '../../../data/platformIntegrations';
 import { getApiBaseUrl, getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
-import { cn } from '../../../design-system';
+import { cn, platformLogos } from '../../../design-system';
 import { getEmbedEnvironment } from './embedEnvironment';
 import { buildInstallPrompt } from './installPrompt';
 
@@ -186,24 +186,6 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               )}
               {demoCopied ? 'Copied' : 'Copy demo link'}
             </button>
-            <span role="status" aria-live="polite" className="sr-only">
-              {demoCopied ? 'Demo link copied' : ''}
-            </span>
-          </div>
-          <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-            Opens a hosted page with your agent - no install needed to try it. Share the link so
-            others can chat with it too.
-          </p>
-        </div>
-      </div>
-
-      {/* Platform-specific install steps */}
-      <div>
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Install steps
-          </span>
-          <div className="flex flex-col items-end gap-1">
             <button
               type="button"
               onClick={copyAgentPrompt}
@@ -219,20 +201,23 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               {promptCopied ? (
                 <Check size={14} className="text-[var(--ds-success)]" aria-hidden="true" />
               ) : (
-                <Sparkles size={14} aria-hidden="true" />
+                <Bot size={14} aria-hidden="true" />
               )}
               {promptCopied ? 'Copied' : 'Copy prompt for AI agent'}
             </button>
-            <p className="max-w-[19rem] text-right text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">
-              {platform
-                ? `Paste into Cursor, Claude Code, or any coding agent - the ${platform.name} steps, your key, and how to verify.`
-                : 'Paste into Cursor, Claude Code, or any coding agent. Pick your platform below for exact steps.'}
-            </p>
             <span role="status" aria-live="polite" className="sr-only">
+              {demoCopied ? 'Demo link copied' : ''}
               {promptCopied ? 'Install prompt copied' : ''}
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Platform-specific install steps */}
+      <div>
+        <span className="mb-3 block text-[11px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
+          Install steps
+        </span>
 
         {platform ? (
           <div className="space-y-4">
@@ -275,31 +260,39 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
                     {categoryLabels[category] ?? category}
                   </p>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {inCategory.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setPlatformId(p.id)}
-                        className={cn(
-                          'flex items-center justify-between gap-2 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-3 text-left transition-colors',
-                          'hover:border-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate text-[13px] font-semibold text-[var(--ds-text)]">
-                            {p.name}
+                    {inCategory.map((p) => {
+                      const Logo = platformLogos[p.id];
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setPlatformId(p.id)}
+                          className={cn(
+                            'flex items-center gap-2.5 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-3 text-left transition-colors',
+                            'hover:border-[var(--ds-accent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
+                          )}
+                        >
+                          {Logo ? (
+                            <span className="shrink-0">
+                              <Logo size={26} aria-hidden="true" />
+                            </span>
+                          ) : null}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-semibold text-[var(--ds-text)]">
+                              {p.name}
+                            </span>
+                            <span className="block truncate text-[11px] text-[var(--ds-text-subtle)]">
+                              {p.description}
+                            </span>
                           </span>
-                          <span className="block truncate text-[11px] text-[var(--ds-text-subtle)]">
-                            {p.description}
-                          </span>
-                        </span>
-                        <ChevronRight
-                          size={15}
-                          className="shrink-0 text-[var(--ds-text-subtle)]"
-                          aria-hidden="true"
-                        />
-                      </button>
-                    ))}
+                          <ChevronRight
+                            size={15}
+                            className="shrink-0 text-[var(--ds-text-subtle)]"
+                            aria-hidden="true"
+                          />
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );

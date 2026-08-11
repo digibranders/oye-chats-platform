@@ -14,6 +14,7 @@ import type {
   Department,
   Entitlements,
   KnowledgeSource,
+  KnowledgeState,
   Lead,
   LeadsQuery,
   LeadsResult,
@@ -72,6 +73,10 @@ export function discoverCrawlUrls(url: string, botId?: number): Promise<CrawlDis
 export function getDocuments(botId?: number): Promise<KnowledgeSource[]>;
 export function getDocumentPages(source: string, botId?: number): Promise<SourcePagesResult>;
 export function deleteDocument(documentName: string, botId?: number): Promise<Record<string, unknown>>;
+/** Whether this bot's knowledge was deactivated by a plan lapse to Free —
+ * drives the "re-crawl / re-upload to reactivate" banner on the Knowledge page.
+ * Backed by `GET /documents/knowledge-state`. */
+export function getKnowledgeState(botId?: number): Promise<KnowledgeState>;
 
 export function getSeedQuestions(botId: number): Promise<string[]>;
 export function previewChatStream(
@@ -174,6 +179,13 @@ export interface JourneySummary {
    *  both converted AND kept browsing. Optional for backward compat
    *  with older API builds. */
   sessions_no_activity?: number;
+  /** Sessions with a journey that fired NO conversion event but DID
+   *  visit at least one post-chat page — "kept browsing, no outcome".
+   *  The right-hand outcome column needs this bucket to reconcile with
+   *  `sessions_with_journey`: conversions + this + `sessions_no_activity`
+   *  partition every journey exactly once. Optional for backward compat
+   *  with older API builds (card is simply omitted when absent). */
+  sessions_browsed_no_conversion?: number;
   leads_captured: number;
 }
 

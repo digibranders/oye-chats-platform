@@ -1945,3 +1945,457 @@ class TestBuildHistoryContext:
         from app.services.rag_service import _build_history_context
 
         assert _build_history_context([]) == ""
+
+
+# ── Visitor name capture (deterministic personalization) ─────────────────────
+
+
+def _name_msg(role, content):
+    return SimpleNamespace(role=role, content=content)
+
+
+_NAME_ASK_HISTORY = [
+    _name_msg("user", "how do i integrate the bot?"),
+    _name_msg(
+        "bot",
+        "Go to Channels and copy the script.\n\nWhat name should I use to address you?",
+    ),
+]
+
+
+class TestExtractVisitorName:
+    @pytest.mark.parametrize(
+        "question, history, expected",
+        [
+            # explicit intros — matched anywhere, any casing
+            ("my name is Gaurav", [], "Gaurav"),
+            ("My name's Priya", [], "Priya"),
+            ("I'm Sarah Khan", [], "Sarah Khan"),
+            ("i am alex", [], "Alex"),
+            ("call me Sam", [], "Sam"),
+            ("this is Priya", [], "Priya"),
+            ("you can call me Max", [], "Max"),
+            # bare reply counts ONLY right after the name ask
+            ("Gaurav", _NAME_ASK_HISTORY, "Gaurav"),
+            ("gaurav", _NAME_ASK_HISTORY, "Gaurav"),
+            ("Gaurav", [], None),
+            # declines / non-names / junk
+            ("no", _NAME_ASK_HISTORY, None),
+            ("skip", _NAME_ASK_HISTORY, None),
+            ("why do you need it", _NAME_ASK_HISTORY, None),
+            ("Gaurav123", _NAME_ASK_HISTORY, None),
+            ("", [], None),
+            ("what is the pricing", [], None),
+        ],
+    )
+    def test_extraction(self, question, history, expected):
+        from app.services.rag_service import _extract_visitor_name
+
+        assert _extract_visitor_name(question, history) == expected
+
+    def test_history_dict_shape_supported(self):
+        from app.services.rag_service import _extract_visitor_name
+
+        history = [{"role": "bot", "content": "What name should I use to address you?"}]
+        assert _extract_visitor_name("Ravi", history) == "Ravi"
+
+
+class TestCleanVisitorName:
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("gaurav", "Gaurav"),
+            ("  sarah  khan ", "Sarah Khan"),
+            ("O'Brien", "O'Brien"),
+            ("no", None),
+            ("guy123", None),
+            ("this is way too many words here", None),
+            ("", None),
+        ],
+    )
+    def test_clean(self, raw, expected):
+        from app.services.rag_service import _clean_visitor_name
+
+        assert _clean_visitor_name(raw) == expected
+
+
+class TestResolveVisitorName:
+    def test_existing_lead_name_wins(self):
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Existing")
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=lead),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+        ):
+            got = rag_service.resolve_visitor_name(MagicMock(), "s1", 3, 9, "my name is New", [])
+        assert got == "Existing"
+        mock_save.assert_not_called()
+
+    def test_extracts_and_persists_when_unknown(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+        ):
+            got = rag_service.resolve_visitor_name(MagicMock(), "s1", 3, 9, "my name is Gaurav", [])
+        assert got == "Gaurav"
+        mock_save.assert_called_once()
+        _, kwargs = mock_save.call_args
+        assert kwargs.get("name") == "Gaurav"
+        assert kwargs.get("bot_id") == 3
+
+    def test_returns_none_and_no_persist_when_no_name(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+        ):
+            got = rag_service.resolve_visitor_name(MagicMock(), "s1", 3, 9, "what is the pricing?", [])
+        assert got is None
+        mock_save.assert_not_called()
+
+    def test_no_bot_id_skips_persist(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+        ):
+            got = rag_service.resolve_visitor_name(MagicMock(), "s1", None, 9, "my name is Gaurav", [])
+        assert got is None
+        mock_save.assert_not_called()
+
+    def test_swallows_exceptions(self):
+        from app.services import rag_service
+
+        with patch.object(rag_service, "get_lead_info_by_session", side_effect=RuntimeError("db down")):
+            got = rag_service.resolve_visitor_name(MagicMock(), "s1", 3, 9, "my name is Gaurav", [])
+        assert got is None
+
+
+class TestShouldAskVisitorName:
+    def test_asks_on_first_reply_when_name_unknown(self):
+        from app.services.rag_service import _should_ask_visitor_name
+
+        # No prior bot turn in history -> this is the first bot reply.
+        assert _should_ask_visitor_name(None, []) is True
+        assert _should_ask_visitor_name(None, [_name_msg("user", "hi there")]) is True
+
+    def test_does_not_ask_when_name_known(self):
+        from app.services.rag_service import _should_ask_visitor_name
+
+        assert _should_ask_visitor_name("Gaurav", []) is False
+
+    def test_does_not_ask_after_first_bot_reply(self):
+        from app.services.rag_service import _should_ask_visitor_name
+
+        history = [_name_msg("user", "hi"), _name_msg("bot", "Hello! How can I help?")]
+        assert _should_ask_visitor_name(None, history) is False
+
+    def test_dict_history_bot_turn_blocks_ask(self):
+        from app.services.rag_service import _should_ask_visitor_name
+
+        history = [{"role": "bot", "content": "Hello!"}]
+        assert _should_ask_visitor_name(None, history) is False
+
+
+class TestMaybeAppendNameAsk:
+    def test_appends_on_first_reply_unknown_name(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "create_or_update_lead_info"),
+        ):
+            out = rag_service._maybe_append_name_ask("Hey, happy to help.", MagicMock(), "s1", 3, 9, "hi", history=[])
+        assert "Hey, happy to help." in out
+        assert out.rstrip().endswith("What name should I use to address you?")
+
+    def test_skips_when_name_known(self):
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Gaurav")
+        with patch.object(rag_service, "get_lead_info_by_session", return_value=lead):
+            out = rag_service._maybe_append_name_ask("Hi Gaurav!", MagicMock(), "s1", 3, 9, "hi", history=[])
+        assert out == "Hi Gaurav!"
+
+    def test_skips_after_first_bot_reply(self):
+        from app.services import rag_service
+
+        hist = [_name_msg("bot", "Hello earlier")]
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "create_or_update_lead_info"),
+        ):
+            out = rag_service._maybe_append_name_ask("Sure thing.", MagicMock(), "s1", 3, 9, "hi", history=hist)
+        assert out == "Sure thing."
+
+    def test_skips_when_question_already_in_text(self):
+        from app.services import rag_service
+
+        text = "Hello! What name should I use to address you?"
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "create_or_update_lead_info"),
+        ):
+            out = rag_service._maybe_append_name_ask(text, MagicMock(), "s1", 3, 9, "hi", history=[])
+        assert out == text
+
+
+class TestRecoverDeferredQuestion:
+    def test_finds_original_question_before_name_ask(self):
+        from app.services.rag_service import _recover_deferred_question
+
+        history = [
+            _name_msg("user", "what are your prices?"),
+            _name_msg("bot", "Sure! What name should I use to address you?"),
+            _name_msg("user", "Gaurav"),
+        ]
+        assert _recover_deferred_question(history) == "what are your prices?"
+
+    def test_none_when_no_name_ask(self):
+        from app.services.rag_service import _recover_deferred_question
+
+        history = [_name_msg("user", "hi"), _name_msg("bot", "Hello!")]
+        assert _recover_deferred_question(history) is None
+
+
+class TestResolveNameFlow:
+    def test_known_name_proceeds_without_ask(self):
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Gaurav")
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=lead),
+            patch.object(rag_service, "get_chat_history", return_value=[]),
+        ):
+            ask, deferred, name, _just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "hi", company_name="Acme"
+            )
+        assert (ask, deferred, name) == (None, None, "Gaurav")
+
+    def test_first_message_asks_name_and_defers(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=[]),
+        ):
+            ask, deferred, name, _just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "what are your prices?", company_name="Acme"
+            )
+        assert ask is not None
+        assert deferred is None and name is None
+
+    def test_name_reply_defers_to_original_question(self):
+        from app.services import rag_service
+
+        history = [
+            _name_msg("user", "what are your prices?"),
+            _name_msg("bot", "Sure! What name should I use to address you?"),
+        ]
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=history),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+            patch.object(rag_service, "route_intent", return_value=None),
+        ):
+            ask, deferred, name, _just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "Gaurav", company_name="Acme"
+            )
+        assert ask is None
+        assert deferred == "what are your prices?"
+        assert name == "Gaurav"
+        mock_save.assert_called_once()
+
+    def test_decline_answers_original_and_does_not_renag(self):
+        from app.services import rag_service
+
+        history = [
+            _name_msg("user", "what are your prices?"),
+            _name_msg("bot", "Sure! What name should I use to address you?"),
+        ]
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=history),
+            patch.object(rag_service, "create_or_update_lead_info"),
+            patch.object(rag_service, "route_intent", return_value=None),
+        ):
+            ask, deferred, name, _just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "why do you need it", company_name="Acme"
+            )
+        # Declining ("why do you need it") does not re-ask, and still answers the
+        # visitor's original deferred question rather than dropping it.
+        assert ask is None
+        assert deferred == "what are your prices?"
+        assert name is None
+
+    def test_no_bot_id_skips_ask(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=[]),
+        ):
+            ask, deferred, name, _just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", None, 9, "hi", company_name="Acme"
+            )
+        assert (ask, deferred, name) == (None, None, None)
+
+
+class TestNameAskMessageMatcher:
+    def test_matches_both_wordings(self):
+        from app.services.rag_service import (
+            _NAME_ASK_TEXT,
+            _NAME_REQUEST_MESSAGE,
+            _is_name_ask_message,
+        )
+
+        # Both the short appended question and the full turn-1 request must match,
+        # otherwise turn-2 name capture + deferred-answer recovery silently no-op.
+        assert _is_name_ask_message(_NAME_ASK_TEXT) is True
+        assert _is_name_ask_message(_NAME_REQUEST_MESSAGE) is True
+        assert _is_name_ask_message("Here are our services.") is False
+        assert _is_name_ask_message("") is False
+
+    def test_real_turn1_message_recovers_deferred_question(self):
+        # Reproduces the reported bug: visitor asked "Our Services", bot sent the
+        # real _NAME_REQUEST_MESSAGE, visitor replied "steve" -> the original
+        # question must be recovered and the name captured.
+        from app.services import rag_service
+
+        history = [
+            _name_msg("user", "Our Services"),
+            _name_msg("bot", rag_service._NAME_REQUEST_MESSAGE),
+        ]
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=history),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+            patch.object(rag_service, "route_intent", return_value=None),
+        ):
+            ask, deferred, name, _just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "steve", company_name="CleanStart"
+            )
+        assert ask is None
+        assert deferred == "Our Services"
+        assert name == "Steve"
+        mock_save.assert_called_once()
+
+
+class TestExtractNameChange:
+    @pytest.mark.parametrize(
+        "question, expected",
+        [
+            ("rename it to jason", "Jason"),
+            ("rename me to Jason", "Jason"),
+            ("change my name to Priya", "Priya"),
+            ("actually i'm Sam", "Sam"),
+            ("call me Alex", "Alex"),
+            ("my name is Ravi", "Ravi"),
+            ("what are your prices", None),
+            ("", None),
+        ],
+    )
+    def test_extract(self, question, expected):
+        from app.services.rag_service import _extract_name_change
+
+        assert _extract_name_change(question) == expected
+
+
+class TestResolveNameFlowRename:
+    def test_rename_updates_stored_name_and_flags_just_named(self):
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Steve")
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=lead),
+            patch.object(rag_service, "get_chat_history", return_value=[]),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+        ):
+            ask, deferred, name, just_named = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "rename it to jason", company_name="Acme"
+            )
+        assert ask is None and deferred is None
+        assert name == "Jason"
+        assert just_named is True
+        mock_save.assert_called_once()
+        _, kwargs = mock_save.call_args
+        assert kwargs.get("name") == "Jason"
+
+    def test_same_name_is_not_rewritten(self):
+        from app.services import rag_service
+
+        lead = SimpleNamespace(name="Jason")
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=lead),
+            patch.object(rag_service, "get_chat_history", return_value=[]),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+        ):
+            ask, deferred, name, just_named = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "call me Jason", company_name="Acme"
+            )
+        assert (ask, deferred, name, just_named) == (None, None, "Jason", False)
+        mock_save.assert_not_called()
+
+
+class TestIsNameDecline:
+    @pytest.mark.parametrize(
+        "question, expected",
+        [
+            ("no", True),
+            ("nope", True),
+            ("why do you need it", True),
+            ("rather not say", True),
+            ("no thanks", True),
+            ("", True),
+            ("steve", False),
+            ("what are your prices?", False),
+            ("tell me about your services", False),
+        ],
+    )
+    def test_decline(self, question, expected):
+        from app.services.rag_service import _is_name_decline
+
+        assert _is_name_decline(question) is expected
+
+
+class TestResolveNameFlowDecline:
+    _HIST = [
+        _name_msg("user", "Our Services"),
+        _name_msg("bot", "Hi there! Before I help you out, may I know your name so I can address you properly?"),
+    ]
+
+    def test_decline_still_answers_original_question(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=self._HIST),
+            patch.object(rag_service, "create_or_update_lead_info"),
+            patch.object(rag_service, "route_intent", return_value=None),
+        ):
+            ask, deferred, name, just_named = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "no", company_name="Acme"
+            )
+        assert ask is None
+        assert deferred == "Our Services"
+        assert name is None and just_named is False
+
+    def test_new_question_flows_normally_not_deferred(self):
+        from app.services import rag_service
+
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=self._HIST),
+            patch.object(rag_service, "create_or_update_lead_info"),
+            patch.object(rag_service, "route_intent", return_value=None),
+        ):
+            ask, deferred, name, just_named = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "what are your prices?", company_name="Acme"
+            )
+        # Topic change: answer the new question, not the old deferred one.
+        assert (ask, deferred, name, just_named) == (None, None, None, False)

@@ -527,6 +527,40 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
 # this boundary too.
 VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional"})
 
+# The slugs `seed_plans.py` creates. Anything else is a BESPOKE plan a
+# super-admin provisioned for an individual deal — the seed script's own
+# docstring says unknown slugs are left untouched precisely because they exist.
+_SEEDED_PLAN_SLUGS: frozenset[str] = frozenset({"free", "starter", "standard", "professional"})
+
+
+def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
+    """Does this plan include a feature granted to ``ladder_slugs``?
+
+    Two rules, and the second exists because narrowing these gates to a bare
+    allow-list silently removed a paid feature from enterprise customers.
+
+    1. A slug on the standard ladder gets exactly what the ladder says.
+    2. A slug OFF the ladder is bespoke — an enterprise deal at a negotiated
+       price — and gets the feature. The comment guarding this was deleted
+       when the gate narrowed to ``{"standard", "professional"}``; it said "a
+       custom paid slug provisioned for an enterprise deal is a paid plan and
+       must not silently lose the feature."
+
+    The failure modes are not symmetric, which is what decides rule 2. Wrongly
+    granting costs one vendor call on a tier that should not have had it.
+    Wrongly denying leaves a customer on a bespoke contract without a feature
+    they pay for AND — because ``LeadInfo.is_valid_email`` stays NULL — tripping
+    the 409 soft gate on every manual follow-up, with no setting anywhere that
+    would re-enable it.
+
+    A newly SEEDED tier is not covered by rule 2: adding it to
+    ``_SEEDED_PLAN_SLUGS`` is part of adding the tier, which forces a
+    deliberate choice per feature rather than a silent grant.
+    """
+    if slug in ladder_slugs:
+        return True
+    return slug not in _SEEDED_PLAN_SLUGS
+
 
 def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool:
     """True iff ANY of this client's subscriptions includes Visitor Intelligence.
@@ -550,7 +584,7 @@ def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
+    return _paid_tier_includes(entitlements.plan_slug, VISITOR_INTELLIGENCE_SLUGS)
 
 
 def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
@@ -575,30 +609,31 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
+    return _paid_tier_includes(entitlements.plan_slug, VISITOR_INTELLIGENCE_SLUGS)
 
 
-# ── Real-time email validation gate (every PAID plan) ───────────────────────
+# ── Email verification gate (Standard + Professional) ───────────────────────
 #
-# The widget calls POST /chat/validate-email on the email field's blur event
-# to block obviously-fake addresses before a visitor can submit the handoff
-# or lead-capture form. Lead quality is the baseline value of paying at all,
-# so every paid tier gets it — Starter included. Only Free is excluded, and
-# a Free bot skips the Reoon call entirely (rather than making it and hiding
-# the result), so we never pay for a check that can't be acted on.
-#
-# Expressed as "not free" rather than a slug allow-list, matching
-# ``is_lead_intelligence_enabled``: a custom paid slug provisioned for an
-# enterprise deal is a paid plan and must not silently lose the feature.
+# Reoon email verification powers both the widget's real-time blur check
+# (``POST /chat/validate-email``) and the background lead-enrichment check that
+# persists ``LeadInfo.is_valid_email`` / ``email_score``. It is a metered,
+# credit-costing feature (``credit_cost.email_verification``), so it is scoped
+# to the Standard and Professional tiers — Free and Starter are excluded and
+# skip the Reoon call entirely (rather than paying for a check they can't act
+# on). A slug allow-list (not "not free") keeps this boundary explicit so a
+# future Starter change can't silently switch the paid feature on.
+EMAIL_VERIFICATION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
 
 
 def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
-    """True iff the plan funding THIS bot is a paid plan (any tier above Free).
+    """True iff the plan funding THIS bot includes email verification.
 
     Bot-scoped (mirrors :func:`is_lead_source_attribution_enabled_for_bot`)
     because the gated call sites — ``POST /chat/validate-email`` and the
     background lead-enrichment Reoon check — are both authenticated via
-    ``X-Bot-Key``, not a client session. Denies on any resolver error.
+    ``X-Bot-Key``, not a client session. Restricted to the Standard and
+    Professional tiers (see :data:`EMAIL_VERIFICATION_SLUGS`). Denies on any
+    resolver error.
     """
     try:
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
@@ -609,7 +644,7 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug != "free"
+    return _paid_tier_includes(entitlements.plan_slug, EMAIL_VERIFICATION_SLUGS)
 
 
 def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:

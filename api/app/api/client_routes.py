@@ -241,12 +241,13 @@ async def upload_feedback_attachment(
     client: Client = Depends(get_current_client),
 ):
     """Upload a feedback attachment (max 10MB) to R2 and return the URL."""
-    # Max file size: 10MB
+    from app.core.upload_guard import read_bounded
+
+    # Bounded read, not read-then-measure: the previous order pulled the whole
+    # body into memory and only then objected to its size.
     MAX_SIZE = 10 * 1024 * 1024
     try:
-        content = await file.read()
-        if len(content) > MAX_SIZE:
-            raise HTTPException(status_code=400, detail="File size exceeds the 10MB limit.")
+        content = await read_bounded(file, MAX_SIZE)
 
         from app.services.r2_service import upload_chat_file
 
@@ -268,18 +269,35 @@ async def upload_logo_endpoint(
     bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client_strict),
 ):
-    """Upload a logo to Backblaze B2 and return the URL."""
+    """Upload a logo image to R2 and return its URL.
+
+    This endpoint previously read the whole body with no cap and passed
+    arbitrary bytes to ``Image.open`` — a decompression-bomb and Pillow-CVE
+    surface reachable by any authenticated customer, bounded only by nginx's
+    50 MB body limit. Two sibling endpoints already had size and type checks;
+    this one had neither.
+    """
+    from app.core.upload_guard import IMAGE_UPLOAD_TYPES, MAX_LOGO_BYTES, ensure_allowed_type, read_bounded
+    from app.services.r2_service import UnsupportedImage, upload_to_b2
+
+    # Cheap rejects first: the declared type costs nothing to check, and the
+    # bounded read means an oversized upload never reaches memory in full.
+    ensure_allowed_type(file, IMAGE_UPLOAD_TYPES)
+    content = await read_bounded(file, MAX_LOGO_BYTES)
+
     try:
-        from app.services.r2_service import upload_to_b2
-
-        content = await file.read()
         file_key = upload_to_b2(content, file.filename, file.content_type)
-        public_url = f"{str(request.base_url).rstrip('/')}/files/{file_key}"
-
-        return {"url": public_url}
+    except UnsupportedImage as e:
+        # The customer's file is wrong, not our service — 400, and say why.
+        # The declared content type is forgeable, so this is the check that
+        # actually decided, having decoded the bytes.
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Logo upload failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload logo.") from e
+
+    public_url = f"{str(request.base_url).rstrip('/')}/files/{file_key}"
+    return {"url": public_url}
 
 
 # ── Account: profile / password / API key ────────────────────────────────────

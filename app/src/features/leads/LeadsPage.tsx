@@ -40,6 +40,7 @@ import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
 import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
 import { type Lead } from '../../types/domain';
+import { buildSelectedLeadsCsv } from './leadsCsv';
 import { useLeads } from './useLeads';
 import { useLeadDetail } from './useLeadDetail';
 import { useLeadAnnotations } from './useLeadAnnotations';
@@ -49,6 +50,7 @@ import {
   type TierKey,
   TIER_META,
   TIER_ORDER,
+  companyDisplay,
   filterLeads,
   formatDateTime,
   formatLocation,
@@ -99,35 +101,6 @@ function leadComparator(sortBy: SortKey): (a: Lead, b: Lead) => number {
   return (a, b) => leadActivityTime(b) - leadActivityTime(a) || b.score - a.score;
 }
 
-/** Escape one CSV field: quote it and double any embedded quotes (RFC 4180). */
-function csvField(value: string | number | null | undefined): string {
-  const raw = value === null || value === undefined ? '' : String(value);
-  return `"${raw.replace(/"/g, '""')}"`;
-}
-
-/**
- * Build a CSV for a subset of leads entirely client-side. The server export
- * (`exportLeadsCsv`) only emits the full set, so "Export selected" assembles its
- * own file from the rows the user ticked - including their private tags.
- */
-function buildSelectedLeadsCsv(leads: Lead[], tagsFor: (sessionId: string) => readonly string[]): string {
-  const header = ['Name', 'Email', 'Phone', 'Company', 'Quality', 'Score', 'Location', 'Tags', 'Last active'];
-  const rows = leads.map((lead) => {
-    const tier = TIER_META[normalizeTier(lead.status)];
-    return [
-      csvField(lead.contact?.name),
-      csvField(lead.contact?.email),
-      csvField(lead.contact?.phone),
-      csvField(lead.contact?.company),
-      csvField(tier.label),
-      csvField(lead.score),
-      csvField(formatLocation(lead.location)),
-      csvField(tagsFor(lead.session_id).join('; ')),
-      csvField(formatDateTime(lead.last_active_at)),
-    ].join(',');
-  });
-  return [header.map(csvField).join(','), ...rows].join('\r\n');
-}
 
 /** Trigger a browser download of `content` as a UTF-8 CSV named `filename`. */
 function downloadCsv(content: string, filename: string): void {
@@ -497,21 +470,25 @@ export function LeadsPage(): ReactElement {
       {
         key: 'company',
         header: 'Company',
-        // Derived free of charge from the lead's email domain
+        // The domain is derived free of charge from the lead's email
         // (`email_domain_service.extract_company_domain`) — personal-provider
         // addresses correctly yield nothing, so an em-dash here means
-        // "consumer email", not "lookup failed".
+        // "consumer email", not "lookup failed". `companyDisplay` prefers the
+        // resolved name ("Infosys Limited") when the paid lookup found one;
+        // this column showed the bare domain either way, so the enrichment
+        // the customer pays for was invisible in the view they scan.
         render: (lead) => {
-          const company = lead.contact?.company?.trim();
+          const company = companyDisplay(lead.contact);
           if (!company) {
             return <span className="text-[12px] text-[var(--ds-text-subtle)]">&mdash;</span>;
           }
+          const title = company.secondary ? `${company.value} (${company.secondary})` : company.value;
           return (
             <span
-              title={company}
+              title={title}
               className="block max-w-[12rem] truncate text-[12px] text-[var(--ds-text)]"
             >
-              {company}
+              {company.value}
             </span>
           );
         },

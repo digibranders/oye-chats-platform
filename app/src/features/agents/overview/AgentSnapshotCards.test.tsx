@@ -1,13 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import { AgentOverviewHero } from './AgentOverviewHero';
 import { AgentSnapshotCards } from './AgentSnapshotCards';
-import { deriveAgentHealth } from './agent-health';
 import { type Bot } from '../../../types/domain';
 import { type AgentStats } from './overview-data';
 
-describe('AgentOverviewHero & AgentSnapshotCards', () => {
+describe('AgentSnapshotCards', () => {
   const sampleAgent: Bot = {
     id: 17,
     name: 'Support Concierge',
@@ -29,22 +27,6 @@ describe('AgentOverviewHero & AgentSnapshotCards', () => {
     resolutionRate: 88,
     averageRating: 4.6,
   };
-
-  it('renders AgentOverviewHero with agent identity and experience link', () => {
-    const health = deriveAgentHealth(sampleAgent);
-    render(
-      <MemoryRouter>
-        <AgentOverviewHero agent={sampleAgent} health={health} agentBasePath="/agents/17" />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole('heading', { level: 1, name: 'Support Concierge' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /edit experience/i })).toHaveAttribute(
-      'href',
-      '/agents/17/experience',
-    );
-    expect(screen.getByText(/Created Jul 12, 2026/)).toBeInTheDocument();
-  });
 
   it('renders AgentSnapshotCards with deep links and metrics', () => {
     render(

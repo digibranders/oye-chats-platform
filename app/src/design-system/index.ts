@@ -58,7 +58,16 @@ export { MetricCard } from './components/MetricCard';
 export type { MetricCardProps, MetricTrend } from './components/MetricCard';
 export { IconTile } from './components/IconTile';
 export type { IconTileProps, IconTileTone, IconTileSize, TileIcon } from './components/IconTile';
-export { WhatsAppGlyph, MessengerGlyph } from './icons/brand';
+export {
+  WhatsAppGlyph,
+  MessengerGlyph,
+  CalendlyGlyph,
+  ZcalGlyph,
+  CalComGlyph,
+  EmailGlyph,
+} from './icons/brand';
+export { platformLogos } from './icons/platformLogos';
+export type { PlatformGlyph, PlatformGlyphProps } from './icons/platforms';
 export { InsightCard } from './components/InsightCard';
 export type { InsightCardProps, InsightTone } from './components/InsightCard';
 export { ActionCard } from './components/ActionCard';

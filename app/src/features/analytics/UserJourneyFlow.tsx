@@ -33,6 +33,14 @@ import {
   Skeleton,
 } from '../../design-system';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
+import {
+  deriveDropOffTotal,
+  dropOffTooltip,
+  filterEmptyDescription,
+  isFilterableOutcome,
+  outcomeLabel,
+  type FilterableOutcome,
+} from './journeyModel';
 
 /**
  * UserJourneyFlow — a Sankey-inspired flow visualisation. Sources on
@@ -154,6 +162,10 @@ interface TrieVizNode {
    *  sequence index. */
   seqIndices: ReadonlySet<number>;
   side: 'pre' | 'post';
+  /** Starting page (depth-0 ancestor path) of this node's branch. Only
+   *  meaningful pre-side: clicking a pre node filters the diagram to the
+   *  journeys that began on this page, mirroring an outcome click. */
+  startPage?: string;
 }
 
 interface TrieVizEdge {
@@ -198,6 +210,15 @@ const CHAIN_START_X = 24;
 const CHAIN_END_X = 410; // just before the chatbot circle
 const CHAIN_MIN_CARD_W = 44; // don't shrink below icon-plus-text
 const CHAIN_MAX_CARD_W = 156; // don't grow past the destination CARD_W
+// REVERTED from 25. These four are geometry-derived, not preferences: the
+// source band is a fixed 24→410px, `colW = (410-24)/cols` and
+// `cardW = max(44, min(156, colW-15))`, so overlap begins at cols >= 9 — 8 was
+// exactly the largest non-overlapping value. At 25 every card overlapped its
+// neighbour by ~29px and the deepest one intruded into the chatbot circle,
+// while `cardW` pinned to 44 truncated every label to six characters
+// ("/pric…", "/abou…"). Raising these also pushed the client's fetch limit to
+// 25 against a route bound of `le=20`, which 422'd and errored the WHOLE
+// Journey tab on load. Change the band geometry first if these need to grow.
 const MAX_CHAIN_LEN = 8;
 
 // Post-chat chain lives to the RIGHT of the chatbot, mirroring the
@@ -239,6 +260,13 @@ const CONVERSION_DESTINATIONS = [
   { id: 'offline_message_sent', label: 'Offline Message', tone: 'purple' as const, icon: Mail },
 ];
 const EXIT_DESTINATION = { id: 'exit', label: 'Drop-off / Exit', tone: 'gray' as const, icon: LogOut };
+
+// Synthetic pre-chat entry for visitors who opened chat with NO tracked
+// page before it (direct / first-touch). Rendered as one card on the far
+// left so the entry column sums to the center count instead of silently
+// under-counting these sessions. Sentinel — never a real URL path, so
+// clicking it is a no-op rather than a page filter.
+const DIRECT_PATH = 'Direct (no prior page)';
 
 const DEST_COLUMN_X = 990;
 
@@ -486,6 +514,16 @@ function layoutTrie(
   const rootStyle = SOURCE_STYLES[0];
   paint(root, rootStyle.tone, rootStyle.icon);
 
+  // Starting page of a node's branch: walk up to the depth-0 ancestor.
+  // Every sequence passing through a node shares its prefix, so this is
+  // the single page their journey began on — the value a pre-node click
+  // filters by.
+  const rootPageOf = (bn: TrieBuildNode): string => {
+    let c = bn;
+    while (c.parent && c.depth > 0) c = c.parent;
+    return c.path;
+  };
+
   // Recursively assign vertical positions using leaf-count weighting:
   // each subtree occupies vertical space proportional to its leaves.
   let cursorSlot = 0;
@@ -520,6 +558,7 @@ const x = xStart + n.depth * colW;
           depth: n.depth,
           seqIndices: n.seqIndices,
           side,
+          startPage: rootPageOf(n),
         });
         // Leaf anchor: right edge of the card (both sides). Only the
         // pre-side actually renders these anchors as chatbot
@@ -558,8 +597,10 @@ const x = xStart + n.depth * colW;
         x: cardX,
         y,
         width: cardW,
+        depth: n.depth,
         seqIndices: n.seqIndices,
         side,
+        startPage: rootPageOf(n),
       });
     }
     return { yCenter };
@@ -608,6 +649,27 @@ function clampCard(x: number, w: number): number {
   return Math.max(CHAIN_START_X, Math.min(POST_CHAIN_END_X - w, x));
 }
 
+// Why there is no per-journey drop-off derivation here
+// ─────────────────────────────────────────────────────
+// The backend attributes pre-chat page sequences to the three POSITIVE
+// outcomes (Meeting / Live Chat / Offline) and to nothing else. Drop-off has
+// no path attribution, and it cannot be reconstructed from what the client
+// holds:
+//   · `preChatSequences.sequences[].sessions` is the pattern's TOTAL session
+//     count — converted and not. Removing a whole bucket because one of its
+//     200 sessions booked a meeting deletes 199 real drop-offs; keeping the
+//     bucket and printing 200 labels 200 sessions as drop-offs when only some
+//     were. Both directions are wrong, and the high-traffic buckets (the ones
+//     that matter) are the most likely to contain at least one conversion.
+//   · `conversionPaths` is fetched with `limit: 5` per outcome, so any
+//     conversion outside the top 5 is invisible to the client anyway.
+//   · `post_sessions` counts only the single WINNING post-chat continuation,
+//     not every session that kept browsing — so "no conversion AND no
+//     post-chat page" is not computable per pattern either.
+// The honest per-session TOTAL does exist (`summary.sessions_no_activity`) and
+// is what the Drop-off card shows via `deriveDropOffTotal`. The card is
+// therefore rendered but not filterable — see `isFilterableOutcome`.
+
 // ── UI ─────────────────────────────────────────────────────────────────────
 
 export interface UserJourneyFlowProps {
@@ -631,19 +693,13 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // pre-chain starts on it. Cleared when the agent or period changes.
   const [startFilter, setStartFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
-  // Filter by OUTCOME — clicking a destination card (Meeting / Live
-  // Chat / Offline / Drop-off) narrows the diagram to pre-chat
-  // sequences that actually led to that outcome. Backend already
-  // returns this attribution for the 3 conversion types via
-  // `conversionPaths`; drop-off is derived client-side as sequences
-  // with no post-chat activity (best available proxy — a truly
-  // per-session drop-off attribution would need a new backend field).
-  type OutcomeFilter =
-    | 'meeting_booked'
-    | 'handoff_requested'
-    | 'offline_message_sent'
-    | 'exit';
-  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter | null>(null);
+  // Filter by OUTCOME — clicking a conversion destination card (Meeting /
+  // Live Chat / Offline) narrows the diagram to the pre-chat sequences that
+  // actually led to that outcome, using the backend's own attribution from
+  // `conversionPaths`. Drop-off is NOT in this union: the backend attributes
+  // no paths to it, and inventing them client-side produced confident wrong
+  // numbers (see the note above `UserJourneyFlow`).
+  const [outcomeFilter, setOutcomeFilter] = useState<FilterableOutcome | null>(null);
   // Reset filters + selection when the agent changes. Uses the
   // "derived state during render" pattern (a prev-value shadow state)
   // instead of a `useEffect(setState, [botId])` — the latter runs an
@@ -688,16 +744,9 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       sessions: number;
       post_sequence?: readonly string[];
     }
-    let src: readonly Src[];
-    if (outcomeFilter && outcomeFilter !== 'exit') {
-      src = data.conversionPaths[outcomeFilter]?.paths ?? [];
-    } else if (outcomeFilter === 'exit') {
-      src = data.preChatSequences.sequences.filter(
-        (s) => (s.post_sequence?.length ?? 0) === 0,
-      );
-    } else {
-      src = data.preChatSequences.sequences;
-    }
+    const src: readonly Src[] = outcomeFilter
+      ? data.conversionPaths[outcomeFilter]?.paths ?? []
+      : data.preChatSequences.sequences;
     for (const seq of src) {
       if (seq.sessions <= 0 || seq.sequence.length === 0) continue;
       const start = seq.sequence[0];
@@ -742,8 +791,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     // pre-chat list (which is not attributed by outcome). Rows sourced
     // this way have no `post_sequence` — the visitor went straight to
     // the outcome — so the right-of-chatbot chain is naturally empty.
-    // Drop-off ('exit') has no backend attribution; approximated as
-    // pre-sequences with an empty post_sequence.
+    // Drop-off is never a source: it has no backend path attribution.
     interface RawSeq {
       sequence: readonly string[];
       post_sequence?: readonly string[];
@@ -751,7 +799,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       post_sessions?: number;
     }
     let source: readonly RawSeq[];
-    if (outcomeFilter && outcomeFilter !== 'exit') {
+    if (outcomeFilter) {
       const paths = data.conversionPaths[outcomeFilter]?.paths ?? [];
       source = paths.map((p) => ({
         sequence: p.sequence,
@@ -759,10 +807,6 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         post_sequence: [],
         post_sessions: 0,
       }));
-    } else if (outcomeFilter === 'exit') {
-      source = data.preChatSequences.sequences.filter(
-        (s) => (s.post_sequence?.length ?? 0) === 0,
-      );
     } else {
       source = data.preChatSequences.sequences;
     }
@@ -797,6 +841,22 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       insertPath(preRoot, clipped, seq.sessions, seqIndex);
     });
     pruneToMaxLeaves(preRoot, TRIE_MAX_LEAVES);
+
+    // Direct visitors — opened chat with no tracked page before it. Only
+    // meaningful in the unfiltered "all paths" view; when a start/outcome
+    // filter is active the diagram already shows a specific sub-population
+    // whose entry pages are known, so a "no prior page" node wouldn't
+    // reconcile against anything. Injected AFTER pruning with a seqIndex
+    // past every real sequence, so it survives the leaf cap and its
+    // cross-highlight set contains only itself.
+    const isUnfilteredView = effectiveStartFilter == null && outcomeFilter == null;
+    const directCount = Math.max(
+      0,
+      data.summary.sessions_with_journey - data.preChatSequences.sessions_with_pre_chat,
+    );
+    if (isUnfilteredView && directCount > 0) {
+      insertPath(preRoot, [DIRECT_PATH], directCount, filteredSequences.length);
+    }
 
     // Build the post-chat TRIE from the SAME filtered sequences.
     // Post-cards carry the WINNING continuation's own session count
@@ -883,24 +943,11 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     //  - Three conversion slots from summary_counts (Book Meeting /
     //    Live Chat / Offline Message).
     //  - Drop-off / Exit — sessions that opened chat but did nothing:
-    //    no conversion event AND no post-chat page. The backend now
-    //    returns this count directly (`sessions_no_activity`), which
-    //    avoids the previous bug where subtracting conversions +
-    //    post-chat activity from total double-counted any session
-    //    that both converted AND kept browsing. Older API builds
-    //    without the field fall back to the subtraction; drop-off
-    //    may then read low but is still clamped ≥ 0.
-    const conversions =
-      data.summary.meeting_booked + data.summary.handoff_requested + data.summary.offline_message_sent;
-    const dropoff =
-      typeof data.summary.sessions_no_activity === 'number'
-        ? data.summary.sessions_no_activity
-        : Math.max(
-            0,
-            data.summary.sessions_with_journey -
-              conversions -
-              data.postChat.sessions_with_post_chat_activity,
-          );
+    //    no conversion event AND no post-chat page. Read from the
+    //    backend's per-session count; only older API builds fall back
+    //    to a subtraction, and those are labelled as an estimate on
+    //    the card itself. See `deriveDropOffTotal`.
+    const dropOff = deriveDropOffTotal(data);
     const centerValue = data.summary.sessions_with_journey;
     const denom = centerValue > 0 ? centerValue : 1;
 
@@ -931,7 +978,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         label: EXIT_DESTINATION.label,
         tone: EXIT_DESTINATION.tone,
         icon: EXIT_DESTINATION.icon,
-        value: dropoff,
+        value: dropOff.count,
       },
     ];
 
@@ -962,6 +1009,10 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       effVBH,
       centerY: effCenterY,
       crossHighlight,
+      dropOff,
+      /** Did this window track ANY pre-chat journey? Separates "no data"
+       *  from "data exists, your filter matched none of it". */
+      hasTrackedJourneys: data.preChatSequences.sequences.length > 0,
     };
   }, [data, effectiveStartFilter, outcomeFilter]);
 
@@ -1028,14 +1079,12 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         </div>
         <EmptyState
           icon={Compass}
-          title="No journeys match this filter"
-          description={
-            outcomeFilter === 'exit'
-              ? 'No sessions dropped off from a tracked pre-chat page in this window.'
-              : outcomeFilter
-                ? `No sessions ended in ${outcomeLabel(outcomeFilter)} in this window${startFilter ? ` starting on ${startFilter}` : ''}.`
-                : `No sessions started on ${startFilter} in this window.`
-          }
+          title={flow.hasTrackedJourneys ? 'No journeys match this filter' : 'No journeys tracked yet'}
+          description={filterEmptyDescription({
+            outcome: outcomeFilter,
+            startPage: effectiveStartFilter,
+            hasTrackedJourneys: flow.hasTrackedJourneys,
+          })}
         />
       </div>
     );
@@ -1309,7 +1358,29 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             height={CARD_H}
             opacity={nodeVisible(node.id)}
             style={{ cursor: 'pointer' }}
-            onClick={() => toggleRow(node.id)}
+            onClick={() => {
+              // Pre-chat page click = FILTER the diagram to journeys that
+              // began on this page, mirroring how clicking an outcome
+              // filters to journeys that ended there. This re-renders a
+              // focused, non-empty view instead of the in-place highlight
+              // (which, on sparse data, dimmed everything and hid the
+              // outcome connectors — reading as "nothing happened").
+              // Post-chat nodes keep the highlight: they have no single
+              // starting page to filter by.
+              if (
+                node.side === 'pre' &&
+                node.startPage != null &&
+                node.path !== DIRECT_PATH
+              ) {
+                const page = node.startPage;
+                setStartFilter((prev) => (prev === page ? null : page));
+                setSelectedRowId(null);
+              } else {
+                // Direct / post-chat nodes have no single starting page to
+                // filter by — just toggle the highlight for the flow.
+                toggleRow(node.id);
+              }
+            }}
           >
             <FlowCard
               node={{
@@ -1329,15 +1400,23 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
           </foreignObject>
         );
       })}
-      {/* Destination cards — click one to filter the diagram to only
-          the pre-chat journeys that led to that outcome, so the owner
-          can see "who ended in Live Chat?" or "who dropped off?".
-          Dim when a row is selected, and hide the % on the card in
-          that mode since the % is a share of ALL sessions, not of
-          the selected row. */}
+      {/* Destination cards — click a CONVERSION card to filter the
+          diagram to the pre-chat journeys the backend attributed to
+          that outcome ("who ended in Live Chat?"). The Drop-off card
+          is deliberately inert: its total is honest, but no per-journey
+          exit attribution exists, so filtering by it could only ever
+          show made-up rows. Its tooltip says so. Dim when a row is
+          selected, and hide the % in that mode since the % is a share
+          of ALL sessions, not of the selected row. */}
       <g opacity={otherOpacity()}>
         {flow.destinations.map((node) => {
+          // Narrow once, here — the id is only a filter target when the
+          // backend actually attributes paths to it.
+          const filterOutcome: FilterableOutcome | null = isFilterableOutcome(node.id)
+            ? node.id
+            : null;
           const isActive = outcomeFilter === node.id;
+          const isDropOff = node.id === EXIT_DESTINATION.id;
           return (
             <foreignObject
               key={node.id}
@@ -1345,15 +1424,23 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               y={node.y}
               width={node.width}
               height={CARD_H}
-              style={{ cursor: 'pointer' }}
-              onClick={() => {
-                setOutcomeFilter((prev) =>
-                  prev === node.id ? null : (node.id as OutcomeFilter),
-                );
-                setSelectedRowId(null);
-              }}
+              style={{ cursor: filterOutcome ? 'pointer' : 'default' }}
+              onClick={
+                filterOutcome
+                  ? () => {
+                      setOutcomeFilter((prev) => (prev === filterOutcome ? null : filterOutcome));
+                      setSelectedRowId(null);
+                    }
+                  : undefined
+              }
             >
-              <FlowCard node={node} hidePct={selectedRowId != null} active={isActive} />
+              <FlowCard
+                node={node}
+                hidePct={selectedRowId != null}
+                active={isActive}
+                subtitle={isDropOff && flow.dropOff.basis === 'estimated' ? 'est.' : undefined}
+                tooltip={isDropOff ? dropOffTooltip(flow.dropOff) : undefined}
+              />
             </foreignObject>
           );
         })}
@@ -1494,7 +1581,6 @@ function FlowCard({
    *  clipped by displayPath(). */
   tooltip?: string;
 }): ReactElement {
-  const Icon = node.icon;
   const tone = TONE[node.tone];
   const compact = node.width < FLOW_CARD_COMPACT_THRESHOLD;
   const borderClass = active
@@ -1524,11 +1610,6 @@ function FlowCard({
             style={{ backgroundColor: tone.icon }}
           />
         )}
-        <Icon
-          size={14}
-          strokeWidth={1.75}
-          className="shrink-0 text-[var(--ds-text-muted)]"
-        />
         <div className="min-w-0 max-w-full text-center">
           <p className="truncate text-[10px] font-medium leading-tight text-[var(--ds-text-muted)]">
             {node.label}
@@ -1553,11 +1634,6 @@ function FlowCard({
           style={{ backgroundColor: tone.icon }}
         />
       )}
-      <Icon
-        size={18}
-        strokeWidth={1.75}
-        className="shrink-0 text-[var(--ds-text-muted)]"
-      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-medium text-[var(--ds-text-muted)]">{node.label}</p>
         <p className="tabular-nums text-[13px] font-semibold leading-tight text-[var(--ds-text)]">
@@ -1579,25 +1655,6 @@ function FlowCard({
 }
 
 // ── Header controls ─────────────────────────────────────────────────────────
-
-// Human-readable label for an outcome id. Kept in sync with
-// CONVERSION_DESTINATIONS / EXIT_DESTINATION above — no auto-derivation
-// because the id → label mapping is small and stable, and colocating it
-// here means the chip text can be tightened without unrelated churn.
-function outcomeLabel(id: string): string {
-  switch (id) {
-    case 'meeting_booked':
-      return 'Book Meeting';
-    case 'handoff_requested':
-      return 'Live Chat';
-    case 'offline_message_sent':
-      return 'Offline Message';
-    case 'exit':
-      return 'Drop-off';
-    default:
-      return id;
-  }
-}
 
 /**
  * Popover listing every distinct starting page (first stop of a

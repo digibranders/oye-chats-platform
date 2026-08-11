@@ -41,7 +41,17 @@ def _session(**overrides):
 
 
 def _lead_info(**overrides):
-    base = dict(name="Jane", email="jane@acme.com", phone=None, company="Acme", is_valid_email=None, email_score=None)
+    base = dict(
+        name="Jane",
+        email="jane@acme.com",
+        phone=None,
+        company="acme.com",
+        is_valid_email=None,
+        email_score=None,
+        company_name=None,
+        company_description=None,
+        company_logo_url=None,
+    )
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -52,6 +62,36 @@ class TestVisitorIntelligenceFieldsDefaultOff:
         assert "is_valid_email" not in payload["contact"]
         assert "email_score" not in payload["contact"]
         assert "visitor_metadata" not in payload
+
+    def test_the_resolved_company_is_behind_the_paywall(self):
+        """The three resolved-company fields are produced by the same paid
+        enrichment and must not leak to a plan that did not buy it.
+
+        A review hoisted these three assignments out of the
+        `include_visitor_intelligence` block and the entire 3715-test suite
+        stayed green — a one-line indentation slip would have handed
+        Free/Starter/Standard callers the paid enrichment, in the file whose
+        whole purpose is proving the paywall.
+        """
+        payload = build_lead_response(
+            _session(),
+            _lead_info(
+                company_name="Infosys Limited",
+                company_description="An IT services company.",
+                company_logo_url="https://infosys.com/logo.png",
+            ),
+        )
+
+        for field in ("company_name", "company_description", "company_logo_url"):
+            assert field not in payload["contact"], f"{field} leaked to a plan without Visitor Intelligence"
+
+    def test_the_raw_domain_stays_visible_on_every_plan(self):
+        """`company` predates the feature, is free, and is read by the leads
+        table, CSV export and outbound webhooks. Gating it would be a
+        regression, not a paywall."""
+        payload = build_lead_response(_session(), _lead_info(company="infosys.com"))
+
+        assert payload["contact"]["company"] == "infosys.com"
 
     def test_fields_absent_with_no_lead_info(self):
         payload = build_lead_response(

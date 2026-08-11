@@ -38,7 +38,7 @@ function LockedTeaser(): ReactElement {
   const { openUpgradeModal } = useUpgradeModal();
   return (
     <section className="space-y-3">
-      <SectionTitle>Visitor Intelligence</SectionTitle>
+      <SectionTitle>Network &amp; risk</SectionTitle>
       <button
         type="button"
         onClick={() => openUpgradeModal('view_visitor_intelligence')}
@@ -49,7 +49,7 @@ function LockedTeaser(): ReactElement {
         </span>
         <span className="min-w-0">
           <span className="block text-[13px] font-medium text-[var(--ds-text)]">
-            Company signal & email validity are locked
+            Network signal & email validity are locked
           </span>
           <span className="block text-[12px] text-[var(--ds-text-subtle)]">
             Upgrade to Professional to see this and send a manual follow-up.
@@ -83,21 +83,26 @@ function hasCompanySignal(intel: Record<string, unknown>): boolean {
 function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElement | null {
   const companyName = asString(intel.company_name);
   const companyDomain = asString(intel.company_domain);
-  const companyType = asString(intel.company_type);
   const asnOrg = asString(intel.asn_org);
   const isVpn = intel.is_vpn === true || intel.is_proxy === true || intel.is_tor === true;
-  const isHosting = companyType === 'hosting' || companyType === 'isp' || intel.is_datacenter === true;
 
   if (!hasCompanySignal(intel)) return null;
 
-  // An ISP/hosting-owned IP tells you who ROUTED the visitor, not who
-  // employs them. Labelling that as "the visitor's company" is the single
-  // most misleading thing this panel could do, so it is called out inline.
-  const isEmployerSignal = Boolean(companyName) && !isHosting && !isVpn;
-
+  // `company_name` now arrives already filtered: the API strips it for every
+  // hosting range, ISP range, carrier brand and subnet label, so anything that
+  // reaches this component is a range someone can actually be employed by.
+  // `ip_intel_service.fetch_ip_intel` is the ONLY sanctioned writer of
+  // `visitor_metadata.ip_intel` — anything else writing that key must apply
+  // the same gates, or this component starts asserting something it cannot
+  // back up. (An alembic backfill was a second, unfiltered writer until it was
+  // made to share the gates.)
+  // That is why there is no longer an "is this really an employer?" test here
+  // — the old inline disclaimer was deciding, in the UI, a question the API
+  // now answers. Two DIFFERENT things are rendered, never one thing hedged:
+  // a company, or the network that routed them.
   return (
     <div className="space-y-2 rounded-xl border border-[var(--ds-border)] p-4">
-      {companyName && (
+      {companyName ? (
         <div className="flex items-start gap-2.5 text-[13px] text-[var(--ds-text)]">
           <Building2 size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
           <span className="min-w-0">
@@ -105,17 +110,16 @@ function CompanySignal({ intel }: { intel: Record<string, unknown> }): ReactElem
             {companyDomain && (
               <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{companyDomain}</span>
             )}
+            <span className="mt-1 block text-[11px] text-[var(--ds-text-subtle)]">
+              Derived from the visitor&rsquo;s network &mdash; not a confirmed employer.
+            </span>
           </span>
         </div>
-      )}
-      {!companyName && asnOrg && (
-        <p className="text-[12px] text-[var(--ds-text-subtle)]">Network: {asnOrg}</p>
-      )}
-      {companyName && !isEmployerSignal && (
+      ) : asnOrg ? (
         <p className="text-[12px] text-[var(--ds-text-subtle)]">
-          This is the network operator, not necessarily the visitor&rsquo;s employer.
+          Connecting via <span className="text-[var(--ds-text)]">{asnOrg}</span>
         </p>
-      )}
+      ) : null}
       {isVpn && (
         <div className="flex items-start gap-2 text-[12px]">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--ds-warning)]" aria-hidden="true" />
@@ -250,14 +254,13 @@ export function VisitorIntelligenceSection({
 
   return (
     <section className="space-y-3">
-      <SectionTitle>Visitor Intelligence</SectionTitle>
+      <SectionTitle>Network &amp; risk</SectionTitle>
       <div className="space-y-3">
         {hasCompanySignal(intel) ? (
           <CompanySignal intel={intel} />
         ) : (
           <p className="rounded-xl border border-[var(--ds-border)] p-4 text-[12px] text-[var(--ds-text-subtle)]">
-            No company signal resolved for this visitor&rsquo;s IP. Most home and mobile
-            connections can&rsquo;t be traced to an employer.
+            No network details resolved for this visitor.
           </p>
         )}
         {email && <EmailValidityBadge isValid={isValidEmail} score={emailScore} />}

@@ -2,13 +2,15 @@ import { type ReactElement, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  Building2,
   CalendarClock,
+  ChevronDown,
   FileText,
   Globe,
   ListOrdered,
+  MailCheck,
   MessageSquare,
   Wallet,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton, cn } from '../../design-system';
@@ -21,6 +23,8 @@ import {
   formatDate,
   formatTime,
   resolveScopedPool,
+  describeTopupExpiry,
+  type CreditBalance,
   type LedgerRow,
   type LedgerTone,
   type PoolCredit,
@@ -159,39 +163,36 @@ const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
   debit: 'text-[var(--ds-text-muted)]',
 };
 
-// ── Metered activity tile ─────────────────────────────────────────────────────
-
-interface ActivityCardProps {
-  readonly label: string;
-  readonly icon: LucideIcon;
-  readonly eventCount: number;
-  readonly creditsUsed: number;
-}
-
-/**
- * A single metered-activity tile: the event count as the headline with the
- * credits it burned as a neutral caption. A subtle hover lift signals it's a
- * living metric without implying it's clickable.
- */
-function ActivityCard({ label, icon, eventCount, creditsUsed }: ActivityCardProps): ReactElement {
-  return (
-    <MetricCard
-      label={label}
-      icon={icon}
-      value={formatCredits(eventCount)}
-      caption={`${formatCredits(creditsUsed)} credits`}
-      interactive
-    />
-  );
-}
-
 // ── How credits work (per-action cost reference) ─────────────────────────────
+
+/** One size bucket in a tiered action's expandable breakdown. */
+interface CreditCostTier {
+  readonly label: string;
+  readonly cost: number;
+}
 
 interface CreditCostRow {
   readonly icon: LucideIcon;
   readonly label: string;
   readonly detail: string;
   readonly cost: number;
+  /**
+   * When present, the row becomes expandable (chevron) and reveals a
+   * size→credits table. The flat `cost` acts as the entry-tier floor shown on
+   * the collapsed badge. Mirrors the backend
+   * `credit_cost.document_upload_tiers` defaults (credit_service.py); max_words
+   * is exclusive, so a 100-word doc lands in the 100–500 bucket.
+   */
+  readonly tiers?: readonly CreditCostTier[];
+  /**
+   * Built but not launched yet — the card shows a muted "Coming soon" badge
+   * instead of a credit price, and never charges (the super-admin
+   * `feature.company_name_enabled` switch stays off until launch).
+   */
+  readonly comingSoon?: boolean;
+  // No row sets this today — company lookup, the last one that did, has
+  // launched. Kept because it is live machinery for the next metered feature
+  // that ships dark, not dead code.
 }
 
 /**
@@ -212,18 +213,133 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     cost: 1,
   },
   {
-    icon: FileText,
-    label: 'Document upload',
-    detail: 'Charged per file added to your knowledge base. Refunded if a file fails to save.',
-    cost: 3,
-  },
-  {
     icon: Globe,
     label: 'URL crawl',
     detail: 'Charged per page actually ingested into your knowledge base.',
     cost: 5,
   },
+  {
+    icon: FileText,
+    label: 'Document upload',
+    detail: 'Charged by document size. Refunded if a file fails to save.',
+    cost: 5,
+    // Ranges are stated to match the backend gate EXACTLY. `max_words` there
+    // is exclusive (`word_count < cap`, credit_service.py), so the inclusive
+    // phrasing these labels used to carry ("Up to 100 words", "100–500 words")
+    // was wrong at every boundary — and wrong in the direction that
+    // overcharges. Verified against the live function:
+    //     100 words   → advertised 5,  charged 15   (3x)
+    //     500 words   → advertised 15, charged 30
+    //   2,000 words   → advertised 30, charged 75
+    //  10,000 words   → advertised 75, charged 150
+    // Keep these upper bounds one below the config's `max_words` values.
+    tiers: [
+      { label: 'Under 100 words', cost: 5 },
+      { label: '100–499 words', cost: 15 },
+      { label: '500–1,999 words', cost: 30 },
+      { label: '2,000–9,999 words', cost: 75 },
+      { label: '10,000+ words', cost: 150 },
+    ],
+  },
+  {
+    icon: MailCheck,
+    label: 'Email verification',
+    detail: 'Verifies a captured lead’s email. Standard & Professional plans.',
+    cost: 10,
+  },
+  {
+    icon: Building2,
+    label: 'Company lookup',
+    // States the charge condition, because it is unusual and in the customer's
+    // favour: an IP only names a company when that company owns its range, so
+    // most visitors — anyone on a home or mobile connection — resolve to no
+    // employer at all. Those cost nothing. Saying only "10 credits" would read
+    // as 10 per visitor, which is what it would have been had the charge stayed
+    // ahead of the lookup.
+    detail: 'Identifies a visitor’s company from their IP. Charged only when a company is found. Professional plan.',
+    cost: 10,
+  },
 ];
+
+/** Format a credit amount for a badge/row ("1 credit" / "30 credits"). */
+function formatCreditCost(cost: number): string {
+  return cost === 1 ? '1 credit' : `${cost} credits`;
+}
+
+/**
+ * A single cost card. Flat rows render statically; a row carrying `tiers`
+ * becomes expandable — a chevron toggles a size→credits table, and the badge
+ * shows the full span (e.g. "5–150 credits") so the range is legible before
+ * expanding.
+ */
+function CreditCostItem({ row }: { row: CreditCostRow }): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const Icon = row.icon;
+  // A "coming soon" row is inert — no expandable tiers, no live price.
+  const tiers = row.comingSoon ? undefined : row.tiers;
+  const badge =
+    tiers && tiers.length > 0
+      ? `${tiers[0].cost}–${tiers[tiers.length - 1].cost} credits`
+      : formatCreditCost(row.cost);
+
+  return (
+    // `relative` so the expanded tier list can float as an absolute dropdown —
+    // it must NOT reflow the grid, or opening one card shoves the cards in the
+    // next row down. `z-20` lifts the open panel above sibling cards.
+    <div
+      className={cn(
+        'relative flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]',
+        expanded && 'z-20',
+      )}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
+        <Icon size={16} aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-[13px] font-semibold text-[var(--ds-text)]">{row.label}</p>
+          {row.comingSoon ? (
+            <span className="shrink-0 rounded-md border border-[var(--ds-border)] bg-transparent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
+              Coming soon
+            </span>
+          ) : (
+            <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
+              {badge}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{row.detail}</p>
+        {tiers && tiers.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
+            className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-accent-text)] hover:underline focus-visible:underline focus-visible:outline-none"
+          >
+            {expanded ? 'Hide size ranges' : 'See size ranges'}
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={cn('transition-transform duration-200', expanded && 'rotate-180')}
+            />
+          </button>
+        )}
+      </div>
+      {tiers && tiers.length > 0 && expanded && (
+        <ul className="absolute left-3 right-3 top-full z-20 mt-1.5 space-y-1.5 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-3 shadow-[var(--ds-shadow-lg)]">
+          {tiers.map((tier) => (
+            <li key={tier.label} className="flex items-center justify-between gap-2 text-[12px]">
+              <span className="text-[var(--ds-text-muted)]">{tier.label}</span>
+              <span className="shrink-0 font-semibold tabular-nums text-[var(--ds-text)]">
+                {formatCreditCost(tier.cost)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /**
  * CreditCostReference - a compact "what each action costs" card. Lives on the
@@ -237,25 +353,9 @@ function CreditCostReference(): ReactElement {
         title="How credits work"
         description="What each action costs from your credit balance."
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {CREDIT_COSTS.map(({ icon: Icon, label, detail, cost }) => (
-          <div
-            key={label}
-            className="flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
-              <Icon size={16} aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="text-[13px] font-semibold text-[var(--ds-text)]">{label}</p>
-                <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
-                  {cost === 1 ? '1 credit' : `${cost} credits`}
-                </span>
-              </div>
-              <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{detail}</p>
-            </div>
-          </div>
+      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
+        {CREDIT_COSTS.map((row) => (
+          <CreditCostItem key={row.label} row={row} />
         ))}
       </div>
     </section>
@@ -348,15 +448,29 @@ function isPurchasedTopup(row: LedgerRow): boolean {
  * the legacy TopupsTab's at-a-glance list. Rendered only when the ledger holds
  * genuine purchases; the full itemized ledger below carries everything else.
  */
-function RecentTopups({ rows }: { rows: LedgerRow[] }): ReactElement | null {
+function RecentTopups({
+  rows,
+  balance,
+}: {
+  rows: LedgerRow[];
+  balance: CreditBalance | null;
+}): ReactElement | null {
   const purchases = useMemo(() => rows.filter(isPurchasedTopup).slice(0, 5), [rows]);
   if (purchases.length === 0) return null;
+
+  // This said "Top-up credits never expire" unconditionally, on the same
+  // screen as a hero that shows the real expiry date when there is one — the
+  // exact self-contradiction. (It previously said "roll over for 12 months",
+  // and an earlier fix here swapped one unconditional claim for another.)
+  // `describeTopupExpiry` states only what this customer's own ledger proves,
+  // and says nothing when it proves nothing.
+  const expiryNote = balance ? describeTopupExpiry(balance) : null;
 
   return (
     <section aria-label="Recent top-ups" className="space-y-4">
       <SectionHeader
         title="Recent top-ups"
-        description="Your latest credit purchases. Top-up credits roll over for 12 months."
+        description={`Your latest credit purchases.${expiryNote ? ` ${expiryNote}` : ''}`}
       />
       <ul className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
         {purchases.map((row) => (
@@ -425,8 +539,17 @@ export function UsagePage(): ReactElement {
             documentUpload: balance.documentUpload,
             urlScan: balance.urlScan,
             emailSend: balance.emailSend,
+            emailVerification: balance.emailVerification,
+            companyName: balance.companyName,
           }
-        : { aiChat: emptyBucket, documentUpload: emptyBucket, urlScan: emptyBucket, emailSend: emptyBucket };
+        : {
+            aiChat: emptyBucket,
+            documentUpload: emptyBucket,
+            urlScan: emptyBucket,
+            emailSend: emptyBucket,
+            emailVerification: emptyBucket,
+            companyName: emptyBucket,
+          };
   // `null` = closed. A target carries the pool the top-up is scoped to: the
   // shared account balance (`botId: null`) or one agent's isolated balance.
   const navigate = useNavigate();
@@ -514,7 +637,7 @@ export function UsagePage(): ReactElement {
           <PlanLimitsSection pool={selectedBot ? selectedPool : null} />
 
           {/* Recent credit purchases - a quick receipt above the full ledger. */}
-          {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} />}
+          {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} balance={balance} />}
 
           {/* Itemized ledger, grouped by day. */}
           <section aria-label="Consumption history" className="space-y-3">

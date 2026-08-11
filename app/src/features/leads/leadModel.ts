@@ -12,7 +12,7 @@
  * question - "Who are my qualified leads?" - without a glossary.
  */
 import { type StatusBadgeProps } from '../../design-system';
-import { type Lead } from '../../types/domain';
+import { type Lead, type LeadContact } from '../../types/domain';
 
 // ── Tiers ────────────────────────────────────────────────────────────────────
 
@@ -243,6 +243,10 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
         lead.contact?.name,
         lead.contact?.email,
         lead.contact?.company,
+        // The RESOLVED company name, which is what the drawer shows and
+        // therefore what an operator will type. Searching only the raw domain
+        // meant "Infosys Limited" — the name on screen — matched nothing.
+        lead.contact?.company_name,
         lead.location,
         lead.session_id,
       ]
@@ -311,4 +315,29 @@ export function humanizeDimension(key: string): string {
   return key
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+/**
+ * What to show in a lead's company row: the resolved name with the raw domain
+ * beneath it, or just the domain, or nothing.
+ *
+ * `contact.company` holds the registrable domain of the captured email
+ * ("infosys.com") and always has. `contact.company_name` is the resolved
+ * identity ("Infosys Limited"), produced by a Professional-gated paid
+ * enrichment and therefore frequently ABSENT — resolution can fail, be
+ * switched off per agent, or still be in flight when the drawer opens.
+ *
+ * So the resolved name appends to the domain, never replaces it. Rendering
+ * only `company_name` would blank the company row for every lead on a lower
+ * plan and every domain that could not be resolved — a regression against
+ * behaviour that predates the feature.
+ */
+export function companyDisplay(
+  contact: LeadContact | null | undefined,
+): { value: string; secondary?: string } | null {
+  const domain = contact?.company?.trim() || null;
+  const resolved = contact?.company_name?.trim() || null;
+
+  if (resolved) return domain ? { value: resolved, secondary: domain } : { value: resolved };
+  return domain ? { value: domain } : null;
 }

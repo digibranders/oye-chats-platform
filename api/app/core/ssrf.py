@@ -290,3 +290,73 @@ async def fetch_text_safely(
         except Exception:
             return None
     return None  # redirect limit exceeded
+
+
+async def fetch_bytes_safely(
+    session,
+    url: str,
+    *,
+    max_bytes: int,
+    max_redirects: int = 3,
+) -> tuple[int, bytes] | None:
+    """:func:`fetch_text_safely` for binary bodies, with one behavioural change.
+
+    An oversized body is REJECTED, not truncated. Text can survive being cut
+    short; an image cannot — a truncated PNG is either undecodable or, worse,
+    decodes to something the caller then stores. Returning ``None`` means the
+    caller skips it, which is the honest outcome.
+
+    Exists because the favicon fetcher rolled its own client and got all three
+    guards wrong: `follow_redirects=True` meant a customer site could 302 the
+    crawl worker into the VPC, `validate_public_url` ran once on the
+    pre-redirect URL only, and the size cap was applied to ``resp.content``
+    AFTER the whole body had been buffered — so a slow multi-gigabyte body was
+    unbounded in both memory and time.
+    """
+    import aiohttp
+
+    current = url
+    for _ in range(max_redirects + 1):
+        try:
+            validate_public_url(current)
+        except SSRFError:
+            return None
+
+        hostname = urlparse(current).hostname
+        try:
+            pinned_ip = str(ipaddress.ip_address(hostname))
+        except ValueError:
+            pinned_ip = _resolve_pinned_public_ip(hostname)
+        if pinned_ip is None:
+            return None
+
+        connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=False)
+        try:
+            async with (
+                aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned,
+                pinned.get(current, allow_redirects=False, ssl=False) as resp,
+            ):
+                if resp.status in _REDIRECT_STATUSES:
+                    location = resp.headers.get("Location")
+                    if not location:
+                        return resp.status, b""
+                    current = urljoin(current, location)
+                    continue
+
+                # Reject early on a declared length, then enforce it again
+                # while streaming — Content-Length is a claim, not a promise.
+                declared = resp.headers.get("Content-Length")
+                if declared and declared.isdigit() and int(declared) > max_bytes:
+                    return None
+
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.content.iter_chunked(8192):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        return None  # reject, do not truncate
+                    chunks.append(chunk)
+                return resp.status, b"".join(chunks)
+        except Exception:
+            return None
+    return None  # redirect limit exceeded

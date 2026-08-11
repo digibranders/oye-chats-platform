@@ -59,13 +59,33 @@ def _as_dict(value: object) -> dict:
 
 
 def _flatten(legacy: dict) -> dict:
-    """Convert a legacy top-level payload into the current ip_intel shape."""
+    """Convert a legacy top-level payload into the current ip_intel shape.
+
+    Applies the SAME employer gates as ``ip_intel_service.fetch_ip_intel``.
+    This was the second writer of ``visitor_metadata.ip_intel`` and it copied
+    the vendor's company name straight through, so a row it wrote could carry
+    a carrier or hosting name where the live path would have written null —
+    and the Leads panel renders exactly that field as the visitor's company.
+
+    The panel dropped its own defensive disclaimer once the service began
+    filtering, on the stated premise that every writer filters. This is what
+    makes that premise true. Imported inside the function so the migration
+    keeps working if the module is later moved.
+    """
+    from app.services.ip_intel_service import _EMPLOYER_COMPANY_TYPES, is_usable_company_name
+
     company = _as_dict(legacy.get("company"))
     asn = _as_dict(legacy.get("asn"))
+
+    company_type = company.get("type")
+    company_name = company.get("name")
+    if company_type not in _EMPLOYER_COMPANY_TYPES or not is_usable_company_name(company_name):
+        company_name = None
+
     return {
-        "company_name": company.get("name"),
-        "company_domain": company.get("domain"),
-        "company_type": company.get("type"),
+        "company_name": company_name,
+        "company_domain": company.get("domain") if company_name else None,
+        "company_type": company_type,
         "asn": asn.get("asn"),
         "asn_org": asn.get("org") or asn.get("descr"),
         **{flag: bool(legacy.get(flag, False)) for flag in _RISK_FLAGS},

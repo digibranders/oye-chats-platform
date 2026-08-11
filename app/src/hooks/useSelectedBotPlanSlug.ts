@@ -1,7 +1,4 @@
-import { useEffect, useState } from 'react';
-import { getCreditBalance } from '../services/api';
 import { useBotContext } from '../context/BotContext';
-import { useEntitlements } from './useEntitlements';
 
 /**
  * useSelectedBotPlanSlug - the machine-readable plan slug for the agent
@@ -17,49 +14,26 @@ import { useEntitlements } from './useEntitlements';
  * The account-level `entitlements.plan_slug` deliberately reports the
  * HIGHEST-priced plan across all agents, so gating agent-scoped data on it
  * would unlock paid UI for a Free agent's leads — the backend would then strip
- * the fields anyway, leaving an empty panel and a button that 403s. Mirrors
- * `is_visitor_intelligence_enabled_for_bot` on the server.
+ * the fields anyway, leaving an empty panel and a button that 403s.
  *
- * Falls back to the account slug when the agent has no subscription of its own
- * (matching the backend's `get_bot_entitlements` account fallback), and returns
- * `null` while still loading so callers can hold the gate closed rather than
- * flashing paid UI.
+ * The slug comes from `Bot.plan_slug`, resolved server-side by `bot_plan_slug()`
+ * in `bot_routes.py` via the same `get_bot_entitlements` the server's own gates
+ * use. This hook previously derived it from the credit-balance payload instead,
+ * which lists only bots holding their own ledger — a Free agent has none, so it
+ * was absent from the map and silently fell back to the account slug, unlocking
+ * paid UI on exactly the agent the fallback was meant to protect.
+ *
+ * Returns `null` while the bot list is still loading so callers can hold the
+ * gate closed rather than flashing paid UI.
+ *
+ * URL-scoped agent pages must NOT use this: it follows the shell switcher, not
+ * `:agentId`. Those read `useAgent().agent?.plan_slug` directly.
  */
 export function useSelectedBotPlanSlug(): string | null {
-  const { selectedBot } = useBotContext();
-  const { planSlug: accountSlug, loading: entitlementsLoading } = useEntitlements();
-  const [botSlugs, setBotSlugs] = useState<Record<number, string> | null>(null);
+  const { selectedBot, loading } = useBotContext();
 
-  useEffect(() => {
-    let cancelled = false;
-    void getCreditBalance()
-      .then((raw) => {
-        if (cancelled) return;
-        const rows = Array.isArray(raw?.bots) ? raw.bots : [];
-        const next: Record<number, string> = {};
-        for (const row of rows) {
-          const record = (row ?? {}) as Record<string, unknown>;
-          const id = Number(record.bot_id);
-          const slug = record.plan_slug;
-          if (id && typeof slug === 'string' && slug) next[id] = slug;
-        }
-        setBotSlugs(next);
-      })
-      .catch(() => {
-        // Per-bot lookup unavailable - fall back to the account slug below.
-        if (!cancelled) setBotSlugs({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (entitlementsLoading || botSlugs === null) return null;
-  if (selectedBot) {
-    const perBot = botSlugs[selectedBot.id];
-    if (perBot) return perBot;
-  }
-  return accountSlug ?? null;
+  if (loading) return null;
+  return selectedBot?.plan_slug ?? null;
 }
 
 export default useSelectedBotPlanSlug;

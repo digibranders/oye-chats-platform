@@ -1,21 +1,28 @@
 /**
- * SubdomainSessionSection - opt-in cross-subdomain conversation continuity.
+ * SubdomainSessionSection - cross-subdomain conversation continuity.
  *
  * A visitor's chat session lives in the widget's `localStorage`, which the
  * browser partitions per origin - so a conversation started on `example.com`
- * would restart on `academy.example.com`. When a parent domain is set here, the
- * widget mirrors the session id into a cookie scoped to that domain
+ * would restart on `academy.example.com`. To bridge that, the widget also
+ * mirrors the session id into a cookie scoped to the parent domain
  * (`Domain=.example.com`), which every subdomain can read, so the same
  * conversation continues across `*.example.com`.
  *
+ * This is now AUTOMATIC: when no domain is set, the widget auto-detects the
+ * registrable apex of the page it runs on and scopes the cookie there, so
+ * continuity works with zero configuration. This panel therefore presents as
+ * "on automatically" with an OPTIONAL override for owners who want to pin a
+ * specific parent domain (e.g. to scope narrower/broader than auto-detect).
+ *
  * Governs the backend `session_share_domain` field via `updateBot`. Empty =
- * disabled (default). Lives in the Website channel card, beneath the domain
- * allow-list, because both concern how the embed behaves across a customer's
- * domains. Mount with `key={botId}` so switching agents reseeds from props.
+ * auto-detect (the default). A value = explicit override. Lives in the Website
+ * channel card, beneath the domain allow-list, because both concern how the
+ * embed behaves across a customer's domains. Mount with `key={botId}` so
+ * switching agents reseeds from props.
  */
 import { useMemo, useState, type ReactElement } from 'react';
 import { AlertCircle, Info, Link2, Network, ShieldCheck } from 'lucide-react';
-import { Button } from '../../../design-system';
+import { Button, StatusBadge } from '../../../design-system';
 import { InsightCard } from '../../../design-system/components/InsightCard';
 import { getBot, updateBot } from '../../../services/api';
 
@@ -60,7 +67,6 @@ export function SubdomainSessionSection({
   onSaved,
 }: SubdomainSessionSectionProps): ReactElement {
   const seededDomain = (initialShareDomain || '').trim();
-  const [enabled, setEnabled] = useState<boolean>(Boolean(seededDomain));
   const [domain, setDomain] = useState<string>(seededDomain);
   const [inputError, setInputError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -70,31 +76,38 @@ export function SubdomainSessionSection({
 
   const websiteDomain = useMemo(() => normalizeParentDomain(website || ''), [website]);
   const normalizedDomain = useMemo(() => normalizeParentDomain(domain), [domain]);
+  const hasOverride = domain.trim().length > 0;
 
+  // Status card. Continuity is ALWAYS on now (the widget auto-detects the
+  // apex when no domain is set), so the copy distinguishes the automatic
+  // default from an explicit override, and warns while an invalid override
+  // is being typed.
   const status = useMemo(() => {
-    if (!enabled) {
-      return {
-        tone: 'info' as const,
-        icon: Network,
-        title: 'Conversations stay on one site',
-        body: 'A chat started on one subdomain restarts if the visitor moves to another. Turn this on to carry it across all your subdomains.',
-      };
-    }
-    if (!normalizedDomain) {
+    if (hasOverride && !normalizedDomain) {
       return {
         tone: 'warning' as const,
         icon: AlertCircle,
-        title: 'Add your domain to finish',
-        body: 'Enter your parent domain (e.g. example.com) so the conversation can follow visitors across its subdomains.',
+        title: 'That does not look like a domain',
+        body: 'Enter a parent domain like example.com, or clear the field to detect it automatically.',
+      };
+    }
+    if (normalizedDomain) {
+      return {
+        tone: 'success' as const,
+        icon: ShieldCheck,
+        title: `Scoped to *.${normalizedDomain}`,
+        body: `A chat started on ${normalizedDomain} keeps going on every subdomain, like app.${normalizedDomain} or academy.${normalizedDomain}.`,
       };
     }
     return {
       tone: 'success' as const,
       icon: ShieldCheck,
-      title: `Conversations continue across *.${normalizedDomain}`,
-      body: `A chat started on ${normalizedDomain} keeps going on every subdomain, like app.${normalizedDomain} or academy.${normalizedDomain}.`,
+      title: 'On automatically',
+      body: websiteDomain
+        ? `Conversations follow visitors across all your subdomains. We detect ${websiteDomain} automatically, so there is nothing to set up.`
+        : 'Conversations follow visitors across all your subdomains automatically. There is nothing to set up.',
     };
-  }, [enabled, normalizedDomain]);
+  }, [hasOverride, normalizedDomain, websiteDomain]);
 
   const markDirty = (): void => {
     setDirty(true);
@@ -102,32 +115,24 @@ export function SubdomainSessionSection({
     setSaveError('');
   };
 
-  const toggleEnabled = (): void => {
-    setEnabled((prev) => {
-      const next = !prev;
-      // Turning on with an empty field: prefill from the saved website so the
-      // common case is one click.
-      if (next && !domain.trim() && websiteDomain) {
-        setDomain(websiteDomain);
-        setInputError('');
-      }
-      return next;
-    });
-    markDirty();
-  };
-
   const detectFromWebsite = (): void => {
     if (!websiteDomain) return;
     setDomain(websiteDomain);
     setInputError('');
-    if (!enabled) setEnabled(true);
+    markDirty();
+  };
+
+  const clearOverride = (): void => {
+    setDomain('');
+    setInputError('');
     markDirty();
   };
 
   const save = async (): Promise<void> => {
     if (saving) return;
-    // Validate before hitting the API so the error is immediate and local.
-    if (enabled) {
+    // Validate only when an override is present; an empty field means
+    // auto-detect, which is always valid.
+    if (hasOverride) {
       const normalized = normalizeParentDomain(domain);
       if (!normalized) {
         setInputError('Enter a valid domain like example.com');
@@ -137,8 +142,9 @@ export function SubdomainSessionSection({
     setInputError('');
     setSaving(true);
     setSaveError('');
-    // Empty string clears the field server-side (disables sharing).
-    const payload = enabled ? (normalizeParentDomain(domain) as string) : '';
+    // Empty string clears the override server-side, so the widget falls
+    // back to auto-detecting the apex (sharing stays on).
+    const payload = hasOverride ? (normalizeParentDomain(domain) as string) : '';
     try {
       await updateBot(botId, { session_share_domain: payload });
       // Re-read so we reflect the server-normalized value and stay in sync.
@@ -147,7 +153,6 @@ export function SubdomainSessionSection({
         const fresh = (await getBot(botId)) as { session_share_domain?: string | null };
         nextDomain = fresh.session_share_domain ?? null;
         setDomain(nextDomain || '');
-        setEnabled(Boolean(nextDomain));
       } catch {
         /* keep the optimistic value if the reload fails */
       }
@@ -171,82 +176,83 @@ export function SubdomainSessionSection({
           <Link2 size={14} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
           Continue sessions across subdomains
         </span>
-        <button
-          type="button"
-          onClick={toggleEnabled}
-          role="switch"
-          aria-checked={enabled}
-          aria-label="Toggle cross-subdomain session sharing"
-          className={
-            'rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide transition-colors ' +
-            'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] ' +
-            (enabled
-              ? 'bg-[var(--ds-success-soft)] text-[var(--ds-success)]'
-              : 'bg-[var(--ds-bg-sunken)] text-[var(--ds-text-muted)]')
-          }
-        >
-          {enabled ? 'On' : 'Off'}
-        </button>
+        {/* Not a toggle: continuity is always on. The pill just reports
+            whether it is running on auto-detect or a pinned override. Uses
+            the shared StatusBadge so it matches every other pill in the
+            admin (quiet chip, tone carried by the dot). */}
+        <StatusBadge tone="success">{hasOverride ? 'Custom' : 'Automatic'}</StatusBadge>
       </div>
 
       <InsightCard tone={status.tone} icon={StatusIcon} title={status.title} body={status.body} />
 
-      {enabled && (
-        <>
-          <p className="mb-2 mt-4 text-[12px] text-[var(--ds-text-muted)]">
-            Enter the parent domain your subdomains share (e.g. example.com).
-          </p>
+      {/* Optional override. Most owners never touch this; auto-detect covers
+          the common case, so it is framed as opt-in refinement, not setup. */}
+      <p className="mb-2 mt-4 text-[12px] text-[var(--ds-text-muted)]">
+        Optional: pin a specific parent domain. Leave blank to detect it automatically.
+      </p>
 
-          <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2">
-            <input
-              type="text"
-              value={domain}
-              onChange={(e) => {
-                setDomain(e.target.value);
-                if (inputError) setInputError('');
-                markDirty();
-              }}
-              placeholder="example.com"
-              aria-label="Parent domain for session sharing"
-              className="w-full bg-transparent font-mono text-[12px] text-[var(--ds-text)] outline-none placeholder:text-[var(--ds-text-subtle)]"
-            />
-          </div>
+      <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-2">
+        <input
+          type="text"
+          value={domain}
+          onChange={(e) => {
+            setDomain(e.target.value);
+            if (inputError) setInputError('');
+            markDirty();
+          }}
+          placeholder="Auto-detect (e.g. example.com)"
+          aria-label="Parent domain for session sharing (optional override)"
+          className="w-full bg-transparent font-mono text-[12px] text-[var(--ds-text)] outline-none placeholder:text-[var(--ds-text-subtle)]"
+        />
+      </div>
 
-          {inputError && (
-            <p role="alert" className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--ds-danger)]">
-              <AlertCircle size={12} aria-hidden="true" />
-              {inputError}
-            </p>
-          )}
+      {inputError && (
+        <p role="alert" className="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--ds-danger)]">
+          <AlertCircle size={12} aria-hidden="true" />
+          {inputError}
+        </p>
+      )}
 
+      {(canDetect || hasOverride) && (
+        <div className="mt-2 flex items-center gap-4">
           {canDetect && websiteDomain && (
             <button
               type="button"
               onClick={detectFromWebsite}
-              className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-accent)] transition-opacity hover:opacity-80"
+              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-accent)] transition-opacity hover:opacity-80"
             >
               <Network size={13} aria-hidden="true" />
               Use {websiteDomain}
             </button>
           )}
-
-          {/* Reminder: continuity ≠ appearance. The widget only renders on pages
-              that actually load the embed snippet, so each subdomain needs it too. */}
-          <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2.5">
-            <Info size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" />
-            <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
-              This keeps the <span className="font-medium text-[var(--ds-text)]">conversation</span> going across
-              your subdomains — it doesn’t place the widget on them. For the chat to{' '}
-              <span className="font-medium text-[var(--ds-text)]">appear</span> on a subdomain like{' '}
-              <code className="rounded bg-[var(--ds-bg-surface)] px-1 py-0.5 font-mono text-[11px]">
-                academy.{normalizedDomain || 'example.com'}
-              </code>
-              , add the same embed snippet (with this agent’s key) to that subdomain too — it’s the copyable code
-              up in the install steps above.
-            </p>
-          </div>
-        </>
+          {hasOverride && (
+            <button
+              type="button"
+              onClick={clearOverride}
+              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--ds-text-muted)] transition-opacity hover:opacity-80"
+            >
+              Reset to automatic
+            </button>
+          )}
+        </div>
       )}
+
+      {/* Reminder: continuity is not the same as appearance. The widget only
+          renders on pages that actually load the embed snippet, so each
+          subdomain needs it too. */}
+      <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-3 py-2.5">
+        <Info size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" />
+        <p className="text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
+          This keeps the <span className="font-medium text-[var(--ds-text)]">conversation</span> going across
+          your subdomains. It does not place the widget on them. For the chat to{' '}
+          <span className="font-medium text-[var(--ds-text)]">appear</span> on a subdomain like{' '}
+          <code className="rounded bg-[var(--ds-bg-surface)] px-1 py-0.5 font-mono text-[11px]">
+            academy.{normalizedDomain || websiteDomain || 'example.com'}
+          </code>
+          , add the same embed snippet (with this agent’s key) to that subdomain too. It is the copyable code
+          up in the install steps above.
+        </p>
+      </div>
 
       {/* Save row */}
       <div className="mt-4 flex items-center gap-3">

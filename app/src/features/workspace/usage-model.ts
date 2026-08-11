@@ -50,12 +50,16 @@ function parseBreakdown(value: unknown): UsageBreakdownEntry {
   };
 }
 
-/** The four metered activity buckets the backend returns for each pool. */
+/** The metered activity buckets the backend returns for each pool. */
 export interface UsageBuckets {
   readonly aiChat: UsageBreakdownEntry;
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
   readonly emailSend: UsageBreakdownEntry;
+  /** Reoon email verification (Standard + Professional), 10 credits each. */
+  readonly emailVerification: UsageBreakdownEntry;
+  /** IP → company lookup / Visitor Intelligence (Professional), 10 credits each. */
+  readonly companyName: UsageBreakdownEntry;
 }
 
 function parseUsageBuckets(value: unknown): UsageBuckets {
@@ -67,6 +71,8 @@ function parseUsageBuckets(value: unknown): UsageBuckets {
     // email_send is a metered, credit-costing activity
     // (subscription_routes.py:1693) - omitting it under-reports spend.
     emailSend: parseBreakdown(usage.email_send),
+    emailVerification: parseBreakdown(usage.email_verification),
+    companyName: parseBreakdown(usage.company_name),
   };
 }
 
@@ -119,7 +125,9 @@ function poolCreditsUsed(usage: UsageBuckets): number {
     usage.aiChat.creditsUsed +
     usage.documentUpload.creditsUsed +
     usage.urlScan.creditsUsed +
-    usage.emailSend.creditsUsed
+    usage.emailSend.creditsUsed +
+    usage.emailVerification.creditsUsed +
+    usage.companyName.creditsUsed
   );
 }
 
@@ -161,6 +169,17 @@ export interface PoolCredit {
   readonly planUsedPct: number;
   /** When the plan bucket refills, ISO 8601. */
   readonly resetsAt: string | null;
+  /**
+   * Earliest `expires_at` across THIS pool's top-up grants, null when none
+   * expire.
+   *
+   * `CreditPool` has always carried this and `poolCredit()` silently dropped
+   * it, so per-pool surfaces had no way to tell the truth about expiry and
+   * fell back to the slogan "Roll over" — printed unconditionally, directly
+   * above a section stating a real expiry date. Whether top-ups expire is a
+   * TERM OF SALE; any surface that mentions it needs the evidence.
+   */
+  readonly soonestExpiry: string | null;
   /** Credits consumed this period from this pool. */
   readonly periodCreditsUsed: number;
   /** This period's metered activity for this pool, per action bucket. */
@@ -195,6 +214,7 @@ function poolCredit(
     planUsedPct:
       pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
     resetsAt: pool.resetsAt,
+    soonestExpiry: pool.soonestExpiry,
     periodCreditsUsed: poolCreditsUsed(pool.usage),
     activity: pool.usage,
     planLimits: identity.planLimits ?? null,
@@ -245,6 +265,8 @@ export interface CreditBalance {
   readonly documentUpload: UsageBreakdownEntry;
   readonly urlScan: UsageBreakdownEntry;
   readonly emailSend: UsageBreakdownEntry;
+  readonly emailVerification: UsageBreakdownEntry;
+  readonly companyName: UsageBreakdownEntry;
   /** Credits consumed this period across every metered activity. */
   readonly periodCreditsUsed: number;
   /**
@@ -325,6 +347,8 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       documentUpload: addBreakdown(acc.documentUpload, pool.usage.documentUpload),
       urlScan: addBreakdown(acc.urlScan, pool.usage.urlScan),
       emailSend: addBreakdown(acc.emailSend, pool.usage.emailSend),
+      emailVerification: addBreakdown(acc.emailVerification, pool.usage.emailVerification),
+      companyName: addBreakdown(acc.companyName, pool.usage.companyName),
     }),
     {
       monthlyGrant: 0,
@@ -337,6 +361,8 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
       documentUpload: empty,
       urlScan: empty,
       emailSend: empty,
+      emailVerification: empty,
+      companyName: empty,
     },
   );
 
@@ -361,11 +387,15 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     documentUpload: aggregate.documentUpload,
     urlScan: aggregate.urlScan,
     emailSend: aggregate.emailSend,
+    emailVerification: aggregate.emailVerification,
+    companyName: aggregate.companyName,
     periodCreditsUsed:
       aggregate.aiChat.creditsUsed +
       aggregate.documentUpload.creditsUsed +
       aggregate.urlScan.creditsUsed +
-      aggregate.emailSend.creditsUsed,
+      aggregate.emailSend.creditsUsed +
+      aggregate.emailVerification.creditsUsed +
+      aggregate.companyName.creditsUsed,
     botCredits,
     accountPool,
   };
@@ -389,16 +419,48 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     totalRemaining: balance.totalRemaining,
     planUsedPct: balance.planUsedPct,
     resetsAt: balance.resetsAt,
+    soonestExpiry: balance.soonestExpiry,
     periodCreditsUsed: balance.periodCreditsUsed,
     activity: {
       aiChat: balance.aiChat,
       documentUpload: balance.documentUpload,
       urlScan: balance.urlScan,
       emailSend: balance.emailSend,
+      emailVerification: balance.emailVerification,
+      companyName: balance.companyName,
     },
     planLimits: null,
     limitUsage: null,
   };
+}
+
+/**
+ * The one honest statement this app can make about top-up expiry.
+ *
+ * "Top-up credits never expire" is a TERM OF SALE, true only when
+ * `pricing_config.topup_expiry_months = 0` — a server-side value no endpoint
+ * exposes. The only evidence the client holds is the customer's own ledger:
+ * `soonestExpiry` is non-null exactly when a top-up they hold carries an
+ * `expires_at` that the daily sweep will act on.
+ *
+ *   - a dated grant  → state the date; "forever" is false for this customer
+ *   - grants, undated → "never expire" is demonstrably true for them
+ *   - no grants       → no evidence, so NO CLAIM
+ *
+ * That last case is deliberate and costs a sentence on the sales page. An
+ * unbacked guarantee at the point of sale is the defect this replaces: the
+ * app promised lifetime credits while the database said 12 months, and a
+ * customer could see a concrete expiry date in the hero and "never expire"
+ * 400px below it on the same screen.
+ *
+ * Lives here rather than in one modal so every surface states the same thing.
+ */
+export function describeTopupExpiry(balance: CreditBalance): string | null {
+  if (balance.soonestExpiry) {
+    return `Your top-up credits do expire - the earliest on ${formatDate(balance.soonestExpiry)}.`;
+  }
+  if (balance.topupRemaining > 0) return 'Top-up credits never expire.';
+  return null;
 }
 
 /**

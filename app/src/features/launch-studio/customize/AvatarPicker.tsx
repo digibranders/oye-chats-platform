@@ -1,7 +1,15 @@
+import { useState } from 'react';
 import { Bot, Check, ImagePlus, Loader2, Sparkles, Trash2, Upload } from 'lucide-react';
-import { cn } from '../../../design-system';
+import { StatusBadge, cn } from '../../../design-system';
 import PremiumOrb from '../../../components/PremiumOrb';
 import { ColorField } from './ColorField';
+import { AvatarCropModal } from './AvatarCropModal';
+import {
+  AVATAR_ACCEPT_ATTRIBUTE,
+  AVATAR_UPLOAD_HINT,
+  resolveAvatarType,
+  validateAvatarFile,
+} from './avatarFile';
 
 export type AvatarType = 'upload' | 'orb' | 'mascot';
 
@@ -60,6 +68,8 @@ export interface AvatarPickerProps {
   onChangeOrbColor: (hex: string) => void;
   onUpload: (file: File) => void;
   onRemoveLogo: () => void;
+  /** True when the previewed avatar is the one currently live on the widget. */
+  avatarIsLive?: boolean;
 }
 
 const TYPES: { key: AvatarType; label: string; icon: typeof Bot }[] = [
@@ -80,79 +90,96 @@ export function AvatarPicker({
   onChangeOrbColor,
   onUpload,
   onRemoveLogo,
+  avatarIsLive = false,
 }: AvatarPickerProps) {
-  return (
-    <div className="space-y-4">
-      {/* Type segmented control */}
-      <div
-        role="tablist"
-        aria-label="Avatar style"
-        className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
-      >
-        {TYPES.map(({ key, label, icon: Icon }) => {
-          const active = avatarType === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => onChangeType(key)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
-                'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-                active
-                  ? // Selected: accent tint + accent-color border so it reads
-                    // unmistakably in both light AND dark (the old white-on-
-                    // sunken style was near-invisible in dark). The trailing
-                    // check icon removes any doubt about which tab is on.
-                    'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)] shadow-[inset_0_0_0_1px_var(--ds-accent)]'
-                  : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-              )}
-            >
-              <Icon size={14} aria-hidden="true" />
-              {label}
-              {active && (
-                <Check
-                  size={14}
-                  strokeWidth={3}
-                  className="ml-0.5 text-[var(--ds-accent)]"
-                  aria-hidden="true"
-                />
-              )}
-            </button>
-          );
-        })}
-      </div>
+  // Holds the picked image (as a data URL) while the crop modal is open. On
+  // confirm we upload the CROPPED file instead of the raw upload. `sourceType`
+  // is null for the re-crop path, where we only have the stored image's URL.
+  const [cropState, setCropState] = useState<{
+    src: string;
+    name: string;
+    sourceType: string | null;
+  } | null>(null);
+  // Why the last pick was refused — the format/size rules the hint promises.
+  const [pickError, setPickError] = useState<string | null>(null);
 
-      {/* Per-type controls */}
-      {avatarType === 'upload' && (
-        <div className="flex items-center gap-4">
-          <AvatarPreview
-            avatarType="upload"
-            botLogo={botLogo}
-            orbColor={orbColor}
-            primaryColor={primaryColor}
-            size={56}
-          />
-          <div>
-            <div className="flex items-center gap-2">
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)]">
-                {uploading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Upload size={14} />
+  const handlePick = (file: File): void => {
+    // Validate BEFORE reading: `accept` is only a filter hint (drag-and-drop
+    // ignores it), and readAsDataURL would materialise the whole file as
+    // base64 in memory before anyone had checked how big it is.
+    const rejection = validateAvatarFile(file);
+    if (rejection !== null) {
+      setPickError(rejection);
+      return;
+    }
+    setPickError(null);
+    const reader = new FileReader();
+    reader.onload = () =>
+      setCropState({ src: String(reader.result), name: file.name, sourceType: resolveAvatarType(file) });
+    reader.onerror = () => setPickError('That file could not be read. Please try another one.');
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="flex flex-col gap-6 sm:flex-row sm:items-stretch">
+      {/* Left column — options */}
+      <div className="min-w-0 flex-1 space-y-4">
+        {/* Type segmented control */}
+        <div
+          role="tablist"
+          aria-label="Avatar style"
+          className="inline-flex rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-0.5"
+        >
+          {TYPES.map(({ key, label, icon: Icon }) => {
+            const active = avatarType === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => onChangeType(key)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+                  'focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
+                  active
+                    ? 'bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)] shadow-[inset_0_0_0_1px_var(--ds-accent)]'
+                    : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
                 )}
+              >
+                <Icon size={14} aria-hidden="true" />
+                {label}
+                {active && (
+                  <Check
+                    size={14}
+                    strokeWidth={3}
+                    className="ml-0.5 text-[var(--ds-accent)]"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Per-type controls (preview lives in the right column) */}
+        {avatarType === 'upload' && (
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)]">
+                {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                 {botLogo ? 'Replace' : 'Upload image'}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept={AVATAR_ACCEPT_ATTRIBUTE}
                   className="hidden"
                   disabled={uploading}
                   onChange={(event) => {
                     const file = event.target.files?.[0];
-                    if (file) onUpload(file);
                     event.target.value = '';
+                    // Open the cropper first; the raw file is only uploaded once
+                    // the visitor confirms a crop.
+                    if (file) handlePick(file);
                   }}
                 />
               </label>
@@ -167,21 +194,17 @@ export function AvatarPicker({
                 </button>
               )}
             </div>
-            <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">PNG, JPG or SVG up to 2MB</p>
+            <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">{AVATAR_UPLOAD_HINT}</p>
+            {pickError && (
+              <p role="alert" className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
+                {pickError}
+              </p>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {avatarType === 'orb' && (
-        <div className="flex items-start gap-4">
-          <AvatarPreview
-            avatarType="orb"
-            botLogo={null}
-            orbColor={orbColor}
-            primaryColor={primaryColor}
-            size={56}
-          />
-          <div className="min-w-0 flex-1 space-y-3">
+        {avatarType === 'orb' && (
+          <div className="space-y-3">
             <label className="flex items-center gap-2 text-[13px] text-[var(--ds-text)]">
               <input
                 type="checkbox"
@@ -199,22 +222,72 @@ export function AvatarPicker({
               />
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {avatarType === 'mascot' && (
-        <div className="flex items-center gap-4">
-          <AvatarPreview
-            avatarType="mascot"
-            botLogo={null}
-            orbColor={orbColor}
-            primaryColor={primaryColor}
-            size={56}
-          />
+        {avatarType === 'mascot' && (
           <p className="text-[13px] text-[var(--ds-text-muted)]">
             A friendly robot mascot on your brand colour.
           </p>
-        </div>
+        )}
+      </div>
+
+      {/* Right column — live preview. When a photo is set, clicking it reopens
+          the cropper so the framing can be adjusted without re-uploading. The
+          green tick marks that this preview is the avatar currently live on the
+          widget (hidden once there are unsaved avatar changes). */}
+      <div className="relative flex shrink-0 items-center justify-center rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-6 sm:w-44">
+        {avatarIsLive && (
+          <StatusBadge
+            tone="success"
+            dot
+            size="sm"
+            className="absolute right-2 top-2"
+            title="This avatar is live on your chatbot"
+          >
+            Live
+          </StatusBadge>
+        )}
+        {avatarType === 'upload' && botLogo ? (
+          <button
+            type="button"
+            onClick={() => setCropState({ src: botLogo, name: 'avatar', sourceType: null })}
+            title="Click to re-crop"
+            aria-label="Re-crop avatar"
+            className="group relative rounded-full focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-ring)]"
+          >
+            <AvatarPreview
+              avatarType="upload"
+              botLogo={botLogo}
+              orbColor={orbColor}
+              primaryColor={primaryColor}
+              size={96}
+            />
+            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-[11px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
+              Re-crop
+            </span>
+          </button>
+        ) : (
+          <AvatarPreview
+            avatarType={avatarType}
+            botLogo={botLogo}
+            orbColor={orbColor}
+            primaryColor={primaryColor}
+            size={96}
+          />
+        )}
+      </div>
+
+      {cropState && (
+        <AvatarCropModal
+          src={cropState.src}
+          fileName={cropState.name}
+          sourceType={cropState.sourceType}
+          onCancel={() => setCropState(null)}
+          onConfirm={(file) => {
+            setCropState(null);
+            onUpload(file);
+          }}
+        />
       )}
     </div>
   );

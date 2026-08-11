@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { User, Mail, ArrowRight, Headphones, ArrowLeft } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 import { validateEmail as checkEmailWithServer } from '../services/api';
 
 const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 'pending' }) => {
-    const hasName = !!(existingLeadInfo?.name?.trim());
     const hasEmail = !!(existingLeadInfo?.email?.trim());
-    const hasAllRequired = hasName && hasEmail;
 
     const [formData, setFormData] = useState({
         name: existingLeadInfo?.name || '',
@@ -17,7 +15,6 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
     // Starts 'valid' when the email is already on file (existingLeadInfo),
     // since it was already accepted once and doesn't need rechecking.
     const [emailCheckState, setEmailCheckState] = useState(hasEmail ? 'valid' : 'idle');
-    const autoSubmitAttemptedRef = useRef(false);
     // Holds the in-flight server check so submit can await it if the
     // visitor clicks "Connect Now" before the blur check resolves.
     const emailCheckPromiseRef = useRef(null);
@@ -26,22 +23,20 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
     const isSubmitting = status === 'submitting';
     const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
 
-    // Auto-submit when all required info is already on file (skip the form
-    // entirely). Department picker was removed — all chats go into the
-    // single shared pool and the backend's routing service picks the
-    // operator. Removing the picker also removes the getDepartments() round
-    // trip we used to wait on before auto-submit was allowed to fire.
-    useEffect(() => {
-        if (!hasAllRequired || autoSubmitAttemptedRef.current) return;
-        autoSubmitAttemptedRef.current = true;
-        const timer = setTimeout(() => {
-            onSubmit({
-                name: existingLeadInfo.name,
-                email: existingLeadInfo.email,
-            });
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [hasAllRequired, existingLeadInfo, onSubmit]);
+    // Pre-fill from a late-arriving ``existingLeadInfo``. The parent refreshes
+    // the visitor's saved contact when this form is triggered, and that fetch
+    // can land just after mount (when the initial state was already seeded from
+    // a stale value). Adjust state during render (React-approved, avoids the
+    // cascading-render of a setState-in-effect) and only fill fields the visitor
+    // hasn't typed into, so we never overwrite their edits.
+    const [seededLead, setSeededLead] = useState(existingLeadInfo);
+    if (existingLeadInfo && existingLeadInfo !== seededLead) {
+        setSeededLead(existingLeadInfo);
+        setFormData(prev => ({
+            name: prev.name || existingLeadInfo.name || '',
+            email: prev.email || existingLeadInfo.email || '',
+        }));
+    }
 
     const looksLikeEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -77,7 +72,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!hasName && !formData.name.trim()) return;
+        if (!formData.name.trim()) return;
 
         if (!hasEmail) {
             const email = formData.email.trim();
@@ -111,7 +106,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
         setEmailError('');
         await onSubmit({
             ...formData,
-            name: hasName ? existingLeadInfo.name : formData.name,
+            name: formData.name,
             email: hasEmail ? existingLeadInfo.email : formData.email,
         });
     };
@@ -131,25 +126,15 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                 </div>
                 <div>
                     <p className="text-[13px] font-semibold text-[#16202C] leading-tight">
-                        {hasAllRequired ? 'Connecting you...' : 'Connect with our team'}
+                        Connect with our team
                     </p>
-                    {!hasAllRequired && (
-                        <p className="text-[11px] text-gray-400 leading-tight mt-0.5">
-                            {hasName
-                                ? `Hi ${existingLeadInfo.name}! Just need your email.`
-                                : 'Share a few details to get started.'}
-                        </p>
-                    )}
+                    <p className="text-[11px] text-gray-400 leading-tight mt-0.5">
+                        Share a few details to get started.
+                    </p>
                 </div>
             </div>
 
-            {/* Auto-submit spinner when all info is already on file */}
-            {hasAllRequired ? (
-                <div className="flex items-center justify-center py-3">
-                    <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin" />
-                </div>
-            ) : (
-                <form onSubmit={handleSubmit} className="space-y-2">
+            <form onSubmit={handleSubmit} className="space-y-2">
                     {/* Email field first — hidden if already known. Checked
                         on blur so validation runs in the background while
                         the visitor fills in their name. */}
@@ -182,24 +167,22 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                     )}
 
                     {/* Name field — hidden if already known */}
-                    {!hasName && (
-                        <div className={`flex items-center gap-2 rounded-xl border bg-gray-50/50 px-3 py-2 focus-within:bg-white transition-colors border-gray-200 focus-within:border-blue-300 ${isSubmitting ? 'opacity-60' : ''}`}>
-                            <User className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                            <input
-                                type="text"
-                                placeholder="Your name *"
-                                value={formData.name}
-                                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                                className="flex-1 bg-transparent outline-none text-[13px] text-[#16202C] placeholder:text-gray-400"
-                                disabled={isSubmitting}
-                                required
-                            />
-                        </div>
-                    )}
+                    <div className={`flex items-center gap-2 rounded-xl border bg-gray-50/50 px-3 py-2 focus-within:bg-white transition-colors border-gray-200 focus-within:border-blue-300 ${isSubmitting ? 'opacity-60' : ''}`}>
+                        <User className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                        <input
+                            type="text"
+                            placeholder="Your name *"
+                            value={formData.name}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                            className="flex-1 bg-transparent outline-none text-[13px] text-[#16202C] placeholder:text-gray-400"
+                            disabled={isSubmitting}
+                            required
+                        />
+                    </div>
 
                     <button
                         type="submit"
-                        disabled={isSubmitting || (!hasName && !formData.name.trim()) || (!hasEmail && !formData.email.trim()) || emailCheckState === 'invalid'}
+                        disabled={isSubmitting || !formData.name.trim() || (!hasEmail && !formData.email.trim()) || emailCheckState === 'invalid'}
                         className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium transition-all hover:opacity-90 disabled:opacity-60"
                         style={{ backgroundColor: primaryColor }}
                     >
@@ -224,7 +207,6 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                         </button>
                     )}
                 </form>
-            )}
         </div>
     );
 };

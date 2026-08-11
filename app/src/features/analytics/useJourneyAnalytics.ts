@@ -96,9 +96,10 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             getJourneyConversionPaths(botId, 'handoff_requested', { period, limit: 5 }),
             getJourneyConversionPaths(botId, 'offline_message_sent', { period, limit: 5 }),
             getJourneyPostChat(botId, { period, limit: 10 }),
-            // Fetch 6 so the diagram's MAX_SEQUENCE_ROWS=6 slot has data
-            // to render — asking for 5 while the UI slot allows 6 meant
-            // the sixth row was dead code and never appeared.
+            // Matches the diagram's TRIE_MAX_LEAVES. Must also stay within the
+            // route's own bound — `analytics_routes.py` declares
+            // `limit: int = Query(5, ge=1, le=20)`, so 25 returned 422 and
+            // errored the entire Journey tab on load for every account.
             getJourneyPreChatSequences(botId, { period, limit: 6 }),
           ]);
 

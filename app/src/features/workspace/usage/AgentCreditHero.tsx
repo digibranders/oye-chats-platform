@@ -89,15 +89,27 @@ export function AgentCreditHero({ pool, agentName, onTopup }: AgentCreditHeroPro
 
         {/* Facts + CTA */}
         <div className="flex flex-col gap-4 border-t border-[var(--ds-border)] pt-5 lg:min-w-[220px] lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
-          <div>
-            <dt className="text-[12px] text-[var(--ds-text-subtle)]">
-              {pool.resetsAt ? 'Plan renews' : 'Top-ups'}
-            </dt>
-            <dd className="mt-0.5 flex items-center gap-1.5 text-[14px] font-semibold text-[var(--ds-text)]">
-              <RefreshCw size={13} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
-              {pool.resetsAt ? formatDate(pool.resetsAt) : 'Roll over'}
-            </dd>
-          </div>
+          {/* "Roll over" IS "never expire", and it was printed unconditionally
+              — directly above a section that states a real expiry date when
+              there is one. Whether top-ups expire is a term of sale, so this
+              states only what this pool's own ledger proves: the date when a
+              grant is dated, "Never expire" only when grants exist and none
+              are, and nothing at all when there is no evidence either way. */}
+          {(pool.resetsAt || pool.soonestExpiry || pool.topupRemaining > 0) && (
+            <div>
+              <dt className="text-[12px] text-[var(--ds-text-subtle)]">
+                {pool.resetsAt ? 'Plan renews' : pool.soonestExpiry ? 'Top-ups expire' : 'Top-ups'}
+              </dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 text-[14px] font-semibold text-[var(--ds-text)]">
+                <RefreshCw size={13} aria-hidden="true" className="text-[var(--ds-text-subtle)]" />
+                {pool.resetsAt
+                  ? formatDate(pool.resetsAt)
+                  : pool.soonestExpiry
+                    ? formatDate(pool.soonestExpiry)
+                    : 'Never expire'}
+              </dd>
+            </div>
+          )}
           {pool.topupRemaining > 0 && (
             <div>
               <dt className="text-[12px] text-[var(--ds-text-subtle)]">Top-up credits</dt>
