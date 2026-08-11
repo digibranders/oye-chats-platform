@@ -182,7 +182,28 @@ def check_relevance(
             response = litellm.completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=20,
+                # Thinking DISABLED, and a budget that fits the answer.
+                #
+                # `gemini-2.5-flash` (the default GATE_MODEL) is a reasoning
+                # model: it spends output tokens thinking before it emits any
+                # text. At `max_tokens=20` the entire budget went to reasoning
+                # and the content came back EMPTY — measured against the live
+                # API: 17 completion tokens, `reasoning_tokens=17`,
+                # `text_tokens=0`. The call SUCCEEDS, so nothing raised; the
+                # empty string then failed JSON parsing and this gate fell
+                # through to its fail-open path on every single request. In
+                # production that was 41 consecutive failures, both gates, and
+                # the only trace was a WARNING nobody was reading.
+                #
+                # A gate is a cheap classification and wants no reasoning at
+                # all. Disabling it returns `{"score":1}` in FIVE tokens
+                # against 116 for the thinking path — correct AND ~23x cheaper
+                # than the version that was silently returning nothing.
+                # `litellm.drop_params = True` (main.py) drops this param for a
+                # GATE_MODEL that does not support it, so retuning the model
+                # cannot resurrect the bug.
+                reasoning_effort="disable",
+                max_tokens=64,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
