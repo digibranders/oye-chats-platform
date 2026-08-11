@@ -93,7 +93,21 @@ class TestTheActualDecodeIsTheBoundary:
             process_image_for_logo(b"MZ\x90\x00" + b"\x00" * 500)  # a PE header
 
     def test_a_truncated_image_is_rejected_not_crashed(self):
-        truncated = _png(400, 400)[:120]
+        """A header that parses over pixel data that stops early.
+
+        The cut is a FRACTION of the encoded file, and asserted to be one. It
+        used to be a fixed `[:120]`, which silently stopped testing anything on
+        a machine whose Pillow encodes this image in under 120 bytes — the
+        slice was then the whole valid file, `load()` succeeded, and the test
+        failed with DID NOT RAISE. PNG size here is decided by which row filter
+        the build picks: a solid colour under filter "Up" is 400 rows of zeros
+        and compresses to almost nothing, so the encoded length is a property
+        of the platform, never something to hard-code against.
+        """
+        full = _png(400, 400)
+        truncated = full[: len(full) // 2]
+        assert 0 < len(truncated) < len(full), "the fixture must actually be missing data"
+
         with pytest.raises(UnsupportedImage):
             process_image_for_logo(truncated)
 
