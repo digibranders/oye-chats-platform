@@ -40,8 +40,7 @@ const ANCHOR_CSS = 'font-size:11px;color:inherit;opacity:0.7;text-decoration:non
 
 /** Shown for install paths that cannot produce a crawlable anchor. */
 export const MANUAL_ATTRIBUTION_NOTE =
-  'This install path injects the widget from JavaScript, so anything it adds is invisible to crawlers. ' +
-  'To get credited attribution, paste the line below directly into your site template (footer) instead.';
+  'This install path injects the widget from JavaScript, so anything it adds is invisible to crawlers.';
 
 /** The attribution URL for one bot. */
 export function attributionHref(botKey: string): string {

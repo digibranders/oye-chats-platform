@@ -49,7 +49,7 @@ const attributionStep = (botKey, mode, location, attribution) => {
         return [
             {
                 title: 'Add the attribution link to your site template',
-                description: `${MANUAL_ATTRIBUTION_NOTE} Paste it into ${location}.`,
+                description: `${MANUAL_ATTRIBUTION_NOTE} For attribution a crawler can read, paste the link below into ${location}.`,
                 code: attributionAnchorHtml(botKey),
                 language: 'html',
             },
@@ -73,7 +73,6 @@ const html = {
     name: 'HTML',
     category: 'generic',
     description: 'Any static HTML website',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script tag to your HTML',
@@ -100,7 +99,6 @@ const nextjs = {
     name: 'Next.js',
     category: 'framework',
     description: 'App Router or Pages Router',
-    attributionMode: 'jsx',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Import next/script in your root layout',
@@ -136,7 +134,6 @@ const react = {
     name: 'React',
     category: 'framework',
     description: 'Create React App or Vite',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add a useEffect in your root component',
@@ -188,7 +185,6 @@ const vue = {
     name: 'Vue.js',
     category: 'framework',
     description: 'Vue 3 or Nuxt',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script in your App.vue or index.html',
@@ -234,7 +230,6 @@ const angular = {
     name: 'Angular',
     category: 'framework',
     description: 'Angular 16+',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script to your index.html',
@@ -273,7 +268,6 @@ const svelte = {
     name: 'Svelte',
     category: 'framework',
     description: 'Svelte or SvelteKit',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script in your app.html or layout',
@@ -326,7 +320,6 @@ const astro = {
     name: 'Astro',
     category: 'framework',
     description: 'Astro static or SSR sites',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script to your shared layout',
@@ -365,7 +358,6 @@ const wordpress = {
     name: 'WordPress',
     category: 'cms',
     description: 'Self-hosted or WordPress.com Business',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Option A: Use a plugin (easiest)',
@@ -423,7 +415,6 @@ const shopify = {
     name: 'Shopify',
     category: 'cms',
     description: 'Shopify stores',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open the theme code editor',
@@ -458,7 +449,6 @@ const squarespace = {
     name: 'Squarespace',
     category: 'cms',
     description: 'Squarespace websites',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open Code Injection settings',
@@ -496,7 +486,6 @@ const webflow = {
     name: 'Webflow',
     category: 'builder',
     description: 'Webflow sites and projects',
-    attributionMode: 'html',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open Custom Code settings',
@@ -534,7 +523,6 @@ const wix = {
     name: 'Wix',
     category: 'builder',
     description: 'Wix websites',
-    attributionMode: 'manual',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open Custom Code settings',
@@ -572,7 +560,6 @@ const framer = {
     name: 'Framer',
     category: 'builder',
     description: 'Framer sites',
-    attributionMode: 'manual',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open site settings',
@@ -610,7 +597,6 @@ const bubble = {
     name: 'Bubble',
     category: 'builder',
     description: 'Bubble.io apps',
-    attributionMode: 'manual',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open the Settings tab',
@@ -648,7 +634,6 @@ const gtm = {
     name: 'Google Tag Manager',
     category: 'tool',
     description: 'Load via GTM container',
-    attributionMode: 'manual',
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Create a new Custom HTML tag',

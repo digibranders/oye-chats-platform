@@ -12,8 +12,6 @@ export interface PlatformStep {
   language?: string;
 }
 
-export type AttributionMode = 'html' | 'jsx' | 'manual';
-
 export interface GetStepsOptions {
   /** Include the crawlable attribution anchor. Defaults to true. */
   attribution?: boolean;
@@ -24,8 +22,6 @@ export interface Platform {
   name: string;
   category: string;
   description: string;
-  /** How this platform can host a server-rendered attribution anchor. */
-  attributionMode: AttributionMode;
   getSteps: (botKey: string, env: PlatformEnv, options?: GetStepsOptions) => PlatformStep[];
 }
 
