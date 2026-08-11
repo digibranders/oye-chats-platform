@@ -107,8 +107,13 @@ jobs:
         working-directory: widget
         run: npm run lint
 
-      # 79 tests that nothing was running. `npm test` exists in package.json
-      # and was simply never wired into CI.
+      # 79 tests that nothing was running. `npm test` existed in package.json
+      # and was simply never wired into CI — and had rotted unnoticed while
+      # nothing ran it: the script globbed `src/services/**/*.test.js`, which
+      # only Node >= 22 expands itself. On this runner's Node 20 it resolved to
+      # nothing and exited 1. The script now uses a single-level glob the SHELL
+      # expands, which behaves the same on every Node and every shell. Widget
+      # tests therefore have to live directly in `src/services/`.
       - name: Test
         working-directory: widget
         run: npm test
