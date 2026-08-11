@@ -57,6 +57,27 @@ function rootHost(urls: readonly string[]): string {
  * segments; the last segment carries any query string so two pages that differ
  * only by ``?query`` remain distinct, selectable leaves rather than colliding.
  */
+/**
+ * `decodeURIComponent` that cannot take the panel down.
+ *
+ * It throws `URIError` on a lone `%` or a truncated escape, and real sitemaps
+ * contain both — `/sale/50%_off` survives `new URL()` intact and then throws
+ * here. This sat inside a `useMemo` with no guard (the `new URL()` above it IS
+ * guarded, so the wrong failure was anticipated), which meant one such URL
+ * unmounted the whole Add-Knowledge panel to the error boundary and left the
+ * customer unable to add their website at all, with no way to recover.
+ *
+ * Falling back to the raw segment shows a slightly uglier label; throwing
+ * shows nothing.
+ */
+function safeDecode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function buildTree(urls: readonly string[]): PageNode {
   const host = rootHost(urls);
   const root: PageNode = { id: '/', segment: host, url: null, children: [], urls: [] };
@@ -95,7 +116,7 @@ function buildTree(urls: readonly string[]): PageNode {
     let acc = '';
     segments.forEach((seg, i) => {
       const isLast = i === segments.length - 1;
-      const label = decodeURIComponent(seg) + (isLast ? search : '');
+      const label = safeDecode(seg) + (isLast ? search : '');
       acc += `/${seg}${isLast ? search : ''}`;
       let node = byPath.get(acc);
       if (!node) {

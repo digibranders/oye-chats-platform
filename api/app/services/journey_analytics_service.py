@@ -101,7 +101,7 @@ def paths_to_conversion(
     since: datetime,
     until: datetime,
     limit: int = 10,
-    max_seq_len: int = 25,
+    max_seq_len: int = 6,
 ) -> dict:
     """Top pre-chat page sequences that preceded a given conversion event.
 
@@ -226,7 +226,7 @@ def top_pre_chat_sequences(
     since: datetime,
     until: datetime,
     limit: int = 5,
-    max_seq_len: int = 25,
+    max_seq_len: int = 8,
 ) -> dict:
     """Top pre-chat page sequences across ALL sessions, converted or not.
 

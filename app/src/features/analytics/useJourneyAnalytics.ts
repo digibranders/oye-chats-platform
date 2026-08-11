@@ -96,10 +96,11 @@ export function useJourneyAnalytics(botId: number | null): UseJourneyAnalyticsRe
             getJourneyConversionPaths(botId, 'handoff_requested', { period, limit: 5 }),
             getJourneyConversionPaths(botId, 'offline_message_sent', { period, limit: 5 }),
             getJourneyPostChat(botId, { period, limit: 10 }),
-            // Fetch up to 25 pre-chat sequences to match the diagram's
-            // TRIE_MAX_LEAVES=25 cap — the trie prunes to that many leaves,
-            // so sending fewer would bottleneck the flow below its limit.
-            getJourneyPreChatSequences(botId, { period, limit: 25 }),
+            // Matches the diagram's TRIE_MAX_LEAVES. Must also stay within the
+            // route's own bound — `analytics_routes.py` declares
+            // `limit: int = Query(5, ge=1, le=20)`, so 25 returned 422 and
+            // errored the entire Journey tab on load for every account.
+            getJourneyPreChatSequences(botId, { period, limit: 6 }),
           ]);
 
         if (cancelled) return;

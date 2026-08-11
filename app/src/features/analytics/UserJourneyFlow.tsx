@@ -210,7 +210,16 @@ const CHAIN_START_X = 24;
 const CHAIN_END_X = 410; // just before the chatbot circle
 const CHAIN_MIN_CARD_W = 44; // don't shrink below icon-plus-text
 const CHAIN_MAX_CARD_W = 156; // don't grow past the destination CARD_W
-const MAX_CHAIN_LEN = 25;
+// REVERTED from 25. These four are geometry-derived, not preferences: the
+// source band is a fixed 24→410px, `colW = (410-24)/cols` and
+// `cardW = max(44, min(156, colW-15))`, so overlap begins at cols >= 9 — 8 was
+// exactly the largest non-overlapping value. At 25 every card overlapped its
+// neighbour by ~29px and the deepest one intruded into the chatbot circle,
+// while `cardW` pinned to 44 truncated every label to six characters
+// ("/pric…", "/abou…"). Raising these also pushed the client's fetch limit to
+// 25 against a route bound of `le=20`, which 422'd and errored the WHOLE
+// Journey tab on load. Change the band geometry first if these need to grow.
+const MAX_CHAIN_LEN = 8;
 
 // Post-chat chain lives to the RIGHT of the chatbot, mirroring the
 // pre-chat chain on the left. Each source row grows its own post-chain
@@ -219,7 +228,7 @@ const MAX_CHAIN_LEN = 25;
 // after — reads as one continuous flow.
 const POST_CHAIN_START_X = 595;
 const POST_CHAIN_END_X = 950;
-const MAX_POST_CHAIN_LEN = 25;
+const MAX_POST_CHAIN_LEN = 6;
 /**
  * Vertical distribution of N cards inside a viewport of height ``vbH``.
  * Returns the top-Y of each card. Uses even center-distribution when
@@ -336,12 +345,12 @@ function circleExit(index: number, count: number, centerY: number): { x: number;
 
 /** Cap the visible leaf count so the diagram doesn't explode. Matches
  *  the previous MAX_SEQUENCE_ROWS: 6 distinct end-to-end journeys max. */
-const TRIE_MAX_LEAVES = 25;
+const TRIE_MAX_LEAVES = 6;
 /** Cap the depth we merge shared prefixes to. Trie always renders at
  *  most this many columns; deeper hops are truncated (backend already
  *  caps sequences at 8 pages, so this is a safety net not an active
  *  clip in most cases). */
-const TRIE_MAX_DEPTH = 25;
+const TRIE_MAX_DEPTH = 8;
 /** Vertical space per leaf slot: card height + minimum gap. */
 const TRIE_LEAF_H = CARD_H + ROW_MIN_GAP;
 
