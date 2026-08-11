@@ -755,3 +755,81 @@ class TestTheFaviconStepInsideTheCrawl:
 
         assert result["message"].startswith("Crawling and ingestion completed")
         assert _reread(db, 8103).bot_logo is None
+
+
+# ── Avatar provenance ───────────────────────────────────────────────────────
+
+
+@pytestmark_db
+class TestProvenanceDecidesWhetherToDerive:
+    """`bot_logo IS NULL` answers the wrong question.
+
+    A customer who REMOVES their avatar lands in exactly the same row state as
+    one who never had one, so the crawl read a deliberate deletion as an empty
+    slot and re-derived the picture they had just deleted — with no way for
+    them to say no, because `avatar_type` stays `upload` and the removal was
+    never recorded anywhere. `Bot.bot_logo_source` is what makes the two
+    distinguishable.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_derived_avatar_is_stamped_as_derived(self, db, monkeypatch):
+        bot = _make_bot(db, 8200)
+
+        with _favicon_enabled(monkeypatch, fetch=AsyncMock(return_value=_image_bytes("PNG"))):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        written = _reread(db, 8200)
+        assert written.bot_logo == _UPLOADED_KEY
+        assert written.bot_logo_source == "derived"
+
+    @pytest.mark.asyncio
+    async def test_a_removed_avatar_is_not_re_derived(self, db, monkeypatch):
+        """The bug this column exists for. Row state is identical to a fresh
+        agent — `bot_logo` NULL, `avatar_type` 'upload' — and only the stamp
+        distinguishes them."""
+        bot = _make_bot(db, 8201, bot_logo=None, bot_logo_source="manual")
+        fetch = AsyncMock(return_value=_image_bytes("PNG"))
+
+        with _favicon_enabled(monkeypatch, fetch=fetch):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        assert fetch.await_count == 0, "a customer who said no should not cost a homepage fetch either"
+        written = _reread(db, 8201)
+        assert written.bot_logo is None
+        assert written.bot_logo_source == "manual"
+
+    @pytest.mark.asyncio
+    async def test_a_removal_during_the_fetch_still_wins(self, db, monkeypatch):
+        """The pre-check is an optimisation; the post-fetch re-check is the
+        guard. A customer removing their avatar in the seconds the fetch takes
+        is the same intent, expressed a moment later."""
+        bot = _make_bot(db, 8202)
+
+        async def _fetch_then_customer_removes(_url):
+            from app.db.session import get_session
+
+            with get_session() as concurrent:
+                row = concurrent.get(Bot, 8202)
+                row.bot_logo_source = "manual"
+                concurrent.commit()
+            return _image_bytes("PNG")
+
+        with _favicon_enabled(monkeypatch, fetch=_fetch_then_customer_removes):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        written = _reread(db, 8202)
+        assert written.bot_logo is None
+        assert written.bot_logo_source == "manual"
+
+    @pytest.mark.asyncio
+    async def test_an_agent_nobody_has_touched_still_gets_one(self, db, monkeypatch):
+        """The other half: provenance must not become a blanket refusal. A
+        fresh agent has a NULL stamp and is exactly who this feature is for."""
+        bot = _make_bot(db, 8203)
+        assert bot.bot_logo_source is None
+
+        with _favicon_enabled(monkeypatch, fetch=AsyncMock(return_value=_image_bytes("PNG"))):
+            await orch._maybe_apply_favicon_avatar(bot.id, bot.client_id, "https://acme.com")
+
+        assert _reread(db, 8203).bot_logo == _UPLOADED_KEY

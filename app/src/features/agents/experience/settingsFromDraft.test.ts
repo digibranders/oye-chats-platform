@@ -23,6 +23,7 @@ function draftWith(overrides: Partial<ExperienceDraft> = {}): ExperienceDraft {
     avatarType: 'upload',
     orbColor: '',
     botLogo: null,
+    botLogoSource: null,
     showBranding: true,
     welcomeGreeting: 'Hi there',
     welcomeSubtitle: 'How can I help?',
@@ -81,6 +82,20 @@ describe('settingsFromDraft avatar handling', () => {
     expect('bot_logo' in payload).toBe(true);
     expect(payload.bot_logo).toBeNull();
     expect(payload.launcher_logo).toBeNull();
+  });
+
+  it('never sends provenance back — the server owns it', () => {
+    // `bot_logo_source` is derived state stamped server-side on write. Echoing
+    // a page-load snapshot of it would let the client assert a provenance it
+    // has no authority over, including re-asserting 'derived' after the
+    // customer replaced the image.
+    const payload = settingsFromDraft(
+      draftWith({ botLogo: 'logos/new.png', botLogoSource: 'derived' }),
+      draftWith({ botLogo: null, botLogoSource: 'derived' }),
+    );
+
+    expect(payload).not.toHaveProperty('bot_logo_source');
+    expect(payload).not.toHaveProperty('botLogoSource');
   });
 
   it('sends the avatar when no baseline is available to compare against', () => {

@@ -1524,3 +1524,30 @@ def prune_stale_events(session, *, retention_days: int) -> int:
     stmt = delete(Event).where(or_(Event.last_seen_at < cutoff, Event.starts_at < cutoff))
     result = session.execute(stmt)
     return int(result.rowcount or 0)
+
+
+# Avatar provenance — see `Bot.bot_logo_source`.
+AVATAR_SOURCE_MANUAL = "manual"
+AVATAR_SOURCE_DERIVED = "derived"
+
+
+def stamp_manual_avatar(bot, update_data: dict) -> None:
+    """Mark the bot's avatar as the customer's own, if this patch touches it.
+
+    Called from both settings patches (``bot_routes.update_bot`` and the legacy
+    ``client_routes`` one) BEFORE the patch is applied, so the two cannot drift.
+
+    Any customer write to the avatar counts, including clearing it. That is the
+    whole point: removing an avatar leaves ``bot_logo`` NULL, which is
+    indistinguishable from never having had one, and the crawl's favicon step
+    read that empty slot as an invitation and re-derived the picture the
+    customer had just deleted. Stamping "manual" here is how they get to say no
+    and have it stick.
+
+    Not gated on the value actually changing. A patch that re-sends the same
+    avatar is still the customer asserting ownership of the field, and treating
+    a no-op write as "no opinion" would leave the slot open to derivation for
+    anyone whose editor saves unchanged values.
+    """
+    if "bot_logo" in update_data or "launcher_logo" in update_data:
+        bot.bot_logo_source = AVATAR_SOURCE_MANUAL

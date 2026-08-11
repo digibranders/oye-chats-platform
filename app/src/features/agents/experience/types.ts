@@ -16,6 +16,12 @@ export interface ExperienceDraft {
   avatarType: AvatarType;
   orbColor: string;
   botLogo: string | null;
+  /** Who set `botLogo`: null (nobody has), 'manual' (this workspace) or
+   * 'derived' (taken from the site's favicon during a crawl). Read-only here —
+   * the server owns it, and any save that touches the image stamps 'manual'.
+   * Present so the picker can say where a derived image came from instead of
+   * showing it as though someone uploaded it. */
+  botLogoSource: string | null;
   /** `feature_flags.show_branding` - true shows the "Powered by OyeChats"
    * footer. Only a workspace with the `branding_removable` plan feature can
    * turn this off; the backend force-sets it back to `true` on save
@@ -153,6 +159,7 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
     avatarType: asAvatarType(raw.avatar_type),
     orbColor: asString(raw.orb_color, DEFAULTS.orbColor),
     botLogo: typeof raw.bot_logo === 'string' && raw.bot_logo.length > 0 ? raw.bot_logo : null,
+    botLogoSource: typeof raw.bot_logo_source === 'string' ? raw.bot_logo_source : null,
     showBranding: asBoolean(featureFlags.show_branding, true),
 
     welcomeGreeting: asNonEmptyString(widgetMessages.welcome_greeting, DEFAULTS.welcomeGreeting),

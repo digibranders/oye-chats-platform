@@ -72,6 +72,7 @@ export function BrandingSection({
           avatarType={draft.avatarType}
           orbColor={draft.orbColor}
           botLogo={draft.botLogo}
+          botLogoSource={draft.botLogoSource}
           primaryColor={draft.primaryColor}
           uploading={uploading}
           swatches={swatches}

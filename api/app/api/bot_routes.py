@@ -25,6 +25,7 @@ from app.core.origin_check import extract_hostname, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import Bot, BotGrowthEvent
+from app.db.repository import stamp_manual_avatar
 from app.db.session import get_session
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 
@@ -344,6 +345,10 @@ class BotResponse(BaseModel):
     # the AI & Personality tab.
     manual_field_overrides: list[str] = []
     bot_logo: str | None
+    # Who set the avatar: null (nobody has), "manual" (the customer) or
+    # "derived" (taken from the site's favicon during a crawl). Lets the avatar
+    # picker caption a derived image rather than pass it off as an upload.
+    bot_logo_source: str | None = None
     launcher_name: str
     launcher_logo: str | None
     primary_color: str
@@ -485,6 +490,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         company_description=bot.company_description,
         manual_field_overrides=bot.manual_field_overrides or [],
         bot_logo=bl,
+        bot_logo_source=bot.bot_logo_source,
         launcher_name=bot.launcher_name or "Have Questions?",
         launcher_logo=ll,
         primary_color=bot.primary_color or "#ba68c8",
@@ -1953,6 +1959,10 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 update_data["launcher_logo"] = update_data["bot_logo"]
             elif "launcher_logo" in update_data:
                 update_data["bot_logo"] = update_data["launcher_logo"]
+
+            # Any avatar write here is the customer's, including clearing it —
+            # which is what stops the crawl re-deriving a deleted avatar.
+            stamp_manual_avatar(bot, update_data)
 
             # Merge feature_flags — partial updates must not wipe existing flags
             if "feature_flags" in update_data and update_data["feature_flags"] is not None:
