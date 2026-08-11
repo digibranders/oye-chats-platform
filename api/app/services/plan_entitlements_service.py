@@ -527,6 +527,40 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
 # this boundary too.
 VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional"})
 
+# The slugs `seed_plans.py` creates. Anything else is a BESPOKE plan a
+# super-admin provisioned for an individual deal — the seed script's own
+# docstring says unknown slugs are left untouched precisely because they exist.
+_SEEDED_PLAN_SLUGS: frozenset[str] = frozenset({"free", "starter", "standard", "professional"})
+
+
+def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
+    """Does this plan include a feature granted to ``ladder_slugs``?
+
+    Two rules, and the second exists because narrowing these gates to a bare
+    allow-list silently removed a paid feature from enterprise customers.
+
+    1. A slug on the standard ladder gets exactly what the ladder says.
+    2. A slug OFF the ladder is bespoke — an enterprise deal at a negotiated
+       price — and gets the feature. The comment guarding this was deleted
+       when the gate narrowed to ``{"standard", "professional"}``; it said "a
+       custom paid slug provisioned for an enterprise deal is a paid plan and
+       must not silently lose the feature."
+
+    The failure modes are not symmetric, which is what decides rule 2. Wrongly
+    granting costs one vendor call on a tier that should not have had it.
+    Wrongly denying leaves a customer on a bespoke contract without a feature
+    they pay for AND — because ``LeadInfo.is_valid_email`` stays NULL — tripping
+    the 409 soft gate on every manual follow-up, with no setting anywhere that
+    would re-enable it.
+
+    A newly SEEDED tier is not covered by rule 2: adding it to
+    ``_SEEDED_PLAN_SLUGS`` is part of adding the tier, which forces a
+    deliberate choice per feature rather than a silent grant.
+    """
+    if slug in ladder_slugs:
+        return True
+    return slug not in _SEEDED_PLAN_SLUGS
+
 
 def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool:
     """True iff ANY of this client's subscriptions includes Visitor Intelligence.
@@ -550,7 +584,7 @@ def is_visitor_intelligence_enabled(client_id: int, db_session: Session) -> bool
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
+    return _paid_tier_includes(entitlements.plan_slug, VISITOR_INTELLIGENCE_SLUGS)
 
 
 def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
@@ -575,7 +609,7 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug in VISITOR_INTELLIGENCE_SLUGS
+    return _paid_tier_includes(entitlements.plan_slug, VISITOR_INTELLIGENCE_SLUGS)
 
 
 # ── Email verification gate (Standard + Professional) ───────────────────────
@@ -610,7 +644,7 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
             exc_info=True,
         )
         return False
-    return entitlements.plan_slug in EMAIL_VERIFICATION_SLUGS
+    return _paid_tier_includes(entitlements.plan_slug, EMAIL_VERIFICATION_SLUGS)
 
 
 def get_chat_history_retention_days(client_id: int, db_session: Session) -> int:

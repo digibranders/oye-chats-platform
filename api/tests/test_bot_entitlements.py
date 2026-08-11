@@ -125,12 +125,21 @@ def test_lead_source_attribution_is_per_bot(db):
 
 
 def test_email_validation_is_enabled_only_on_standard_and_professional(db):
-    """Email verification is a metered feature scoped to Standard + Professional.
+    """Email verification is a metered feature scoped to Standard + Professional
+    on the standard ladder — and granted to bespoke enterprise slugs.
 
-    Starter and any custom paid slug are excluded — the gate is an explicit
-    allow-list (:data:`ent.EMAIL_VERIFICATION_SLUGS`), mirroring the
-    Professional-only Visitor Intelligence gate, so a lower or bespoke tier
-    can't silently switch the paid feature on."""
+    Starter is excluded deliberately: it is a cheaper LADDER tier, and the
+    allow-list keeps that boundary explicit so a future Starter change cannot
+    switch a paid feature on by accident.
+
+    A custom slug is the opposite case. It is provisioned by a super-admin for
+    an individual deal at a negotiated price, and this test used to assert it
+    was DENIED — the inverse of what the guarding comment said before the gate
+    was narrowed: "a custom paid slug provisioned for an enterprise deal is a
+    paid plan and must not silently lose the feature." Denying it leaves that
+    customer without a feature they pay for and, because `is_valid_email`
+    stays NULL, tripping the 409 soft gate on every manual follow-up, with no
+    setting anywhere to re-enable it."""
     client = _client(db, "emailval-perbot@e.com")
     starter = _plan(db, "starter", price=44900, bant=False)
     standard = _plan(db, "standard", price=94900, bant=True)
@@ -149,7 +158,9 @@ def test_email_validation_is_enabled_only_on_standard_and_professional(db):
     assert ent.is_email_validation_enabled_for_bot(bot_std.id, db) is True
     assert ent.is_email_validation_enabled_for_bot(bot_pro.id, db) is True
     assert ent.is_email_validation_enabled_for_bot(bot_starter.id, db) is False
-    assert ent.is_email_validation_enabled_for_bot(bot_custom.id, db) is False
+    assert ent.is_email_validation_enabled_for_bot(bot_custom.id, db) is True, (
+        "a bespoke enterprise plan silently lost a feature it pays for"
+    )
 
 
 def test_email_validation_is_denied_on_free(db):
@@ -184,3 +195,32 @@ def test_visitor_intelligence_is_per_bot_not_account_highest(db):
     # The account-level resolver still reports True (highest plan wins) —
     # which is exactly why lead-scoped surfaces must not use it.
     assert ent.is_visitor_intelligence_enabled(client.id, db) is True
+
+
+def test_a_bespoke_slug_also_gets_visitor_intelligence(db):
+    """Same rule, applied consistently to the other gate that was narrowed.
+
+    Visitor Intelligence is Professional-only on the ladder; an enterprise
+    contract priced above Professional must not resolve to less than it.
+    """
+    client = _client(db, "vi-custom@e.com")
+    professional = _plan(db, "professional", price=199900, bant=True)
+    custom = _plan(db, "enterprise-custom", price=500000, bant=True)
+    bot_pro = _bot(db, client, "bot-vi-pro")
+    bot_custom = _bot(db, client, "bot-vi-custom")
+    _sub(db, client, professional, bot_id=bot_pro.id)
+    _sub(db, client, custom, bot_id=bot_custom.id)
+    db.flush()
+
+    assert ent.is_visitor_intelligence_enabled_for_bot(bot_pro.id, db) is True
+    assert ent.is_visitor_intelligence_enabled_for_bot(bot_custom.id, db) is True
+
+
+def test_a_new_seeded_ladder_tier_is_not_granted_by_accident(db):
+    """The guard on rule 2. Bespoke slugs get paid features; a tier added to
+    the standard ladder must NOT — adding it to `_SEEDED_PLAN_SLUGS` is part
+    of adding the tier, which forces a deliberate per-feature choice."""
+    assert "starter" in ent._SEEDED_PLAN_SLUGS
+    assert ent._paid_tier_includes("starter", ent.EMAIL_VERIFICATION_SLUGS) is False
+    assert ent._paid_tier_includes("free", ent.EMAIL_VERIFICATION_SLUGS) is False
+    assert ent._paid_tier_includes("enterprise-acme", ent.EMAIL_VERIFICATION_SLUGS) is True
