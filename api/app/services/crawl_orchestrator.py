@@ -227,6 +227,12 @@ def _apply_crawl_metadata_to_bot(
     return written
 
 
+# Absolute wall-clock budget for the whole favicon step — discovery, every
+# candidate download, the R2 upload. Small on purpose: this runs after the
+# crawl is already complete and billed, so its only job is to not linger.
+_FAVICON_TOTAL_BUDGET_S = 25.0
+
+
 async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: str) -> None:
     """Set the site's favicon as the bot's avatar when none is chosen yet.
 
@@ -266,14 +272,28 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
         if not logo_key:
             return
 
-        # Re-check under a fresh session: the customer may have uploaded a logo
-        # while we were fetching. Only claim the empty slot — never overwrite.
+        # Re-check under a fresh session: the customer may have chosen an
+        # avatar while we were fetching. Only claim a genuinely empty slot.
         with get_session() as session:
             bot = session.get(Bot, bot_id)
             if bot is None or bot.client_id != client_id or bot.bot_logo:
                 return
+            # `bot_logo` being empty is NOT the same as "no avatar chosen".
+            # `avatar_type` has three legal values — upload / orb / mascot —
+            # and a customer who picked Orb has bot_logo NULL. The old guard
+            # checked only bot_logo, so it passed, then flipped avatar_type
+            # from 'orb' to 'upload' and silently replaced a deliberate choice
+            # with their favicon.
+            if (bot.avatar_type or "upload") != "upload":
+                logger.info("bot %s uses the %s avatar — leaving it alone", bot_id, bot.avatar_type)
+                return
             bot.bot_logo = logo_key
-            bot.avatar_type = "upload"
+            # Write BOTH. `bot_routes` keeps these in lockstep on every API
+            # write and the widget's launcher reads `launcher_logo`, so
+            # setting only bot_logo left the in-chat avatar as the favicon
+            # while the launcher bubble still showed the fallback robot.
+            if not bot.launcher_logo:
+                bot.launcher_logo = logo_key
             session.commit()
             logger.info("Set favicon avatar for bot %s from %s", bot_id, url)
     except Exception:
@@ -856,13 +876,6 @@ async def run_full_crawl(
                             client_id,
                         )
 
-        # Auto-avatar: harvest the site's favicon and set it as the bot's
-        # avatar when the customer hasn't chosen one. Full crawls only (an
-        # ordered_urls partial re-scrape has no canonical homepage to read an
-        # icon from). Best-effort — never fails the crawl.
-        if not ordered_urls:
-            await _maybe_apply_favicon_avatar(bot_id, client_id, url)
-
         # ``pages_dropped`` is the headline number for the UI: how many URLs
         # we found but couldn't ingest given the plan caps. Compute it
         # defensively — never negative, even if the subprocess and the post-
@@ -951,6 +964,31 @@ async def run_full_crawl(
                     )
             except Exception:
                 logger.warning("crawl-complete notification failed (non-fatal)", exc_info=True)
+
+        # Auto-avatar: harvest the site's icon and set it as the bot's avatar
+        # when the customer has not chosen one.
+        #
+        # LAST, and hard-bounded. It used to sit above the result payload and
+        # the terminal status write, unbounded: a homepage with 300 <link
+        # rel="icon"> tags produced 302 sequential candidates at up to 10s
+        # each, far past the worker's job timeout. An ARQ cancellation raises
+        # CancelledError — a BaseException, so neither the `except Exception`
+        # here nor the "failed" handler below catches it — and the crawl was
+        # already fetched, ingested and BILLED. The customer's spinner hung
+        # forever on completed work, and a retry re-ran the whole crawl.
+        #
+        # Now nothing before this point depends on it, and the budget is
+        # absolute regardless of how many candidates a site declares.
+        if not ordered_urls:
+            try:
+                await asyncio.wait_for(
+                    _maybe_apply_favicon_avatar(bot_id, client_id, url),
+                    timeout=_FAVICON_TOTAL_BUDGET_S,
+                )
+            except TimeoutError:
+                logger.info("favicon avatar timed out for bot %s — crawl already complete", bot_id)
+            except Exception:
+                logger.warning("favicon avatar failed for bot %s (non-fatal)", bot_id, exc_info=True)
 
         return result_payload
     except CrawlCancelled as exc:

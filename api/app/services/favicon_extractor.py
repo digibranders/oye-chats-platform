@@ -33,11 +33,10 @@ import io
 import logging
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 from PIL import Image
 
-from app.core.ssrf import SSRFError, validate_public_url
+from app.core.ssrf import fetch_bytes_safely, fetch_text_safely
 
 logger = logging.getLogger(__name__)
 
@@ -173,29 +172,52 @@ def _decode_is_valid_image(data: bytes) -> bool:
     return width >= 16 and height >= 16
 
 
-async def _download_icon(client: httpx.AsyncClient, url: str) -> bytes | None:
-    """Download and validate a single icon URL, or return ``None``.
+# The most candidates we will try for one site. A homepage can declare an
+# unbounded number of <link rel="icon"> tags — 300 tags produced 302
+# sequential candidates at up to 10s each, which is longer than the worker's
+# whole job timeout. Ranked best-first, so a cap costs nothing real.
+_MAX_ICON_CANDIDATES = 6
 
-    SSRF-validated before connecting; redirects are not auto-followed (a
-    ``Location`` to an internal host is simply treated as a miss); the body is
-    capped at :data:`_MAX_ICON_BYTES`.
+
+def _usable_by_the_avatar_pipeline(data: bytes) -> bool:
+    """Would `process_image_for_logo` accept this?
+
+    Asking the real question, not a proxy for it. `_decode_is_valid_image`
+    only checks that Pillow can open it, and Pillow opens plenty the avatar
+    pipeline rejects — ICO above all, which is the single most common favicon
+    declaration on the web. The old code returned the ICO bytes, which STOPPED
+    the candidate loop, so a site declaring `/favicon.ico` got no avatar AND
+    never reached the `/apple-touch-icon.png` that would have worked.
     """
+    from app.services.r2_service import ALLOWED_IMAGE_FORMATS
+
     try:
-        validate_public_url(url)
-    except SSRFError:
-        logger.debug("favicon candidate rejected by SSRF guard: %s", url)
+        with Image.open(io.BytesIO(data)) as img:
+            return (img.format or "").upper() in ALLOWED_IMAGE_FORMATS
+    except Exception:
+        return False
+
+
+async def _download_icon(session, url: str) -> bytes | None:
+    """Download and validate one icon URL, or return ``None``.
+
+    Goes through :func:`fetch_bytes_safely`, which re-validates EVERY redirect
+    hop, connects to a pinned pre-validated IP, and rejects an oversized body
+    instead of truncating it. The previous version built its own httpx client
+    with ``follow_redirects=True`` and validated only the pre-redirect URL, so
+    a customer's site could 302 the crawl worker into the VPC — while its
+    docstring said redirects were not followed.
+    """
+    result = await fetch_bytes_safely(session, url, max_bytes=_MAX_ICON_BYTES)
+    if result is None:
         return None
-    try:
-        resp = await client.get(url, timeout=_FETCH_TIMEOUT_S)
-    except Exception as exc:
-        logger.debug("favicon download failed for %s: %s", url, exc)
-        return None
-    if resp.status_code != 200:
-        return None
-    data = resp.content[:_MAX_ICON_BYTES]
-    if len(data) < _MIN_ICON_BYTES:
+    status, data = result
+    if status != 200 or len(data) < _MIN_ICON_BYTES:
         return None
     if not _decode_is_valid_image(data):
+        return None
+    if not _usable_by_the_avatar_pipeline(data):
+        logger.debug("favicon candidate decodes but the avatar pipeline cannot use it: %s", url)
         return None
     return data
 
@@ -204,34 +226,36 @@ async def fetch_favicon_image(url: str) -> bytes | None:
     """Return the best usable icon for ``url`` as raw image bytes, or ``None``.
 
     Fetches the homepage HTML, ranks its declared icons plus the conventional
-    root fallbacks, and downloads them in order until one decodes as a valid
-    raster image. Best-effort: a network error, an SSRF rejection, a JS-only
-    shell with no icons, or a site that serves nothing decodable all return
-    ``None`` without raising.
+    root fallbacks, and tries them in order until one decodes as an image the
+    avatar pipeline can actually use. Best-effort: a network error, an SSRF
+    rejection, a JS-only shell with no icons, or a site serving nothing usable
+    all return ``None`` without raising.
+
+    Every fetch — the homepage and each icon — goes through the shared SSRF
+    helpers in ``core/ssrf``, so redirects are re-validated per hop and DNS is
+    pinned against rebinding.
     """
     if not url:
         return None
 
-    try:
-        validate_public_url(url)
-    except SSRFError:
-        logger.debug("favicon homepage rejected by SSRF guard: %s", url)
-        return None
+    import aiohttp
 
     try:
-        async with httpx.AsyncClient(
-            timeout=_FETCH_TIMEOUT_S,
-            follow_redirects=True,
-            headers=_HEADERS,
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            html = resp.content[:_MAX_HTML_BYTES].decode(resp.encoding or "utf-8", errors="ignore")
-            # Resolve icon hrefs against the redirected final URL so relative
-            # paths work for sites that redirect www ↔ apex or http → https.
-            candidates = _discover_icon_urls(str(resp.url), html)
+        timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
+        async with aiohttp.ClientSession(headers=_HEADERS, timeout=timeout) as session:
+            page = await fetch_text_safely(session, url, max_bytes=_MAX_HTML_BYTES)
+            if page is None:
+                return None
+            status, html = page
+            if status != 200:
+                return None
+
+            # Resolved against the ORIGINAL url: `fetch_text_safely` does not
+            # report the final hop, and a relative href resolved against the
+            # wrong base is a miss rather than a wrong fetch.
+            candidates = _discover_icon_urls(url, html)[:_MAX_ICON_CANDIDATES]
             for candidate in candidates:
-                data = await _download_icon(client, candidate)
+                data = await _download_icon(session, candidate)
                 if data is not None:
                     logger.info("Fetched favicon for %s from %s (%d bytes)", url, candidate, len(data))
                     return data
