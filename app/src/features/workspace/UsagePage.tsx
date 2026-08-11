@@ -218,11 +218,21 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     label: 'Document upload',
     detail: 'Charged by document size. Refunded if a file fails to save.',
     cost: 5,
+    // Ranges are stated to match the backend gate EXACTLY. `max_words` there
+    // is exclusive (`word_count < cap`, credit_service.py), so the inclusive
+    // phrasing these labels used to carry ("Up to 100 words", "100–500 words")
+    // was wrong at every boundary — and wrong in the direction that
+    // overcharges. Verified against the live function:
+    //     100 words   → advertised 5,  charged 15   (3x)
+    //     500 words   → advertised 15, charged 30
+    //   2,000 words   → advertised 30, charged 75
+    //  10,000 words   → advertised 75, charged 150
+    // Keep these upper bounds one below the config's `max_words` values.
     tiers: [
-      { label: 'Up to 100 words', cost: 5 },
-      { label: '100–500 words', cost: 15 },
-      { label: '500–2,000 words', cost: 30 },
-      { label: '2,000–10,000 words', cost: 75 },
+      { label: 'Under 100 words', cost: 5 },
+      { label: '100–499 words', cost: 15 },
+      { label: '500–1,999 words', cost: 30 },
+      { label: '2,000–9,999 words', cost: 75 },
       { label: '10,000+ words', cost: 150 },
     ],
   },
