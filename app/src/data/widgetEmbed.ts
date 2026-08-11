@@ -24,7 +24,11 @@ export const ATTRIBUTION_TEXT = 'Powered by OyeChats';
 /** Bot keys are public ids like `bot-11a026a4b8b3`. */
 const BOT_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Inline style keeps the line unobtrusive without depending on host CSS. */
+/**
+ * Inline style keeps the line unobtrusive without depending on host CSS.
+ * Kept in sync by hand with the JSX style object in `attributionAnchorJsx` -
+ * same three properties, CSS syntax here vs. JSX object syntax there.
+ */
 const ANCHOR_CSS = 'font-size:11px;color:#9ca3af;text-decoration:none';
 
 /** Shown for install paths that cannot produce a crawlable anchor. */
@@ -43,7 +47,16 @@ export function attributionHref(botKey: string): string {
   return url.toString();
 }
 
-/** The attribution anchor as raw HTML, for templates the customer serves. */
+/**
+ * SAFETY INVARIANT - this markup is pasted into a customer's HTML unescaped.
+ * It is only safe to interpolate because the value here is always
+ * `attributionHref(botKey)`, never `botKey` itself: the allowlist regex in
+ * `attributionHref` rejects any key containing `"`, `<`, `>`, `&`, a space,
+ * or non-ASCII before `ref` is ever set, and `URLSearchParams` percent-encodes
+ * the rest. Never interpolate `botKey` directly here or in
+ * `attributionAnchorJsx`, and never loosen `BOT_KEY_PATTERN` without
+ * re-verifying this holds.
+ */
 export function attributionAnchorHtml(botKey: string): string {
   return `<a href="${attributionHref(botKey)}" rel="nofollow" style="${ANCHOR_CSS}">${ATTRIBUTION_TEXT}</a>`;
 }

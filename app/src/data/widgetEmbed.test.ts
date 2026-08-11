@@ -30,6 +30,23 @@ describe('attributionAnchorHtml', () => {
     expect(html).toContain(`ref=${KEY}`);
     expect(html).not.toContain('display:none');
   });
+
+  it('cannot be used to inject markup via a hostile bot key', () => {
+    const hostileKey = 'x" onmouseover="alert(1)';
+    const html = attributionAnchorHtml(hostileKey);
+
+    // The hostile key fails BOT_KEY_PATTERN, so `ref` is omitted entirely -
+    // the output must be byte-identical to the "no ref" anchor.
+    expect(html).toBe(attributionAnchorHtml(''));
+    expect(html).not.toContain('onmouseover');
+
+    // Exactly six `"` - one opening/closing pair each for href, rel, and
+    // style - all belonging to the three expected attributes, nothing else.
+    expect((html.match(/"/g) ?? []).length).toBe(6);
+    // The only `<` and `>` are the anchor's own opening and closing tags.
+    expect((html.match(/</g) ?? []).length).toBe(2);
+    expect((html.match(/>/g) ?? []).length).toBe(2);
+  });
 });
 
 describe('attributionAnchorJsx', () => {
@@ -38,6 +55,15 @@ describe('attributionAnchorJsx', () => {
     expect(jsx).toContain('rel="nofollow"');
     expect(jsx).toContain('style={{');
     expect(jsx).toContain('Powered by OyeChats');
+    expect(jsx).toContain(attributionHref(KEY));
+  });
+
+  it('cannot be used to inject markup via a hostile bot key', () => {
+    const hostileKey = 'x" onmouseover="alert(1)';
+    const jsx = attributionAnchorJsx(hostileKey);
+
+    expect(jsx).toBe(attributionAnchorJsx(''));
+    expect(jsx).not.toContain('onmouseover');
   });
 });
 
