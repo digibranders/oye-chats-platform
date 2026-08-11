@@ -414,9 +414,16 @@ async def run_full_crawl(
     """
     result_payload: dict | None = None
     started_at = time.time()
-    # Denominator for the UI progress bar: the explicit list length for an
-    # ordered crawl, else the plan-derived page cap (may be None for recursive).
-    progress_max = len(ordered_urls) if ordered_urls else max_pages
+    # Denominator for the UI progress bar. Only ever a real, known page count
+    # (the explicit ordered-crawl list length) — never `max_pages`, which is
+    # a plan/credit-derived *ceiling*, not a discovered total. A small site
+    # with no sitemap (ordered_urls empty) falls into the recursive crawl
+    # below with no discovered count at all; showing that site's progress as
+    # "1/2398 pages" because 2398 happens to be this account's crawl budget
+    # reads as "we found 2398 pages on your 20-page site" and is just wrong.
+    # `None` here means "total unknown" — the UI shows pages crawled so far
+    # with no (fabricated) denominator instead.
+    progress_max = len(ordered_urls) if ordered_urls else None
     crawled_urls: list[str] = []
 
     def _report_page(page_url: str, ok: bool) -> None:
