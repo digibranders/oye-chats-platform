@@ -126,22 +126,32 @@ const withAttributionNote = (description, attribution) =>
     attribution ? `${description}${INLINE_ATTRIBUTION_NOTE}` : description;
 
 /**
- * A PHP statement that echoes the attribution anchor, for snippets that
- * build the widget tag server-side (e.g. WordPress's `wp_enqueue_script`)
- * rather than emitting a literal `<script>` tag in the copied code. The
- * anchor is single-quoted PHP: `attributionAnchorHtml` never contains an
+ * A standalone WordPress hook block that echoes the attribution anchor from
+ * `wp_footer` - the correct WordPress hook for markup that belongs just
+ * before `</body>`. This is deliberately its own action, not folded into
+ * `oyechats_enqueue_widget()`: that function is hooked to
+ * `wp_enqueue_scripts`, an *enqueueing* hook, not an output hook - echoing
+ * markup from it can print before `<head>` is even open (theme-dependent),
+ * can interfere with `wp_head()`'s own output buffering, can trip
+ * "headers already sent" warnings under some caching setups, and risks being
+ * stripped or mangled by head-optimisation plugins that rewrite `<head>`
+ * content. `wp_footer` has none of those failure modes and is exactly where
+ * this markup belongs.
+ *
+ * The anchor is single-quoted PHP: `attributionAnchorHtml` never contains an
  * unescaped `'` (its `href` is percent-encoded by `URL`/`URLSearchParams`
  * and its `style` uses double quotes), so no escaping is needed. Returns
- * `''` when attribution is off, so callers can interpolate it unconditionally
- * and get back exactly today's code.
+ * `''` when attribution is off, so callers can append it unconditionally and
+ * get back exactly today's code.
  *
  * @param {string} botKey
  * @param {boolean} attribution
- * @param {string} [indent] - leading whitespace to match the surrounding block
  * @returns {string}
  */
-const phpAttributionEcho = (botKey, attribution, indent = '') =>
-    attribution ? `\n${indent}echo '${attributionAnchorHtml(botKey)}';` : '';
+const phpFooterAttributionBlock = (botKey, attribution) =>
+    attribution
+        ? `\n\n// Add the OyeChats attribution link\nfunction oyechats_attribution_link() {\n    echo '${attributionAnchorHtml(botKey)}';\n}\nadd_action('wp_footer', 'oyechats_attribution_link');`
+        : '';
 
 /**
  * `wix` / `framer` / `bubble` manual-mode step: these builders' footer text
@@ -424,8 +434,9 @@ const svelte = {
         },
         {
             title: 'Alternative: use onMount in a Svelte component',
-            description:
-                'If you prefer programmatic loading, add this to your root +layout.svelte file.',
+            description: attribution
+                ? 'If you prefer programmatic loading, add this to your root +layout.svelte file. This only injects the script - the attribution line above still needs to be in src/app.html, so add it there too if you use this path.'
+                : 'If you prefer programmatic loading, add this to your root +layout.svelte file.',
             code: `<script>
   import { onMount } from 'svelte';
 
@@ -520,7 +531,7 @@ function oyechats_enqueue_widget() {
         array(),
         null,
         true
-    );${phpAttributionEcho(botKey, attribution, '    ')}
+    );
 }
 add_action('wp_enqueue_scripts', 'oyechats_enqueue_widget');
 
@@ -531,7 +542,7 @@ function oyechats_add_bot_key($tag, $handle) {
     }
     return $tag;
 }
-add_filter('script_loader_tag', 'oyechats_add_bot_key', 10, 2);`,
+add_filter('script_loader_tag', 'oyechats_add_bot_key', 10, 2);${phpFooterAttributionBlock(botKey, attribution)}`,
             language: 'php',
         },
         {
