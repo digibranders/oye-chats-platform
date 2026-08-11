@@ -3,11 +3,18 @@
  *
  * Each platform provides:
  *  - id, name, category, description  - metadata for the selector grid
- *  - getSteps(botKey, env)            - returns an array of step objects
+ *  - attribution mode                 - how this platform can host a
+ *    server-rendered attribution anchor ('html' | 'jsx' | 'manual')
+ *  - getSteps(botKey, env, options)   - returns an array of step objects
  *    whose code snippets dynamically reflect the chosen environment.
  *
  * env is 'production' | 'development'.
  */
+import {
+    attributionAnchorHtml,
+    attributionAnchorJsx,
+    MANUAL_ATTRIBUTION_NOTE,
+} from './widgetEmbed';
 
 /**
  * The widget bundle URL for an environment. Exported so every surface that
@@ -24,6 +31,40 @@ export const widgetScriptUrl = (env) =>
 
 const cdnUrl = widgetScriptUrl;
 
+/**
+ * The attribution step appended to a platform's install steps.
+ *
+ * Returns an empty array when attribution is off (plans entitled to remove
+ * branding), so callers can spread it unconditionally.
+ *
+ * @param {string} botKey
+ * @param {'html' | 'jsx' | 'manual'} mode
+ * @param {string} location - where the user should paste it, in their words
+ * @param {boolean} attribution
+ * @returns {Array<{title: string, description: string, code: string | null, language?: string}>}
+ */
+const attributionStep = (botKey, mode, location, attribution) => {
+    if (!attribution) return [];
+    if (mode === 'manual') {
+        return [
+            {
+                title: 'Add the attribution link to your site template',
+                description: `${MANUAL_ATTRIBUTION_NOTE} Paste it into ${location}.`,
+                code: attributionAnchorHtml(botKey),
+                language: 'html',
+            },
+        ];
+    }
+    return [
+        {
+            title: 'Add the attribution link',
+            description: `Paste this next to the widget snippet in ${location}. It is a normal visible link, so search engines and AI crawlers can read it - unlike the in-widget badge, which only exists after a visitor opens the chat.`,
+            code: mode === 'jsx' ? attributionAnchorJsx(botKey) : attributionAnchorHtml(botKey),
+            language: mode === 'jsx' ? 'jsx' : 'html',
+        },
+    ];
+};
+
 // ---------------------------------------------------------------------------
 // HTML / Generic
 // ---------------------------------------------------------------------------
@@ -32,7 +73,8 @@ const html = {
     name: 'HTML',
     category: 'generic',
     description: 'Any static HTML website',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script tag to your HTML',
             description:
@@ -40,6 +82,7 @@ const html = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
+        ...attributionStep(botKey, 'html', 'the same place, just before </body>', attribution),
         {
             title: 'Deploy your website',
             description:
@@ -57,7 +100,8 @@ const nextjs = {
     name: 'Next.js',
     category: 'framework',
     description: 'App Router or Pages Router',
-    getSteps: (botKey, env) => [
+    attributionMode: 'jsx',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Import next/script in your root layout',
             description: 'At the top of your root layout file (app/layout.tsx or pages/_app.tsx), add this import.',
@@ -74,6 +118,7 @@ const nextjs = {
 />`,
             language: 'jsx',
         },
+        ...attributionStep(botKey, 'jsx', 'your root layout, next to the <Script> tag', attribution),
         {
             title: 'Deploy your application',
             description:
@@ -91,7 +136,8 @@ const react = {
     name: 'React',
     category: 'framework',
     description: 'Create React App or Vite',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add a useEffect in your root component',
             description:
@@ -119,6 +165,12 @@ function App() {
 export default App;`,
             language: 'jsx',
         },
+        ...attributionStep(
+            botKey,
+            'html',
+            'public/index.html (CRA) or index.html (Vite), just before </body>',
+            attribution,
+        ),
         {
             title: 'Start your dev server or build for production',
             description:
@@ -136,7 +188,8 @@ const vue = {
     name: 'Vue.js',
     category: 'framework',
     description: 'Vue 3 or Nuxt',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script in your App.vue or index.html',
             description:
@@ -163,6 +216,7 @@ useHead({
 </script>`,
             language: 'vue',
         },
+        ...attributionStep(botKey, 'html', 'index.html, just before </body>', attribution),
         {
             title: 'Deploy your application',
             description:
@@ -180,7 +234,8 @@ const angular = {
     name: 'Angular',
     category: 'framework',
     description: 'Angular 16+',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script to your index.html',
             description:
@@ -200,6 +255,7 @@ const angular = {
 </html>`,
             language: 'html',
         },
+        ...attributionStep(botKey, 'html', 'src/index.html, just before </body>', attribution),
         {
             title: 'Build and deploy',
             description:
@@ -217,7 +273,8 @@ const svelte = {
     name: 'Svelte',
     category: 'framework',
     description: 'Svelte or SvelteKit',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script in your app.html or layout',
             description:
@@ -251,6 +308,7 @@ const svelte = {
 </script>`,
             language: 'svelte',
         },
+        ...attributionStep(botKey, 'html', 'src/app.html, just before </body>', attribution),
         {
             title: 'Deploy your app',
             description:
@@ -268,7 +326,8 @@ const astro = {
     name: 'Astro',
     category: 'framework',
     description: 'Astro static or SSR sites',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script to your shared layout',
             description:
@@ -288,6 +347,7 @@ const astro = {
 </html>`,
             language: 'astro',
         },
+        ...attributionStep(botKey, 'html', 'your shared layout, just before </body>', attribution),
         {
             title: 'Build and deploy',
             description:
@@ -305,7 +365,8 @@ const wordpress = {
     name: 'WordPress',
     category: 'cms',
     description: 'Self-hosted or WordPress.com Business',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Option A: Use a plugin (easiest)',
             description:
@@ -339,6 +400,12 @@ function oyechats_add_bot_key($tag, $handle) {
 add_filter('script_loader_tag', 'oyechats_add_bot_key', 10, 2);`,
             language: 'php',
         },
+        ...attributionStep(
+            botKey,
+            'html',
+            "your theme's footer.php, just before </body>",
+            attribution,
+        ),
         {
             title: 'Save and verify',
             description:
@@ -356,7 +423,8 @@ const shopify = {
     name: 'Shopify',
     category: 'cms',
     description: 'Shopify stores',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open the theme code editor',
             description:
@@ -372,6 +440,7 @@ const shopify = {
 </body>`,
             language: 'html',
         },
+        ...attributionStep(botKey, 'html', 'theme.liquid, just before </body>', attribution),
         {
             title: 'Save and preview',
             description:
@@ -389,7 +458,8 @@ const squarespace = {
     name: 'Squarespace',
     category: 'cms',
     description: 'Squarespace websites',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open Code Injection settings',
             description:
@@ -403,6 +473,12 @@ const squarespace = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
+        ...attributionStep(
+            botKey,
+            'html',
+            'Settings → Advanced → Code Injection → Footer',
+            attribution,
+        ),
         {
             title: 'Verify on your live site',
             description:
@@ -420,7 +496,8 @@ const webflow = {
     name: 'Webflow',
     category: 'builder',
     description: 'Webflow sites and projects',
-    getSteps: (botKey, env) => [
+    attributionMode: 'html',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open Custom Code settings',
             description:
@@ -434,6 +511,12 @@ const webflow = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
+        ...attributionStep(
+            botKey,
+            'html',
+            'Project Settings → Custom Code → Footer Code',
+            attribution,
+        ),
         {
             title: 'Publish your site',
             description:
@@ -451,7 +534,8 @@ const wix = {
     name: 'Wix',
     category: 'builder',
     description: 'Wix websites',
-    getSteps: (botKey, env) => [
+    attributionMode: 'manual',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open Custom Code settings',
             description:
@@ -465,6 +549,12 @@ const wix = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
+        ...attributionStep(
+            botKey,
+            'manual',
+            "a Text element in your site footer, using its link option",
+            attribution,
+        ),
         {
             title: 'Publish and verify',
             description:
@@ -482,7 +572,8 @@ const framer = {
     name: 'Framer',
     category: 'builder',
     description: 'Framer sites',
-    getSteps: (botKey, env) => [
+    attributionMode: 'manual',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open site settings',
             description:
@@ -496,6 +587,12 @@ const framer = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
+        ...attributionStep(
+            botKey,
+            'manual',
+            'a Text layer in your site footer, using its link option',
+            attribution,
+        ),
         {
             title: 'Publish your site',
             description:
@@ -513,7 +610,8 @@ const bubble = {
     name: 'Bubble',
     category: 'builder',
     description: 'Bubble.io apps',
-    getSteps: (botKey, env) => [
+    attributionMode: 'manual',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Open the Settings tab',
             description:
@@ -527,6 +625,12 @@ const bubble = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
+        ...attributionStep(
+            botKey,
+            'manual',
+            'a Text element in your page footer, using its link option',
+            attribution,
+        ),
         {
             title: 'Preview or deploy',
             description:
@@ -544,7 +648,8 @@ const gtm = {
     name: 'Google Tag Manager',
     category: 'tool',
     description: 'Load via GTM container',
-    getSteps: (botKey, env) => [
+    attributionMode: 'manual',
+    getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Create a new Custom HTML tag',
             description:
@@ -570,6 +675,12 @@ const gtm = {
                 'Click Submit → Publish in GTM. Use Preview mode first to verify the widget loads correctly.',
             code: null,
         },
+        ...attributionStep(
+            botKey,
+            'manual',
+            "your site's own footer template - not a GTM tag",
+            attribution,
+        ),
     ],
 };
 

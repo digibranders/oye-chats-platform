@@ -12,12 +12,21 @@ export interface PlatformStep {
   language?: string;
 }
 
+export type AttributionMode = 'html' | 'jsx' | 'manual';
+
+export interface GetStepsOptions {
+  /** Include the crawlable attribution anchor. Defaults to true. */
+  attribution?: boolean;
+}
+
 export interface Platform {
   id: string;
   name: string;
   category: string;
   description: string;
-  getSteps: (botKey: string, env: PlatformEnv) => PlatformStep[];
+  /** How this platform can host a server-rendered attribution anchor. */
+  attributionMode: AttributionMode;
+  getSteps: (botKey: string, env: PlatformEnv, options?: GetStepsOptions) => PlatformStep[];
 }
 
 /** The widget bundle URL for an environment (shared by snippets + AI prompt). */
