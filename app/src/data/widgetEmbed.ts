@@ -1,0 +1,60 @@
+/**
+ * widgetEmbed - single source of truth for the markup a customer pastes.
+ *
+ * The widget mounts into a shadow root from JavaScript, after the visitor
+ * clicks the launcher. That means nothing it renders - including the "Powered
+ * by OyeChats" badge - is ever visible to a crawler: non-rendering crawlers run
+ * no JS at all, and rendering ones never click. The only attribution that can
+ * be indexed is an anchor that sits in the customer's served HTML next to the
+ * script tag, which is what these helpers produce.
+ *
+ * The anchor is deliberately visible (hidden text is a Google policy violation
+ * that would penalise the customer's domain) and deliberately `nofollow`
+ * (a self-placed, sitewide, identical-anchor link is a named link scheme).
+ * The value we want is the brand mention and the referral click, both of which
+ * survive nofollow.
+ */
+
+/** Where the attribution anchor points, before per-bot tagging. */
+const ATTRIBUTION_BASE_URL = 'https://www.oyechats.com/';
+
+/** The anchor's visible text. */
+export const ATTRIBUTION_TEXT = 'Powered by OyeChats';
+
+/** Bot keys are public ids like `bot-11a026a4b8b3`. */
+const BOT_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Inline style keeps the line unobtrusive without depending on host CSS. */
+const ANCHOR_CSS = 'font-size:11px;color:#9ca3af;text-decoration:none';
+
+/** Shown for install paths that cannot produce a crawlable anchor. */
+export const MANUAL_ATTRIBUTION_NOTE =
+  'This install path injects the widget from JavaScript, so anything it adds is invisible to crawlers. ' +
+  'To get credited attribution, paste the line below directly into your site template (footer) instead.';
+
+/** The attribution URL for one bot. */
+export function attributionHref(botKey: string): string {
+  const url = new URL(ATTRIBUTION_BASE_URL);
+  if (BOT_KEY_PATTERN.test(botKey)) {
+    url.searchParams.set('ref', botKey);
+  }
+  url.searchParams.set('utm_source', 'widget');
+  url.searchParams.set('utm_medium', 'referral');
+  return url.toString();
+}
+
+/** The attribution anchor as raw HTML, for templates the customer serves. */
+export function attributionAnchorHtml(botKey: string): string {
+  return `<a href="${attributionHref(botKey)}" rel="nofollow" style="${ANCHOR_CSS}">${ATTRIBUTION_TEXT}</a>`;
+}
+
+/** The attribution anchor as JSX source, for server-rendered React trees. */
+export function attributionAnchorJsx(botKey: string): string {
+  return `<a
+  href="${attributionHref(botKey)}"
+  rel="nofollow"
+  style={{ fontSize: 11, color: '#9ca3af', textDecoration: 'none' }}
+>
+  ${ATTRIBUTION_TEXT}
+</a>`;
+}
