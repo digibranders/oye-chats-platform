@@ -126,6 +126,24 @@ const withAttributionNote = (description, attribution) =>
     attribution ? `${description}${INLINE_ATTRIBUTION_NOTE}` : description;
 
 /**
+ * A PHP statement that echoes the attribution anchor, for snippets that
+ * build the widget tag server-side (e.g. WordPress's `wp_enqueue_script`)
+ * rather than emitting a literal `<script>` tag in the copied code. The
+ * anchor is single-quoted PHP: `attributionAnchorHtml` never contains an
+ * unescaped `'` (its `href` is percent-encoded by `URL`/`URLSearchParams`
+ * and its `style` uses double quotes), so no escaping is needed. Returns
+ * `''` when attribution is off, so callers can interpolate it unconditionally
+ * and get back exactly today's code.
+ *
+ * @param {string} botKey
+ * @param {boolean} attribution
+ * @param {string} [indent] - leading whitespace to match the surrounding block
+ * @returns {string}
+ */
+const phpAttributionEcho = (botKey, attribution, indent = '') =>
+    attribution ? `\n${indent}echo '${attributionAnchorHtml(botKey)}';` : '';
+
+/**
  * `wix` / `framer` / `bubble` manual-mode step: these builders' footer text
  * elements accept plain text plus a URL through their own link tool, not
  * markup - pasting `attributionAnchorHtml`'s raw `<a>` tag renders the
@@ -296,9 +314,27 @@ const vue = {
         },
         {
             title: 'For Nuxt 3: use useHead in app.vue',
-            description:
-                'If you are using Nuxt 3, add the script via the useHead composable in your app.vue file.',
-            code: `<script setup>
+            description: attribution
+                ? 'If you are using Nuxt 3, add the script via the useHead composable in your app.vue file. useHead only manages <head> tags, so the attribution anchor cannot ride inside that call - it goes in the template block below instead, which Nuxt server-renders by default. This block also includes a small visible "Powered by OyeChats" credit line - upgrade to a plan with white-label branding to remove it.'
+                : 'If you are using Nuxt 3, add the script via the useHead composable in your app.vue file.',
+            code: attribution
+                ? `<script setup>
+useHead({
+  script: [
+    {
+      src: '${cdnUrl(env)}',
+      'data-bot-key': '${botKey}',
+      defer: true,
+    },
+  ],
+});
+</script>
+
+<template>
+  <!-- ...your existing app.vue template... -->
+  ${attributionAnchorHtml(botKey)}
+</template>`
+                : `<script setup>
 useHead({
   script: [
     {
@@ -472,8 +508,10 @@ const wordpress = {
         },
         {
             title: 'Option B: Add via functions.php',
-            description:
+            description: withAttributionNote(
                 'If you prefer code, open your theme\'s functions.php file (Appearance → Theme File Editor → functions.php) and add:',
+                attribution,
+            ),
             code: `// Add OyeChats Widget
 function oyechats_enqueue_widget() {
     wp_enqueue_script(
@@ -482,7 +520,7 @@ function oyechats_enqueue_widget() {
         array(),
         null,
         true
-    );
+    );${phpAttributionEcho(botKey, attribution, '    ')}
 }
 add_action('wp_enqueue_scripts', 'oyechats_enqueue_widget');
 
