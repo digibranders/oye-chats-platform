@@ -306,8 +306,14 @@ def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     JSON never grants a free upload.
 
     Bucket edge semantics: ``max_words`` is EXCLUSIVE, so a doc of exactly
-    100 words lands in the 100–500 bucket (25 credits), not the <100 bucket.
-    Matches the marketing table shown to customers.
+    100 words lands in the SECOND bucket (15 credits), not the first.
+
+    This docstring previously said "25 credits" and claimed it "matches the
+    marketing table shown to customers". Both were wrong: the tier is 15, and
+    the customer-facing table in ``UsagePage.tsx`` was labelled INCLUSIVELY
+    ("Up to 100 words → 5 credits"), so all four bounded boundaries advertised
+    a price and then charged the next tier up — 3x at 100 words. The labels now
+    state exclusive ranges; if you change these caps, change them there too.
     """
     word_count = max(int(word_count or 0), 0)
     pricing = get_pricing(session)
@@ -353,16 +359,40 @@ def is_kill_switch_active(session: Session) -> bool:
     return bool(get_pricing(session).get("kill_switch", False))
 
 
+# Values a super-admin might plausibly type into the pricing panel's untyped
+# `value: Any` editor meaning "off". `bool("false")` is True in Python, so a
+# bare bool() here turns every one of these into ON — the opposite of intent,
+# on a switch whose entire job is to stop a metered feature from charging.
+_FEATURE_FALSY = frozenset({"0", "false", "no", "off", "disabled", ""})
+
+
 def is_feature_enabled(session: Session, feature: str) -> bool:
     """Return the super-admin on/off state for a metered feature.
 
-    Reads ``feature.<name>`` from pricing config (e.g. ``email_verification``,
-    ``company_name``). Fails OPEN (defaults to True) so a missing/malformed key
-    behaves like the shipped default rather than silently disabling a paid
-    feature — the plan gate and credit balance are the hard guards, this switch
-    is a platform-wide convenience kill.
+    Reads ``feature.<name>_enabled`` from pricing config — e.g.
+    ``feature.email_verification_enabled``, ``feature.company_name_enabled``.
+
+    **The ``_enabled`` suffix is load-bearing and was missing.** This function
+    read ``feature.<name>``, which is defined nowhere: not in
+    ``_DEFAULT_PRICING``, not in ``seed_pricing_config.py``. Combined with the
+    fail-open default below, that made every switch permanently ON. Verified
+    against a real database: with ``feature.company_name_enabled = False``
+    physically present, this returned ``True``. So the Visitor-Intelligence
+    company lookup — the one the admin UI badges "Coming soon" and whose own
+    comment promises it "never charges" — deducted 10 credits per visitor
+    session, and a super-admin turning it off in the panel changed nothing.
+    On Professional that is the full 10,000-credit monthly allowance in 1,000
+    sessions, for an unlaunched feature.
+
+    Fails OPEN (defaults to True) only for a genuinely ABSENT key, so a feature
+    shipped without a config row behaves like its default rather than silently
+    dying. A key that is present and falsy is honoured — that is the whole
+    point of the switch.
     """
-    return bool(get_pricing(session).get(f"feature.{feature}", True))
+    value = get_pricing(session).get(f"feature.{feature}_enabled", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in _FEATURE_FALSY
+    return bool(value)
 
 
 # ── Balance queries ───────────────────────────────────────────────────────────
