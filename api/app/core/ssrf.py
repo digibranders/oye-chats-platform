@@ -22,13 +22,64 @@ custom aiohttp resolver (:class:`_PinnedResolver`), mirroring the pattern
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
+import ssl as _ssl
 from urllib.parse import urljoin, urlparse
+
+from app.config import SSRF_TLS_VERIFY_ENABLED
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_SCHEMES = ("http", "https")
 
 # Default byte cap for discovery fetches (robots.txt / sitemaps / preview bodies).
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+# Built once: `create_default_context` loads the system trust store, which is
+# not something to repeat per hop per candidate URL.
+_VERIFYING_SSL_CONTEXT = _ssl.create_default_context()
+
+
+def _tls() -> _ssl.SSLContext | bool:
+    """The ``ssl=`` argument for every pinned connector and request here.
+
+    Every fetch in this module used to pass ``ssl=False``, which disables
+    certificate verification outright. Pinning the IP does not require that:
+    :class:`_PinnedResolver` reports the real hostname alongside the pinned
+    address, so aiohttp still sends the correct SNI and still verifies the
+    certificate against the name in the URL. The two mechanisms are
+    independent — pinning decides WHERE we connect, TLS decides WHETHER the
+    thing that answered is who the URL said it would be.
+
+    Without it, an on-path attacker can substitute anything these helpers
+    fetch: the sitemap that decides which pages get ingested, the footer and
+    colours read off the homepage, the favicon that becomes the agent's
+    avatar. All of it is served back to the customer as their own content.
+
+    ``SSRF_TLS_VERIFY_ENABLED`` exists because turning this on can only ever
+    *reduce* what we successfully fetch — a site with an expired or
+    mismatched certificate now fails where it used to succeed. That failure
+    is silent and per-customer (page discovery quietly falls back to a
+    recursive crawl; the brand extras just yield nothing), so the flag is
+    there to restore service from a variable while the certificate is chased,
+    without a code push. It defaults to verifying.
+    """
+    return _VERIFYING_SSL_CONTEXT if SSRF_TLS_VERIFY_ENABLED else False
+
+
+def _log_if_tls_failure(url: str, exc: BaseException) -> None:
+    """Give a rejected certificate its own log line.
+
+    Every fetch here collapses failure into ``None``/``True``, so a site that
+    stopped working *because* verification was turned on is indistinguishable
+    from a timeout or a 500 — which is exactly the diagnosis someone will be
+    doing when they reach for ``SSRF_TLS_VERIFY_ENABLED``. aiohttp wraps the
+    error (``ClientConnectorCertificateError``), so the cause is checked too.
+    """
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(exc, _ssl.SSLError) or isinstance(cause, _ssl.SSLError):
+        logger.warning("TLS verification failed for %s: %s", url, exc)
 
 
 class SSRFError(ValueError):
@@ -207,20 +258,21 @@ async def probe_url_alive(session, url: str) -> bool:
     if pinned_ip is None:
         return False
 
-    connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=False)
+    connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=_tls())
     async with aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned:
         try:
-            async with pinned.head(url, allow_redirects=False, ssl=False) as resp:
+            async with pinned.head(url, allow_redirects=False, ssl=_tls()) as resp:
                 if resp.status in (404, 410):
                     return False
                 if resp.status < 400:
                     return True
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_if_tls_failure(url, exc)
         try:
-            async with pinned.get(url, allow_redirects=False, ssl=False) as resp:
+            async with pinned.get(url, allow_redirects=False, ssl=_tls()) as resp:
                 return resp.status not in (404, 410)
-        except Exception:
+        except Exception as exc:
+            _log_if_tls_failure(url, exc)
             return True
 
 
@@ -267,11 +319,11 @@ async def fetch_text_safely(
         if pinned_ip is None:
             return None
 
-        connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=False)
+        connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=_tls())
         try:
             async with (
                 aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned,
-                pinned.get(current, allow_redirects=False, ssl=False) as resp,
+                pinned.get(current, allow_redirects=False, ssl=_tls()) as resp,
             ):
                 if resp.status in _REDIRECT_STATUSES:
                     location = resp.headers.get("Location")
@@ -287,7 +339,8 @@ async def fetch_text_safely(
                         break
                     chunks.append(chunk)
                 return resp.status, b"".join(chunks).decode("utf-8", errors="replace")
-        except Exception:
+        except Exception as exc:
+            _log_if_tls_failure(current, exc)
             return None
     return None  # redirect limit exceeded
 
@@ -330,11 +383,11 @@ async def fetch_bytes_safely(
         if pinned_ip is None:
             return None
 
-        connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=False)
+        connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=_tls())
         try:
             async with (
                 aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned,
-                pinned.get(current, allow_redirects=False, ssl=False) as resp,
+                pinned.get(current, allow_redirects=False, ssl=_tls()) as resp,
             ):
                 if resp.status in _REDIRECT_STATUSES:
                     location = resp.headers.get("Location")
@@ -357,6 +410,7 @@ async def fetch_bytes_safely(
                         return None  # reject, do not truncate
                     chunks.append(chunk)
                 return resp.status, b"".join(chunks)
-        except Exception:
+        except Exception as exc:
+            _log_if_tls_failure(current, exc)
             return None
     return None  # redirect limit exceeded

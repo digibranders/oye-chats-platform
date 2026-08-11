@@ -626,3 +626,26 @@ CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "false").str
     "true",
     "yes",
 )
+
+# Verify TLS certificates on the SSRF-guarded fetches in `core/ssrf` — sitemap
+# and robots.txt discovery, the liveness probe, the footer/colour/favicon reads.
+#
+# DEFAULT ON, which is the correction: every one of those fetches passed
+# `ssl=False`, so an https:// URL was fetched with no certificate check at all
+# and an on-path attacker could substitute the sitemap that decides which pages
+# get ingested, or the icon that becomes the agent's avatar. Pinning the
+# resolved IP never required this — `_PinnedResolver` reports the real hostname,
+# so SNI and hostname verification still work against the URL's own name.
+#
+# The switch exists because verifying can only reduce what we successfully
+# fetch: a customer whose certificate is expired or mismatched now fails where
+# they used to succeed, silently and only for them (discovery falls back to a
+# recursive crawl; the brand extras yield nothing). Set this to false to restore
+# service for them from a variable while the certificate is fixed — it is a
+# stopgap, not a setting. `core/ssrf` logs a distinct warning per rejected
+# certificate so the affected host is identifiable before you reach for it.
+SSRF_TLS_VERIFY_ENABLED = _env("SSRF_TLS_VERIFY_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
