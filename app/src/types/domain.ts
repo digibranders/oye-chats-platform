@@ -175,6 +175,18 @@ export interface KnowledgeSource {
   duration_seconds?: number;
 }
 
+/** Response of `GET /documents/knowledge-state`.
+ *
+ * `deactivated` is the server's own verdict (`inactive_count > 0`), not
+ * something the client should re-derive — a plan lapse to Free marks chunks
+ * inactive, and this drives the "re-crawl / re-upload to reactivate" banner.
+ */
+export interface KnowledgeState {
+  active_count: number;
+  inactive_count: number;
+  deactivated: boolean;
+}
+
 export interface SourcePage {
   url: string;
   title?: string;

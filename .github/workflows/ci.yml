@@ -107,6 +107,12 @@ jobs:
         working-directory: widget
         run: npm run lint
 
+      # 79 tests that nothing was running. `npm test` exists in package.json
+      # and was simply never wired into CI.
+      - name: Test
+        working-directory: widget
+        run: npm test
+
       - name: Build
         working-directory: widget
         run: npm run build
@@ -141,6 +147,18 @@ jobs:
         run: |
           npm ci
           npm run lint
+
+      # Vite does NOT typecheck — `npm run build` transpiles and strips types,
+      # so a type error builds and ships perfectly happily. Nothing in CI ran
+      # tsc, which is how three errors sat on `development` unnoticed, one of
+      # them an import of a symbol the type shim never declared.
+      - name: Typecheck
+        working-directory: app
+        run: npx tsc --noEmit
+
+      - name: Test
+        working-directory: app
+        run: npx vitest run
 
       - name: Build
         working-directory: app

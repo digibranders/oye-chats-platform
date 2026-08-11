@@ -11,7 +11,6 @@ import {
   MailCheck,
   MessageSquare,
   Wallet,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton, cn } from '../../design-system';
@@ -161,32 +160,6 @@ const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
   expiry: 'text-[var(--ds-warning)]',
   debit: 'text-[var(--ds-text-muted)]',
 };
-
-// ── Metered activity tile ─────────────────────────────────────────────────────
-
-interface ActivityCardProps {
-  readonly label: string;
-  readonly icon: LucideIcon;
-  readonly eventCount: number;
-  readonly creditsUsed: number;
-}
-
-/**
- * A single metered-activity tile: the event count as the headline with the
- * credits it burned as a neutral caption. A subtle hover lift signals it's a
- * living metric without implying it's clickable.
- */
-function ActivityCard({ label, icon, eventCount, creditsUsed }: ActivityCardProps): ReactElement {
-  return (
-    <MetricCard
-      label={label}
-      icon={icon}
-      value={formatCredits(eventCount)}
-      caption={`${formatCredits(creditsUsed)} credits`}
-      interactive
-    />
-  );
-}
 
 // ── How credits work (per-action cost reference) ─────────────────────────────
 
