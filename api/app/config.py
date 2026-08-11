@@ -185,11 +185,29 @@ EMAIL_ENABLED = bool(BREVO_API_KEY)
 # Brand & public URLs (used by email templates and any other branded surface)
 # ─────────────────────────────────────────────────────────────────────────────
 # Public marketing site root, e.g. "https://www.oyechats.com". No trailing slash.
-MARKETING_URL = os.getenv("MARKETING_URL", "https://www.oyechats.com").rstrip("/")
+# Named constants so the DEFAULTS themselves are testable. Simulating "unset"
+# by reloading this module cannot work — `load_dotenv()` at import repopulates
+# from `api/.env` — which is precisely how a localhost default reached
+# production unnoticed.
+DEFAULT_MARKETING_URL = "https://www.oyechats.com"
+DEFAULT_APP_URL = "https://app.oyechats.com"
+DEFAULT_API_BASE_URL = "https://api.oyechats.com"
+
+MARKETING_URL = os.getenv("MARKETING_URL", DEFAULT_MARKETING_URL).rstrip("/")
 # Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
 # Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
-APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+APP_URL = os.getenv("APP_URL", DEFAULT_APP_URL).rstrip("/")
+# Public API root, e.g. "https://api.oyechats.com". No trailing slash.
+#
+# Defaults to the PRODUCTION host, like MARKETING_URL and APP_URL above — it
+# used to default to "http://localhost:8000" and was the only one of the three
+# that did. It is also the only one that lands in a customer's inbox: the
+# unsubscribe link in a manual follow-up is built from it
+# (`lead_routes.send_manual_follow_up`). Unset in production, every follow-up
+# email shipped an unsubscribe pointing at http://localhost:8000 — dead for the
+# recipient, and an unsubscribe that cannot be actioned is a compliance
+# problem, not a cosmetic one. Local development overrides it in `api/.env`.
+API_BASE_URL = os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
 # Address users should reach out to for help. Different from EMAIL_FROM_ADDRESS,
 # which is the no-reply sender. SUPPORT_EMAIL is what appears in "Contact us".
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@oyechats.com")
