@@ -744,20 +744,42 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
 
-    # Resolve the domain to the company's own declared identity, LAST.
-    #
-    # After the commit above, because the email verdict is the more actionable
-    # signal and must not wait behind a crawl that can take tens of seconds.
-    #
-    # An earlier version of this comment claimed a second `submit_background`
-    # would "consume a second of three slots per lead". That is wrong: the pool
-    # is a FIFO executor, so total worker-seconds are identical either way, and
-    # staying on an already-acquired slot actually lets this crawl BYPASS the
-    # queue rather than waiting its turn behind queued geolocation and BANT —
-    # worse for the neighbours it claimed to protect. The honest reason for the
-    # tail call is only that it avoids a second queue entry. See the note on
-    # ARQ in `_resolve_lead_company` for where this really belongs.
-    _resolve_lead_company(session_id, domain, bot_id)
+    # Resolve the domain to the company's own declared identity — QUEUED, not
+    # run here. See `_queue_lead_company_resolution`.
+    _queue_lead_company_resolution(session_id, domain, bot_id)
+
+
+def _queue_lead_company_resolution(session_id: str, domain: str | None, bot_id: int | None) -> None:
+    """Hand the company resolution to the durable queue, or the pool if it is down.
+
+    This used to be a tail call on this same thread, justified in a comment
+    that was simply wrong: the pool is FIFO, so total worker-seconds are
+    identical either way, and staying on an already-acquired slot lets the
+    crawl BYPASS the queue rather than waiting behind queued geolocation and
+    BANT — worse for the neighbours the comment claimed to protect.
+
+    The real problem it created: `/chat/lead-capture` is authenticated by the
+    widget's bot key, which is public, and the resolution charges only for an
+    ANSWER, so an unresolvable domain costs the caller nothing. Fresh session
+    ids with random domains therefore bought unlimited crawls at ~70s of one
+    worker each, against a `max_workers=3` pool shared platform-wide. One
+    abusive key could stall geolocation and BANT for every bot in the process.
+
+    Same shape as `webhook_service.queue_webhook_delivery`: the durable queue
+    when the ARQ worker is running, the thread pool when it is not, so a
+    single-process deployment still resolves companies.
+    """
+    if not domain or bot_id is None:
+        return
+
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if WORKER_ENABLED:
+        from app.worker.enqueue import enqueue_sync
+
+        enqueue_sync("task_resolve_lead_company", session_id, domain, bot_id)
+    else:
+        submit_background(_resolve_lead_company, session_id, domain, bot_id)
 
 
 def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | None) -> None:

@@ -87,6 +87,10 @@ class TestBackgroundEnrichmentGating:
             patch("app.services.email_domain_service.extract_company_domain", return_value="acme.com") as mock_domain,
             patch("app.services.reoon_service.verify_email") as mock_verify,
             patch("app.api.chat_routes.get_session") as mock_get_session,
+            # The company leg is not what these test. Left unpatched it spawns
+            # a real background thread that outlives the test and holds a
+            # connection, so the fixture's DROP DATABASE fails at teardown.
+            patch("app.api.chat_routes._queue_lead_company_resolution"),
         ):
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)
@@ -114,6 +118,10 @@ class TestBackgroundEnrichmentGating:
             # Credits successfully reserved → Reoon fires.
             patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as mock_charge,
             patch("app.api.chat_routes.get_session") as mock_get_session,
+            # The company leg is not what these test. Left unpatched it spawns
+            # a real background thread that outlives the test and holds a
+            # connection, so the fixture's DROP DATABASE fails at teardown.
+            patch("app.api.chat_routes._queue_lead_company_resolution"),
         ):
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)
@@ -150,6 +158,10 @@ class TestBackgroundEnrichmentGating:
             patch("app.services.reoon_service.verify_email") as mock_verify,
             patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as mock_charge,
             patch("app.api.chat_routes.get_session") as mock_get_session,
+            # The company leg is not what these test. Left unpatched it spawns
+            # a real background thread that outlives the test and holds a
+            # connection, so the fixture's DROP DATABASE fails at teardown.
+            patch("app.api.chat_routes._queue_lead_company_resolution"),
         ):
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)
@@ -176,6 +188,10 @@ class TestBackgroundEnrichmentGating:
             # Charge fails (empty balance / feature off) → Reoon must not fire.
             patch("app.api.chat_routes._charge_for_enrichment", return_value=False),
             patch("app.api.chat_routes.get_session") as mock_get_session,
+            # The company leg is not what these test. Left unpatched it spawns
+            # a real background thread that outlives the test and holds a
+            # connection, so the fixture's DROP DATABASE fails at teardown.
+            patch("app.api.chat_routes._queue_lead_company_resolution"),
         ):
             mock_get_session.return_value.__enter__.return_value = session
             chat_routes._enrich_lead_in_background("sess-1", "person@acme.com", bot_id=1)

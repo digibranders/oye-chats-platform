@@ -368,6 +368,47 @@ async def task_deliver_webhook(
     return True
 
 
+async def task_resolve_lead_company(ctx: dict, session_id: str, domain: str, bot_id: int) -> bool:
+    """Resolve a lead's email domain to its company identity.
+
+    Why this is a QUEUED task and not a tail call on the request-adjacent
+    thread pool, which is where it started:
+
+    ``/chat/lead-capture`` is authenticated by the widget's bot key, which is
+    embedded in customer pages and therefore public, and is rate-limited at
+    10/min per key. The resolution charges only for an ANSWER — deliberately,
+    so nobody pays for the many visitors whose domain names no employer — so
+    an unresolvable domain costs the caller nothing. Posting fresh session ids
+    with random domains therefore bought unlimited crawls at roughly 70s of one
+    worker each (two crawl legs, then an LLM), against a ``max_workers=3`` pool
+    shared platform-wide with geolocation, BANT extraction and, when the worker
+    is down, webhook delivery. One abusive widget key could stall those for
+    every bot in the process.
+
+    A durable queue fixes the part that hurts OTHER customers: this work now
+    waits its turn behind a bounded queue instead of occupying a slot that
+    visitor-facing enrichment needs. It also gets retries and survives a
+    restart.
+
+    It does NOT by itself stop an attacker burning our own crawl quota — that
+    is a cost question rather than an availability one, bounded by the existing
+    rate limit, and is tracked separately.
+
+    Runs the synchronous resolver in an executor, matching
+    ``task_deliver_webhook``: the whole path underneath is blocking (a
+    requests-style crawl, then a blocking LLM call).
+    """
+    import asyncio
+
+    from app.api.chat_routes import _resolve_lead_company
+
+    logger.info("task_resolve_lead_company: session=%s domain=%s bot_id=%s", session_id, domain, bot_id)
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: _resolve_lead_company(session_id, domain, bot_id))
+    return True
+
+
 async def task_process_webhook_retries(ctx: dict) -> int:
     """Cron task: poll for due webhook retries and re-enqueue them.
 

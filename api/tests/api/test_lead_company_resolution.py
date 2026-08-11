@@ -231,7 +231,7 @@ class TestTheWiringItself:
     no test on the call site is the same defect one level up.
     """
 
-    def test_lead_enrichment_invokes_the_company_resolver(self, db):
+    def test_lead_enrichment_queues_the_company_resolution(self, db):
         from app.api import chat_routes
 
         # `_enrich_lead_in_background` returns early when the LeadInfo row is
@@ -239,7 +239,7 @@ class TestTheWiringItself:
         _lead(db, 90, "s-wire")
 
         with (
-            patch.object(chat_routes, "_resolve_lead_company") as resolve,
+            patch.object(chat_routes, "_queue_lead_company_resolution") as resolve,
             patch("app.services.email_domain_service.extract_company_domain", return_value="infosys.com"),
             patch("app.api.chat_routes.is_email_validation_enabled_for_bot", return_value=False),
             patch("app.api.chat_routes.get_session", return_value=_Ctx(db)),
@@ -248,10 +248,9 @@ class TestTheWiringItself:
 
         resolve.assert_called_once_with("s-wire", "infosys.com", 90)
 
-    def test_it_runs_after_the_email_verdict_is_committed(self, db):
-        """Ordering is the reason it is a tail call rather than earlier: the
-        email verdict is the more actionable signal and must not wait behind a
-        crawl that can take tens of seconds."""
+    def test_it_is_queued_after_the_email_verdict_is_committed(self, db):
+        """The enqueue happens after the write, so a queue outage can never
+        cost the lead its email verdict."""
         from app.api import chat_routes
 
         _lead(db, 91, "s-order")
@@ -263,7 +262,7 @@ class TestTheWiringItself:
                 return False
 
         with (
-            patch.object(chat_routes, "_resolve_lead_company", side_effect=lambda *_: order.append("resolve")),
+            patch.object(chat_routes, "_queue_lead_company_resolution", side_effect=lambda *_: order.append("resolve")),
             patch("app.services.email_domain_service.extract_company_domain", return_value="infosys.com"),
             patch("app.api.chat_routes.is_email_validation_enabled_for_bot", return_value=False),
             patch("app.api.chat_routes.get_session", return_value=_Recording(db)),
@@ -296,3 +295,68 @@ def test_the_super_admin_kill_switch_stops_the_crawl(db):
 
     assert resolver.call_count == 0, "the kill switch is pulled but the crawl still ran"
     assert charge.call_count == 0
+
+
+class TestItGoesToTheDurableQueue:
+    """Where the work RUNS, which is the part that protects other customers.
+
+    `/chat/lead-capture` is authenticated by the widget's bot key — public,
+    embedded in customer pages — and the resolution charges only for an ANSWER,
+    so an unresolvable domain costs the caller nothing. Run as a tail call on
+    the `max_workers=3` pool, fresh session ids with random domains bought
+    unlimited crawls at ~70s of a worker each, against a pool shared
+    platform-wide with geolocation, BANT and webhook delivery. One abusive key
+    could stall those for every bot in the process.
+
+    Same shape as `webhook_service.queue_webhook_delivery`.
+    """
+
+    def test_it_enqueues_when_the_worker_is_up(self):
+        from app.api import chat_routes
+
+        with (
+            patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.worker.enqueue.enqueue_sync") as enqueue,
+            patch.object(chat_routes, "submit_background") as pool,
+        ):
+            chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5)
+
+        enqueue.assert_called_once_with("task_resolve_lead_company", "s-q", "infosys.com", 5)
+        assert pool.call_count == 0, "queued AND run in-process — the work would happen twice"
+
+    def test_it_falls_back_to_the_pool_when_the_worker_is_down(self):
+        """A single-process deployment must still resolve companies."""
+        from app.api import chat_routes
+
+        with (
+            patch("app.worker.enqueue.WORKER_ENABLED", False),
+            patch("app.worker.enqueue.enqueue_sync") as enqueue,
+            patch.object(chat_routes, "submit_background") as pool,
+        ):
+            chat_routes._queue_lead_company_resolution("s-q", "infosys.com", 5)
+
+        assert enqueue.call_count == 0
+        pool.assert_called_once_with(chat_routes._resolve_lead_company, "s-q", "infosys.com", 5)
+
+    @pytest.mark.parametrize(("domain", "bot_id"), [(None, 5), ("", 5), ("infosys.com", None)])
+    def test_nothing_is_queued_without_a_domain_and_a_bot(self, domain, bot_id):
+        """Cheaper to reject here than to pay a queue round trip and have the
+        task deny it."""
+        from app.api import chat_routes
+
+        with (
+            patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.worker.enqueue.enqueue_sync") as enqueue,
+            patch.object(chat_routes, "submit_background") as pool,
+        ):
+            chat_routes._queue_lead_company_resolution("s-q", domain, bot_id)
+
+        assert enqueue.call_count == 0
+        assert pool.call_count == 0
+
+    def test_the_worker_task_is_registered(self):
+        """An enqueue naming a function the worker cannot execute fails at
+        runtime, in the worker, where nobody is watching."""
+        from app.worker.settings import WorkerSettings
+
+        assert "task_resolve_lead_company" in {f.__name__ for f in WorkerSettings.functions}
