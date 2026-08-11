@@ -4,6 +4,8 @@ The embeddable chat widget. Customers paste one `<script>` tag into their site a
 
 ```html
 <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
+   rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
 ```
 
 ## Architecture (post-bundle-split)

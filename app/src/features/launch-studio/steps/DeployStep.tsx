@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Copy, Check, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
-import { Card } from '../../../design-system';
+import { Card, Skeleton } from '../../../design-system';
 import { platforms, categoryLabels, categoryOrder } from '../../../data/platformIntegrations';
 import { recordActivationEvent, getApiBaseUrl } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getEmbedEnvironment } from '../../agents/channels/embedEnvironment';
 import { buildInstallPrompt } from '../../agents/channels/installPrompt';
 import { StepShell } from '../StepShell';
@@ -53,11 +54,25 @@ export function DeployStep(props: StepProps) {
 
   const platform = platforms.find((p) => p.id === platformId) ?? null;
 
+  // Plans entitled to remove branding get a snippet with no attribution anchor.
+  // `loading` guards this the same way `WebsiteInstall` does: the entitlements
+  // fallback defaults `branding_removable` to `false`, so a not-yet-resolved
+  // fetch would otherwise compute `attribution = true` even for a workspace
+  // entitled to remove it. Nothing re-verifies a value once the user has
+  // copied it to their clipboard or hand-typed it from these steps, so
+  // `handleCopyPrompt` and the rendered install steps both stay inert until
+  // entitlements resolve instead of guessing.
+  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
+  const attribution = !hasFeature('branding_removable');
+
   const handleCopyPrompt = async () => {
+    // Belt-and-suspenders alongside the button's `disabled` state - never
+    // build a prompt from an unresolved `attribution`.
+    if (entitlementsLoading) return;
     try {
       const apiBaseUrl = getApiBaseUrl();
       const env = getEmbedEnvironment(apiBaseUrl);
-      const promptText = buildInstallPrompt({ botKey, apiBaseUrl, env, platform });
+      const promptText = buildInstallPrompt({ botKey, apiBaseUrl, env, platform, attribution });
       await navigator.clipboard.writeText(promptText);
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 2000);
@@ -70,8 +85,13 @@ export function DeployStep(props: StepProps) {
     <button
       type="button"
       onClick={handleCopyPrompt}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
-      title="Copy structured installation briefing for AI assistants like Cursor, Claude, or Copilot"
+      disabled={entitlementsLoading}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3 py-1.5 text-[12px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[var(--ds-bg-surface)]"
+      title={
+        entitlementsLoading
+          ? 'Resolving your plan…'
+          : 'Copy structured installation briefing for AI assistants like Cursor, Claude, or Copilot'
+      }
     >
       {promptCopied ? (
         <>
@@ -148,7 +168,7 @@ export function DeployStep(props: StepProps) {
   }
 
   // ── Platform-specific guide ──────────────────────────────────────
-  const steps = platform.getSteps(botKey, ENV);
+  const steps = entitlementsLoading ? [] : platform.getSteps(botKey, ENV, { attribution });
   return (
     <StepShell
       title={`Add OyeChats to ${platform.name}`}
@@ -175,20 +195,28 @@ export function DeployStep(props: StepProps) {
           {copyPromptButton}
         </div>
 
-        <ol className="space-y-4">
-          {steps.map((step, index) => (
-            <li key={step.title} className="flex gap-3">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[11px] font-semibold text-[var(--ds-accent-text)]">
-                {index + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-[var(--ds-text)]">{step.title}</p>
-                <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">{step.description}</p>
-                {step.code && <CopyableCode code={step.code} />}
-              </div>
-            </li>
-          ))}
-        </ol>
+        {entitlementsLoading ? (
+          <div className="space-y-4" aria-busy="true" aria-label="Resolving your plan">
+            <Skeleton className="h-16 w-full rounded-lg" />
+            <Skeleton className="h-16 w-full rounded-lg" />
+            <Skeleton className="h-16 w-full rounded-lg" />
+          </div>
+        ) : (
+          <ol className="space-y-4">
+            {steps.map((step, index) => (
+              <li key={step.title} className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[11px] font-semibold text-[var(--ds-accent-text)]">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-medium text-[var(--ds-text)]">{step.title}</p>
+                  <p className="mt-0.5 text-[12px] text-[var(--ds-text-muted)]">{step.description}</p>
+                  {step.code && <CopyableCode code={step.code} />}
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
 
         <Card className="p-3">
           <p className="text-[12px] text-[var(--ds-text-subtle)]">

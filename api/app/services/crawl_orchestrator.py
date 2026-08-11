@@ -35,6 +35,7 @@ from collections.abc import Callable
 from app.config import CRAWL_FAVICON_AVATAR_ENABLED, CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.core.cache import bot_config_key, cache_delete
 from app.db.models import Bot, Client, Document
+from app.db.repository import AVATAR_SOURCE_DERIVED
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
 from app.services.brand_color_extractor import fetch_recommended_colors
@@ -240,16 +241,26 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
     Best-effort and non-fatal — a failure here must never affect the crawl
     result. Runs for any bot-scoped crawl, full or partial: the icon is read
     from the homepage, so which pages the customer ticked is irrelevant to it.
-    The only gate is an empty avatar slot — ``bot_logo`` unset AND
-    ``avatar_type`` still ``upload`` — so an explicit choice is never
-    overwritten, mirroring how ``services_url`` is auto-filled only when empty.
-    That check is the first thing this does, so a re-crawl of a bot that
-    already has an avatar costs one indexed lookup and no network at all.
+
+    Three things must all hold, and the check is the first thing this does, so
+    a re-crawl of a bot that fails any of them costs one indexed lookup and no
+    network at all:
+
+    * ``bot_logo_source`` is NULL — nobody has ever set this avatar. A customer
+      who uploaded one, or who REMOVED one, is stamped ``manual`` by both
+      settings patches, and removal is the case ``bot_logo IS NULL`` alone
+      cannot see: without provenance this step read a deliberate deletion as an
+      empty slot and re-derived the picture on the next crawl.
+    * ``bot_logo`` is empty — belt and braces, and what makes this free for the
+      overwhelmingly common re-crawl of an agent that already has an avatar.
+    * ``avatar_type`` is still ``upload`` — a customer who picked Orb or Mascot
+      has ``bot_logo`` NULL by design.
 
     The favicon bytes are pushed through the same logo pipeline as a manual
     upload (:func:`upload_to_r2` square-crops + resizes to a 512x512 PNG), so the
     stored key and ``avatar_type='upload'`` render identically to a hand-uploaded
-    logo everywhere the avatar is shown.
+    logo everywhere the avatar is shown; ``bot_logo_source='derived'`` is what
+    tells them apart afterwards.
     """
     if not CRAWL_FAVICON_AVATAR_ENABLED or not bot_id:
         return
@@ -263,6 +274,9 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
         with get_session() as session:
             bot = session.get(Bot, bot_id)
             if bot is None or bot.client_id != client_id or bot.bot_logo:
+                return
+            if bot.bot_logo_source is not None:
+                logger.info("bot %s avatar was set by %s — not deriving one", bot_id, bot.bot_logo_source)
                 return
             if (bot.avatar_type or "upload") != "upload":
                 logger.info("bot %s uses the %s avatar — leaving it alone", bot_id, bot.avatar_type)
@@ -290,6 +304,12 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
             bot = session.get(Bot, bot_id)
             if bot is None or bot.client_id != client_id or bot.bot_logo:
                 return
+            # Re-checked, not just pre-checked: the customer can remove their
+            # avatar (stamping `manual`) during the seconds the fetch takes,
+            # and that removal has to win.
+            if bot.bot_logo_source is not None:
+                logger.info("bot %s avatar was set by %s — not deriving one", bot_id, bot.bot_logo_source)
+                return
             # `bot_logo` being empty is NOT the same as "no avatar chosen".
             # `avatar_type` has three legal values — upload / orb / mascot —
             # and a customer who picked Orb has bot_logo NULL. The old guard
@@ -300,6 +320,7 @@ async def _maybe_apply_favicon_avatar(bot_id: int | None, client_id: int, url: s
                 logger.info("bot %s uses the %s avatar — leaving it alone", bot_id, bot.avatar_type)
                 return
             bot.bot_logo = logo_key
+            bot.bot_logo_source = AVATAR_SOURCE_DERIVED
             # Write BOTH. `bot_routes` keeps these in lockstep on every API
             # write and the widget's launcher reads `launcher_logo`, so
             # setting only bot_logo left the in-chat avatar as the favicon

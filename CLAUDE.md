@@ -55,6 +55,8 @@ Run only the checks relevant to the files you changed:
 5. **Pastes the script** into their website's `<body>` tag:
    ```html
    <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+   <a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
+      rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
    ```
 6. **Visitors see a chat widget** (floating button, bottom-right) → click to open → ask questions
 7. **Widget sends question** to backend API with `X-Bot-Key` header
@@ -98,7 +100,17 @@ The widget (`oyechats-widget.js`) is a **self-contained IIFE bundle** (~416KB) t
 ### Production Embed
 ```html
 <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
+   rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
 ```
+
+> The `<a>` is not decoration. The widget mounts into a shadow root from JS after the visitor clicks the
+> launcher, so its in-widget "Powered by" badge is invisible to every crawler — non-rendering crawlers run no
+> JS, and Googlebot never clicks. This anchor is the only attribution that lands in the customer's served
+> HTML. It is visible (hidden text would violate Google's policy and penalise the *customer's* domain),
+> `nofollow` (a sitewide self-placed link is a named link scheme), and `color:inherit` so it can never render
+> invisible on a dark host background. Workspaces with the `branding_removable` entitlement get a snippet
+> without it — the dashboard emits both variants from `app/src/data/widgetEmbed.ts`.
 
 ### Development Embed (IMPORTANT)
 The Vite **dev server** (`localhost:5173/src/main.jsx`) **cannot** be embedded on external sites. Vite's `@vitejs/plugin-react` injects a React Fast Refresh preamble only in its own `index.html`. Loading it cross-origin throws: `"@vitejs/plugin-react can't detect preamble"`.

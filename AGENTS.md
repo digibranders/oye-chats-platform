@@ -48,6 +48,8 @@ Run only the checks relevant to the files you changed:
 5. **Pastes the script** into their website's `<body>` tag:
    ```html
    <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+   <a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
+      rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
    ```
 6. **Visitors see a chat widget** (floating button, bottom-right) → click to open → ask questions
 7. **Widget sends question** to backend API with `X-Bot-Key` header
@@ -91,6 +93,8 @@ The widget (`oyechats-widget.js`) is a **self-contained IIFE bundle** (~416KB) t
 ### Production Embed
 ```html
 <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
+<a href="https://www.oyechats.com/?ref=bot-xxx&utm_source=widget&utm_medium=referral"
+   rel="nofollow" style="font-size:11px;color:inherit;opacity:0.7;text-decoration:none">Powered by OyeChats</a>
 ```
 
 ### Development Embed (IMPORTANT)

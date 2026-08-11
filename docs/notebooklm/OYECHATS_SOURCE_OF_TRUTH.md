@@ -1,0 +1,120 @@
+# OyeChats — Source of Truth / Claim Matrix
+
+*Every major claim used across this documentation package, with its source, evidence, and status. Purpose: prevent NotebookLM (or any downstream consumer of these documents) from treating an unverified or conflicting claim as settled fact. Status values used: **CONFIRMED**, **MARKETING POSITIONING**, **IMPLEMENTATION CONFIRMED**, **NEEDS VERIFICATION**, **NOT SUPPORTED**.*
+
+---
+
+## Source Hierarchy Used
+
+1. **Actual implemented product/code** — files directly inspected: root `CLAUDE.md` (code-derived technical reference), `app/CLAUDE.md` (build mandate), `widget/src/components/*.jsx`, `app/src/shell/OyeChatsMark.tsx`, `app/src/design-system/icons/platformLogos.ts`, `oyechats-website/src/app/globals.css`, live asset URLs (curl-verified).
+2. **Current product documentation** — `docs/oyechats-technical-story.md` (comprehensive, code-derived narrative).
+3. **Current approved marketing story** — `docs/oyechats-marketing-story.md` (including its embedded Brand Guidelines and Video Visual Style sections, developed and reviewed in this working session).
+4. **Reference video** — `The_Active_Web__Engineering_Conversion_with_OyeChats.mp4`, analyzed via direct frame extraction/inspection.
+5. **Project memory** (prior-session facts about shipped/unshipped status) — used only as *context for flagging uncertainty*, never as a primary claim source; anything sourced only from memory is marked NEEDS VERIFICATION below.
+
+No raw `.py`/`.jsx` business-logic files beyond those listed above were re-read in this pass; root `CLAUDE.md` is itself maintained as a code-derived reference by the project, and is treated as tier-1 on that basis.
+
+---
+
+## Product Capability Claims
+
+| Claim | Source | Evidence | Status |
+|---|---|---|---|
+| Business points platform at its website; content is crawled/read into a private knowledge base | root `CLAUDE.md` RAG Pipeline; `docs/oyechats-technical-story.md` Part 5 | `api/app/ingestion/pipeline.py`, `embedder.py` referenced in Key Files table | CONFIRMED |
+| Answers are grounded only in the business's own content (hybrid vector + keyword search) | root `CLAUDE.md` RAG Pipeline diagram | `rag_service.py` referenced directly | CONFIRMED |
+| Relevance gate refuses to answer when nothing relevant is retrieved | root `CLAUDE.md` (`RELEVANCE_GATE_ENABLED` flag); `docs/oyechats-technical-story.md` Part 6.6 | Named config flag in code reference | CONFIRMED |
+| Reranking (cross-encoder) available | root `CLAUDE.md` (`RERANK_ENABLED` flag) | Named config flag, off by default per doc | IMPLEMENTATION CONFIRMED (optional, not always-on) |
+| Qualification frameworks: BANT, MEDDIC, CHAMP, GPCTBA+C&I | root `CLAUDE.md` `Bot.qualification_framework`, `BANTSignal` model; `docs/oyechats-technical-story.md` Part 7 | DB model field + narrative doc agree | CONFIRMED |
+| Interactive qualification chips ship OFF by default on every framework | `docs/oyechats-technical-story.md` Part 7.1 | Direct quoted statement in doc; not independently re-verified against code in this pass | IMPLEMENTATION CONFIRMED (per doc; not re-read in raw code) |
+| Live human handoff with 4-state machine, routing strategies, multi-device notification | root `CLAUDE.md` `ChatSession.status`, `Operator`, `ChatAuditLog`, `live_chat_service.py`, `ws_routes.py`; `docs/oyechats-technical-story.md` Part 9 | Model fields + service file references agree | CONFIRMED |
+| Lead capture with email verification, company lookup, journey enrichment | root `CLAUDE.md` `LeadInfo` model; `docs/oyechats-technical-story.md` Part 8 | Model + doc agree | CONFIRMED |
+| IP-based company/organization lookup is "metered and currently held behind a flag" | `docs/oyechats-technical-story.md` Part 8.2 | Direct quoted statement | IMPLEMENTATION CONFIRMED (explicitly not fully live — do not market as always-on) |
+| Credit ledger is append-only/event-sourced; lapse deactivates (not deletes) knowledge | root `CLAUDE.md` `CreditLedger` model; `docs/oyechats-technical-story.md` Part 10, Part 11 | Model + doc agree | CONFIRMED |
+| Razorpay/INR is the sole live payment rail; USD pricing exists but is staged behind a flag | root `CLAUDE.md` Tech Stack table ("Razorpay (INR) — single provider"); `docs/oyechats-technical-story.md` Part 10.1 | Direct tech-stack table entry + narrative doc agree | CONFIRMED (do not depict USD billing as live) |
+| One-line embeddable widget works on any website with a body tag | root `CLAUDE.md` "Widget Embedding — How It Works" | Direct section, lists WordPress/Webflow/Shopify/plain HTML | CONFIRMED |
+| Platform-specific install guidance covers HTML, Next.js, React, Vue, Angular, Shopify, Squarespace, Svelte, Webflow, Wix, WordPress, Framer, Bubble, Astro, GTM | `app/src/design-system/icons/platformLogos.ts` | Direct source inspection of the icon-mapping file | CONFIRMED |
+| Widget launcher avatar is customizable: animated "orb," generic "mascot," or business's own uploaded logo | `widget/src/components/Launcher.jsx` `renderBotIcon()` | Direct source inspection | CONFIRMED |
+| Super-admin Control Tower: cross-tenant visibility, runtime pricing/model config, impersonation, webhook replay | `docs/oyechats-technical-story.md` Part 15 | Narrative doc, internal-only surface | CONFIRMED, but **PRODUCT CAPABILITY — NOT CURRENTLY POSITIONED** for buyer-facing video (internal ops tool, not a customer feature) |
+| Affiliate program with tracked referral codes | `docs/oyechats-technical-story.md` Part 10.13 | Narrative doc | CONFIRMED, but **PRODUCT CAPABILITY — NOT CURRENTLY POSITIONED** for the core buyer video (distinct audience) |
+
+---
+
+## Structural / Organizational Claims
+
+| Claim | Source | Evidence | Status |
+|---|---|---|---|
+| Actors: Visitor, Customer/Owner, Operator, Affiliate, Super Admin, background "Machine" | `docs/oyechats-technical-story.md` Part 1 | Narrative doc, consistent with DB models (`Client`, `Operator`) | CONFIRMED |
+| Dashboard IA = Home, Chatbots, Support, Leads, Journey, Analytics, Workspace, Settings (+ Launch Studio) | `docs/oyechats-technical-story.md` Part 2 | Narrative doc | **CONFLICTS with row below — see Conflict Log** |
+| Dashboard IA = Home, AI Agents, Inbox, Leads, Analytics, Workspace (no separate Journey/Settings nav) | `app/CLAUDE.md` "Information architecture — the ONLY sidebar" | Direct quote from the active build mandate governing `app/` | **CONFLICTS with row above — see Conflict Log** |
+| Admin dashboard is a real, actively-developed interface (not a mockup) | `app/src/shell/OyeChatsMark.tsx` | Direct source inspection — functioning theme-aware logo component | CONFIRMED (existence of a real app); does not resolve which IA version is currently shipped |
+
+### Conflict Log — Dashboard Information Architecture
+
+**Nature of conflict:** `docs/oyechats-technical-story.md` (tier 2, current product documentation) and `app/CLAUDE.md` (tier 1, the active build mandate for the same surface) describe two different navigation structures for the same admin dashboard.
+
+**Resolution applied in this package:** `app/CLAUDE.md` is treated as the more authoritative statement of *current direction* because it is the literal governing mandate for ongoing work in `app/` and explicitly states it supersedes prior UX/IA ("DO NOT reuse the existing... navigation, information architecture"). However, this package does **not** assert that the new IA is fully shipped/live — per source-hierarchy priority, "actual implemented code" would outrank both documents, and no direct UI screenshot or route-file audit was performed in this pass to confirm which IA a live user currently sees.
+
+**Practical instruction:** Any video or material depicting specific on-screen navigation labels must be verified against the actually-deployed dashboard immediately before production — do not trust either document's nav labels blindly. Prefer generic UI framing (a leads list, a conversation view) over rendering exact nav text. **Status: NEEDS VERIFICATION.**
+
+---
+
+## Brand / Visual Claims
+
+| Claim | Source | Evidence | Status |
+|---|---|---|---|
+| Theme name "Voltage Paper" | `oyechats-website/src/app/globals.css` | Direct source inspection, named in CSS comments | CONFIRMED |
+| Exact hex palette (Paper `#FAFAF7`, Ink `#0A0A0A`, Volt `#7C3AED`, etc.) | `oyechats-website/src/app/globals.css` | Direct source inspection, exact values copied | CONFIRMED |
+| Volt `#7C3AED` / `#A78BFA` corroborated by a second, independent design system | `design-system/README.md` ("Enterprise Purple" theme) | Direct source inspection | CONFIRMED (cross-corroborated) |
+| Fonts: Geist, Inter, Geist Mono, Fraunces | `oyechats-website/src/app/layout.tsx` | Direct `next/font/google` imports inspected | CONFIRMED |
+| Tagline "OyeChats. You only talk to buyers." | Live site title/meta | Confirmed via `docs/oyechats-marketing-story.md`, itself sourced from `layout.tsx` | CONFIRMED (marketing positioning, not a product-capability claim) — MARKETING POSITIONING |
+| Current icon mark = `logo-light.png`/`logo-dark.png` "C"-ring speech-bubble glyph (Admin Dashboard) | `app/src/shell/OyeChatsMark.tsx` | Direct source inspection — actively rendered in the live Admin dashboard sidebar | CONFIRMED (strongest possible evidence: live-rendering code) |
+| Current full wordmark = `oyechats-wordmark.png`/`oyechats-wordmark-light.png` (Marketing Website), embedding the same ring-with-dots glyph as the "C" of "chats" | Live production HTML at `https://www.oyechats.com/`; files pulled via curl, pixel-inspected | Homepage HTML references `/_next/image?url=%2Foyechats-wordmark.png...` and the light variant; both curl-verified HTTP 200; light variant confirmed white-on-transparent via pixel inspection | CONFIRMED (live production HTML is the strongest possible evidence — stronger than any local repo file) |
+| `oyechats-mark.png` (navy bubble) is the current OyeChats logo | `oyechats-website/public/oyechats-mark.png`, referenced by the **local repo's** `src/components/site/Logo.tsx` | **Confirmed 404 on live production** (`https://www.oyechats.com/oyechats-mark.png`); local repo is 2 commits behind `origin/development`, and `origin/main` already contains commit `5a9bca8 feat(logo): implemented new logo` which the local checkout doesn't have | NOT SUPPORTED as current production logo — **local-repo/production drift, not a live design conflict.** `Logo.tsx` as checked out locally is stale; do not trust it over the live HTML. |
+| Indigo/blue "signal arc" logo concept (`_logo-workspace.html`) | `docs/logos/_logo-workspace.html` | File exists; git history dates it to April 2026; **no live consumer found anywhere in the codebase** | NOT SUPPORTED as current brand asset — dead exploration |
+| Orange/terracotta glyph (`OyeChatsLogo.jsx`) | `widget/src/components/OyeChatsLogo.jsx` | File exists; repo-wide search found **zero imports of this component anywhere else** | NOT SUPPORTED as current brand asset — dead/orphaned code |
+| UI principle: avoid "purple overload," gradients, neon glows, glassmorphism | `app/CLAUDE.md` "Visual language" section | Direct quote | CONFIRMED |
+
+---
+
+## Terminology Standardization Map
+
+| Legacy/internal term | Current customer-facing term | Evidence | Status |
+|---|---|---|---|
+| Bot / Chatbot | AI Agent | `app/CLAUDE.md` IA uses "AI Agents"; DB table/model is still literally `Bot` internally (root `CLAUDE.md` schema) | CONFIRMED — both true simultaneously: internal code name vs. external customer-facing label, not a contradiction |
+| Session (`ChatSession`) | Conversation | `app/CLAUDE.md` "Session→Conversation" direction; internal model name unchanged | NEEDS VERIFICATION for exact rollout completeness, but directionally CONFIRMED as the intended customer-facing term |
+| Crawl | Train / Training | `docs/oyechats-technical-story.md` Part 4.2 Step 3 itself is titled "Setup and Train," while internal mechanism is called "crawl" throughout the same doc | CONFIRMED — customer-facing step is already named "Train" in the current technical documentation itself |
+| Human rep / generic "Agent" (person) | Operator | root `CLAUDE.md` `Operator` model, `X-Operator-Key` header, `X-Agent-Key` explicitly marked "legacy alias... during agent → operator rename" | CONFIRMED — directly evidenced in code/auth headers |
+| Contact | Lead | root `CLAUDE.md` `LeadInfo` model | CONFIRMED — already aligned, no rename needed |
+| Client (DB model) | Account / Business / Customer | root `CLAUDE.md` `Client` model; customer-facing language throughout marketing docs uses "the business"/"the account" | CONFIRMED as customer-facing framing; internal model name unchanged |
+
+**Usage instruction for this package:** all customer-facing documents in this folder use the right-hand column terms. Internal/technical documents (root `CLAUDE.md`, `docs/oyechats-technical-story.md`) may still use legacy terms like "bot" or "session" — this is expected and not an error to correct in those documents.
+
+---
+
+## Business Outcome / Metric Claims
+
+| Claim | Source | Evidence | Status |
+|---|---|---|---|
+| Any conversion-rate lift, ROI percentage, or revenue figure | — | No such figure appears in any inspected source | **NOT SUPPORTED — do not use** |
+| Any named customer, testimonial, or case study | — | None found in any inspected source | **NOT SUPPORTED — do not use** |
+| "Nothing falls through the cracks" / leads are automatically enriched and recorded | `docs/oyechats-technical-story.md` Part 8 | Direct capability description | MARKETING POSITIONING (framing of a real, confirmed capability — not a numeric claim) |
+| "Reversible churn" (lapse pauses, doesn't delete knowledge) | `docs/oyechats-technical-story.md` Part 11 | Direct capability description | CONFIRMED as product mechanism; "most humane mechanic in the product" phrasing is MARKETING POSITIONING layered on top of a confirmed mechanism |
+
+---
+
+## Reference Video Style Claims
+
+| Claim | Source | Evidence | Status |
+|---|---|---|---|
+| Papercraft/origami diorama visual style, macro cinematography, warm gold glow accent | `The_Active_Web__Engineering_Conversion_with_OyeChats.mp4` | Direct frame-by-frame extraction and visual inspection (15 frames at 15s intervals) | CONFIRMED (as a description of the reference video itself — this is a style source, not a product claim) |
+| The reference video's gold-glow accent matches OyeChats' actual brand accent | — | Reference uses warm gold/amber; OyeChats' documented accent is Volt violet `#7C3AED` | **NOT SUPPORTED — these are different colors; adaptation requires re-keying the glow, not a claim that they already match** |
+| Exact hex values for the reference video's own colors | — | No source-code access to the reference video's generation parameters; only visual/qualitative color-family matching was possible | NEEDS VERIFICATION if exact hex-matching to the reference itself is ever required (not needed for the adaptation rule, which intentionally overrides the reference's accent) |
+
+---
+
+## Summary of Open [VERIFY] Items
+
+1. **Dashboard IA** — which navigation structure (technical-story.md's or `app/CLAUDE.md`'s) is actually live at production time. *(See Conflict Log above.)*
+2. ~~`oyechats-mark.png` vs. `logo-light/dark.png` cross-surface logo inconsistency~~ — **RESOLVED.** Checked live production HTML directly: the marketing website's actual current logo is `oyechats-wordmark.png`/`oyechats-wordmark-light.png`, which embeds the exact same ring-with-dots glyph as the Admin Dashboard's `logo-light.png`/`logo-dark.png`. The two surfaces are consistent. What looked like a conflict was the **local repo checkout being 2 commits behind `origin/development`** — `origin/main` already contains `5a9bca8 feat(logo): implemented new logo`. `oyechats-mark.png` and the local copy of `Logo.tsx` are simply stale locally, not evidence of a live design inconsistency. Wordmark files have been copied into `oyechats-website/public/` locally; a proper `git pull` (once pre-existing uncommitted changes to unrelated files are resolved) would additionally update `Logo.tsx` itself.
+3. **Terminology rollout completeness** — "Bot→AI Agent" and "Session→Conversation" are confirmed as the *intended* current direction, but full rollout across every customer-facing surface was not independently re-audited in this pass.
+4. **Qualification chip default-off behavior** — confirmed via the narrative documentation (`docs/oyechats-technical-story.md`) but not independently re-verified against the raw `qualification_service.py` source in this pass.

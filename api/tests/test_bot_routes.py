@@ -340,6 +340,110 @@ class TestBotSettingsPublic:
         assert result["is_offline"] is False
         assert result["offline_reason"] is None
 
+    def _build_bot(self, *, branding_text=None, branding_url=None):
+        bot = MagicMock()
+        bot.id = 5
+        bot.primary_color = "#4F46E5"
+        bot.background_color = "#FFF"
+        bot.header_color = "#4F46E5"
+        bot.user_bubble_color = None
+        bot.welcome_title = "Hello"
+        bot.welcome_subtitle = "Ask anything"
+        bot.bot_logo = None
+        bot.launcher_logo = None
+        bot.launcher_name = None
+        bot.feature_flags = {}
+        bot.widget_messages = {}
+        bot.widget_config = {}
+        bot.bant_enabled = False
+        bot.bant_config = None
+        bot.lead_form_enabled = False
+        bot.lead_form_fields = None
+        bot.live_chat_enabled = False
+        bot.branding_text = branding_text
+        bot.branding_url = branding_url
+        bot.recommended_colors = None
+        bot.offline_message = None
+        bot.waiting_message = None
+        bot.handoff_delay_seconds = None
+        bot.meeting_booking_enabled = False
+        bot.calendly_url = None
+        return bot
+
+    def test_entitled_plan_gets_custom_branding(self, monkeypatch):
+        """A plan with `branding_removable` gets the workspace's own badge text/link."""
+        from app.api import bot_routes as br
+        from app.services.plan_entitlements_service import PlanEntitlements
+
+        bot = self._build_bot(
+            branding_text="Powered by Acme",
+            branding_url="https://acme.example",
+        )
+        request = MagicMock()
+        request.base_url = "http://test/"
+
+        entitlements = PlanEntitlements(
+            client_id=1,
+            plan_slug="professional",
+            plan_name="Professional",
+            subscription_status="active",
+            features={"branding_removable": True},
+        )
+
+        with (
+            patch.object(br, "_build_public_cta_options", return_value={}),
+            patch.object(br, "bot_subscription_status", return_value="active"),
+            patch("app.db.session.get_session", lambda: _session_ctx(MagicMock())),
+            patch(
+                "app.services.plan_entitlements_service.get_bot_entitlements",
+                return_value=entitlements,
+            ),
+        ):
+            result = br.get_bot_settings_public(request, bot)
+
+        assert result["branding_text"] == "Powered by Acme"
+        assert result["branding_url"] == "https://acme.example"
+        assert result["feature_flags"].get("show_branding") is not True
+
+    def test_non_entitled_plan_cannot_bypass_branding_paywall(self, monkeypatch):
+        """The bypass regression test: a non-entitled plan must NEVER receive a
+        white-label badge, even when custom values are already stored on the
+        bot (e.g. from directly PATCHing the public API). The public settings
+        payload the widget reads is the real enforcement boundary — the admin
+        UI merely hides the inputs for these plans."""
+        from app.api import bot_routes as br
+        from app.services.plan_entitlements_service import PlanEntitlements
+
+        bot = self._build_bot(
+            branding_text="Powered by Acme",
+            branding_url="https://acme.example",
+        )
+        request = MagicMock()
+        request.base_url = "http://test/"
+
+        entitlements = PlanEntitlements(
+            client_id=1,
+            plan_slug="starter",
+            plan_name="Starter",
+            subscription_status="active",
+            features={"branding_removable": False},
+        )
+
+        with (
+            patch.object(br, "_build_public_cta_options", return_value={}),
+            patch.object(br, "bot_subscription_status", return_value="active"),
+            patch("app.db.session.get_session", lambda: _session_ctx(MagicMock())),
+            patch(
+                "app.services.plan_entitlements_service.get_bot_entitlements",
+                return_value=entitlements,
+            ),
+        ):
+            result = br.get_bot_settings_public(request, bot)
+
+        assert result["branding_text"] == "Powered by OyeChats"
+        assert result["branding_url"] == "https://www.oyechats.com"
+        assert result["feature_flags"]["show_branding"] is True
+
 
 # ── Bot update ───────────────────────────────────────────────────────────────
 

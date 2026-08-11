@@ -185,11 +185,29 @@ EMAIL_ENABLED = bool(BREVO_API_KEY)
 # Brand & public URLs (used by email templates and any other branded surface)
 # ─────────────────────────────────────────────────────────────────────────────
 # Public marketing site root, e.g. "https://www.oyechats.com". No trailing slash.
-MARKETING_URL = os.getenv("MARKETING_URL", "https://www.oyechats.com").rstrip("/")
+# Named constants so the DEFAULTS themselves are testable. Simulating "unset"
+# by reloading this module cannot work — `load_dotenv()` at import repopulates
+# from `api/.env` — which is precisely how a localhost default reached
+# production unnoticed.
+DEFAULT_MARKETING_URL = "https://www.oyechats.com"
+DEFAULT_APP_URL = "https://app.oyechats.com"
+DEFAULT_API_BASE_URL = "https://api.oyechats.com"
+
+MARKETING_URL = os.getenv("MARKETING_URL", DEFAULT_MARKETING_URL).rstrip("/")
 # Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
 # Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
-APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+APP_URL = os.getenv("APP_URL", DEFAULT_APP_URL).rstrip("/")
+# Public API root, e.g. "https://api.oyechats.com". No trailing slash.
+#
+# Defaults to the PRODUCTION host, like MARKETING_URL and APP_URL above — it
+# used to default to "http://localhost:8000" and was the only one of the three
+# that did. It is also the only one that lands in a customer's inbox: the
+# unsubscribe link in a manual follow-up is built from it
+# (`lead_routes.send_manual_follow_up`). Unset in production, every follow-up
+# email shipped an unsubscribe pointing at http://localhost:8000 — dead for the
+# recipient, and an unsubscribe that cannot be actioned is a compliance
+# problem, not a cosmetic one. Local development overrides it in `api/.env`.
+API_BASE_URL = os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
 # Address users should reach out to for help. Different from EMAIL_FROM_ADDRESS,
 # which is the no-reply sender. SUPPORT_EMAIL is what appears in "Contact us".
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@oyechats.com")
@@ -622,6 +640,29 @@ CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
 # Neither destroys data, and both are fixed by the plan's provenance column.
 # Weigh them before flipping this on.
 CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# Verify TLS certificates on the SSRF-guarded fetches in `core/ssrf` — sitemap
+# and robots.txt discovery, the liveness probe, the footer/colour/favicon reads.
+#
+# DEFAULT ON, which is the correction: every one of those fetches passed
+# `ssl=False`, so an https:// URL was fetched with no certificate check at all
+# and an on-path attacker could substitute the sitemap that decides which pages
+# get ingested, or the icon that becomes the agent's avatar. Pinning the
+# resolved IP never required this — `_PinnedResolver` reports the real hostname,
+# so SNI and hostname verification still work against the URL's own name.
+#
+# The switch exists because verifying can only reduce what we successfully
+# fetch: a customer whose certificate is expired or mismatched now fails where
+# they used to succeed, silently and only for them (discovery falls back to a
+# recursive crawl; the brand extras yield nothing). Set this to false to restore
+# service for them from a variable while the certificate is fixed — it is a
+# stopgap, not a setting. `core/ssrf` logs a distinct warning per rejected
+# certificate so the affected host is identifiable before you reach for it.
+SSRF_TLS_VERIFY_ENABLED = _env("SSRF_TLS_VERIFY_ENABLED", "true").strip().lower() in (
     "1",
     "true",
     "yes",

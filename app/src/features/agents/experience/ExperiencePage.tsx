@@ -159,7 +159,7 @@ export function ExperiencePage(): ReactElement {
     setSaving(true);
     setSaveError(null);
     try {
-      await updateClientSettings(settingsFromDraft(draft), saveBotId);
+      await updateClientSettings(settingsFromDraft(draft, baseline), saveBotId);
       if (botIdRef.current !== saveBotId) return;
       setBaseline(draft);
       setJustSaved(true);

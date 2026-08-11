@@ -68,6 +68,11 @@ export interface AvatarPickerProps {
   onChangeOrbColor: (hex: string) => void;
   onUpload: (file: File) => void;
   onRemoveLogo: () => void;
+  /** Provenance of `botLogo` from the server: 'derived' means the crawl took
+   * it from the site's favicon rather than anyone uploading it. Captioned so
+   * a picture the customer did not choose is never presented as one they
+   * did — and so "Remove" reads as a decision rather than a repair. */
+  botLogoSource?: string | null;
   /** True when the previewed avatar is the one currently live on the widget. */
   avatarIsLive?: boolean;
 }
@@ -90,6 +95,7 @@ export function AvatarPicker({
   onChangeOrbColor,
   onUpload,
   onRemoveLogo,
+  botLogoSource = null,
   avatarIsLive = false,
 }: AvatarPickerProps) {
   // Holds the picked image (as a data URL) while the crop modal is open. On
@@ -194,7 +200,13 @@ export function AvatarPicker({
                 </button>
               )}
             </div>
-            <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">{AVATAR_UPLOAD_HINT}</p>
+            {botLogo && botLogoSource === 'derived' ? (
+              <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">
+                Taken from your website's icon. Upload your own to replace it.
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">{AVATAR_UPLOAD_HINT}</p>
+            )}
             {pickError && (
               <p role="alert" className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
                 {pickError}

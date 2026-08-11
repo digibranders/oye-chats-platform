@@ -319,6 +319,19 @@ class Bot(Base):
     manual_field_overrides = Column(JSONB, nullable=False, default=list, server_default=sqlalchemy.text("'[]'::jsonb"))
     website = Column(String, nullable=True)
     bot_logo = Column(Text, nullable=True)
+    # Who last wrote the avatar. NULL = nobody has ever set it; "manual" = the
+    # customer did (uploading one OR removing one); "derived" = the crawl took
+    # it from the site's favicon.
+    #
+    # Provenance, deliberately NOT folded into `avatar_type` — that is a style
+    # selector with exactly three legal values that the admin UI renders as a
+    # segmented control, and a fourth value would break it.
+    #
+    # This is what makes "no avatar" answerable. `bot_logo IS NULL` alone
+    # cannot distinguish an agent nobody has touched from one whose owner
+    # deliberately removed the picture, so the crawl re-derived the avatar the
+    # customer had just deleted. Derivation runs only while this is NULL.
+    bot_logo_source = Column(String, nullable=True)
     launcher_name = Column(String, default="Have Questions?", server_default="Have Questions?")
     launcher_logo = Column(Text, nullable=True)
     primary_color = Column(String, default="#ba68c8", server_default="#ba68c8")

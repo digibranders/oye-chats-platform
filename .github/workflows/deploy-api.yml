@@ -66,6 +66,10 @@ jobs:
           # the customer's site. Ships OFF; the repository variable does not
           # exist yet, and an unset variable stays off via the default below.
           CRAWL_FAVICON_AVATAR_ENABLED: ${{ vars.CRAWL_FAVICON_AVATAR_ENABLED }}
+          # TLS verification on the SSRF-guarded fetches. Ships ON; set the
+          # variable to false only as a stopgap for a customer whose
+          # certificate is broken, while it is being fixed.
+          SSRF_TLS_VERIFY_ENABLED: ${{ vars.SSRF_TLS_VERIFY_ENABLED }}
           # ARQ concurrency. Default 5 (crawling runs off-box on Spider, so this
           # is no longer RAM/Chromium-bound). Real ceiling is embedding CPU on the
           # box + the DB pool (~15 conns for 1 worker). Go beyond ~5-6 only with a
@@ -94,6 +98,11 @@ jobs:
           CHECKOUT_TEST_CLIENT_IDS: ${{ vars.CHECKOUT_TEST_CLIENT_IDS }}
           # Frontend URL for Stripe success/cancel and Razorpay return redirects.
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          # Public API root. Used to build the unsubscribe link inside manual
+          # follow-up emails, so an unset value ships dead links to real
+          # recipients. Defaults in config.py to the production host, but is
+          # passed explicitly here so a non-prod deploy can point elsewhere.
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
           # Google OAuth (Sign in with Google). All five are required — the
           # frontend probes /auth/google/status on every page load and hides
           # the button when the backend isn't configured. Missing any of
@@ -125,7 +134,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,CRAWL_FAVICON_AVATAR_ENABLED,SSRF_TLS_VERIFY_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,RAZORPAY_SEAT_PLAN_ID,RAZORPAY_TEST_PLAN_ID,RAZORPAY_SEAT_PLAN_ID_USD,INTL_PAYMENTS_ENABLED,CHECKOUT_TEST_CLIENT_IDS,FRONTEND_URL,API_BASE_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,UNSUBSCRIBE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY,REOON_API_KEY,IPAPI_IS_KEY
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -245,6 +254,7 @@ jobs:
               "JINA_API_KEY=${JINA_API_KEY}" \
               "JINA_FALLBACK_ENABLED=${JINA_FALLBACK_ENABLED:-true}" \
               "CRAWL_FAVICON_AVATAR_ENABLED=${CRAWL_FAVICON_AVATAR_ENABLED:-false}" \
+              "SSRF_TLS_VERIFY_ENABLED=${SSRF_TLS_VERIFY_ENABLED:-true}" \
               "WORKER_MAX_JOBS=${WORKER_MAX_JOBS:-5}" \
               "WORKER_ENABLED=true" \
               "MODERATION_ENABLED=true" \
@@ -260,6 +270,7 @@ jobs:
               "INTL_PAYMENTS_ENABLED=${INTL_PAYMENTS_ENABLED:-false}" \
               "CHECKOUT_TEST_CLIENT_IDS=${CHECKOUT_TEST_CLIENT_IDS}" \
               "FRONTEND_URL=${FRONTEND_URL}" \
+              "API_BASE_URL=${API_BASE_URL:-https://api.oyechats.com}" \
               "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" \
               "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}" \
               "GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}" \

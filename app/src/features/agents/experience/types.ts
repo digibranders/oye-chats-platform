@@ -16,11 +16,27 @@ export interface ExperienceDraft {
   avatarType: AvatarType;
   orbColor: string;
   botLogo: string | null;
+  /** Who set `botLogo`: null (nobody has), 'manual' (this workspace) or
+   * 'derived' (taken from the site's favicon during a crawl). Read-only here —
+   * the server owns it, and any save that touches the image stamps 'manual'.
+   * Present so the picker can say where a derived image came from instead of
+   * showing it as though someone uploaded it. */
+  botLogoSource: string | null;
   /** `feature_flags.show_branding` - true shows the "Powered by OyeChats"
    * footer. Only a workspace with the `branding_removable` plan feature can
    * turn this off; the backend force-sets it back to `true` on save
    * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
   showBranding: boolean;
+  /** `bot.branding_text` - the badge label. Only meaningful when
+   * `showBranding` is true AND the plan has `branding_removable`; the backend
+   * forces both this and `brandingUrl` back to defaults otherwise, so a
+   * non-entitled workspace cannot white-label by calling the API directly. */
+  brandingText: string;
+  /** `bot.branding_url` - where the badge links. Same entitlement rule as
+   * `brandingText`. The widget validates this independently
+   * (`widget/src/services/brandingLink.js`) and falls back to the default for
+   * anything non-http, so a bad value here can never reach a live `href`. */
+  brandingUrl: string;
 
   // ── Messages (widget_messages.*) ────────────────────────────────────────────
   welcomeGreeting: string;
@@ -75,6 +91,8 @@ const DEFAULTS = {
   welcomeGreeting: 'Hi there, how can I help you today?',
   welcomeSubtitle: 'Ask me anything - I answer from your knowledge base.',
   inputPlaceholder: 'Write a message…',
+  brandingText: 'Powered by OyeChats',
+  brandingUrl: 'https://www.oyechats.com',
 } as const;
 
 /**
@@ -153,7 +171,10 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
     avatarType: asAvatarType(raw.avatar_type),
     orbColor: asString(raw.orb_color, DEFAULTS.orbColor),
     botLogo: typeof raw.bot_logo === 'string' && raw.bot_logo.length > 0 ? raw.bot_logo : null,
+    botLogoSource: typeof raw.bot_logo_source === 'string' ? raw.bot_logo_source : null,
     showBranding: asBoolean(featureFlags.show_branding, true),
+    brandingText: asNonEmptyString(raw.branding_text, DEFAULTS.brandingText),
+    brandingUrl: asNonEmptyString(raw.branding_url, DEFAULTS.brandingUrl),
 
     welcomeGreeting: asNonEmptyString(widgetMessages.welcome_greeting, DEFAULTS.welcomeGreeting),
     welcomeSubtitle: asNonEmptyString(widgetMessages.welcome_subtitle, DEFAULTS.welcomeSubtitle),
@@ -178,8 +199,20 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
  * Serialise the draft into the PATCH body for `updateClientSettings(_, botId)`.
  * Empty quick-action rows (kept while editing) are dropped, and `launcher_logo`
  * mirrors `bot_logo` exactly as the legacy Customize flow does.
+ *
+ * `baseline` is the draft as loaded from the server. When it is supplied and
+ * the avatar image is unchanged, `bot_logo` / `launcher_logo` are omitted so
+ * the PATCH (`exclude_unset=True`) leaves the stored value alone. A crawl can
+ * set the agent's avatar from the site's favicon while this editor is open,
+ * and re-sending the value this page loaded before that happened writes the
+ * derived avatar back off. Removing the avatar here is still a change, so it
+ * is still sent — the guard is on "unchanged", not on "empty".
  */
-export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknown> {
+export function settingsFromDraft(
+  draft: ExperienceDraft,
+  baseline?: ExperienceDraft | null,
+): Record<string, unknown> {
+  const avatarImageChanged = !baseline || baseline.botLogo !== draft.botLogo;
   const welcomeSuggestions = draft.quickActions.map((s) => s.trim()).filter((s) => s.length > 0);
   const displayName = draft.displayName.trim();
 
@@ -195,11 +228,12 @@ export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknow
     user_bubble_color: draft.userBubbleColor,
     avatar_type: draft.avatarType,
     orb_color: draft.orbColor || null,
-    bot_logo: draft.botLogo,
-    launcher_logo: draft.botLogo,
+    ...(avatarImageChanged ? { bot_logo: draft.botLogo, launcher_logo: draft.botLogo } : {}),
     // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) - other
     // stored feature flags (managed on the Advanced tab) are untouched.
     feature_flags: { show_branding: draft.showBranding },
+    branding_text: draft.brandingText.trim() || DEFAULTS.brandingText,
+    branding_url: draft.brandingUrl.trim() || DEFAULTS.brandingUrl,
 
     widget_messages: {
       ...draft.extraWidgetMessages,

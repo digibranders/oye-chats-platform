@@ -1,12 +1,23 @@
-import { type ReactElement } from 'react';
+import { type ReactElement, useId } from 'react';
 import { Lock } from 'lucide-react';
-import { Button, Card, SectionHeader } from '../../../design-system';
+import { Button, Card, Input, SectionHeader } from '../../../design-system';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../../context/UpgradeModalContext';
 import { ColorField } from '../../launch-studio/customize/ColorField';
 import { AvatarPicker } from '../../launch-studio/customize/AvatarPicker';
 import { Toggle } from '../advanced/controls';
 import { type ExperienceDraft } from './types';
+
+/** True only for an absolute `http:`/`https:` URL - what the widget's own
+ * `brandingLink.js` guard requires before it will use a custom badge link. */
+function isValidBrandingUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 export interface BrandingSectionProps {
   draft: ExperienceDraft;
@@ -40,6 +51,20 @@ export function BrandingSection({
   const { openUpgradeModal } = useUpgradeModal();
   const canRemoveBranding = hasFeature('branding_removable');
 
+  const brandingTextId = useId();
+  const brandingTextHintId = useId();
+  const brandingUrlId = useId();
+  const brandingUrlHintId = useId();
+  const brandingUrlErrorId = useId();
+
+  const trimmedBrandingUrl = draft.brandingUrl.trim();
+  const brandingUrlError =
+    trimmedBrandingUrl.length > 0 && !isValidBrandingUrl(trimmedBrandingUrl)
+      ? 'Enter a full URL starting with http:// or https://'
+      : null;
+
+  const showWhiteLabelFields = canRemoveBranding && draft.showBranding;
+
   return (
     <div className="space-y-8">
       <section className="space-y-5">
@@ -72,6 +97,7 @@ export function BrandingSection({
           avatarType={draft.avatarType}
           orbColor={draft.orbColor}
           botLogo={draft.botLogo}
+          botLogoSource={draft.botLogoSource}
           primaryColor={draft.primaryColor}
           uploading={uploading}
           swatches={swatches}
@@ -125,6 +151,55 @@ export function BrandingSection({
             </Button>
           )}
         </Card>
+
+        {showWhiteLabelFields && (
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <label
+                htmlFor={brandingTextId}
+                className="block text-[13px] font-medium text-[var(--ds-text)]"
+              >
+                Badge text
+              </label>
+              <Input
+                id={brandingTextId}
+                value={draft.brandingText}
+                placeholder="Powered by OyeChats"
+                aria-describedby={brandingTextHintId}
+                onChange={(e) => onChange({ brandingText: e.target.value })}
+              />
+              <p id={brandingTextHintId} className="text-[11px] text-[var(--ds-text-subtle)]">
+                Replace “Powered by OyeChats” with your own wording.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor={brandingUrlId}
+                className="block text-[13px] font-medium text-[var(--ds-text)]"
+              >
+                Badge link
+              </label>
+              <Input
+                id={brandingUrlId}
+                type="url"
+                value={draft.brandingUrl}
+                placeholder="https://www.oyechats.com"
+                aria-describedby={`${brandingUrlHintId} ${brandingUrlError ? brandingUrlErrorId : ''}`.trim()}
+                aria-invalid={brandingUrlError !== null}
+                onChange={(e) => onChange({ brandingUrl: e.target.value })}
+              />
+              <p id={brandingUrlHintId} className="text-[11px] text-[var(--ds-text-subtle)]">
+                Where the badge sends visitors.
+              </p>
+              {brandingUrlError && (
+                <p id={brandingUrlErrorId} role="alert" className="text-[12px] text-[var(--ds-danger)]">
+                  {brandingUrlError}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

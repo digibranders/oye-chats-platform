@@ -6,6 +6,90 @@
 
 ---
 
+## Brand Guidelines & Visual Identity
+
+*Use this section to keep any generated video, imagery, or narration visually and tonally on-brand as real OyeChats material — not generic AI-SaaS stock styling.*
+
+**Tagline (use verbatim where a tagline is needed):**
+> "OyeChats. You only talk to buyers."
+
+**One-line positioning (use for a subtitle or narrator setup line):**
+> AI chatbot that qualifies every visitor before your sales reps ever see them — grounded answers, live handoff, and analytics, all from your own website.
+
+**Theme name:** *Voltage Paper* — a warm, editorial "paper" neutral palette (off-white, near-black ink) punched through by a single electric-violet accent. It should read as premium, warm, and confident — not clinical or cold like a generic dark-mode SaaS tool, and not neon/gamer-purple either. Think: high-end print stationery with one deliberate jolt of color.
+
+**Logo (current, updated mark) — live URLs, since these are what a document-only tool like NotebookLM can actually fetch (a local repo path is not reachable from outside this machine):**
+
+| Asset | Live URL | Code path (reference only, not fetchable externally) |
+|---|---|---|
+| Primary mark, for light backgrounds (solid near-black) | https://app.oyechats.com/logo-light.png | `app/public/logo-light.png` |
+| Primary mark, for dark backgrounds (solid white) | https://app.oyechats.com/logo-dark.png | `app/public/logo-dark.png` |
+| Cropped/square favicon crop | https://app.oyechats.com/oye_favicon_cropped.png | `app/public/oye_favicon_cropped.png` |
+| Small favicon (32px) | https://app.oyechats.com/favicon-32.png | `app/public/favicon-32.png` |
+| Small favicon (192px) | https://app.oyechats.com/favicon-192.png | `app/public/favicon-192.png` |
+
+All confirmed live (HTTP 200) as of this writing. These are the current logomark, used across the Admin Platform 2.0 rebuild, and supersede the older navy mark still live at `https://www.oyechats.com/oyechats-mark.png` on the marketing site — that one is stale and should not be used for new material.
+
+**Mark description** (for when an image can't be pulled in, or as a caption): a rounded, bold "C"-shaped ring that reads simultaneously as the OyeChats initial and a speech bubble — three dots inside it (an active "typing…" indicator, reinforcing "live conversation"), with a small chat-tail notch at the bottom where the ring breaks. Clean, geometric, single-color (no gradient, no multi-color) in either pure near-black or pure white depending on background — never rendered in Volt violet or any other color.
+
+Do not use `app/public/logo-icon.png` (an earlier, rougher sketch-style render with a sparkle flourish) — it's a discarded exploration, not the production mark, and isn't hosted at a live URL. No standalone SVG exists for the current mark — the PNG is the source of truth for shape/proportions; don't stretch or recolor it.
+
+**Color palette (exact hex values):**
+
+| Role | Hex | Notes |
+|---|---|---|
+| Paper (page background) | `#FAFAF7` | Primary light background — warm off-white, never pure white as the dominant field |
+| Canvas | `#FFFFFF` | Cards/surfaces sitting on top of Paper |
+| Ink (primary text) | `#0A0A0A` | Near-black, not pure black |
+| Ink-2 (secondary text) | `#3F3F46` | |
+| Muted text | `#71717A` | |
+| Line / hairline borders | `#E7E5DE` | Warm-toned, not cool gray |
+| Dark section background | `#14101E` | Used for dark/contrast sections, has a violet undertone rather than neutral black |
+| Dark section text | `#F5F1FA` | |
+| **Volt (primary brand accent)** | **`#7C3AED`** | The signature color — use for CTAs, highlights, the chat bubble, key emphasis |
+| Volt hover/pressed | `#6D28D9` | |
+| Volt on dark surfaces | `#A78BFA` | Lighter violet for legibility on dark backgrounds |
+| Volt tint (light accent fill) | `#FDF4FF` | |
+| Volt hairline | `#DDD6FE` | |
+| Volt ink (accent text on light) | `#5B21B6` | |
+| Success | `#0B7A45` (text) / `#0F9D58` (graphics/icons) | |
+| Warning | `#B45309` | |
+| Danger/error | `#B91C1C` | |
+
+**The one rule that matters most:** violet (`#7C3AED`) is a *single accent*, not a background color. The dominant field is always warm paper/near-black — violet appears as CTAs, the chat bubble, icons, underlines, and emphasis, not as a wash across whole scenes. This is what makes it read as "Voltage Paper" rather than "generic purple SaaS."
+
+**Typography:**
+- Headings / display: **Geist**
+- Body text: **Inter**
+- Monospace (code, technical labels): **Geist Mono**
+- Editorial accent (pull-quotes, testimonials only): **Fraunces**, italic — used sparingly, never for UI or body copy
+
+**Tone for narration/voiceover:** confident, direct, plain-spoken — short declarative sentences, no hype-adjective stacking ("revolutionary," "game-changing"), no filler. The brand voice trusts the product to be impressive on its own; it doesn't oversell it. Mirrors the tagline's economy: "You only talk to buyers." — six words, no adjectives, a clear customer benefit.
+
+---
+
+## Video Visual Style — Papercraft / Origami Diorama
+
+*This spec is extracted directly from a NotebookLM-generated video the team liked (`The_Active_Web__Engineering_Conversion_with_OyeChats.mp4`). Use it as the concrete visual-generation brief for any future OyeChats video — it already overlaps naturally with the Voltage Paper palette above, so the two should be treated as one system, not two competing styles.*
+
+**Medium.** Everything in the scene is built as if physically cut, folded, and embossed from thick craft paper — website UI, phone mockups, speech bubbles, icons, even the human characters and the mascot. Nothing is flat 2D graphic design; it's a miniature tabletop diorama shot with a macro lens. Visible paper grain/fiber texture, soft rounded die-cut edges, and slightly raised/embossed or engraved lettering pressed directly into the paper (never a flat printed label).
+
+**Palette.** Dominant field is warm cream/ivory/beige paper tones — this *is* the "Paper" side of Voltage Paper (`#FAFAF7` family), extended into taupe and warm-gray paper-shadow tones for depth. Backgrounds are neutral desk/studio surfaces (soft gray tabletop, or warm wood-grain desk for close-up character shots). Color is used sparingly and only for small functional accents — a dusty rose folder icon, a muted denim-blue icon — never as a scene-dominant hue.
+
+**The glow accent.** Every "this is the important thing" moment is signaled by a warm light glowing *from inside* the paper object itself — a button lights up amber-gold from within, a speech bubble glows like a paper lantern, a phone screen backlights the hand holding it. **Recommendation: re-key this glow to Volt violet (`#7C3AED` / `#A78BFA` on darker paper) instead of the generic warm-gold used in the reference video.** The paper/diorama technique should stay identical; only the glow color changes — that single swap is what turns "a nice papercraft AI video" into "an unmistakably OyeChats video." Reserve the original gold only for one-off metaphors like an award or a coin, not as the recurring CTA/highlight color.
+
+**Characters & mascot.** Humans are rendered as soft, chibi-proportioned paper-sculpture figures — rounded folded-paper limbs with visible fold-seam lines, simple friendly painted faces, business-casual paper clothing (blazer, headset for a support-agent character). The AI itself is represented by a distinct low-poly origami robot — angular folded triangle panels in metallic gold/silver, geometric (not humanoid-cute), sitting deliberately apart in tone from the warm human characters to visually separate "the AI" from "the person." Keep that human-vs-robot material contrast (warm paper vs. cold metallic-fold) whenever both appear together, e.g. an AI hand-off scene.
+
+**UI-as-paper motifs.** Website/app chrome (browser bars, nav pills, buttons, cards, phone bezels) is rendered as stacked, layered paper cutouts with soft drop shadows between layers, giving real physical depth to what would normally be a flat screenshot. Recurring motifs: a folded-paper speech bubble with a glow inside it; a paper smartphone held in paper hands; nav pills and buttons as raised paper tabs with embossed labels; a dot-grid backdrop with thin dashed gold/accent connector lines linking related elements (e.g. "Buyer" persona icon dashed-lined to relevant content icons); a fanned stack of paper app-icon cards.
+
+**Lighting & camera.** Soft, warm studio softbox lighting from one dominant direction, gentle realistic shadows, shallow depth of field (background objects visibly soft/out of focus), macro tabletop-photography framing — camera sits close on one hero object per shot rather than wide establishing shots. Slight cinematic tilt is fine; keep it subtle, not dramatic.
+
+**Typography in-scene.** All in-scene lettering is engraved/debossed or subtly foil-stamped directly into the paper surface, typically set in caps or small-caps for UI labels (MENU, SERVICES, USER PROFILE) — a stationery/print-shop feel, not a digital UI font. This can coexist with the Geist/Inter type system used for the video's actual overlay titles and lower-thirds; keep in-scene "paper" lettering visually distinct from any real on-screen title cards.
+
+**Mood in one line:** a handcrafted, tactile, premium print-stationery diorama — genuinely warm and human — telling the story of a very modern AI product. The contrast between "analog paper craft" and "digital AI subject matter" is the whole visual joke/hook; don't let the paper texture slip into looking like generic 3D-render plastic, and don't let the AI/tech elements slip into looking cold or corporate.
+
+---
+
 ## Part 0 — What OyeChats Is, In One Breath
 
 OyeChats turns any business website into a 24/7 AI salesperson — one that actually knows your business, qualifies your visitors, and hands the hot ones to a real human before they walk away.
