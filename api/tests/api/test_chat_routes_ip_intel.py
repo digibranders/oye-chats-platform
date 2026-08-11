@@ -129,6 +129,10 @@ def _metering_allowed():
     tests exist to protect."""
     with (
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        # The third gate: the per-agent customer toggle. Patched because most
+        # of these tests seed a bot row directly and care about dedup/metering
+        # order, not about the toggle — the toggle has its own tests.
+        patch("app.api.chat_routes._agent_enrichment_opt_in", return_value=True),
         patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
     ):
         yield charge
@@ -495,3 +499,56 @@ def test_an_identified_company_is_withheld_when_the_charge_fails(db):
     assert stored["company_name"] is None, "an unpaid company identification was given away"
     assert stored["company_domain"] is None
     assert stored["asn_org"] == "Infosys", "the free network signal should survive"
+
+
+def test_the_customer_toggle_stops_the_company_lookup(db):
+    """The third gate, end-to-end and NOT patched.
+
+    The helper has its own unit tests, but those pass whether or not the gate
+    is actually wired into the resolution path — `_metering_allowed` patches
+    the helper open. This one drives the real column: a Professional agent with
+    `company_lookup_enabled = False` must make no vendor call and no charge.
+
+    Verified by mutation: removing `customer_wants_it` from the gate leaves
+    every other test in this file green.
+    """
+    from app.services import credit_service
+
+    session_id = _seed(db, client_id=50, bot_key="bot-optout", session_id="s-optout")
+    bot = db.query(Bot).filter(Bot.id == 50).first()
+    bot.company_lookup_enabled = False
+    db.commit()
+
+    with (
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch.object(credit_service, "is_feature_enabled", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme"}) as intel,
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", 50)
+
+    assert intel.call_count == 0, "the customer switched it off but the paid vendor call still fired"
+    assert charge.call_count == 0, "charged for an enrichment the customer disabled"
+
+
+def test_the_customer_toggle_left_on_permits_the_lookup(db):
+    """The contrast case, on the real default (ON) with nothing patched open."""
+    from app.services import credit_service
+
+    session_id = _seed(db, client_id=51, bot_key="bot-optin", session_id="s-optin")
+    assert db.query(Bot).filter(Bot.id == 51).first().company_lookup_enabled is True, "the column must default ON"
+
+    with (
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch.object(credit_service, "is_feature_enabled", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme"}) as intel,
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", 51)
+
+    assert intel.call_count == 1
+    assert charge.call_count == 1

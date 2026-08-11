@@ -1,8 +1,19 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { AlertCircle, CalendarClock, Check, Loader2 } from 'lucide-react';
 import { Button, Modal, Textarea } from '../../../design-system';
-import { cancelSubscription } from '../../../services/api';
+import { cancelSubscription, getCreditBalance } from '../../../services/api';
 import { formatDate } from '../billingModel';
+import { parseCreditBalance } from '../usage-model';
+
+/**
+ * What cancelling guarantees on its own: it never touches purchased credits.
+ * Used until the ledger says something more specific, and kept if it never
+ * does - whether top-ups expire is set by `pricing_config.topup_expiry_months`
+ * server-side and is not exposed to the client, so an unconditional "they never
+ * expire" here would be a promise this dialog cannot keep.
+ */
+const TOPUP_NOTE_UNEVIDENCED =
+  'Any top-up credits you’ve bought stay valid - cancelling doesn’t remove them.';
 
 export interface CancelSubscriptionModalProps {
   open: boolean;
@@ -38,6 +49,7 @@ export function CancelSubscriptionModal({
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [topupNote, setTopupNote] = useState(TOPUP_NOTE_UNEVIDENCED);
 
   // Reset transient state each time the dialog opens so a prior reason/error
   // can't flash on reopen.
@@ -47,6 +59,33 @@ export function CancelSubscriptionModal({
       setError('');
       setSubmitting(false);
     }
+  }, [open]);
+
+  // Read the real position of the customer's purchased credits from their own
+  // ledger: `soonest_expiry` is non-null exactly when a top-up grant they hold
+  // carries an `expires_at` for the daily sweep to act on. Same rule as
+  // `UsageHero` and the top-up dialog, so no two screens can disagree. A failed
+  // call leaves the unevidenced note standing - never a guess.
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setTopupNote(TOPUP_NOTE_UNEVIDENCED);
+    getCreditBalance()
+      .then((raw) => {
+        if (cancelled) return;
+        const balance = parseCreditBalance(raw);
+        if (balance.soonestExpiry) {
+          setTopupNote(
+            `Any top-up credits you’ve bought stay valid - the earliest expires ${formatDate(balance.soonestExpiry)}.`,
+          );
+        } else if (balance.topupRemaining > 0) {
+          setTopupNote('Any top-up credits you’ve bought stay valid - they never expire.');
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const endLabel = periodEnd ? formatDate(periodEnd) : 'the end of your billing period';
@@ -109,7 +148,7 @@ export function CancelSubscriptionModal({
           {[
             `Full access to ${planName} continues until ${endLabel}.`,
             'After that, your agents stop replying and go offline.',
-            'Any top-up credits you’ve bought stay valid - they never expire.',
+            topupNote,
             `Changed your mind? Reactivate anytime before ${endLabel} - it's instant, and there's nothing to pay.`,
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5">

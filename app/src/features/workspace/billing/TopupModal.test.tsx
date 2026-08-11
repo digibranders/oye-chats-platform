@@ -12,11 +12,16 @@ const getTopupPacks = vi.fn();
 const initiateTopup = vi.fn();
 const verifyTopupPayment = vi.fn();
 const recordBillingEvent = vi.fn();
+// The dialog also reads the credit ledger to decide what it may truthfully say
+// about top-up expiry (see creditExpiryCopy.test.tsx). Irrelevant to the money
+// path under test here, but the import must resolve.
+const getCreditBalance = vi.fn();
 vi.mock('../../../services/api', () => ({
   getTopupPacks: (...args: unknown[]) => getTopupPacks(...args),
   initiateTopup: (...args: unknown[]) => initiateTopup(...args),
   verifyTopupPayment: (...args: unknown[]) => verifyTopupPayment(...args),
   recordBillingEvent: (...args: unknown[]) => recordBillingEvent(...args),
+  getCreditBalance: (...args: unknown[]) => getCreditBalance(...args),
 }));
 
 const openRazorpayCheckout = vi.fn();
@@ -39,6 +44,7 @@ const PACK = { amount: 1599, credits: 2000, currency: 'INR' };
 
 function mockHappyPathUntilCheckout() {
   getTopupPacks.mockResolvedValue([PACK]);
+  getCreditBalance.mockResolvedValue({});
   initiateTopup.mockResolvedValue({
     key_id: 'rzp_test',
     order_id: 'order_test_1',

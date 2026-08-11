@@ -4,6 +4,12 @@ import { StatusBadge, cn } from '../../../design-system';
 import PremiumOrb from '../../../components/PremiumOrb';
 import { ColorField } from './ColorField';
 import { AvatarCropModal } from './AvatarCropModal';
+import {
+  AVATAR_ACCEPT_ATTRIBUTE,
+  AVATAR_UPLOAD_HINT,
+  resolveAvatarType,
+  validateAvatarFile,
+} from './avatarFile';
 
 export type AvatarType = 'upload' | 'orb' | 'mascot';
 
@@ -87,8 +93,33 @@ export function AvatarPicker({
   avatarIsLive = false,
 }: AvatarPickerProps) {
   // Holds the picked image (as a data URL) while the crop modal is open. On
-  // confirm we upload the CROPPED file instead of the raw upload.
-  const [cropState, setCropState] = useState<{ src: string; name: string } | null>(null);
+  // confirm we upload the CROPPED file instead of the raw upload. `sourceType`
+  // is null for the re-crop path, where we only have the stored image's URL.
+  const [cropState, setCropState] = useState<{
+    src: string;
+    name: string;
+    sourceType: string | null;
+  } | null>(null);
+  // Why the last pick was refused — the format/size rules the hint promises.
+  const [pickError, setPickError] = useState<string | null>(null);
+
+  const handlePick = (file: File): void => {
+    // Validate BEFORE reading: `accept` is only a filter hint (drag-and-drop
+    // ignores it), and readAsDataURL would materialise the whole file as
+    // base64 in memory before anyone had checked how big it is.
+    const rejection = validateAvatarFile(file);
+    if (rejection !== null) {
+      setPickError(rejection);
+      return;
+    }
+    setPickError(null);
+    const reader = new FileReader();
+    reader.onload = () =>
+      setCropState({ src: String(reader.result), name: file.name, sourceType: resolveAvatarType(file) });
+    reader.onerror = () => setPickError('That file could not be read. Please try another one.');
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="flex flex-col gap-6 sm:flex-row sm:items-stretch">
       {/* Left column — options */}
@@ -140,18 +171,15 @@ export function AvatarPicker({
                 {botLogo ? 'Replace' : 'Upload image'}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept={AVATAR_ACCEPT_ATTRIBUTE}
                   className="hidden"
                   disabled={uploading}
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     event.target.value = '';
-                    if (!file) return;
                     // Open the cropper first; the raw file is only uploaded once
                     // the visitor confirms a crop.
-                    const reader = new FileReader();
-                    reader.onload = () => setCropState({ src: String(reader.result), name: file.name });
-                    reader.readAsDataURL(file);
+                    if (file) handlePick(file);
                   }}
                 />
               </label>
@@ -166,7 +194,12 @@ export function AvatarPicker({
                 </button>
               )}
             </div>
-            <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">PNG, JPG or SVG up to 2MB</p>
+            <p className="mt-1.5 text-[11px] text-[var(--ds-text-subtle)]">{AVATAR_UPLOAD_HINT}</p>
+            {pickError && (
+              <p role="alert" className="mt-1.5 text-[12px] text-[var(--ds-danger)]">
+                {pickError}
+              </p>
+            )}
           </div>
         )}
 
@@ -217,7 +250,7 @@ export function AvatarPicker({
         {avatarType === 'upload' && botLogo ? (
           <button
             type="button"
-            onClick={() => setCropState({ src: botLogo, name: 'avatar' })}
+            onClick={() => setCropState({ src: botLogo, name: 'avatar', sourceType: null })}
             title="Click to re-crop"
             aria-label="Re-crop avatar"
             className="group relative rounded-full focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-ring)]"
@@ -248,6 +281,7 @@ export function AvatarPicker({
         <AvatarCropModal
           src={cropState.src}
           fileName={cropState.name}
+          sourceType={cropState.sourceType}
           onCancel={() => setCropState(null)}
           onConfirm={(file) => {
             setCropState(null);

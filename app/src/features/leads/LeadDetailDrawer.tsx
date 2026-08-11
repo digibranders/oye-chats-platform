@@ -34,6 +34,7 @@ import { VisitorIntelligenceSection } from './VisitorIntelligenceSection';
 import {
   SCORE_TONE_VAR,
   TIER_META,
+  companyDisplay,
   formatDateTime,
   formatLocation,
   humanizeDimension,
@@ -129,11 +130,26 @@ function ScoreRing({ score }: { score: number }): ReactElement {
   );
 }
 
-function ContactRow({ icon: Icon, value }: { icon: typeof Mail; value: string }): ReactElement {
+function ContactRow({
+  icon: Icon,
+  value,
+  secondary,
+}: {
+  icon: typeof Mail;
+  value: string;
+  /** Quieter line beneath the value — used to keep the raw email domain
+   *  visible under a resolved company name, rather than replacing it. */
+  secondary?: string;
+}): ReactElement {
   return (
-    <div className="flex items-center gap-2.5 text-[13px] text-[var(--ds-text)]">
-      <Icon size={15} className="shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
-      <span className="break-words">{value}</span>
+    <div className="flex items-start gap-2.5 text-[13px] text-[var(--ds-text)]">
+      <Icon size={15} className="mt-0.5 shrink-0 text-[var(--ds-text-subtle)]" aria-hidden="true" />
+      <span className="min-w-0">
+        <span className="block break-words">{value}</span>
+        {secondary && (
+          <span className="block break-all text-[12px] text-[var(--ds-text-subtle)]">{secondary}</span>
+        )}
+      </span>
     </div>
   );
 }
@@ -471,9 +487,14 @@ export function LeadDetailDrawer({
                 {detail.contact?.name && <ContactRow icon={User} value={detail.contact.name} />}
                 {detail.contact?.email && <ContactRow icon={Mail} value={detail.contact.email} />}
                 {detail.contact?.phone && <ContactRow icon={Phone} value={detail.contact.phone} />}
-                {detail.contact?.company && (
-                  <ContactRow icon={Building2} value={detail.contact.company} />
-                )}
+                {(() => {
+                  // Resolved name with the raw domain beneath it — never
+                  // instead of it. See `companyDisplay`.
+                  const company = companyDisplay(detail.contact);
+                  return company ? (
+                    <ContactRow icon={Building2} value={company.value} secondary={company.secondary} />
+                  ) : null;
+                })()}
                 {formatLocation(detail.location) !== 'Unknown' && (
                   <ContactRow icon={MapPin} value={formatLocation(detail.location)} />
                 )}

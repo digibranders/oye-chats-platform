@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatLocation } from './leadModel';
+import { companyDisplay, formatLocation } from './leadModel';
 
 /**
  * `ChatSession.location` is stored by the backend as
@@ -59,5 +59,39 @@ describe('formatLocation', () => {
       expect(out).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
       expect(out).not.toMatch(/[0-9a-f]{1,4}:[0-9a-f]{0,4}:/i);
     }
+  });
+});
+
+describe('companyDisplay', () => {
+  /* `company` is the raw email domain and always present; `company_name` is
+     the Professional-gated resolved identity and frequently absent —
+     resolution can fail, be switched off per agent, or still be in flight.
+     The resolved name must APPEND to the domain, never replace it: rendering
+     only `company_name` would blank the company row for every lead on a lower
+     plan, a regression against behaviour that predates the feature. */
+  it('shows the resolved name with the domain beneath it', () => {
+    expect(companyDisplay({ company: 'infosys.com', company_name: 'Infosys Limited' })).toEqual({
+      value: 'Infosys Limited',
+      secondary: 'infosys.com',
+    });
+  });
+
+  it('falls back to the bare domain when nothing was resolved', () => {
+    expect(companyDisplay({ company: 'infosys.com', company_name: null })).toEqual({
+      value: 'infosys.com',
+    });
+  });
+
+  it('returns nothing when there is no domain either', () => {
+    expect(companyDisplay({ company: null, company_name: null })).toBeNull();
+    expect(companyDisplay(null)).toBeNull();
+    expect(companyDisplay(undefined)).toBeNull();
+  });
+
+  it('treats whitespace as absent rather than rendering a blank row', () => {
+    expect(companyDisplay({ company: '   ', company_name: '  ' })).toBeNull();
+    expect(companyDisplay({ company: 'infosys.com', company_name: '   ' })).toEqual({
+      value: 'infosys.com',
+    });
   });
 });

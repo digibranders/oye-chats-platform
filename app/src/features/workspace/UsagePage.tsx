@@ -23,6 +23,8 @@ import {
   formatDate,
   formatTime,
   resolveScopedPool,
+  describeTopupExpiry,
+  type CreditBalance,
   type LedgerRow,
   type LedgerTone,
   type PoolCredit,
@@ -446,15 +448,29 @@ function isPurchasedTopup(row: LedgerRow): boolean {
  * the legacy TopupsTab's at-a-glance list. Rendered only when the ledger holds
  * genuine purchases; the full itemized ledger below carries everything else.
  */
-function RecentTopups({ rows }: { rows: LedgerRow[] }): ReactElement | null {
+function RecentTopups({
+  rows,
+  balance,
+}: {
+  rows: LedgerRow[];
+  balance: CreditBalance | null;
+}): ReactElement | null {
   const purchases = useMemo(() => rows.filter(isPurchasedTopup).slice(0, 5), [rows]);
   if (purchases.length === 0) return null;
+
+  // This said "Top-up credits never expire" unconditionally, on the same
+  // screen as a hero that shows the real expiry date when there is one — the
+  // exact self-contradiction. (It previously said "roll over for 12 months",
+  // and an earlier fix here swapped one unconditional claim for another.)
+  // `describeTopupExpiry` states only what this customer's own ledger proves,
+  // and says nothing when it proves nothing.
+  const expiryNote = balance ? describeTopupExpiry(balance) : null;
 
   return (
     <section aria-label="Recent top-ups" className="space-y-4">
       <SectionHeader
         title="Recent top-ups"
-        description="Your latest credit purchases. Top-up credits never expire."
+        description={`Your latest credit purchases.${expiryNote ? ` ${expiryNote}` : ''}`}
       />
       <ul className="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
         {purchases.map((row) => (
@@ -621,7 +637,7 @@ export function UsagePage(): ReactElement {
           <PlanLimitsSection pool={selectedBot ? selectedPool : null} />
 
           {/* Recent credit purchases - a quick receipt above the full ledger. */}
-          {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} />}
+          {phase.ledger.status === 'ready' && <RecentTopups rows={phase.ledger.rows} balance={balance} />}
 
           {/* Itemized ledger, grouped by day. */}
           <section aria-label="Consumption history" className="space-y-3">

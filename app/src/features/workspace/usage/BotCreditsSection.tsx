@@ -83,8 +83,16 @@ function PoolCard({ pool, onTopup }: { pool: PoolCredit; onTopup: (t: TopupTarge
       )}
 
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--ds-border)] pt-4">
+        {/* Same rule as AgentCreditHero: "Top-ups roll over" asserted lifetime
+            credits unconditionally. State only what this pool proves. */}
         <span className="text-[12px] text-[var(--ds-text-subtle)]">
-          {pool.resetsAt ? `Resets ${formatDate(pool.resetsAt)}` : 'Top-ups roll over'}
+          {pool.resetsAt
+            ? `Resets ${formatDate(pool.resetsAt)}`
+            : pool.soonestExpiry
+              ? `Top-ups expire ${formatDate(pool.soonestExpiry)}`
+              : pool.topupRemaining > 0
+                ? 'Top-ups never expire'
+                : ''}
         </span>
         <Button variant="outline" size="sm" onClick={() => onTopup(target)}>
           <Wallet size={14} aria-hidden="true" />

@@ -284,6 +284,13 @@ def build_lead_response(
         if include_visitor_intelligence:
             contact["is_valid_email"] = lead_info.is_valid_email
             contact["email_score"] = lead_info.email_score
+            # The resolved company identity, behind the same plan gate as the
+            # rest of visitor intelligence — it is produced by the same paid
+            # enrichment. `company` above stays the raw domain on every plan,
+            # because it is free and pre-dates this feature.
+            contact["company_name"] = lead_info.company_name
+            contact["company_description"] = lead_info.company_description
+            contact["company_logo_url"] = lead_info.company_logo_url
 
     tier = get_lead_tier(score, thresholds=config.get("thresholds"))
     lead_viewed_at = getattr(session, "lead_viewed_at", None)

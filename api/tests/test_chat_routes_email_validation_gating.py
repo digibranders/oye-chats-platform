@@ -43,7 +43,7 @@ class TestValidateEmailEndpointGating:
         from app.api import chat_routes
 
         monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
-        monkeypatch.setattr(chat_routes, "_agent_email_verification_opt_in", lambda *_a, **_k: True)
+        monkeypatch.setattr(chat_routes, "_agent_enrichment_opt_in", lambda *_a, **_k: True)
         with patch(
             "app.services.reoon_service.verify_email",
             return_value={"is_valid_syntax": True, "is_disposable": True},
@@ -61,7 +61,7 @@ class TestValidateEmailEndpointGating:
         from app.api import chat_routes
 
         monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
-        monkeypatch.setattr(chat_routes, "_agent_email_verification_opt_in", lambda *_a, **_k: False)
+        monkeypatch.setattr(chat_routes, "_agent_enrichment_opt_in", lambda *_a, **_k: False)
         with patch("app.services.reoon_service.verify_email") as mock_verify:
             response = TestClient(_build_app(_bot())).post(
                 "/chat/validate-email", json={"email": "junk@disposable-mail.test"}
@@ -99,7 +99,7 @@ class TestBackgroundEnrichmentGating:
         from app.db.models import LeadInfo
 
         monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
-        monkeypatch.setattr(chat_routes, "_agent_email_verification_opt_in", lambda *_a, **_k: True)
+        monkeypatch.setattr(chat_routes, "_agent_enrichment_opt_in", lambda *_a, **_k: True)
 
         lead = MagicMock(spec=LeadInfo)
         session = MagicMock()
@@ -139,7 +139,7 @@ class TestBackgroundEnrichmentGating:
         from app.db.models import LeadInfo
 
         monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
-        monkeypatch.setattr(chat_routes, "_agent_email_verification_opt_in", lambda *_a, **_k: False)
+        monkeypatch.setattr(chat_routes, "_agent_enrichment_opt_in", lambda *_a, **_k: False)
 
         lead = MagicMock(spec=LeadInfo)
         session = MagicMock()
@@ -164,7 +164,7 @@ class TestBackgroundEnrichmentGating:
         from app.db.models import LeadInfo
 
         monkeypatch.setattr(chat_routes, "is_email_validation_enabled_for_bot", lambda *_a, **_k: True)
-        monkeypatch.setattr(chat_routes, "_agent_email_verification_opt_in", lambda *_a, **_k: True)
+        monkeypatch.setattr(chat_routes, "_agent_enrichment_opt_in", lambda *_a, **_k: True)
 
         lead = MagicMock(spec=LeadInfo)
         session = MagicMock()

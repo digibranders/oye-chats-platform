@@ -298,14 +298,21 @@ export const UPGRADE_INTENTS: Record<UpgradeIntentKey, UpgradeIntentBuilder> = {
     ],
     recommendedPlan: 'Standard',
   }),
+  // Whether top-up credits expire is set per-deployment by
+  // `pricing_config.topup_expiry_months`, which no endpoint exposes to the
+  // client - and this registry is static copy with no access to a workspace's
+  // credit ledger either, so it has no evidence for an expiry claim of any
+  // kind. It therefore makes none. The surfaces that CAN read the ledger
+  // (TopupModal, CancelSubscriptionModal, UsageHero) state the real position
+  // there. See TopupModal's `describeTopupExpiry`.
   topup_credits: () => ({
     eyebrow: 'Top-up credits are a paid feature',
     title: 'Upgrade to buy top-up credits',
     description:
-      'Free workspaces run on their monthly credit allowance. Upgrade to a paid plan to buy top-up credit packs on demand - a one-time purchase that never expires and rolls over indefinitely.',
+      'Free workspaces run on their monthly credit allowance. Upgrade to a paid plan to buy top-up credit packs on demand - a one-time purchase that tops up your balance the moment it clears.',
     highlights: [
       'Buy credit packs on demand - never pause your AI Chatbot mid-month',
-      'Top-up credits are one-time and never expire',
+      'A one-time purchase, on top of your plan - no second subscription',
       'Larger packs include bonus credits',
     ],
     recommendedPlan: 'Starter',

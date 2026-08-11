@@ -342,13 +342,24 @@ class Bot(Base):
     lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
-    # Metered lead-enrichment opt-in. When True (and the plan is Standard /
-    # Professional and the super-admin ``feature.email_verification_enabled``
-    # switch is on), captured lead emails are verified via Reoon at
-    # ``credit_cost.email_verification`` credits each. Defaults OFF so an agent
-    # never spends credits on verification until the customer explicitly enables
-    # it in AI Agent → Advanced.
-    email_verification_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    # ── Metered lead-enrichment opt-outs (AI Agent → Advanced) ──────────────
+    #
+    # Both default ON. The customer is paying for a plan that includes these,
+    # so the useful control is an OFF switch for someone who does not want the
+    # credits spent — not an OFF default that leaves a paid feature invisible
+    # until they find a settings page. Each is one of THREE independent gates,
+    # all of which must pass before a credit is spent:
+    #   1. the plan  (Standard/Professional — enforced server-side)
+    #   2. the super-admin kill switch (``feature.<name>_enabled``)
+    #   3. this per-agent customer toggle
+    #
+    # Verification runs via Reoon at ``credit_cost.email_verification`` per
+    # captured lead.
+    email_verification_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
+    # The IP→company lookup, at ``credit_cost.company_name`` — charged only
+    # when a company is actually identified (see chat_routes), so leaving this
+    # on costs nothing for the many visitors who resolve to a consumer ISP.
+    company_lookup_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
 
     # Email notification settings
     notification_email = Column(String, nullable=True)  # Legacy single recipient (kept for backward compat)
@@ -598,7 +609,22 @@ class LeadInfo(Base):
     name = Column(String, nullable=True)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    # The registrable domain of the captured email, e.g. "infosys.com". Kept as
+    # the raw domain, NOT overwritten with a resolved name: it is free, always
+    # available, and the only thing this column has ever meant. Consumers
+    # (CSV export, webhooks, the leads list) already read it.
     company = Column(String, nullable=True)
+
+    # ── Resolved company identity (company_profile_service) ─────────────────
+    #
+    # Populated from the cross-tenant `company_profile` cache, which turns a
+    # domain into the company's own declared identity — "infosys.com" becomes
+    # "Infosys Limited". Separate columns rather than overwriting `company`
+    # so a failed or pending resolution always degrades to the domain rather
+    # than to nothing, and so an operator can see both.
+    company_name = Column(String, nullable=True)
+    company_description = Column(Text, nullable=True)
+    company_logo_url = Column(String, nullable=True)
 
     metadata_json = Column(JSONB, nullable=True)
     suppression_reason = Column(String, nullable=True)

@@ -368,23 +368,38 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
         return False, False
 
 
-def _agent_email_verification_opt_in(bot_id: int | None) -> bool:
-    """True when the agent's owner has enabled email verification (Advanced tab).
+# The per-agent customer toggles, by the enrichment action they gate. Both
+# columns default ON: the customer already pays for a plan that includes these,
+# so the useful control is an OFF switch, not an OFF default that hides a paid
+# feature behind a settings page they have to discover.
+_AGENT_TOGGLE_COLUMN = {
+    "email_verification": "email_verification_enabled",
+    "company_name": "company_lookup_enabled",
+}
 
-    Per-agent customer opt-in that sits on top of the plan gate and the
-    super-admin feature switch. Defaults OFF (``Bot.email_verification_enabled``
-    server_default false), so a new agent never verifies until the customer
-    turns it on. Denies on any error — same deny-by-default posture as the plan
-    gates.
+
+def _agent_enrichment_opt_in(bot_id: int | None, action: str) -> bool:
+    """True when the agent's owner has left this enrichment switched on.
+
+    The THIRD of three independent gates, all of which must pass before a
+    credit is spent: the plan (Standard/Professional), the super-admin kill
+    switch (``feature.<action>_enabled``), and this customer toggle. It is a
+    real server-side gate, not a UI convenience — hiding a switch in the admin
+    app would not stop the charge.
+
+    Denies on any error, and denies an unknown action, matching the
+    deny-by-default posture of the plan gates: failing open here spends the
+    customer's money.
     """
-    if bot_id is None:
+    column = _AGENT_TOGGLE_COLUMN.get(action)
+    if bot_id is None or column is None:
         return False
     try:
         with get_session() as session:
             bot = session.query(Bot).filter(Bot.id == bot_id).first()
-            return bool(bot and bot.email_verification_enabled)
+            return bool(bot and getattr(bot, column, False))
     except Exception:
-        logger.warning("email_verification opt-in lookup failed for bot=%s", bot_id, exc_info=True)
+        logger.warning("%s opt-in lookup failed for bot=%s", action, bot_id, exc_info=True)
         return False
 
 
@@ -496,7 +511,11 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                 vi_enabled = bot_id is not None and is_visitor_intelligence_enabled_for_bot(bot_id, session)
                 feature_on = credit_service.is_feature_enabled(session, "company_name")
 
-            if vi_enabled and feature_on:
+            # Evaluated lazily inside the `and` chain, not before it: this
+            # opens its own session and SELECTs the bot, and every non-
+            # Professional conversation would otherwise pay for a result the
+            # short-circuit immediately discards.
+            if vi_enabled and feature_on and _agent_enrichment_opt_in(bot_id, "company_name"):
                 ip_intel = fetch_ip_intel(ip_address)
 
                 # CHARGE ONLY IF WE ACTUALLY IDENTIFIED AN EMPLOYER.
@@ -689,7 +708,7 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
     email_fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
     if (
         plan_allows_verification
-        and _agent_email_verification_opt_in(bot_id)
+        and _agent_enrichment_opt_in(bot_id, "email_verification")
         and _charge_for_enrichment(
             bot_id,
             "email_verification",
@@ -724,6 +743,77 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
         except Exception as e:
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
+
+    # Resolve the domain to the company's own declared identity, LAST.
+    #
+    # Deliberately after the commit above, on this same thread rather than a
+    # second `submit_background`: the pool has three workers shared
+    # platform-wide, and this can take tens of seconds (a crawl, then possibly
+    # an LLM call). Running it before the write would hold the email verdict —
+    # the more actionable signal — behind a slower, optional one; running it on
+    # its own worker would consume a second of three slots per lead.
+    _resolve_lead_company(session_id, domain, bot_id)
+
+
+def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | None) -> None:
+    """Turn the lead's email domain into a company name, description and logo.
+
+    "infosys.com" becomes "Infosys Limited". The work happens in
+    ``company_profile_service``, which crawls the domain root, prefers the
+    site's OWN declared identity (schema.org, then og:site_name) and only
+    spends an LLM call when the site declares nothing. Results are cached in a
+    cross-tenant table keyed by registrable domain, so the second lead from any
+    company — on any customer's bot — is free.
+
+    Gated exactly like the IP→company lookup, because to a customer they are
+    one feature ("who is this visitor's company?") with two signal sources:
+    the plan, the super-admin kill switch, and the per-agent toggle.
+
+    It shares the IP path's IDEMPOTENCY KEY on purpose. A session where the IP
+    already identified an employer has been charged; finding the same answer
+    again from the email domain must not bill twice. Whichever signal gets
+    there first pays, once per session.
+
+    ``lead.company`` keeps the raw domain either way — a failed resolution
+    degrades to "infosys.com", never to nothing.
+    """
+    if not domain or bot_id is None:
+        return
+
+    from app.db.models import LeadInfo
+    from app.services import credit_service
+    from app.services.company_profile_service import resolve_company
+
+    try:
+        with get_session() as session:
+            allowed = is_visitor_intelligence_enabled_for_bot(bot_id, session)
+            feature_on = credit_service.is_feature_enabled(session, "company_name")
+        if not (allowed and feature_on and _agent_enrichment_opt_in(bot_id, "company_name")):
+            return
+
+        company = resolve_company(domain)
+        if company is None:
+            return  # parked domain, unreachable site, or nothing declared
+
+        # Charge only for an answer, same rule as the IP path: we absorb the
+        # crawl when we cannot identify anyone.
+        if not _charge_for_enrichment(bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"):
+            logger.info("company resolved for %s but not charged — withholding", session_id)
+            return
+
+        with get_session() as session:
+            lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+            if lead is None:
+                return
+            lead.company_name = company.name
+            lead.company_description = company.description
+            lead.company_logo_url = company.logo_url
+            session.commit()
+        logger.info("lead company resolved | session=%s | %s -> %s", session_id, domain, company.name)
+    except Exception:
+        # Enrichment must never surface to a visitor, and the lead is already
+        # captured and committed by this point.
+        logger.warning("lead company resolution failed for session=%s", session_id, exc_info=True)
 
 
 _DEFAULT_OFFLINE_MESSAGE = "We're currently away. Please leave a message and we'll get back to you soon."
@@ -1112,7 +1202,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         if (
             not is_email_validation_enabled_for_bot(bot.id, session)
             or not credit_service.is_feature_enabled(session, "email_verification")
-            or not _agent_email_verification_opt_in(bot.id)
+            or not _agent_enrichment_opt_in(bot.id, "email_verification")
         ):
             return {"valid": True}
 

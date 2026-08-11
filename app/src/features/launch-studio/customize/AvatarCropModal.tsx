@@ -7,6 +7,7 @@ import ReactCrop, {
 import 'react-image-crop/dist/ReactCrop.css';
 import { Circle, Lasso, Square, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button, Modal, cn } from '../../../design-system';
+import { UNUSABLE_IMAGE_MESSAGE, boundedSize, encodeAvatarCanvas } from './avatarFile';
 
 type Shape = 'square' | 'circle' | 'free';
 
@@ -31,13 +32,14 @@ export interface AvatarCropModalProps {
   src: string;
   /** Original file name (used for the cropped output). */
   fileName: string;
+  /**
+   * MIME type of the picked file, or `null` when it isn't known — the re-crop
+   * entry point reopens an already-stored avatar by URL, not by File. Drives
+   * the output encoding: only a known JPEG source is safe to flatten.
+   */
+  sourceType: string | null;
   onCancel: () => void;
   onConfirm: (file: File) => void;
-}
-
-function outName(fileName: string): string {
-  const base = fileName.replace(/\.[^.]+$/, '') || 'avatar';
-  return `${base}-cropped.png`;
 }
 
 /** A centred starting crop for square/circle. */
@@ -45,33 +47,65 @@ function defaultCrop(w: number, h: number): PercentCrop {
   return centerCrop(makeAspectCrop({ unit: '%', width: 80 }, 1, w, h), w, h);
 }
 
-/** Rect/circle crop to a PNG File. The percentage crop + the displayed width
- *  both scale with zoom, so the zoom factor cancels out here. */
-function toRectFile(img: HTMLImageElement, crop: PercentCrop, circular: boolean, fileName: string): Promise<File> {
-  const scaleX = img.naturalWidth / img.width;
-  const scaleY = img.naturalHeight / img.height;
-  const sx = (crop.x / 100) * img.width * scaleX;
-  const sy = (crop.y / 100) * img.height * scaleY;
-  const sw = Math.max(1, Math.round((crop.width / 100) * img.width * scaleX));
-  const sh = Math.max(1, Math.round((crop.height / 100) * img.height * scaleY));
+/**
+ * An image that decoded to nothing (an SVG with no intrinsic size reports
+ * naturalWidth === 0, as does a source that silently failed to load) used to
+ * sail through the `Math.max(1, …)` clamps and upload a 1x1 avatar.
+ */
+function assertDecodable(img: HTMLImageElement): void {
+  if (img.naturalWidth < 1 || img.naturalHeight < 1) throw new Error(UNUSABLE_IMAGE_MESSAGE);
+}
+
+function newCanvas(width: number, height: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return Promise.reject(new Error('Canvas not available'));
+  if (!ctx) throw new Error('Canvas not available');
+  return [canvas, ctx];
+}
+
+/**
+ * Rect/circle crop. The percentage crop is relative to the displayed image and
+ * the displayed size scales with zoom, so the zoom factor cancels and we can
+ * work straight in natural pixels.
+ *
+ * The destination canvas is bounded by `boundedSize`, never by the source's
+ * natural size: a 6000x8000 phone photo would otherwise allocate a 48 MP
+ * canvas, past iOS Safari's ~16.7 MP ceiling, where `toBlob` hands back a fully
+ * transparent blob without throwing.
+ */
+function toRectFile(
+  img: HTMLImageElement,
+  crop: PercentCrop,
+  circular: boolean,
+  fileName: string,
+  sourceType: string | null,
+): Promise<File> {
+  const sx = (crop.x / 100) * img.naturalWidth;
+  const sy = (crop.y / 100) * img.naturalHeight;
+  const sw = Math.max(1, Math.round((crop.width / 100) * img.naturalWidth));
+  const sh = Math.max(1, Math.round((crop.height / 100) * img.naturalHeight));
+  const out = boundedSize(sw, sh);
+  const [canvas, ctx] = newCanvas(out.width, out.height);
   if (circular) {
     ctx.beginPath();
-    ctx.arc(sw / 2, sh / 2, Math.min(sw, sh) / 2, 0, Math.PI * 2);
+    ctx.arc(out.width / 2, out.height / 2, Math.min(out.width, out.height) / 2, 0, Math.PI * 2);
     ctx.closePath();
     ctx.clip();
   }
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-  return canvasToFile(canvas, fileName);
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, out.width, out.height);
+  return encodeAvatarCanvas(canvas, {
+    sourceType,
+    preserveAlpha: circular || sourceType !== 'image/jpeg',
+    fileName,
+  });
 }
 
 /** Freehand-lasso crop: clip to the drawn polygon (points are fractions of the
- *  image, so zoom-independent), keep its bounding box, transparent outside. */
-function toLassoFile(img: HTMLImageElement, pts: Pt[], fileName: string): Promise<File> {
+ *  image, so zoom-independent), keep its bounding box, transparent outside.
+ *  Always PNG — the mask is the whole point and JPEG has no alpha channel. */
+function toLassoFile(img: HTMLImageElement, pts: Pt[], fileName: string, sourceType: string | null): Promise<File> {
   const NW = img.naturalWidth;
   const NH = img.naturalHeight;
   const nat = pts.map((p) => ({ x: p.x * NW, y: p.y * NH }));
@@ -83,37 +117,21 @@ function toLassoFile(img: HTMLImageElement, pts: Pt[], fileName: string): Promis
   const maxY = Math.min(NH, Math.ceil(Math.max(...ys)));
   const w = Math.max(1, maxX - minX);
   const h = Math.max(1, maxY - minY);
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return Promise.reject(new Error('Canvas not available'));
+  const out = boundedSize(w, h);
+  const kx = out.width / w;
+  const ky = out.height / h;
+  const [canvas, ctx] = newCanvas(out.width, out.height);
   ctx.beginPath();
   nat.forEach((p, i) => {
-    const x = p.x - minX;
-    const y = p.y - minY;
+    const x = (p.x - minX) * kx;
+    const y = (p.y - minY) * ky;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.closePath();
   ctx.clip();
-  ctx.drawImage(img, minX, minY, w, h, 0, 0, w, h);
-  return canvasToFile(canvas, fileName);
-}
-
-function canvasToFile(canvas: HTMLCanvasElement, fileName: string): Promise<File> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error('Could not crop the image. Please try another file.'));
-          return;
-        }
-        resolve(new File([blob], outName(fileName), { type: 'image/png' }));
-      },
-      'image/png',
-    );
-  });
+  ctx.drawImage(img, minX, minY, w, h, 0, 0, out.width, out.height);
+  return encodeAvatarCanvas(canvas, { sourceType, preserveAlpha: true, fileName });
 }
 
 /**
@@ -122,7 +140,13 @@ function canvasToFile(canvas: HTMLCanvasElement, fileName: string): Promise<File
  *   • Custom: a freehand lasso - drag to trace ANY shape; outside becomes transparent.
  *   • Zoom slider: enlarges the image inside a scrollable viewport for precise framing.
  */
-export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCropModalProps): ReactElement {
+export function AvatarCropModal({
+  src,
+  fileName,
+  sourceType,
+  onCancel,
+  onConfirm,
+}: AvatarCropModalProps): ReactElement {
   const imgRef = useRef<HTMLImageElement>(null);
   const [shape, setShape] = useState<Shape>('square');
   const [crop, setCrop] = useState<PercentCrop>();
@@ -153,11 +177,12 @@ export function AvatarCropModal({ src, fileName, onCancel, onConfirm }: AvatarCr
     setBusy(true);
     setError(null);
     try {
+      assertDecodable(img);
       const file =
         shape === 'free'
-          ? await toLassoFile(img, pts, fileName)
+          ? await toLassoFile(img, pts, fileName, sourceType)
           : crop
-            ? await toRectFile(img, crop, shape === 'circle', fileName)
+            ? await toRectFile(img, crop, shape === 'circle', fileName, sourceType)
             : null;
       if (file) onConfirm(file);
     } catch (err) {

@@ -203,11 +203,17 @@ export interface AdvancedDraft {
   featureFlags: Record<string, boolean>;
   widgetConfig: Record<string, number>;
   /**
-   * Per-agent opt-in for metered Reoon email verification. Bound to the
-   * `email_verification_enabled` Bot field; defaults OFF. Only effective on
+   * Per-agent opt-OUT for metered Reoon email verification. Bound to the
+   * `email_verification_enabled` Bot field; defaults ON. Only effective on
    * Standard / Professional plans (enforced server-side).
    */
   emailVerificationEnabled: boolean;
+  /**
+   * Per-agent opt-OUT for the metered IP→company lookup. Bound to the
+   * `company_lookup_enabled` Bot field; defaults ON. Professional-only, and
+   * charged only when a company is actually identified.
+   */
+  companyLookupEnabled: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -246,11 +252,34 @@ export function parseSettings(raw: Record<string, unknown>): AdvancedDraft {
     bantConfig: isRecord(raw.bant_config) ? raw.bant_config : null,
     featureFlags: mergeFlags(raw.feature_flags),
     widgetConfig: mergeConfig(raw.widget_config),
-    emailVerificationEnabled: raw.email_verification_enabled === true,
+    // `!== false`, not `=== true`: the columns default ON, so an absent field
+    // (an older API build, a partial payload) must read as ON. `=== true`
+    // would silently show every agent's paid enrichment as switched off.
+    emailVerificationEnabled: raw.email_verification_enabled !== false,
+    companyLookupEnabled: raw.company_lookup_enabled !== false,
   };
 }
 
 /** Pull `thresholds` ({ mql, sal, sql }) out of a bant_config for display. */
+/**
+ * The settings PATCH body for a draft.
+ *
+ * Extracted from `AdvancedPage`'s save handler so it can be asserted directly.
+ * It was an inline object literal, and a review deleted
+ * `company_lookup_enabled` from it with every test still passing — the
+ * dangerous direction, because the Advanced tab would then PATCH a paid
+ * enrichment to `false` the next time the customer saved anything at all.
+ */
+export function toSettingsPayload(draft: AdvancedDraft): Record<string, unknown> {
+  return {
+    relevance_threshold: draft.relevanceThreshold,
+    feature_flags: draft.featureFlags,
+    widget_config: draft.widgetConfig,
+    email_verification_enabled: draft.emailVerificationEnabled,
+    company_lookup_enabled: draft.companyLookupEnabled,
+  };
+}
+
 export function readThresholds(config: Record<string, unknown> | null): {
   mql: number;
   sal: number;

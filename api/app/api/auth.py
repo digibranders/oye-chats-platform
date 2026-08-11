@@ -896,6 +896,27 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "orb_color": bot.orb_color,
         "lead_form_enabled": bot.lead_form_enabled,
         "lead_form_fields": bot.lead_form_fields,
+        # The two metered-enrichment toggles. Omitting them here does NOT fall
+        # back to the column default: `_bot_from_cache_dict` builds a bare
+        # `Bot()`, and SQLAlchemy's `default=True` is an INSERT-time default,
+        # so an unserialized attribute is None and `bool(None)` is False. Every
+        # cache hit on GET /bot/settings would report both switches OFF, for a
+        # customer whose database row says ON, with no TTL at which it corrects
+        # itself.
+        "email_verification_enabled": bot.email_verification_enabled,
+        "company_lookup_enabled": bot.company_lookup_enabled,
+        # Three more the public settings endpoint publishes and this dict
+        # forgot, found by the round-trip test rather than by inspection:
+        #  * calcom_url — the widget's meeting-booking link simply vanishes on
+        #    every cache hit.
+        #  * widget_installed_at — read as None forever, so the install-stamp
+        #    branch in get_bot_settings_public fires on EVERY external-origin
+        #    widget load, issuing a pointless UPDATE + commit on the hottest
+        #    endpoint in the product. Its comment claims the cache
+        #    invalidation makes later loads skip it; that was never true,
+        #    because the field was never cached.
+        "calcom_url": bot.calcom_url,
+        "widget_installed_at": bot.widget_installed_at.isoformat() if bot.widget_installed_at else None,
         "notification_email": bot.notification_email,
         "notification_emails": bot.notification_emails,
         "reply_to_email": bot.reply_to_email,
@@ -931,13 +952,19 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
     }
 
 
+_CACHED_DATETIME_FIELDS = frozenset({"created_at", "widget_installed_at"})
+
+
 def _bot_from_cache_dict(data: dict) -> Bot:
     """Reconstruct a detached Bot object from a cached dict."""
     from datetime import datetime
 
     bot = Bot()
     for key, value in data.items():
-        if key == "created_at" and isinstance(value, str):
+        # Datetimes are stored ISO-encoded (cache_set JSON-dumps with
+        # default=str, so an un-encoded datetime would come back as a string
+        # anyway — being explicit on both sides keeps the round trip typed).
+        if key in _CACHED_DATETIME_FIELDS and isinstance(value, str):
             value = datetime.fromisoformat(value)
         setattr(bot, key, value)
     return bot

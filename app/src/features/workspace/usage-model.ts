@@ -169,6 +169,17 @@ export interface PoolCredit {
   readonly planUsedPct: number;
   /** When the plan bucket refills, ISO 8601. */
   readonly resetsAt: string | null;
+  /**
+   * Earliest `expires_at` across THIS pool's top-up grants, null when none
+   * expire.
+   *
+   * `CreditPool` has always carried this and `poolCredit()` silently dropped
+   * it, so per-pool surfaces had no way to tell the truth about expiry and
+   * fell back to the slogan "Roll over" — printed unconditionally, directly
+   * above a section stating a real expiry date. Whether top-ups expire is a
+   * TERM OF SALE; any surface that mentions it needs the evidence.
+   */
+  readonly soonestExpiry: string | null;
   /** Credits consumed this period from this pool. */
   readonly periodCreditsUsed: number;
   /** This period's metered activity for this pool, per action bucket. */
@@ -203,6 +214,7 @@ function poolCredit(
     planUsedPct:
       pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
     resetsAt: pool.resetsAt,
+    soonestExpiry: pool.soonestExpiry,
     periodCreditsUsed: poolCreditsUsed(pool.usage),
     activity: pool.usage,
     planLimits: identity.planLimits ?? null,
@@ -407,6 +419,7 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     totalRemaining: balance.totalRemaining,
     planUsedPct: balance.planUsedPct,
     resetsAt: balance.resetsAt,
+    soonestExpiry: balance.soonestExpiry,
     periodCreditsUsed: balance.periodCreditsUsed,
     activity: {
       aiChat: balance.aiChat,
@@ -419,6 +432,35 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     planLimits: null,
     limitUsage: null,
   };
+}
+
+/**
+ * The one honest statement this app can make about top-up expiry.
+ *
+ * "Top-up credits never expire" is a TERM OF SALE, true only when
+ * `pricing_config.topup_expiry_months = 0` — a server-side value no endpoint
+ * exposes. The only evidence the client holds is the customer's own ledger:
+ * `soonestExpiry` is non-null exactly when a top-up they hold carries an
+ * `expires_at` that the daily sweep will act on.
+ *
+ *   - a dated grant  → state the date; "forever" is false for this customer
+ *   - grants, undated → "never expire" is demonstrably true for them
+ *   - no grants       → no evidence, so NO CLAIM
+ *
+ * That last case is deliberate and costs a sentence on the sales page. An
+ * unbacked guarantee at the point of sale is the defect this replaces: the
+ * app promised lifetime credits while the database said 12 months, and a
+ * customer could see a concrete expiry date in the hero and "never expire"
+ * 400px below it on the same screen.
+ *
+ * Lives here rather than in one modal so every surface states the same thing.
+ */
+export function describeTopupExpiry(balance: CreditBalance): string | null {
+  if (balance.soonestExpiry) {
+    return `Your top-up credits do expire - the earliest on ${formatDate(balance.soonestExpiry)}.`;
+  }
+  if (balance.topupRemaining > 0) return 'Top-up credits never expire.';
+  return null;
 }
 
 /**
