@@ -64,12 +64,57 @@ def _safe_chat_file_content_type(content_type: str | None) -> str:
     return _DEFAULT_CHAT_FILE_CONTENT_TYPE
 
 
+class UnsupportedImage(ValueError):
+    """The uploaded bytes are not an image we will process.
+
+    Distinct from a generic failure so the route can answer 400 (your file is
+    wrong) rather than 500 (we are broken).
+    """
+
+
+# Pillow's own guard is a WARNING at ~89M pixels, not an error, so by default a
+# decompression bomb is decoded and only grumbled about. 40M pixels is ~7x more
+# than any real logo needs (the output is 512x512) and caps a decoded frame at
+# roughly 160 MB rather than gigabytes.
+MAX_DECODED_PIXELS = 40_000_000
+
+# Verified against what Pillow can actually decode AND what the pipeline can
+# use. SVG is absent because Pillow cannot open it at all — every SVG upload
+# 500'd for as long as the feature existed, while the UI advertised it.
+ALLOWED_IMAGE_FORMATS = frozenset({"PNG", "JPEG", "WEBP", "GIF", "BMP"})
+
+
 def process_image_for_logo(file_data, target_size=(512, 512)):
     """
     Process image: Square center crop and resize to target_size.
     Returns bytes of the processed PNG.
+
+    THIS is the security boundary for logo uploads, not the route's
+    content-type check — that header is client-supplied and forgeable. What
+    arrives here is arbitrary attacker-chosen bytes from an authenticated
+    customer, so the format is established by DECODING, and the decode itself
+    is bounded against a compression bomb.
     """
-    img = Image.open(io.BytesIO(file_data))
+    Image.MAX_IMAGE_PIXELS = MAX_DECODED_PIXELS
+    try:
+        img = Image.open(io.BytesIO(file_data))
+        # `open` is lazy — it reads the header and returns. Verifying the
+        # format here would be checking a claim the file makes about itself
+        # before anything has actually been decoded, so the real decode below
+        # is what proves it.
+        detected = (img.format or "").upper()
+        if detected not in ALLOWED_IMAGE_FORMATS:
+            raise UnsupportedImage(f"Unsupported image format: {detected or 'unrecognised'}")
+        img.load()
+    except Image.DecompressionBombError as exc:
+        raise UnsupportedImage("Image dimensions are too large to process.") from exc
+    except UnsupportedImage:
+        raise
+    except Exception as exc:
+        # UnidentifiedImageError, truncated files, and anything else Pillow
+        # throws on hostile input. The caller must not see a 500 for a file
+        # the customer chose.
+        raise UnsupportedImage("That file could not be read as an image.") from exc
 
     # Convert to RGBA if not already (to preserve transparency)
     if img.mode != "RGBA":
