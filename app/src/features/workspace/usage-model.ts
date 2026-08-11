@@ -169,6 +169,17 @@ export interface PoolCredit {
   readonly planUsedPct: number;
   /** When the plan bucket refills, ISO 8601. */
   readonly resetsAt: string | null;
+  /**
+   * Earliest `expires_at` across THIS pool's top-up grants, null when none
+   * expire.
+   *
+   * `CreditPool` has always carried this and `poolCredit()` silently dropped
+   * it, so per-pool surfaces had no way to tell the truth about expiry and
+   * fell back to the slogan "Roll over" — printed unconditionally, directly
+   * above a section stating a real expiry date. Whether top-ups expire is a
+   * TERM OF SALE; any surface that mentions it needs the evidence.
+   */
+  readonly soonestExpiry: string | null;
   /** Credits consumed this period from this pool. */
   readonly periodCreditsUsed: number;
   /** This period's metered activity for this pool, per action bucket. */
@@ -203,6 +214,7 @@ function poolCredit(
     planUsedPct:
       pool.monthlyGrant > 0 ? Math.min(Math.round((planUsed / pool.monthlyGrant) * 100), 100) : 0,
     resetsAt: pool.resetsAt,
+    soonestExpiry: pool.soonestExpiry,
     periodCreditsUsed: poolCreditsUsed(pool.usage),
     activity: pool.usage,
     planLimits: identity.planLimits ?? null,
@@ -407,6 +419,7 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
     totalRemaining: balance.totalRemaining,
     planUsedPct: balance.planUsedPct,
     resetsAt: balance.resetsAt,
+    soonestExpiry: balance.soonestExpiry,
     periodCreditsUsed: balance.periodCreditsUsed,
     activity: {
       aiChat: balance.aiChat,
@@ -421,13 +434,6 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
   };
 }
 
-/**
- * The single credit pool to headline for a given scope, shared by the Usage and
- * Billing surfaces so they can never disagree. A selected agent (`botId` set)
- * resolves to its own isolated pool, falling back to the shared account pool and
- * then a synthetic aggregate when the agent still draws from the workspace
- * balance. `null` (All agents) resolves to the whole-workspace aggregate.
- */
 /**
  * The one honest statement this app can make about top-up expiry.
  *
@@ -457,7 +463,13 @@ export function describeTopupExpiry(balance: CreditBalance): string | null {
   return null;
 }
 
-
+/**
+ * The single credit pool to headline for a given scope, shared by the Usage and
+ * Billing surfaces so they can never disagree. A selected agent (`botId` set)
+ * resolves to its own isolated pool, falling back to the shared account pool and
+ * then a synthetic aggregate when the agent still draws from the workspace
+ * balance. `null` (All agents) resolves to the whole-workspace aggregate.
+ */
 export function resolveScopedPool(balance: CreditBalance, botId: number | null): PoolCredit {
   if (botId != null) {
     return (
