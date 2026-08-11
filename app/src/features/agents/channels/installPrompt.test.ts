@@ -97,4 +97,18 @@ describe('attribution', () => {
       expect(text).not.toContain('visibility:hidden');
     }
   });
+
+  it('tells the agent the anchor must survive with JavaScript disabled', () => {
+    const text = prompt();
+    expect(text).toMatch(/curl/i);
+    expect(text).toMatch(/server/i);
+  });
+
+  it('does not instruct the agent to remove an existing anchor when attribution is off', () => {
+    const text = prompt({ attribution: false });
+    const guideline = text.slice(text.indexOf('Attribution Link'));
+    expect(guideline).not.toMatch(/\bremove\b/i);
+    expect(guideline).not.toMatch(/\bdelete\b/i);
+    expect(guideline).toMatch(/do not add/i);
+  });
 });

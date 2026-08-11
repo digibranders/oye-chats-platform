@@ -42,7 +42,7 @@ function renderStep(step: { title: string; description: string; code: string | n
 }
 
 /** Steps to use when the user hasn't picked a platform yet. */
-function genericSteps(botKey: string, scriptUrl: string, attribution: boolean): string {
+function genericSteps(botKey: string, scriptUrl: string, { attribution }: { attribution: boolean }): string {
   return [
     'This prompt was generated without a platform selected, so **detect the stack yourself** by inspecting the repository, then install the snippet the way that stack expects:',
     '',
@@ -90,7 +90,7 @@ export function buildInstallPrompt({
 
   const steps = platform
     ? platform.getSteps(botKey, env, { attribution }).map(renderStep).join('\n\n')
-    : genericSteps(botKey, scriptUrl, attribution);
+    : genericSteps(botKey, scriptUrl, { attribution });
 
   return `# Task: Install OyeChats AI Chat Widget on ${target}
 
@@ -115,8 +115,8 @@ ${steps}
 3. **No Local Bundling:** Do not vendor or npm install the bundle; load directly from \`${scriptUrl}\`.
 4. **Attribution Link:** ${
     attribution
-      ? 'Keep the attribution anchor visible in the rendered page. Do not hide it with CSS, do not move it into a JavaScript-injected element, and do not remove the `rel="nofollow"`. It must be present in the server-rendered HTML.'
-      : 'No attribution link is required for this account.'
+      ? 'The anchor text and `rel="nofollow"` must appear in the HTML the server sends, visible to a normal reader - verify with `curl` on the page (before any JavaScript runs) and confirm the text is there. Non-exhaustive examples of what breaks this: CSS that hides an element or its content, the `hidden`/`aria-hidden` attributes or a visually-hidden ("sr-only") class, `next/dynamic(..., { ssr: false })`, lazy-loading, or any client-only component.'
+      : 'Do not add an attribution link for this account, and leave any existing one on the site untouched - this only controls what gets added, not what is already there.'
   }
 5. **Verification:**
    - Public info probe: \`GET ${api}/bots/settings/public\` (H: X-Bot-Key: ${botKey})
