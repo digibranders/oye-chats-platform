@@ -47,9 +47,11 @@ def test_resolve_and_update_location_writes_visitor_metadata(db):
 
     with (
         patch("app.api.chat_routes.fetch_ip_intel", return_value=fake_intel),
-        # Company lookup is now Professional-gated + metered — stub the plan gate
-        # and the credit reservation so the lookup path runs.
+        # Company lookup is now Professional-gated + metered — stub the plan gate,
+        # the per-agent toggle (defaults OFF), and the credit reservation so the
+        # lookup path runs. This test cares about the write, not the gates.
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._agent_enrichment_opt_in", return_value=True),
         patch("app.api.chat_routes._charge_for_enrichment", return_value=True),
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo for this test")),
         patch("app.api.chat_routes.get_session", return_value=MockSessionManager(db)),
@@ -98,6 +100,7 @@ def test_resolve_and_update_location_preserves_existing_visitor_metadata(db):
     with (
         patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme Corp", "is_vpn": False}),
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._agent_enrichment_opt_in", return_value=True),
         patch("app.api.chat_routes._charge_for_enrichment", return_value=True),
         patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo for this test")),
         patch("app.api.chat_routes.get_session", return_value=MockSessionManager(db)),
@@ -484,6 +487,7 @@ def test_an_identified_company_is_withheld_when_the_charge_fails(db):
 
     with (
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._agent_enrichment_opt_in", return_value=True),
         patch("app.api.chat_routes._charge_for_enrichment", return_value=False),
         patch(
             "app.api.chat_routes.fetch_ip_intel",
@@ -534,11 +538,16 @@ def test_the_customer_toggle_stops_the_company_lookup(db):
 
 
 def test_the_customer_toggle_left_on_permits_the_lookup(db):
-    """The contrast case, on the real default (ON) with nothing patched open."""
+    """The contrast case: the customer has switched the toggle ON, with the gate
+    NOT patched open, so the real ``company_lookup_enabled`` column drives the
+    lookup. Enrichment now defaults OFF (migration ``b3d9f1a7c2e5``), so the
+    opt-in is set explicitly here rather than relied on as a default."""
     from app.services import credit_service
 
     session_id = _seed(db, client_id=51, bot_key="bot-optin", session_id="s-optin")
-    assert db.query(Bot).filter(Bot.id == 51).first().company_lookup_enabled is True, "the column must default ON"
+    bot = db.query(Bot).filter(Bot.id == 51).first()
+    bot.company_lookup_enabled = True
+    db.commit()
 
     with (
         patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),

@@ -36,7 +36,7 @@ import {
   hostOf,
   normalizeUrl,
 } from './knowledge-utils';
-import { CrawlPageTree } from './CrawlPageTree';
+import { CrawlPageTree, canonicalCrawlUrls } from './CrawlPageTree';
 
 type AddMode = 'website' | 'files';
 
@@ -156,7 +156,10 @@ export function AddKnowledgePanel({
       const result = await discoverCrawlUrls(normalizeUrl(trimmed), agentId);
       setEstimate(result);
       // Pre-tick every discovered page; the user unchecks the ones to skip.
-      setSelectedUrls(result.urls ?? []);
+      // Canonicalise first so the seeded selection (and the submitted crawl
+      // list) matches the deduplicated tree exactly — no trailing-slash-style
+      // duplicates get carried into the request.
+      setSelectedUrls(canonicalCrawlUrls(result.urls ?? []));
     } catch (err) {
       // Discovery is best-effort - the user can still crawl. Surface a gentle
       // note and fall back to a zero-count estimate that means "follow links".

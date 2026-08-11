@@ -343,9 +343,19 @@ function circleExit(index: number, count: number, centerY: number): { x: number;
 // and forks into the branches that diverged from it, matching how a
 // real Sankey reads. This section builds and lays out that tree.
 
-/** Cap the visible leaf count so the diagram doesn't explode. Matches
- *  the previous MAX_SEQUENCE_ROWS: 6 distinct end-to-end journeys max. */
-const TRIE_MAX_LEAVES = 6;
+/** Hard ceiling on visible leaves — also the fetch cap and the "All" option's
+ *  value. The diagram never renders more end-to-end journeys than this. */
+const TRIE_MAX_LEAVES = 25;
+/** Default number of page flows shown before the reader asks for more. Keeping
+ *  it small stops the pre-chat side from overlapping on dense accounts. */
+const DEFAULT_MAX_FLOWS = 5;
+/** Options for the "Page flows shown" control in the filter popover. `All`
+ *  maps to the hard ceiling so it shows every fetched flow. */
+const FLOW_COUNT_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
+  { label: 'Top 5', value: 5 },
+  { label: 'Top 10', value: 10 },
+  { label: 'All', value: TRIE_MAX_LEAVES },
+];
 /** Cap the depth we merge shared prefixes to. Trie always renders at
  *  most this many columns; deeper hops are truncated (backend already
  *  caps sequences at 8 pages, so this is a safety net not an active
@@ -700,6 +710,9 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
   // no paths to it, and inventing them client-side produced confident wrong
   // numbers (see the note above `UserJourneyFlow`).
   const [outcomeFilter, setOutcomeFilter] = useState<FilterableOutcome | null>(null);
+  // How many page flows to render. Defaults to the top few so the pre-chat
+  // side stays legible; the reader can widen it to All from the filter popover.
+  const [maxFlows, setMaxFlows] = useState<number>(DEFAULT_MAX_FLOWS);
   // Reset filters + selection when the agent changes. Uses the
   // "derived state during render" pattern (a prev-value shadow state)
   // instead of a `useEffect(setState, [botId])` — the latter runs an
@@ -711,6 +724,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     setStartFilter(null);
     setOutcomeFilter(null);
     setSelectedRowId(null);
+    setMaxFlows(DEFAULT_MAX_FLOWS);
   }
   // Rerender the "Updated Xs ago" label once a second so it stays honest
   // between polls. Cheap — the whole component is already re-rendering
@@ -840,7 +854,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       const clipped = seq.sequence.slice(-MAX_CHAIN_LEN);
       insertPath(preRoot, clipped, seq.sessions, seqIndex);
     });
-    pruneToMaxLeaves(preRoot, TRIE_MAX_LEAVES);
+    pruneToMaxLeaves(preRoot, maxFlows);
 
     // Direct visitors — opened chat with no tracked page before it. Only
     // meaningful in the unfiltered "all paths" view; when a start/outcome
@@ -885,7 +899,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
         typeof seq.post_sessions === 'number' ? seq.post_sessions : seq.sessions;
       insertPath(postRoot, postClipped, postValue, seqIndex);
     });
-    pruneToMaxLeaves(postRoot, TRIE_MAX_LEAVES);
+    pruneToMaxLeaves(postRoot, maxFlows);
 
     // Effective viewBox height grows with the number of leaf slots in
     // the widest side (pre or post). computeEffectiveVBH keeps the
@@ -1014,7 +1028,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
        *  from "data exists, your filter matched none of it". */
       hasTrackedJourneys: data.preChatSequences.sequences.length > 0,
     };
-  }, [data, effectiveStartFilter, outcomeFilter]);
+  }, [data, effectiveStartFilter, outcomeFilter, maxFlows]);
 
   // ── State branching ────────────────────────────────────────────────────
   if (botId == null) {
@@ -1507,7 +1521,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
             <IconButton
               aria-label="Filter by starting page"
               onClick={() => setFilterOpen((v) => !v)}
-              active={startFilter != null || filterOpen}
+              active={startFilter != null || maxFlows !== DEFAULT_MAX_FLOWS || filterOpen}
             >
               <Filter size={16} />
             </IconButton>
@@ -1515,6 +1529,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               <StartingPageFilter
                 pages={startingPages}
                 selected={startFilter}
+                maxFlows={maxFlows}
+                onMaxFlowsChange={setMaxFlows}
                 onSelect={(path) => {
                   setStartFilter(path);
                   setSelectedRowId(null);
@@ -1665,11 +1681,15 @@ function FlowCard({
 function StartingPageFilter({
   pages,
   selected,
+  maxFlows,
+  onMaxFlowsChange,
   onSelect,
   onClose,
 }: {
   pages: ReadonlyArray<{ path: string; sessions: number }>;
   selected: string | null;
+  maxFlows: number;
+  onMaxFlowsChange: (value: number) => void;
   onSelect: (path: string | null) => void;
   onClose: () => void;
 }): ReactElement {
@@ -1689,6 +1709,31 @@ function StartingPageFilter({
       ref={ref}
       className="absolute right-0 top-full z-20 mt-2 w-72 overflow-hidden rounded-xl border border-[var(--ds-border-strong)] bg-[var(--ds-bg-surface)] shadow-[var(--ds-shadow-lg)]"
     >
+      <div className="border-b border-[var(--ds-border)] px-3 py-2.5">
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
+          Page flows shown
+        </p>
+        <div className="flex gap-0.5 rounded-lg bg-[var(--ds-bg-sunken)] p-0.5">
+          {FLOW_COUNT_OPTIONS.map((opt) => {
+            const isActive = maxFlows === opt.value;
+            return (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => onMaxFlowsChange(opt.value)}
+                aria-pressed={isActive}
+                className={`flex-1 rounded-md px-2 py-1 text-[12px] font-medium transition-colors ${
+                  isActive
+                    ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
+                    : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]'
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div className="border-b border-[var(--ds-border)] px-3 py-2">
         <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ds-text-subtle)]">
           Filter by starting page
