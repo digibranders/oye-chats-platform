@@ -363,9 +363,19 @@ class TestItGoesToTheDurableQueue:
         assert enqueue.call_count == 0
         assert pool.call_count == 0
 
-    def test_the_worker_task_is_registered(self):
+    def test_the_worker_task_is_registered(self, monkeypatch):
         """An enqueue naming a function the worker cannot execute fails at
-        runtime, in the worker, where nobody is watching."""
+        runtime, in the worker, where nobody is watching.
+
+        `REDIS_URL` is set here rather than assumed: `WorkerSettings` parses it
+        in its CLASS BODY, so merely importing the module raises without one.
+        A developer machine has it in `.env` and CI does not, which made this
+        test pass everywhere it was written and fail the moment it ran on the
+        runner. Parsing is all that happens — no connection is opened — so a
+        placeholder DSN is enough, and setting it through monkeypatch keeps it
+        out of every other test's environment.
+        """
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         from app.worker.settings import WorkerSettings
 
         assert "task_resolve_lead_company" in {f.__name__ for f in WorkerSettings.functions}
