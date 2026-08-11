@@ -261,6 +261,25 @@ export function parseSettings(raw: Record<string, unknown>): AdvancedDraft {
 }
 
 /** Pull `thresholds` ({ mql, sal, sql }) out of a bant_config for display. */
+/**
+ * The settings PATCH body for a draft.
+ *
+ * Extracted from `AdvancedPage`'s save handler so it can be asserted directly.
+ * It was an inline object literal, and a review deleted
+ * `company_lookup_enabled` from it with every test still passing — the
+ * dangerous direction, because the Advanced tab would then PATCH a paid
+ * enrichment to `false` the next time the customer saved anything at all.
+ */
+export function toSettingsPayload(draft: AdvancedDraft): Record<string, unknown> {
+  return {
+    relevance_threshold: draft.relevanceThreshold,
+    feature_flags: draft.featureFlags,
+    widget_config: draft.widgetConfig,
+    email_verification_enabled: draft.emailVerificationEnabled,
+    company_lookup_enabled: draft.companyLookupEnabled,
+  };
+}
+
 export function readThresholds(config: Record<string, unknown> | null): {
   mql: number;
   sal: number;

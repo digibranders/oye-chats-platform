@@ -1862,6 +1862,16 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                         "session_share_domain",
                         "notification_email",
                         "reply_to_email",
+                        # The two metered-enrichment toggles. A customer turns
+                        # these off specifically so credits stop being spent;
+                        # a support session opened to "fix" something that
+                        # looks wrong must not be able to switch spending back
+                        # on, leaving only a field name in a log line as the
+                        # trace. The set was originally scoped to security
+                        # controls and lead-email redirection — "don't spend
+                        # my money" belongs in the same category.
+                        "email_verification_enabled",
+                        "company_lookup_enabled",
                     }
                     & update_data.keys()
                 )

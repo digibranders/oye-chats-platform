@@ -104,3 +104,59 @@ class _Ctx:
 
     def __exit__(self, *args):
         return False
+
+
+class TestTheCallSitesPassTheRightAction:
+    """The `action` argument is the only thing steering which column is read,
+    and the email paths' tests monkeypatch the helper with
+    `lambda *_a, **_k: ...`, which swallows the argument entirely.
+
+    A review proved the gap: swapping "email_verification" for "company_name"
+    at the lead-capture call site left the whole suite green. The deny-on-
+    unknown-action guard is no help — both strings are valid keys, so a typo
+    lands on the WRONG LIVE GATE instead of failing closed. A customer who
+    turns Company lookup off to save credits would silently stop getting email
+    verification, which they are paying for and did not disable.
+    """
+
+    @staticmethod
+    def _actions_passed_in(func) -> set[str]:
+        import inspect
+        import re
+
+        return set(re.findall(r'_agent_enrichment_opt_in\([^,]+,\s*"([a-z_]+)"', inspect.getsource(func)))
+
+    def test_lead_capture_enrichment_gates_on_email_verification(self):
+        from app.api import chat_routes
+
+        assert self._actions_passed_in(chat_routes._enrich_lead_in_background) == {"email_verification"}
+
+    def test_the_widget_blur_check_gates_on_email_verification(self):
+        from app.api import chat_routes
+
+        assert self._actions_passed_in(chat_routes.validate_email_endpoint) == {"email_verification"}
+
+    def test_the_ip_resolver_gates_on_company_name(self):
+        from app.api import chat_routes
+
+        assert self._actions_passed_in(chat_routes._resolve_and_update_location) == {"company_name"}
+
+    def test_every_action_used_at_a_call_site_is_a_known_column(self):
+        """Catches the other direction — a call site inventing an action name
+        that silently denies forever, since unknown actions deny."""
+        import inspect
+        import re
+
+        from app.api import chat_routes
+
+        used = set(
+            re.findall(
+                r'_agent_enrichment_opt_in\([^,]+,\s*"([a-z_]+)"',
+                inspect.getsource(chat_routes),
+            )
+        )
+        assert used, "no call sites found — did the helper get renamed again?"
+        assert used <= set(chat_routes._AGENT_TOGGLE_COLUMN), (
+            f"call sites use unknown actions {sorted(used - set(chat_routes._AGENT_TOGGLE_COLUMN))}, "
+            "which deny silently and forever"
+        )

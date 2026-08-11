@@ -51,7 +51,6 @@ _CONFIG: dict[str, object] = {
     "kill_switch": False,
     # Master on/off switches for the two metered enrichment features. When
     # False the feature is skipped platform-wide (no lookup, no charge).
-    # Company lookup stays off until launch ("Coming soon" in the UI).
     "feature.email_verification_enabled": True,
     "feature.company_name_enabled": True,
     # One-time top-up packs, lifetime credits (headline INR + USD; provider ids

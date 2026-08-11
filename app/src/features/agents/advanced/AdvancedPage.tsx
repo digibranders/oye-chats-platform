@@ -20,6 +20,7 @@ import {
 import {
   parseSettings,
   presetForFramework,
+  toSettingsPayload,
   type AdvancedDraft,
 } from './advanced.config';
 import { ScopeStrictnessSection } from './ScopeStrictnessSection';
@@ -226,16 +227,7 @@ export function AdvancedPage(): ReactElement {
       // OR the bant_config changed, keeping the stored `framework` field in sync
       // with the selected framework.
       const tasks: Array<Promise<unknown>> = [
-        updateClientSettings(
-          {
-            relevance_threshold: draft.relevanceThreshold,
-            feature_flags: draft.featureFlags,
-            widget_config: draft.widgetConfig,
-            email_verification_enabled: draft.emailVerificationEnabled,
-            company_lookup_enabled: draft.companyLookupEnabled,
-          },
-          agentId,
-        ),
+        updateClientSettings(toSettingsPayload(draft), agentId),
       ];
       if (frameworkChanged || bantConfigChanged) {
         const qualificationPayload: Record<string, unknown> = {

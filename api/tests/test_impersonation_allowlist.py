@@ -544,3 +544,36 @@ class TestAllowlistIsPinned:
             assert getattr(route, "methods", set()) - {"HEAD", "OPTIONS"} != {"GET"}, (
                 f"{route.path} is a read-only route and must not carry the marker"
             )
+
+
+class TestImpersonationCannotReEnableMeteredSpend:
+    """A support session must not be able to switch a customer's paid
+    enrichments back on.
+
+    `PATCH /bots/{id}` is `@impersonation_writable`, and the blocked-field set
+    was scoped to security controls plus lead-email redirection. The two
+    metered toggles belong in the same category for a different reason: a
+    customer turns them off specifically so credits stop being spent, and a
+    super-admin opening a session to fix something that "looks wrong" could
+    turn spending back on with nothing but a field name in a log line as the
+    trace.
+    """
+
+    def test_both_enrichment_toggles_are_in_the_blocked_set(self):
+        """Reads the set out of the handler source rather than driving a full
+        impersonated request, so it stays a cheap guard against someone adding
+        a third metered toggle and forgetting this list."""
+        import inspect
+        import re
+
+        from app.api import bot_routes
+
+        source = inspect.getsource(bot_routes.update_bot)
+        start = source.index("blocked = sorted(")
+        block = source[start : source.index("& update_data.keys()", start)]
+        blocked = set(re.findall(r'"([a-z_][a-z0-9_]*)"', block))
+
+        assert "email_verification_enabled" in blocked
+        assert "company_lookup_enabled" in blocked, (
+            "an impersonated support session can switch metered spending back on"
+        )

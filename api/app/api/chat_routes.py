@@ -510,9 +510,12 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
             with get_session() as session:
                 vi_enabled = bot_id is not None and is_visitor_intelligence_enabled_for_bot(bot_id, session)
                 feature_on = credit_service.is_feature_enabled(session, "company_name")
-            customer_wants_it = _agent_enrichment_opt_in(bot_id, "company_name")
 
-            if vi_enabled and feature_on and customer_wants_it:
+            # Evaluated lazily inside the `and` chain, not before it: this
+            # opens its own session and SELECTs the bot, and every non-
+            # Professional conversation would otherwise pay for a result the
+            # short-circuit immediately discards.
+            if vi_enabled and feature_on and _agent_enrichment_opt_in(bot_id, "company_name"):
                 ip_intel = fetch_ip_intel(ip_address)
 
                 # CHARGE ONLY IF WE ACTUALLY IDENTIFIED AN EMPLOYER.
