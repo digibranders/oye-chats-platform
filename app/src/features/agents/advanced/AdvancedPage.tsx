@@ -28,8 +28,12 @@ import { WidgetBehaviorSection } from './WidgetBehaviorSection';
 import { TimingReliabilitySection } from './TimingReliabilitySection';
 import { LeadEnrichmentSection } from './LeadEnrichmentSection';
 
-/** Plans whose entitlements include metered Reoon email verification. */
+/** Plans whose entitlements include metered Reoon email verification.
+ *  Mirrors `EMAIL_VERIFICATION_SLUGS` in `plan_entitlements_service.py`; the
+ *  server enforces the same boundary, so this is guidance, not the gate. */
 const EMAIL_VERIFICATION_PLANS = new Set(['standard', 'professional']);
+/** Visitor Intelligence (IP→company) is Professional-only. */
+const COMPANY_LOOKUP_PLANS = new Set(['professional']);
 
 /**
  * Order-independent serialization. `bantConfig` is an opaque server object whose
@@ -69,6 +73,7 @@ export function AdvancedPage(): ReactElement {
   // here never flashes the locked card before its real plan resolves.
   const { isFree, loading: entitlementsLoading, planSlug } = useEntitlements();
   const emailVerificationPlanAllows = EMAIL_VERIFICATION_PLANS.has(planSlug);
+  const companyLookupPlanAllows = COMPANY_LOOKUP_PLANS.has(planSlug);
 
   const [draft, setDraft] = useState<AdvancedDraft | null>(null);
   const [initial, setInitial] = useState<AdvancedDraft | null>(null);
@@ -171,6 +176,11 @@ export function AdvancedPage(): ReactElement {
     setDraft((prev) => (prev ? { ...prev, emailVerificationEnabled: next } : prev));
   }, []);
 
+  const setCompanyLookup = useCallback((next: boolean) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, companyLookupEnabled: next } : prev));
+  }, []);
+
   const dirty = useMemo(
     () => draft !== null && initial !== null && !draftsEqual(draft, initial),
     [draft, initial],
@@ -222,6 +232,7 @@ export function AdvancedPage(): ReactElement {
             feature_flags: draft.featureFlags,
             widget_config: draft.widgetConfig,
             email_verification_enabled: draft.emailVerificationEnabled,
+            company_lookup_enabled: draft.companyLookupEnabled,
           },
           agentId,
         ),
@@ -333,9 +344,12 @@ export function AdvancedPage(): ReactElement {
             <div className="border-t border-[var(--ds-border)]" />
 
             <LeadEnrichmentSection
-              enabled={draft.emailVerificationEnabled}
-              onToggle={setEmailVerification}
-              planAllows={emailVerificationPlanAllows}
+              emailVerificationEnabled={draft.emailVerificationEnabled}
+              onToggleEmailVerification={setEmailVerification}
+              emailVerificationPlanAllows={emailVerificationPlanAllows}
+              companyLookupEnabled={draft.companyLookupEnabled}
+              onToggleCompanyLookup={setCompanyLookup}
+              companyLookupPlanAllows={companyLookupPlanAllows}
             />
 
             <div className="border-t border-[var(--ds-border)]" />

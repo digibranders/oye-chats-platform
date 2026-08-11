@@ -203,11 +203,17 @@ export interface AdvancedDraft {
   featureFlags: Record<string, boolean>;
   widgetConfig: Record<string, number>;
   /**
-   * Per-agent opt-in for metered Reoon email verification. Bound to the
-   * `email_verification_enabled` Bot field; defaults OFF. Only effective on
+   * Per-agent opt-OUT for metered Reoon email verification. Bound to the
+   * `email_verification_enabled` Bot field; defaults ON. Only effective on
    * Standard / Professional plans (enforced server-side).
    */
   emailVerificationEnabled: boolean;
+  /**
+   * Per-agent opt-OUT for the metered IP→company lookup. Bound to the
+   * `company_lookup_enabled` Bot field; defaults ON. Professional-only, and
+   * charged only when a company is actually identified.
+   */
+  companyLookupEnabled: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -246,7 +252,11 @@ export function parseSettings(raw: Record<string, unknown>): AdvancedDraft {
     bantConfig: isRecord(raw.bant_config) ? raw.bant_config : null,
     featureFlags: mergeFlags(raw.feature_flags),
     widgetConfig: mergeConfig(raw.widget_config),
-    emailVerificationEnabled: raw.email_verification_enabled === true,
+    // `!== false`, not `=== true`: the columns default ON, so an absent field
+    // (an older API build, a partial payload) must read as ON. `=== true`
+    // would silently show every agent's paid enrichment as switched off.
+    emailVerificationEnabled: raw.email_verification_enabled !== false,
+    companyLookupEnabled: raw.company_lookup_enabled !== false,
   };
 }
 

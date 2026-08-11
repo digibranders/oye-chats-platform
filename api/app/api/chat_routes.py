@@ -368,23 +368,38 @@ def _already_resolved(session_id: str, ip_address: str) -> tuple[bool, bool]:
         return False, False
 
 
-def _agent_email_verification_opt_in(bot_id: int | None) -> bool:
-    """True when the agent's owner has enabled email verification (Advanced tab).
+# The per-agent customer toggles, by the enrichment action they gate. Both
+# columns default ON: the customer already pays for a plan that includes these,
+# so the useful control is an OFF switch, not an OFF default that hides a paid
+# feature behind a settings page they have to discover.
+_AGENT_TOGGLE_COLUMN = {
+    "email_verification": "email_verification_enabled",
+    "company_name": "company_lookup_enabled",
+}
 
-    Per-agent customer opt-in that sits on top of the plan gate and the
-    super-admin feature switch. Defaults OFF (``Bot.email_verification_enabled``
-    server_default false), so a new agent never verifies until the customer
-    turns it on. Denies on any error — same deny-by-default posture as the plan
-    gates.
+
+def _agent_enrichment_opt_in(bot_id: int | None, action: str) -> bool:
+    """True when the agent's owner has left this enrichment switched on.
+
+    The THIRD of three independent gates, all of which must pass before a
+    credit is spent: the plan (Standard/Professional), the super-admin kill
+    switch (``feature.<action>_enabled``), and this customer toggle. It is a
+    real server-side gate, not a UI convenience — hiding a switch in the admin
+    app would not stop the charge.
+
+    Denies on any error, and denies an unknown action, matching the
+    deny-by-default posture of the plan gates: failing open here spends the
+    customer's money.
     """
-    if bot_id is None:
+    column = _AGENT_TOGGLE_COLUMN.get(action)
+    if bot_id is None or column is None:
         return False
     try:
         with get_session() as session:
             bot = session.query(Bot).filter(Bot.id == bot_id).first()
-            return bool(bot and bot.email_verification_enabled)
+            return bool(bot and getattr(bot, column, False))
     except Exception:
-        logger.warning("email_verification opt-in lookup failed for bot=%s", bot_id, exc_info=True)
+        logger.warning("%s opt-in lookup failed for bot=%s", action, bot_id, exc_info=True)
         return False
 
 
@@ -495,8 +510,9 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
             with get_session() as session:
                 vi_enabled = bot_id is not None and is_visitor_intelligence_enabled_for_bot(bot_id, session)
                 feature_on = credit_service.is_feature_enabled(session, "company_name")
+            customer_wants_it = _agent_enrichment_opt_in(bot_id, "company_name")
 
-            if vi_enabled and feature_on:
+            if vi_enabled and feature_on and customer_wants_it:
                 ip_intel = fetch_ip_intel(ip_address)
 
                 # CHARGE ONLY IF WE ACTUALLY IDENTIFIED AN EMPLOYER.
@@ -689,7 +705,7 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
     email_fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
     if (
         plan_allows_verification
-        and _agent_email_verification_opt_in(bot_id)
+        and _agent_enrichment_opt_in(bot_id, "email_verification")
         and _charge_for_enrichment(
             bot_id,
             "email_verification",
@@ -1112,7 +1128,7 @@ def validate_email_endpoint(body: ValidateEmailRequest, request: Request, bot: B
         if (
             not is_email_validation_enabled_for_bot(bot.id, session)
             or not credit_service.is_feature_enabled(session, "email_verification")
-            or not _agent_email_verification_opt_in(bot.id)
+            or not _agent_enrichment_opt_in(bot.id, "email_verification")
         ):
             return {"valid": True}
 

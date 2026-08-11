@@ -243,9 +243,11 @@ class UpdateBotRequest(BaseModel):
     email_on_handoff: bool | None = None
     email_on_offline: bool | None = None
     email_visitor_confirmation: bool | None = None
-    # Metered lead-enrichment opt-in (Reoon email verification). Plan- and
-    # super-admin-gated on top of this; see Bot.email_verification_enabled.
+    # Metered lead-enrichment opt-OUTs, both default ON. Each is the third of
+    # three independent gates (plan, super-admin kill switch, this customer
+    # toggle); see Bot.email_verification_enabled / Bot.company_lookup_enabled.
     email_verification_enabled: bool | None = None
+    company_lookup_enabled: bool | None = None
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = None
@@ -356,7 +358,8 @@ class BotResponse(BaseModel):
     orb_color: str | None
     lead_form_enabled: bool = False
     lead_form_fields: list[dict] | None = None
-    email_verification_enabled: bool = False
+    email_verification_enabled: bool = True
+    company_lookup_enabled: bool = True
     notification_email: str | None = None
     notification_emails: dict | None = None
     reply_to_email: str | None = None
@@ -448,6 +451,7 @@ def _bot_to_response(bot: Bot, request: Request) -> BotResponse:
         lead_form_enabled=bot.lead_form_enabled,
         lead_form_fields=bot.lead_form_fields,
         email_verification_enabled=bool(bot.email_verification_enabled),
+        company_lookup_enabled=bool(bot.company_lookup_enabled),
         notification_email=bot.notification_email,
         notification_emails=bot.notification_emails,
         reply_to_email=bot.reply_to_email,
@@ -636,6 +640,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "orb_color": bot.orb_color,
         "lead_form_enabled": bot.lead_form_enabled,
         "email_verification_enabled": bool(bot.email_verification_enabled),
+        "company_lookup_enabled": bool(bot.company_lookup_enabled),
         "lead_form_fields": bot.lead_form_fields,
         "live_chat_enabled": effective_live_chat_enabled,
         "business_hours": bot.business_hours,
@@ -1316,6 +1321,7 @@ def list_bots(
                     orb_color=b.orb_color,
                     lead_form_enabled=b.lead_form_enabled,
                     email_verification_enabled=bool(b.email_verification_enabled),
+                    company_lookup_enabled=bool(b.company_lookup_enabled),
                     lead_form_fields=b.lead_form_fields,
                     notification_email=b.notification_email,
                     notification_emails=b.notification_emails,
