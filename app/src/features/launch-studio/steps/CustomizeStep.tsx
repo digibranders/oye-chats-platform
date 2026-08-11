@@ -41,6 +41,15 @@ export function CustomizeStep(props: StepProps) {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Did the user touch the avatar image on THIS visit? `preview.botLogo` is a
+  // snapshot taken on mount, and the crawl can set the agent's avatar from the
+  // site's favicon after that — asynchronously, once training finishes. Sending
+  // the snapshot back unconditionally writes that avatar away again, and since
+  // Train runs before Customize in the Launch Studio order, the window is the
+  // ordinary path rather than an edge case. Untouched means "not mine to
+  // write": the field is omitted and the PATCH (`exclude_unset=True`) leaves
+  // whatever is stored alone.
+  const [avatarImageTouched, setAvatarImageTouched] = useState(false);
 
   useEffect(() => {
     if (!selectedBot) return;
@@ -82,6 +91,7 @@ export function CustomizeStep(props: StepProps) {
     try {
       const { url } = await uploadLogo(file);
       setPreview({ botLogo: url });
+      setAvatarImageTouched(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
     } finally {
@@ -104,9 +114,11 @@ export function CustomizeStep(props: StepProps) {
           background_color: '#ffffff',
           avatar_type: preview.avatarType,
           orb_color: preview.orbColor || null,
-          bot_logo: preview.botLogo,
-          launcher_logo: preview.botLogo,
           launcher_name: launcherName,
+          // Omitted entirely unless the user changed the image here — see
+          // `avatarImageTouched`. Both move together everywhere in this
+          // codebase, so they are included or omitted together.
+          ...(avatarImageTouched ? { bot_logo: preview.botLogo, launcher_logo: preview.botLogo } : {}),
         },
         selectedBot.id,
       );
@@ -161,7 +173,10 @@ export function CustomizeStep(props: StepProps) {
               onChangeType={(t) => setPreview({ avatarType: t })}
               onChangeOrbColor={(c) => setPreview({ orbColor: c })}
               onUpload={handleUpload}
-              onRemoveLogo={() => setPreview({ botLogo: null })}
+              onRemoveLogo={() => {
+                setPreview({ botLogo: null });
+                setAvatarImageTouched(true);
+              }}
             />
           </div>
           {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}

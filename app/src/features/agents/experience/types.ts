@@ -178,8 +178,20 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
  * Serialise the draft into the PATCH body for `updateClientSettings(_, botId)`.
  * Empty quick-action rows (kept while editing) are dropped, and `launcher_logo`
  * mirrors `bot_logo` exactly as the legacy Customize flow does.
+ *
+ * `baseline` is the draft as loaded from the server. When it is supplied and
+ * the avatar image is unchanged, `bot_logo` / `launcher_logo` are omitted so
+ * the PATCH (`exclude_unset=True`) leaves the stored value alone. A crawl can
+ * set the agent's avatar from the site's favicon while this editor is open,
+ * and re-sending the value this page loaded before that happened writes the
+ * derived avatar back off. Removing the avatar here is still a change, so it
+ * is still sent — the guard is on "unchanged", not on "empty".
  */
-export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknown> {
+export function settingsFromDraft(
+  draft: ExperienceDraft,
+  baseline?: ExperienceDraft | null,
+): Record<string, unknown> {
+  const avatarImageChanged = !baseline || baseline.botLogo !== draft.botLogo;
   const welcomeSuggestions = draft.quickActions.map((s) => s.trim()).filter((s) => s.length > 0);
   const displayName = draft.displayName.trim();
 
@@ -195,8 +207,7 @@ export function settingsFromDraft(draft: ExperienceDraft): Record<string, unknow
     user_bubble_color: draft.userBubbleColor,
     avatar_type: draft.avatarType,
     orb_color: draft.orbColor || null,
-    bot_logo: draft.botLogo,
-    launcher_logo: draft.botLogo,
+    ...(avatarImageChanged ? { bot_logo: draft.botLogo, launcher_logo: draft.botLogo } : {}),
     // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) - other
     // stored feature flags (managed on the Advanced tab) are untouched.
     feature_flags: { show_branding: draft.showBranding },
