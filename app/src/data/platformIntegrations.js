@@ -11,8 +11,10 @@
  * env is 'production' | 'development'.
  */
 import {
+    ATTRIBUTION_TEXT,
     attributionAnchorHtml,
     attributionAnchorJsx,
+    attributionHref,
     MANUAL_ATTRIBUTION_NOTE,
 } from './widgetEmbed';
 
@@ -65,6 +67,95 @@ const attributionStep = (botKey, mode, location, attribution) => {
     ];
 };
 
+/**
+ * One added sentence, appended to a script-tag step's own description, so the
+ * customer knows - up front, not two steps later - that the block they are
+ * about to copy also carries a small visible credit line and how to remove
+ * it. Used only where the anchor is folded into the same code block as the
+ * script tag (see `withInlineAttribution`).
+ */
+const INLINE_ATTRIBUTION_NOTE =
+    ' This block also includes a small visible "Powered by OyeChats" credit line - upgrade to a plan with white-label branding to remove it.';
+
+/**
+ * Folds the attribution anchor into an existing script-tag step's own code
+ * block and description, instead of appending it as a separate step. This is
+ * how `html`- and `jsx`-mode platforms surface attribution: customers copy
+ * one block once, rather than a script tag and then a second, easy-to-skip
+ * "attribution link" step - the exact split-step pattern that produced zero
+ * backlinks under the old in-widget-only badge.
+ *
+ * Returns `code`/`description` byte-identical to the input when attribution
+ * is off, so the `attribution: false` snippet never changes.
+ *
+ * @param {string} code - the step's existing code block (already includes the script/Script tag)
+ * @param {string} description - the step's existing description
+ * @param {string} botKey
+ * @param {{attribution: boolean, jsx?: boolean}} options
+ * @returns {{code: string, description: string}}
+ */
+const withInlineAttribution = (code, description, botKey, { attribution, jsx = false }) => {
+    if (!attribution) return { description, code };
+    const anchor = jsx ? attributionAnchorJsx(botKey) : attributionAnchorHtml(botKey);
+    return {
+        description: `${description}${INLINE_ATTRIBUTION_NOTE}`,
+        code: `${code}\n${anchor}`,
+    };
+};
+
+/**
+ * Same idea as `withInlineAttribution`, for the platforms whose script tag
+ * sits in the middle of a larger code block (a full document, a theme
+ * template) rather than at the end of it - the anchor has to be interpolated
+ * right after the script line, not appended to the block. Each call site
+ * supplies its own leading whitespace so the anchor lines up with the
+ * surrounding template's indentation; returns `''` when attribution is off,
+ * so callers can interpolate it unconditionally and get back exactly today's
+ * code.
+ *
+ * @param {string} botKey
+ * @param {boolean} attribution
+ * @param {string} [indent] - leading whitespace to match the surrounding block
+ * @returns {string}
+ */
+const inlineAttributionAnchor = (botKey, attribution, indent = '') =>
+    attribution ? `\n\n${indent}${attributionAnchorHtml(botKey)}` : '';
+
+/** Appends the one-sentence attribution note to a step description, or returns it unchanged when attribution is off. */
+const withAttributionNote = (description, attribution) =>
+    attribution ? `${description}${INLINE_ATTRIBUTION_NOTE}` : description;
+
+/**
+ * `wix` / `framer` / `bubble` manual-mode step: these builders' footer text
+ * elements accept plain text plus a URL through their own link tool, not
+ * markup - pasting `attributionAnchorHtml`'s raw `<a>` tag renders the
+ * literal tag as visible text on the customer's live page. So the "code" to
+ * copy here is just the destination URL, and the description spells out the
+ * link text verbatim.
+ *
+ * Trade-off, accepted: these builders' link tools do not expose a `rel`
+ * attribute, so this variant cannot carry `rel="nofollow"` the way the
+ * crawlable-HTML variants do. A handful of manually-placed builder links is
+ * a materially different footprint from a sitewide automated one, so this is
+ * judged an acceptable trade rather than a gap to close.
+ *
+ * @param {string} botKey
+ * @param {string} location - where the user should paste it, in their words
+ * @param {boolean} attribution
+ * @returns {Array<{title: string, description: string, code: string | null, language?: string}>}
+ */
+const manualAttributionLinkStep = (botKey, location, attribution) => {
+    if (!attribution) return [];
+    return [
+        {
+            title: 'Add the attribution link to your site footer',
+            description: `${MANUAL_ATTRIBUTION_NOTE} These builders' text-element link tools take a URL, not HTML, so add a text link in ${location} reading exactly "${ATTRIBUTION_TEXT}" and point it at the URL below using the builder's own link option. Note: this builder does not let you set rel="nofollow" on the link.`,
+            code: attributionHref(botKey),
+            language: 'text',
+        },
+    ];
+};
+
 // ---------------------------------------------------------------------------
 // HTML / Generic
 // ---------------------------------------------------------------------------
@@ -76,12 +167,14 @@ const html = {
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script tag to your HTML',
-            description:
+            ...withInlineAttribution(
+                `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
                 'Paste this snippet just before the closing </body> tag in your HTML file.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+                botKey,
+                { attribution },
+            ),
             language: 'html',
         },
-        ...attributionStep(botKey, 'html', 'the same place, just before </body>', attribution),
         {
             title: 'Deploy your website',
             description:
@@ -108,15 +201,18 @@ const nextjs = {
         },
         {
             title: 'Add the widget just before </body>',
-            description: 'Drop the OyeChats widget inside your <body>, right after {children}.',
-            code: `<Script
+            ...withInlineAttribution(
+                `<Script
   src="${cdnUrl(env)}"
   data-bot-key="${botKey}"
   strategy="lazyOnload"
 />`,
+                'Drop the OyeChats widget inside your <body>, right after {children}.',
+                botKey,
+                { attribution, jsx: true },
+            ),
             language: 'jsx',
         },
-        ...attributionStep(botKey, 'jsx', 'your root layout, next to the <Script> tag', attribution),
         {
             title: 'Deploy your application',
             description:
@@ -188,11 +284,14 @@ const vue = {
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script in your App.vue or index.html',
-            description:
-                'The simplest approach is to add the script tag directly in your index.html. For Nuxt, use the useHead composable instead.',
-            code: `<!-- Option 1: In index.html (Vue CLI / Vite) -->
+            ...withInlineAttribution(
+                `<!-- Option 1: In index.html (Vue CLI / Vite) -->
 <!-- Add before </body> in index.html -->
 <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+                'The simplest approach is to add the script tag directly in your index.html. For Nuxt, use the useHead composable instead.',
+                botKey,
+                { attribution },
+            ),
             language: 'html',
         },
         {
@@ -212,7 +311,6 @@ useHead({
 </script>`,
             language: 'vue',
         },
-        ...attributionStep(botKey, 'html', 'index.html, just before </body>', attribution),
         {
             title: 'Deploy your application',
             description:
@@ -233,8 +331,10 @@ const angular = {
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script to your index.html',
-            description:
+            description: withAttributionNote(
                 'Open src/index.html and paste the script tag just before the closing </body> tag.',
+                attribution,
+            ),
             code: `<!-- src/index.html -->
 <!doctype html>
 <html lang="en">
@@ -245,12 +345,11 @@ const angular = {
 <body>
   <app-root></app-root>
 
-  <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+  <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>${inlineAttributionAnchor(botKey, attribution, '  ')}
 </body>
 </html>`,
             language: 'html',
         },
-        ...attributionStep(botKey, 'html', 'src/index.html, just before </body>', attribution),
         {
             title: 'Build and deploy',
             description:
@@ -271,8 +370,10 @@ const svelte = {
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script in your app.html or layout',
-            description:
+            description: withAttributionNote(
                 'For SvelteKit, open src/app.html and add the script before </body>. For plain Svelte, use the onMount lifecycle.',
+                attribution,
+            ),
             code: `<!-- src/app.html (SvelteKit) -->
 <!doctype html>
 <html lang="en">
@@ -280,7 +381,7 @@ const svelte = {
 <body data-sveltekit-preload-data="hover">
   <div style="display: contents">%sveltekit.body%</div>
 
-  <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+  <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>${inlineAttributionAnchor(botKey, attribution, '  ')}
 </body>
 </html>`,
             language: 'html',
@@ -302,7 +403,6 @@ const svelte = {
 </script>`,
             language: 'svelte',
         },
-        ...attributionStep(botKey, 'html', 'src/app.html, just before </body>', attribution),
         {
             title: 'Deploy your app',
             description:
@@ -323,8 +423,10 @@ const astro = {
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Add the script to your shared layout',
-            description:
+            description: withAttributionNote(
                 'Open your base layout (e.g. src/layouts/Layout.astro) and paste the script just before the closing </body> tag. The is:inline directive tells Astro to leave this third-party script untouched, so it loads on every page that uses the layout.',
+                attribution,
+            ),
             code: `---
 // src/layouts/Layout.astro
 ---
@@ -335,12 +437,11 @@ const astro = {
   <body>
     <slot />
 
-    <script is:inline src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+    <script is:inline src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>${inlineAttributionAnchor(botKey, attribution, '    ')}
   </body>
 </html>`,
             language: 'astro',
         },
-        ...attributionStep(botKey, 'html', 'your shared layout, just before </body>', attribution),
         {
             title: 'Build and deploy',
             description:
@@ -361,9 +462,12 @@ const wordpress = {
     getSteps: (botKey, env, { attribution = true } = {}) => [
         {
             title: 'Option A: Use a plugin (easiest)',
-            description:
+            ...withInlineAttribution(
+                `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
                 'Install the "Insert Headers and Footers" plugin (by WPCode). Go to Code Snippets → Header & Footer, paste the script in the "Footer" section, and click Save.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+                botKey,
+                { attribution },
+            ),
             language: 'html',
         },
         {
@@ -392,12 +496,6 @@ function oyechats_add_bot_key($tag, $handle) {
 add_filter('script_loader_tag', 'oyechats_add_bot_key', 10, 2);`,
             language: 'php',
         },
-        ...attributionStep(
-            botKey,
-            'html',
-            "your theme's footer.php, just before </body>",
-            attribution,
-        ),
         {
             title: 'Save and verify',
             description:
@@ -424,14 +522,15 @@ const shopify = {
         },
         {
             title: 'Edit theme.liquid',
-            description:
+            description: withAttributionNote(
                 'In the Layout section, open theme.liquid. Paste the script just before the closing </body> tag.',
+                attribution,
+            ),
             code: `<!-- OyeChats Widget -->
-<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
+<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>${inlineAttributionAnchor(botKey, attribution, '')}
 </body>`,
             language: 'html',
         },
-        ...attributionStep(botKey, 'html', 'theme.liquid, just before </body>', attribution),
         {
             title: 'Save and preview',
             description:
@@ -458,17 +557,14 @@ const squarespace = {
         },
         {
             title: 'Paste in the Footer section',
-            description:
+            ...withInlineAttribution(
+                `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
                 'In the "Footer" field, paste the following script and click Save.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+                botKey,
+                { attribution },
+            ),
             language: 'html',
         },
-        ...attributionStep(
-            botKey,
-            'html',
-            'Settings → Advanced → Code Injection → Footer',
-            attribution,
-        ),
         {
             title: 'Verify on your live site',
             description:
@@ -495,17 +591,14 @@ const webflow = {
         },
         {
             title: 'Paste in the Footer Code section',
-            description:
+            ...withInlineAttribution(
+                `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
                 'In the "Footer Code" field (Before </body> tag), paste the following and click Save Changes.',
-            code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
+                botKey,
+                { attribution },
+            ),
             language: 'html',
         },
-        ...attributionStep(
-            botKey,
-            'html',
-            'Project Settings → Custom Code → Footer Code',
-            attribution,
-        ),
         {
             title: 'Publish your site',
             description:
@@ -537,12 +630,7 @@ const wix = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
-        ...attributionStep(
-            botKey,
-            'manual',
-            "a Text element in your site footer, using its link option",
-            attribution,
-        ),
+        ...manualAttributionLinkStep(botKey, 'your site footer', attribution),
         {
             title: 'Publish and verify',
             description:
@@ -574,12 +662,7 @@ const framer = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
-        ...attributionStep(
-            botKey,
-            'manual',
-            'a Text layer in your site footer, using its link option',
-            attribution,
-        ),
+        ...manualAttributionLinkStep(botKey, 'your site footer', attribution),
         {
             title: 'Publish your site',
             description:
@@ -611,12 +694,7 @@ const bubble = {
             code: `<script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>`,
             language: 'html',
         },
-        ...attributionStep(
-            botKey,
-            'manual',
-            'a Text element in your page footer, using its link option',
-            attribution,
-        ),
+        ...manualAttributionLinkStep(botKey, 'your page footer', attribution),
         {
             title: 'Preview or deploy',
             description:
