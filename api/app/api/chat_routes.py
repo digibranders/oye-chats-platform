@@ -746,12 +746,17 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
 
     # Resolve the domain to the company's own declared identity, LAST.
     #
-    # Deliberately after the commit above, on this same thread rather than a
-    # second `submit_background`: the pool has three workers shared
-    # platform-wide, and this can take tens of seconds (a crawl, then possibly
-    # an LLM call). Running it before the write would hold the email verdict —
-    # the more actionable signal — behind a slower, optional one; running it on
-    # its own worker would consume a second of three slots per lead.
+    # After the commit above, because the email verdict is the more actionable
+    # signal and must not wait behind a crawl that can take tens of seconds.
+    #
+    # An earlier version of this comment claimed a second `submit_background`
+    # would "consume a second of three slots per lead". That is wrong: the pool
+    # is a FIFO executor, so total worker-seconds are identical either way, and
+    # staying on an already-acquired slot actually lets this crawl BYPASS the
+    # queue rather than waiting its turn behind queued geolocation and BANT —
+    # worse for the neighbours it claimed to protect. The honest reason for the
+    # tail call is only that it avoids a second queue entry. See the note on
+    # ARQ in `_resolve_lead_company` for where this really belongs.
     _resolve_lead_company(session_id, domain, bot_id)
 
 

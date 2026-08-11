@@ -191,17 +191,20 @@ def test_each_gate_stops_the_crawl_entirely(db, gate, value):
     assert charge.call_count == 0
 
 
-def test_no_domain_is_a_no_op(db):
-    """Free-mail addresses yield no registrable company domain."""
-    from app.services import credit_service
+@pytest.mark.parametrize(("domain", "bot_id"), [(None, 77), ("", 77), ("infosys.com", None)])
+def test_a_missing_domain_or_bot_is_a_no_op(db, domain, bot_id):
+    """Free-mail addresses yield no registrable company domain.
 
-    with (
-        patch.object(credit_service, "is_feature_enabled", return_value=True),
-        patch("app.services.company_profile_service.resolve_company") as resolver,
-    ):
-        _resolve_lead_company("s-none", None, 77)
+    Written with ALL THREE GATES OPEN. The first version left them unpatched,
+    so the real gates denied the call and `resolver.call_count == 0` held
+    whether or not the guard existed — a review showed deleting the guard it
+    names left the test green. It asserted nothing.
+    """
+    with _gates_open(db) as (resolver, charge):
+        _resolve_lead_company("s-none", domain, bot_id)
 
     assert resolver.call_count == 0
+    assert charge.call_count == 0
 
 
 def test_a_crash_never_escapes(db):
@@ -216,3 +219,80 @@ def test_a_crash_never_escapes(db):
         patch("app.api.chat_routes.get_session", return_value=_Ctx(db)),
     ):
         _resolve_lead_company("s-boom", "infosys.com", 78)  # must not raise
+
+
+class TestTheWiringItself:
+    """The call site, not just the callee.
+
+    Every test above invokes `_resolve_lead_company` directly, so DELETING the
+    call to it from `_enrich_lead_in_background` left all 3715 tests green — a
+    review proved it. That is exactly the defect this whole commit exists to
+    fix: Phase A shipped a resolver with no caller. Shipping the caller with
+    no test on the call site is the same defect one level up.
+    """
+
+    def test_lead_enrichment_invokes_the_company_resolver(self, db):
+        from app.api import chat_routes
+
+        # `_enrich_lead_in_background` returns early when the LeadInfo row is
+        # absent, so a wiring test without one passes for the wrong reason.
+        _lead(db, 90, "s-wire")
+
+        with (
+            patch.object(chat_routes, "_resolve_lead_company") as resolve,
+            patch("app.services.email_domain_service.extract_company_domain", return_value="infosys.com"),
+            patch("app.api.chat_routes.is_email_validation_enabled_for_bot", return_value=False),
+            patch("app.api.chat_routes.get_session", return_value=_Ctx(db)),
+        ):
+            chat_routes._enrich_lead_in_background("s-wire", "priya@infosys.com", bot_id=90)
+
+        resolve.assert_called_once_with("s-wire", "infosys.com", 90)
+
+    def test_it_runs_after_the_email_verdict_is_committed(self, db):
+        """Ordering is the reason it is a tail call rather than earlier: the
+        email verdict is the more actionable signal and must not wait behind a
+        crawl that can take tens of seconds."""
+        from app.api import chat_routes
+
+        _lead(db, 91, "s-order")
+        order: list[str] = []
+
+        class _Recording(_Ctx):
+            def __exit__(self, *args):
+                order.append("commit")
+                return False
+
+        with (
+            patch.object(chat_routes, "_resolve_lead_company", side_effect=lambda *_: order.append("resolve")),
+            patch("app.services.email_domain_service.extract_company_domain", return_value="infosys.com"),
+            patch("app.api.chat_routes.is_email_validation_enabled_for_bot", return_value=False),
+            patch("app.api.chat_routes.get_session", return_value=_Recording(db)),
+        ):
+            chat_routes._enrich_lead_in_background("s-order", "priya@infosys.com", bot_id=91)
+
+        assert order[-1] == "resolve", f"the resolver did not run last: {order}"
+
+
+def test_the_super_admin_kill_switch_stops_the_crawl(db):
+    """The THIRD gate, which `test_each_gate_stops_the_crawl_entirely` omitted.
+
+    Removing `feature_on` from the pre-crawl condition left the whole suite
+    green. Nothing is billed either way — `_charge_for_enrichment` re-checks
+    it — but the lever's entire purpose is to stop the SPEND during a vendor
+    outage or a cost spike, and the crawl is the spend.
+    """
+    from app.services import credit_service
+
+    _lead(db, 79, "s-killswitch")
+    with (
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch.object(credit_service, "is_feature_enabled", return_value=False),
+        patch("app.api.chat_routes._agent_enrichment_opt_in", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
+        patch("app.services.company_profile_service.resolve_company", return_value=RESOLVED) as resolver,
+        patch("app.api.chat_routes.get_session", return_value=_Ctx(db)),
+    ):
+        _resolve_lead_company("s-killswitch", "infosys.com", 79)
+
+    assert resolver.call_count == 0, "the kill switch is pulled but the crawl still ran"
+    assert charge.call_count == 0
