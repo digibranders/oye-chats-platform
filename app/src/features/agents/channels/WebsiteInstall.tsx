@@ -18,6 +18,7 @@ import {
 } from '../../../data/platformIntegrations';
 import { getApiBaseUrl, getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
 import { cn, platformLogos } from '../../../design-system';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getEmbedEnvironment } from './embedEnvironment';
 import { buildInstallPrompt } from './installPrompt';
 
@@ -82,6 +83,13 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const demoUrl = getBotDemoUrl(botKey);
   const env = getEmbedEnvironment(getApiBaseUrl());
 
+  // Plans entitled to remove branding get a snippet with no attribution anchor.
+  // Note this keys off the entitlement, not the bot's live `showBranding` flag,
+  // which this screen does not load - a paid customer who chooses to keep the
+  // badge still gets an anchor-free snippet.
+  const { hasFeature } = useEntitlements();
+  const attribution = !hasFeature('branding_removable');
+
   const copyKey = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(botKey);
@@ -111,7 +119,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const copyAgentPrompt = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(
-        buildInstallPrompt({ botKey, apiBaseUrl: getApiBaseUrl(), env, platform }),
+        buildInstallPrompt({ botKey, apiBaseUrl: getApiBaseUrl(), env, platform, attribution }),
       );
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 2000);
@@ -231,7 +239,7 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
             </button>
 
             <ol className="space-y-4">
-              {platform.getSteps(botKey, env).map((step, index) => (
+              {platform.getSteps(botKey, env, { attribution }).map((step, index) => (
                 <li key={step.title} className="flex gap-3">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[11px] font-semibold text-[var(--ds-accent-text)]">
                     {index + 1}
