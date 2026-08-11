@@ -21,14 +21,14 @@ vi.mock('../../../context/UpgradeModalContext', () => ({
 }));
 
 describe('advanced.config parsing of the enrichment toggles', () => {
-  it('reads an ABSENT field as ON, matching the column default', () => {
-    /* `!== false`, not `=== true`. Both columns default ON server-side, so an
-       older API build or a partial payload must not read as "switched off" —
-       that value then round-trips back on the next Save. */
+  it('reads an ABSENT field as OFF, matching the column default', () => {
+    /* `=== true`, not `!== false`. Both columns default OFF server-side, so an
+       older API build or a partial payload must read as "switched off" —
+       enrichment stays off until the customer explicitly opts in. */
     const draft = parseSettings({});
 
-    expect(draft.emailVerificationEnabled).toBe(true);
-    expect(draft.companyLookupEnabled).toBe(true);
+    expect(draft.emailVerificationEnabled).toBe(false);
+    expect(draft.companyLookupEnabled).toBe(false);
   });
 
   it('reads an explicit false as OFF', () => {

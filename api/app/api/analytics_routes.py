@@ -517,7 +517,7 @@ def get_journey_post_chat(
 def get_journey_pre_chat_sequences(
     bot_id: int = Query(...),
     period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
-    limit: int = Query(5, ge=1, le=20),
+    limit: int = Query(5, ge=1, le=50),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Top pre-chat page sequences across every session (converted or not).

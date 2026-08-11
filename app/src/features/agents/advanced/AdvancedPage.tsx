@@ -173,6 +173,11 @@ export function AdvancedPage(): ReactElement {
     setDraft((prev) => (prev ? { ...prev, bantConfig: config } : prev));
   }, []);
 
+  const setBantEnabled = useCallback((next: boolean) => {
+    setSaveError(null);
+    setDraft((prev) => (prev ? { ...prev, bantEnabled: next } : prev));
+  }, []);
+
   const toggleFlag = useCallback((flagKey: string, next: boolean) => {
     setSaveError(null);
     setDraft((prev) =>
@@ -235,6 +240,7 @@ export function AdvancedPage(): ReactElement {
       const frameworkChanged = draft.qualificationFramework !== initial.qualificationFramework;
       const bantConfigChanged =
         stableStringify(draft.bantConfig) !== stableStringify(initial.bantConfig);
+      const bantEnabledChanged = draft.bantEnabled !== initial.bantEnabled;
 
       // Widget-scoped settings persist through the settings endpoint; the
       // qualification framework + scoring config are a distinct concern saved via
@@ -244,9 +250,10 @@ export function AdvancedPage(): ReactElement {
       const tasks: Array<Promise<unknown>> = [
         updateClientSettings(toSettingsPayload(draft), agentId),
       ];
-      if (frameworkChanged || bantConfigChanged) {
+      if (frameworkChanged || bantConfigChanged || bantEnabledChanged) {
         const qualificationPayload: Record<string, unknown> = {
           qualification_framework: draft.qualificationFramework,
+          bant_enabled: draft.bantEnabled,
         };
         if (draft.bantConfig) {
           qualificationPayload.bant_config = {
@@ -330,6 +337,17 @@ export function AdvancedPage(): ReactElement {
           </div>
         ) : (
           <>
+            <LeadEnrichmentSection
+              emailVerificationEnabled={draft.emailVerificationEnabled}
+              onToggleEmailVerification={setEmailVerification}
+              emailVerificationPlanAllows={emailVerificationPlanAllows}
+              companyLookupEnabled={draft.companyLookupEnabled}
+              onToggleCompanyLookup={setCompanyLookup}
+              companyLookupPlanAllows={companyLookupPlanAllows}
+            />
+
+            <div className="border-t border-[var(--ds-border)]" />
+
             <ScopeStrictnessSection
               value={draft.relevanceThreshold}
               onChange={setRelevanceThreshold}
@@ -340,6 +358,8 @@ export function AdvancedPage(): ReactElement {
             <QualificationSection
               framework={draft.qualificationFramework}
               bantConfig={draft.bantConfig}
+              bantEnabled={draft.bantEnabled}
+              onToggleBantEnabled={setBantEnabled}
               onFrameworkChange={setFramework}
               onBantConfigChange={setBantConfig}
             />
@@ -347,17 +367,6 @@ export function AdvancedPage(): ReactElement {
             <div className="border-t border-[var(--ds-border)]" />
 
             <WidgetBehaviorSection flags={draft.featureFlags} onToggle={toggleFlag} />
-
-            <div className="border-t border-[var(--ds-border)]" />
-
-            <LeadEnrichmentSection
-              emailVerificationEnabled={draft.emailVerificationEnabled}
-              onToggleEmailVerification={setEmailVerification}
-              emailVerificationPlanAllows={emailVerificationPlanAllows}
-              companyLookupEnabled={draft.companyLookupEnabled}
-              onToggleCompanyLookup={setCompanyLookup}
-              companyLookupPlanAllows={companyLookupPlanAllows}
-            />
 
             <div className="border-t border-[var(--ds-border)]" />
 

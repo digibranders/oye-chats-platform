@@ -1,13 +1,17 @@
 import { type ReactElement, useState } from 'react';
 import { Target, SlidersHorizontal } from 'lucide-react';
-import { Card, LockedFeatureCard, SectionHeader, StatusBadge, Button, Select } from '../../../design-system';
+import { Card, LockedFeatureCard, SectionHeader, StatusBadge, Button, Select, cn } from '../../../design-system';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import { FRAMEWORK_OPTIONS, readThresholds } from './advanced.config';
 import { QualificationEditor } from './QualificationEditor';
+import { Toggle } from './controls';
 
 interface QualificationSectionProps {
   framework: string;
   bantConfig: Record<string, unknown> | null;
+  /** Master on/off for lead qualification; defaults ON. */
+  bantEnabled: boolean;
+  onToggleBantEnabled: (next: boolean) => void;
   onFrameworkChange: (key: string) => void;
   /** Commit an edited `bant_config` back to the page draft. */
   onBantConfigChange: (config: Record<string, unknown>) => void;
@@ -23,6 +27,8 @@ interface QualificationSectionProps {
 export function QualificationSection({
   framework,
   bantConfig,
+  bantEnabled,
+  onToggleBantEnabled,
   onFrameworkChange,
   onBantConfigChange,
 }: QualificationSectionProps): ReactElement {
@@ -41,23 +47,42 @@ export function QualificationSection({
 
   return (
     <section aria-labelledby="qualification-heading" className="space-y-4">
-      <SectionHeader
-        title={
-          <span id="qualification-heading" className="inline-flex items-center gap-2">
-            <Target
-              size={15}
-              className={bantUnlocked ? 'text-[var(--ds-accent)]' : 'text-[var(--ds-text-subtle)]'}
-              aria-hidden="true"
+      <div className="flex items-start justify-between gap-4">
+        <SectionHeader
+          title={
+            <span id="qualification-heading" className="inline-flex items-center gap-2">
+              <Target
+                size={15}
+                className={bantUnlocked ? 'text-[var(--ds-accent)]' : 'text-[var(--ds-text-subtle)]'}
+                aria-hidden="true"
+              />
+              Lead qualification
+            </span>
+          }
+          description="The method your agent uses to score visitors as leads while it chats with them."
+        />
+        {bantUnlocked && (
+          <div className="flex shrink-0 items-center gap-2 pt-0.5">
+            <span className="text-[12px] font-medium text-[var(--ds-text-muted)]">
+              {bantEnabled ? 'On' : 'Off'}
+            </span>
+            <Toggle
+              checked={bantEnabled}
+              onChange={onToggleBantEnabled}
+              label="Enable lead qualification"
             />
-            Lead qualification
-          </span>
-        }
-        description="The method your agent uses to score visitors as leads while it chats with them."
-      />
+          </div>
+        )}
+      </div>
 
       {bantUnlocked ? (
         <>
-          <Card className="space-y-5 p-5">
+          <Card
+            className={cn(
+              'space-y-5 p-5 transition-opacity',
+              !bantEnabled && 'pointer-events-none select-none opacity-50',
+            )}
+            aria-disabled={!bantEnabled}>
             <div className="max-w-sm space-y-1.5">
               <label
                 htmlFor="qualification-framework"

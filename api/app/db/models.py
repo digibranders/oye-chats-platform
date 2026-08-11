@@ -1,4 +1,5 @@
 import sqlalchemy
+import sqlalchemy.event  # explicit: `@sqlalchemy.event.listens_for` below (not auto-loaded by `import sqlalchemy`)
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
@@ -342,24 +343,22 @@ class Bot(Base):
     lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
-    # ── Metered lead-enrichment opt-outs (AI Agent → Advanced) ──────────────
+    # ── Metered lead-enrichment opt-ins (AI Agent > Advanced) ───────────────
     #
-    # Both default ON. The customer is paying for a plan that includes these,
-    # so the useful control is an OFF switch for someone who does not want the
-    # credits spent — not an OFF default that leaves a paid feature invisible
-    # until they find a settings page. Each is one of THREE independent gates,
-    # all of which must pass before a credit is spent:
-    #   1. the plan  (Standard/Professional — enforced server-side)
+    # Both default OFF. Enrichment spends credits, so it is an explicit opt-in
+    # the customer turns on when they want it, not a paid feature left running
+    # until they happen to find a settings page. Each is one of THREE
+    # independent gates, all of which must pass before a credit is spent:
+    #   1. the plan  (Standard/Professional, enforced server-side)
     #   2. the super-admin kill switch (``feature.<name>_enabled``)
     #   3. this per-agent customer toggle
     #
     # Verification runs via Reoon at ``credit_cost.email_verification`` per
     # captured lead.
-    email_verification_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
-    # The IP→company lookup, at ``credit_cost.company_name`` — charged only
-    # when a company is actually identified (see chat_routes), so leaving this
-    # on costs nothing for the many visitors who resolve to a consumer ISP.
-    company_lookup_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
+    email_verification_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    # The IP-to-company lookup, at ``credit_cost.company_name``, charged only
+    # when a company is actually identified (see chat_routes).
+    company_lookup_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Email notification settings
     notification_email = Column(String, nullable=True)  # Legacy single recipient (kept for backward compat)

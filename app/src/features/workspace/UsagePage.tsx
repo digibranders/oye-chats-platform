@@ -1,7 +1,8 @@
 import { type ReactElement, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  ArrowUpRight,
   Building2,
   CalendarClock,
   ChevronDown,
@@ -17,6 +18,7 @@ import { Button, EmptyState, PageContainer, QuotaMeter, SectionHeader, Skeleton,
 import { MetricCard } from '../../design-system/components/MetricCard';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
+import { useBotContext } from '../../context/BotContext';
 import {
   aggregatePool,
   formatCredits,
@@ -30,7 +32,7 @@ import {
   type PoolCredit,
   type UsageBuckets,
 } from './usage-model';
-import { useBotContext } from '../../context/BotContext';
+
 import { useUsageData } from './useUsageData';
 import { TopupModal } from './billing/TopupModal';
 import { AgentCreditHero } from './usage/AgentCreditHero';
@@ -185,6 +187,14 @@ interface CreditCostRow {
    */
   readonly tiers?: readonly CreditCostTier[];
   /**
+   * When set, the card's name gets a deep-link arrow that jumps to the agent
+   * tab where this action is configured (e.g. crawl/upload live under
+   * Knowledge; the enrichment toggles under Advanced). Omitted for actions
+   * with nothing to configure, like the AI chat reply. Resolved against the
+   * switcher-selected agent at render time.
+   */
+  readonly linkTab?: 'knowledge' | 'advanced';
+  /**
    * Built but not launched yet — the card shows a muted "Coming soon" badge
    * instead of a credit price, and never charges (the super-admin
    * `feature.company_name_enabled` switch stays off until launch).
@@ -217,12 +227,14 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     label: 'URL crawl',
     detail: 'Charged per page actually ingested into your knowledge base.',
     cost: 5,
+    linkTab: 'knowledge',
   },
   {
     icon: FileText,
     label: 'Document upload',
     detail: 'Charged by document size. Refunded if a file fails to save.',
     cost: 5,
+    linkTab: 'knowledge',
     // Ranges are stated to match the backend gate EXACTLY. `max_words` there
     // is exclusive (`word_count < cap`, credit_service.py), so the inclusive
     // phrasing these labels used to carry ("Up to 100 words", "100–500 words")
@@ -246,6 +258,7 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     label: 'Email verification',
     detail: 'Verifies a captured lead’s email. Standard & Professional plans.',
     cost: 10,
+    linkTab: 'advanced',
   },
   {
     icon: Building2,
@@ -258,6 +271,7 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     // ahead of the lookup.
     detail: 'Identifies a visitor’s company from their IP. Charged only when a company is found. Professional plan.',
     cost: 10,
+    linkTab: 'advanced',
   },
 ];
 
@@ -272,7 +286,15 @@ function formatCreditCost(cost: number): string {
  * shows the full span (e.g. "5–150 credits") so the range is legible before
  * expanding.
  */
-function CreditCostItem({ row }: { row: CreditCostRow }): ReactElement {
+function CreditCostItem({
+  row,
+  agentBasePath,
+}: {
+  row: CreditCostRow;
+  /** `/agents/:id` for the switcher-selected agent, or null when the account
+   *  has no agent yet — the deep-link arrow is hidden in that case. */
+  agentBasePath: string | null;
+}): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const Icon = row.icon;
   // A "coming soon" row is inert — no expandable tiers, no live price.
@@ -297,7 +319,23 @@ function CreditCostItem({ row }: { row: CreditCostRow }): ReactElement {
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-[13px] font-semibold text-[var(--ds-text)]">{row.label}</p>
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-[13px] font-semibold text-[var(--ds-text)]">
+              {row.label}
+            </span>
+            {row.linkTab && agentBasePath && (
+              <Link
+                to={`${agentBasePath}/${row.linkTab}`}
+                aria-label={`Open ${
+                  row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
+                } to configure this`}
+                title={`Open ${row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'}`}
+                className="shrink-0 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)] focus-visible:text-[var(--ds-accent-text)] focus-visible:outline-none"
+              >
+                <ArrowUpRight size={14} aria-hidden="true" />
+              </Link>
+            )}
+          </span>
           {row.comingSoon ? (
             <span className="shrink-0 rounded-md border border-[var(--ds-border)] bg-transparent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ds-text-subtle)]">
               Coming soon
@@ -347,6 +385,14 @@ function CreditCostItem({ row }: { row: CreditCostRow }): ReactElement {
  * above their price context.
  */
 function CreditCostReference(): ReactElement {
+  // Deep links resolve against the switcher-selected agent; when the workspace
+  // scope is "All agents" (selectedBot null) fall back to the first agent so
+  // the arrow still lands somewhere useful. Null only when the account has no
+  // agents at all, in which case CreditCostItem hides the arrow.
+  const { selectedBot, bots } = useBotContext();
+  const targetAgent = selectedBot ?? bots[0] ?? null;
+  const agentBasePath = targetAgent ? `/agents/${targetAgent.id}` : null;
+
   return (
     <section aria-label="How credits work" className="space-y-4">
       <SectionHeader
@@ -355,7 +401,7 @@ function CreditCostReference(): ReactElement {
       />
       <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
         {CREDIT_COSTS.map((row) => (
-          <CreditCostItem key={row.label} row={row} />
+          <CreditCostItem key={row.label} row={row} agentBasePath={agentBasePath} />
         ))}
       </div>
     </section>

@@ -201,12 +201,27 @@ export function Sidebar({ collapsed, isMobile, mobileOpen, onNavigate }: Sidebar
       )}
     >
       {/* Brand */}
-      <div className="flex h-16 shrink-0 items-center gap-1.5 px-4">
-        <OyeChatsMark size={32} />
-        {showLabels && (
-          <span className="text-[15px] font-bold tracking-tight text-[var(--ds-text)]">
-            OyeChats
-          </span>
+      <div className="flex h-16 shrink-0 items-center px-4">
+        {showLabels ? (
+          // Theme-aware wordmark: dark mark on light theme, white mark on dark
+          // theme. Both render; Tailwind's `dark:` variant toggles visibility.
+          <>
+            <img
+              src="/new_dark.png"
+              alt="OyeChats"
+              draggable={false}
+              className="pointer-events-none block h-7 w-auto select-none object-contain object-left dark:hidden"
+            />
+            <img
+              src="/new_white.png"
+              alt="OyeChats"
+              draggable={false}
+              className="pointer-events-none hidden h-7 w-auto select-none object-contain object-left dark:block"
+            />
+          </>
+        ) : (
+          // Collapsed 68px rail: a full wordmark can't fit, so keep the glyph.
+          <OyeChatsMark size={32} />
         )}
       </div>
 

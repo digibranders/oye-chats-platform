@@ -71,19 +71,18 @@ interface LeadEnrichmentSectionProps {
 }
 
 /**
- * Lead enrichment — the per-agent customer controls for the two METERED
+ * Lead enrichment: the per-agent customer controls for the two METERED
  * enrichments, bound to `Bot.email_verification_enabled` and
  * `Bot.company_lookup_enabled`.
  *
- * Both default ON. The customer is already paying for a plan that includes
- * them, so the control that earns its place is an OFF switch for someone who
- * doesn't want the credits spent — not an OFF default that leaves a paid
- * feature invisible until they find this page.
+ * Both default OFF. Enrichment spends credits, so it is an explicit opt-in the
+ * customer turns on when they want it, not a paid feature left running until
+ * they find this page.
  *
  * Each switch is the third of THREE independent gates, all enforced
  * server-side: the plan, the super-admin kill switch
  * (`feature.<name>_enabled`), and this toggle. Disabling a switch here is
- * guidance for the customer, not the security boundary — the charge is gated
+ * guidance for the customer, not the security boundary; the charge is gated
  * in `chat_routes`, not by this component.
  */
 export function LeadEnrichmentSection({
@@ -103,7 +102,7 @@ export function LeadEnrichmentSection({
             Lead enrichment
           </span>
         }
-        description="Extra detail added to the leads your agent captures. Both are on by default — turn either off to stop spending credits on it."
+        description="Extra detail added to the leads your agent captures. Both are off by default. Turn either on to spend credits enriching each captured lead."
       />
 
       <Card className="divide-y divide-[var(--ds-border)] p-0">

@@ -6,9 +6,10 @@ import {
   Folder,
   FolderOpen,
   House,
+  Maximize2,
   Minus,
 } from 'lucide-react';
-import { cn } from '../../../design-system';
+import { cn, Modal } from '../../../design-system';
 
 /**
  * A node in the discovered-page route tree. A node can be a folder (has
@@ -144,6 +145,23 @@ function buildTree(urls: readonly string[]): PageNode {
   };
   finalize(root);
   return root;
+}
+
+/**
+ * Canonicalise a raw crawl URL list down to the exact deduplicated set the
+ * tree renders — one URL per page, near-duplicate path variants (a trailing
+ * slash, a re-ordered query, etc.) collapsed into a single node. Seed the
+ * selection with this so the submitted crawl list matches what the user sees
+ * and never carries redundant duplicates. Order follows the tree's own
+ * folders-before-leaves, alpha sort.
+ *
+ * Intentionally co-located with the component: it wraps the private ``buildTree``
+ * used by the tree, so splitting it into its own module would fragment that
+ * logic. The Fast-Refresh "components only" rule is disabled for this one export.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function canonicalCrawlUrls(urls: readonly string[]): string[] {
+  return buildTree(urls).urls;
 }
 
 type CheckState = 'checked' | 'indeterminate' | 'unchecked';
@@ -327,10 +345,40 @@ export function CrawlPageTree({
     setExpanded(ids);
   };
 
-  const selectedCount = selectedSet.size;
+  // Count only selected pages that exist in the tree, NOT `selectedSet.size`.
+  // The parent seeds `selected` from the raw crawl result, which can carry
+  // near-duplicates (e.g. a trailing-slash variant of a page) that buildTree
+  // canonicalises into a single node — so the raw set can hold more URLs than
+  // the tree has pages. Counting the intersection keeps the header honest
+  // ("N of M" with N ≤ M) and lets "Select all" read as fully checked once
+  // every tree page is picked, instead of the impossible "18 of 17".
+  const selectedCount = useMemo(
+    () => allUrls.reduce((n, u) => (selectedSet.has(u) ? n + 1 : n), 0),
+    [allUrls, selectedSet],
+  );
   const allSelected = selectedCount === allUrls.length && allUrls.length > 0;
 
-  return (
+  // The tree can grow into hundreds of pages on a big site, which the inline
+  // `max-h-72` scroller only shows a sliver of. `maximized` opens the exact
+  // same tree in a large modal — selection and expand state are shared (they
+  // live in this component / the parent), so both views stay in lockstep.
+  const [maximized, setMaximized] = useState(false);
+  // Auto-open the maximized view the moment a crawl first yields pages, so the
+  // discovered tree lands in the big window by default instead of the cramped
+  // inline strip. A fresh crawl (count returning to 0, then rising) re-opens
+  // it; incremental updates that never hit 0, and a manual close, are
+  // respected. Uses the adjust-state-during-render pattern rather than an
+  // effect to avoid an extra paint (see React "You Might Not Need an Effect").
+  const [prevUrlCount, setPrevUrlCount] = useState(0);
+  if (prevUrlCount !== allUrls.length) {
+    setPrevUrlCount(allUrls.length);
+    if (allUrls.length > 0 && prevUrlCount === 0) setMaximized(true);
+  }
+
+  // Rendered inline AND inside the modal. `bodyMaxHeight` is the only thing
+  // that differs (a taller scroller in the modal); `showMaximize` hides the
+  // maximize affordance in the modal, where the modal's own close takes over.
+  const renderTree = (bodyMaxHeight: string, showMaximize: boolean): ReactElement => (
     <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)]">
       {/* Toolbar: select-all + count + expand controls */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ds-border)] px-3 py-2">
@@ -368,11 +416,26 @@ export function CrawlPageTree({
           >
             Collapse all
           </button>
+          {showMaximize && (
+            <>
+              <span className="text-[var(--ds-border-strong)]">·</span>
+              <button
+                type="button"
+                onClick={() => setMaximized(true)}
+                aria-label="Maximize page list"
+                title="Maximize"
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--ds-text-muted)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+              >
+                <Maximize2 size={13} aria-hidden="true" />
+                Maximize
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* The tree itself */}
-      <div className="max-h-72 overflow-y-auto py-1.5 pr-1">
+      <div className={cn('overflow-y-auto py-1.5 pr-1', bodyMaxHeight)}>
         <ul role="tree" aria-label="Discovered pages">
           <TreeRow
             node={tree}
@@ -386,5 +449,20 @@ export function CrawlPageTree({
         </ul>
       </div>
     </div>
+  );
+
+  return (
+    <>
+      {renderTree('max-h-72', true)}
+      <Modal
+        open={maximized}
+        onClose={() => setMaximized(false)}
+        title="Discovered pages"
+        description="Pick the pages to add to your knowledge base."
+        size="xl"
+      >
+        {renderTree('max-h-[65vh]', false)}
+      </Modal>
+    </>
   );
 }

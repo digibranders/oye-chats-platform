@@ -41,13 +41,13 @@ def _bot(db, bot_id: int, **overrides) -> Bot:
     ("action", "column"),
     [("email_verification", "email_verification_enabled"), ("company_name", "company_lookup_enabled")],
 )
-def test_both_toggles_default_on(db, action, column):
-    """A newly created agent has both enrichments live, with no setup step."""
+def test_both_toggles_default_off(db, action, column):
+    """A newly created agent has both enrichments OFF; enrichment is opt-in."""
     bot = _bot(db, 60 if action == "email_verification" else 61)
-    assert getattr(bot, column) is True
+    assert getattr(bot, column) is False
 
     with patch("app.api.chat_routes.get_session", return_value=_Ctx(db)):
-        assert _agent_enrichment_opt_in(bot.id, action) is True
+        assert _agent_enrichment_opt_in(bot.id, action) is False
 
 
 @pytest.mark.parametrize(
