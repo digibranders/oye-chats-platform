@@ -6,12 +6,13 @@ that DEFINES the config — `_DEFAULT_PRICING` and `seed_pricing_config.py` —
 writes `feature.<name>_enabled`. The key it read existed nowhere, and the
 lookup fails open, so every switch was permanently ON.
 
-The consequence was not theoretical. `feature.company_name_enabled` is seeded
-False because the Visitor-Intelligence company lookup is unlaunched — the admin
-UI badges it "Coming soon" and its own comment promises it "never charges" —
+The consequence was not theoretical. `feature.company_name_enabled` was seeded
+False while the Visitor-Intelligence company lookup was unlaunched — the admin
+UI badged it "Coming soon" and its own comment promised it "never charges" —
 yet it charged 10 credits per visitor session, and a super-admin toggling it off
 changed nothing. On Professional that is the entire 10,000-credit monthly
-allowance in 1,000 sessions.
+allowance in 1,000 sessions. (The feature has since launched, so the default is
+now True; the switch itself still has to work.)
 
 Nothing caught it because every test of the enrichment paths patches
 `_charge_for_enrichment` wholesale, so the switch inside it was never executed.
@@ -73,13 +74,17 @@ def test_an_absent_key_fails_open(db):
     assert is_feature_enabled(db, "some_feature_with_no_row_at_all") is True
 
 
-def test_the_seeded_default_keeps_the_unlaunched_feature_off(db):
-    """Guards the shipped posture, not just the mechanism: `company_name` is
-    seeded False on purpose and must not drift on."""
+@pytest.mark.parametrize("feature", ["company_name", "email_verification"])
+def test_the_shipped_defaults_are_on(db, feature):
+    """Guards the shipped posture, not just the mechanism.
+
+    `company_name` was seeded False while the feature was unlaunched and is now
+    on. Either way this test is the thing that would notice a silent drift —
+    the previous value went unguarded, which is part of why nobody spotted that
+    the switch was not being read at all.
+    """
     from app.services.credit_service import _DEFAULT_PRICING
 
-    assert _DEFAULT_PRICING["feature.company_name_enabled"] is False
+    assert _DEFAULT_PRICING[f"feature.{feature}_enabled"] is True
     invalidate_pricing_cache()
-    assert is_feature_enabled(db, "company_name") is False, (
-        "with no DB override, the unlaunched company lookup must be OFF"
-    )
+    assert is_feature_enabled(db, feature) is True

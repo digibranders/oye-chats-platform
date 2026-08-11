@@ -477,30 +477,61 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
         has_intel, has_location = _already_resolved(session_id, ip_address)
 
-        # ORDER IS LOAD-BEARING. The dedup check runs FIRST, before the plan
-        # gate and before the charge.
+        # ORDER IS LOAD-BEARING: dedup, then plan gate, then the lookup, and
+        # the charge LAST — only once we know we have something to sell.
         #
-        # Both halves of this were written independently: the metering (this is
-        # a paid, Professional-only lookup costing `credit_cost.company_name`)
-        # and the per-session dedup. Git merges them without complaint, and
-        # either order compiles — but charging before the dedup bills the
-        # customer 10 credits for EVERY message of a conversation, re-buying an
-        # answer that cannot change. A 15-turn chat would cost 150 credits of
-        # enrichment against 15 credits of actual AI replies, and ~67 such
-        # conversations would exhaust a Professional plan's entire monthly
-        # allowance. Charging after the lookup would be worse still.
+        # The metering (a paid, Professional-only lookup costing
+        # `credit_cost.company_name`) and the per-session dedup were written
+        # independently. Git merges them without complaint and either order
+        # compiles, but charging before the dedup bills the customer 10 credits
+        # for EVERY message of a conversation, re-buying an answer that cannot
+        # change: a 15-turn chat would cost 150 credits of enrichment against
+        # 15 credits of actual AI replies, and ~67 such conversations would
+        # exhaust a Professional plan's entire monthly allowance.
         ip_intel = None
         if not has_intel:
+            from app.services import credit_service
+
             with get_session() as session:
                 vi_enabled = bot_id is not None and is_visitor_intelligence_enabled_for_bot(bot_id, session)
-            # `idempotency_key` is the durable backstop for the same property:
-            # the dedup above is a best-effort read, so two overlapping
-            # background threads can both reach here, but the ledger will only
-            # accept the first.
-            if vi_enabled and _charge_for_enrichment(
-                bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"
-            ):
+                feature_on = credit_service.is_feature_enabled(session, "company_name")
+
+            if vi_enabled and feature_on:
                 ip_intel = fetch_ip_intel(ip_address)
+
+                # CHARGE ONLY IF WE ACTUALLY IDENTIFIED AN EMPLOYER.
+                #
+                # Most visitors cannot be resolved to a company at all: an IP
+                # only names one when that company owns its range. Measured on
+                # production traffic, 10 resolutions produced ZERO usable
+                # names — 9 consumer ISPs and a subnet label — and
+                # `ip_intel_service` correctly nulls `company_name` for every
+                # one of those. Charging before the lookup therefore billed the
+                # full 10 credits for "no company identified" nearly every
+                # time. We eat the vendor call when we fail to deliver; the
+                # customer pays only for an answer.
+                #
+                # The network signal (`asn_org`, VPN/proxy flags) rides along
+                # free — it is the same API response, and the Leads panel
+                # presents it as routing information rather than as a company.
+                identified = bool(ip_intel and ip_intel.get("company_name"))
+                if identified and not _charge_for_enrichment(
+                    # `idempotency_key` is the durable backstop for the dedup
+                    # above, which is a best-effort read: two overlapping
+                    # background threads can both reach here, and the ledger
+                    # accepts only the first.
+                    bot_id,
+                    "company_name",
+                    idempotency_key=f"enrich:company_name:{session_id}",
+                ):
+                    # Out of credits, or the switch flipped off mid-flight.
+                    # Keep the free network signal so the operator still sees
+                    # who routed the visitor and the dedup still latches, but
+                    # withhold the paid identification.
+                    logger.info("company identified but not charged | session=%s — withholding", session_id)
+                    ip_intel = dict(ip_intel)
+                    ip_intel["company_name"] = None
+                    ip_intel["company_domain"] = None
         if ip_intel:
             # Recorded so a later turn can tell "already done" from "done for a
             # different IP" — see _already_resolved.

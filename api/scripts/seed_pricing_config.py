@@ -53,7 +53,7 @@ _CONFIG: dict[str, object] = {
     # False the feature is skipped platform-wide (no lookup, no charge).
     # Company lookup stays off until launch ("Coming soon" in the UI).
     "feature.email_verification_enabled": True,
-    "feature.company_name_enabled": False,
+    "feature.company_name_enabled": True,
     # One-time top-up packs, lifetime credits (headline INR + USD; provider ids
     # resolved lazily at purchase). bonus_pct/badge are marketing metadata.
     "topup_packs": [

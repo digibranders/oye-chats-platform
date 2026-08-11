@@ -401,3 +401,97 @@ def test_company_lookup_skipped_when_not_professional(db):
     mock_fetch.assert_not_called()
     updated = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     assert "ip_intel" not in (updated.visitor_metadata or {})
+
+
+# ── Charge only for an answer ────────────────────────────────────────────────
+#
+# An IP names a company only when that company owns its range. Measured on
+# production traffic, 10 resolutions produced ZERO usable company names — 9
+# consumer ISPs and a subnet label. Charging before the lookup therefore billed
+# the full 10 credits for "not identified" nearly every time.
+
+
+def test_no_charge_when_the_visitor_cannot_be_resolved_to_a_company(db):
+    """The COMMON case, and the one that decides whether this feature is
+    honest: a home or mobile visitor resolves to a carrier, `ip_intel_service`
+    nulls the company name, and the customer must pay nothing."""
+    session_id = _seed(db, client_id=40, bot_key="bot-nocharge", session_id="s-nocharge")
+    isp_only = {"company_name": None, "company_domain": None, "asn_org": "Bharti Airtel Limited"}
+
+    with (
+        _metering_allowed() as charge,
+        patch("app.api.chat_routes.fetch_ip_intel", return_value=isp_only) as intel,
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", 40)
+
+    assert intel.call_count == 1, "the lookup still runs — we eat the vendor call"
+    assert charge.call_count == 0, "charged 10 credits for 'no company identified'"
+
+    # The free network signal is still stored, so the operator sees who routed
+    # the visitor and the dedup latches (no re-lookup next message).
+    db.expire_all()
+    stored = db.query(ChatSession).filter(ChatSession.id == session_id).first().visitor_metadata["ip_intel"]
+    assert stored["asn_org"] == "Bharti Airtel Limited"
+    assert stored["company_name"] is None
+
+
+def test_charged_when_a_company_is_actually_identified(db):
+    session_id = _seed(db, client_id=41, bot_key="bot-charged", session_id="s-charged")
+
+    with (
+        _metering_allowed() as charge,
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Infosys Limited"}),
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", 41)
+
+    assert charge.call_count == 1
+
+
+def test_the_feature_switch_stops_the_vendor_call_entirely(db):
+    """Off must mean no lookup, not merely no charge — otherwise a disabled
+    feature still spends OyeChats' own ipapi.is quota on every session."""
+    from app.services import credit_service
+
+    session_id = _seed(db, client_id=42, bot_key="bot-switchoff", session_id="s-switchoff")
+
+    with (
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch.object(credit_service, "is_feature_enabled", return_value=False),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=True) as charge,
+        patch("app.api.chat_routes.fetch_ip_intel", return_value={"company_name": "Acme"}) as intel,
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", 42)
+
+    assert intel.call_count == 0, "the switch is off but the paid vendor call still fired"
+    assert charge.call_count == 0
+
+
+def test_an_identified_company_is_withheld_when_the_charge_fails(db):
+    """Out of credits: keep the free network signal, withhold the paid answer.
+    Storing the company anyway would give it away; storing nothing would
+    re-run the vendor call on every subsequent message."""
+    session_id = _seed(db, client_id=43, bot_key="bot-broke", session_id="s-broke")
+
+    with (
+        patch("app.api.chat_routes.is_visitor_intelligence_enabled_for_bot", return_value=True),
+        patch("app.api.chat_routes._charge_for_enrichment", return_value=False),
+        patch(
+            "app.api.chat_routes.fetch_ip_intel",
+            return_value={"company_name": "Infosys Limited", "company_domain": "infosys.com", "asn_org": "Infosys"},
+        ),
+        patch("app.api.chat_routes.urllib.request.urlopen", side_effect=OSError("skip geo")),
+        patch("app.api.chat_routes.get_session", return_value=_MockSessionManager(db)),
+    ):
+        _resolve_and_update_location(session_id, "8.8.8.8", 43)
+
+    db.expire_all()
+    stored = db.query(ChatSession).filter(ChatSession.id == session_id).first().visitor_metadata["ip_intel"]
+    assert stored["company_name"] is None, "an unpaid company identification was given away"
+    assert stored["company_domain"] is None
+    assert stored["asn_org"] == "Infosys", "the free network signal should survive"

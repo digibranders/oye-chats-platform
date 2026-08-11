@@ -188,6 +188,9 @@ interface CreditCostRow {
    * `feature.company_name_enabled` switch stays off until launch).
    */
   readonly comingSoon?: boolean;
+  // No row sets this today — company lookup, the last one that did, has
+  // launched. Kept because it is live machinery for the next metered feature
+  // that ships dark, not dead code.
 }
 
 /**
@@ -245,9 +248,14 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
   {
     icon: Building2,
     label: 'Company lookup',
-    detail: 'Identifies a visitor’s company from their IP. Professional plan.',
+    // States the charge condition, because it is unusual and in the customer's
+    // favour: an IP only names a company when that company owns its range, so
+    // most visitors — anyone on a home or mobile connection — resolve to no
+    // employer at all. Those cost nothing. Saying only "10 credits" would read
+    // as 10 per visitor, which is what it would have been had the charge stayed
+    // ahead of the lookup.
+    detail: 'Identifies a visitor’s company from their IP. Charged only when a company is found. Professional plan.',
     cost: 10,
-    comingSoon: true,
   },
 ];
 

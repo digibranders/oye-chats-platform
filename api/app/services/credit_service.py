@@ -178,10 +178,12 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # from the super-admin pricing panel (pricing_config KV). When False the
     # feature is skipped for everyone regardless of plan — no lookup, no charge.
     "feature.email_verification_enabled": True,
-    # Company lookup is built and wired but NOT launched — kept off ("Coming
-    # soon" in the customer UI) until product flips this on. Off = no lookup,
-    # no charge, anywhere.
-    "feature.company_name_enabled": False,
+    # Company lookup — LAUNCHED. Off = no lookup and no charge, anywhere.
+    # Note this feature charges only when a company is actually IDENTIFIED
+    # (see chat_routes._resolve_and_update_location): most visitors arrive on
+    # consumer ISP ranges that name no employer, and the customer must not pay
+    # 10 credits for "not identified".
+    "feature.company_name_enabled": True,
     # One-time top-up packs (lifetime credits). Charged in INR via Razorpay;
     # ``usd`` is a display-only headline for non-INR buyers (never charged).
     # ``bonus_pct`` / ``badge`` are marketing metadata, fully super-admin
