@@ -75,3 +75,26 @@ describe('buildInstallPrompt', () => {
     expect(text).toContain('connect-src https://api.oyechats.com');
   });
 });
+
+describe('attribution', () => {
+  it('documents the attribution anchor by default', () => {
+    const text = prompt();
+    expect(text).toContain('Powered by OyeChats');
+    expect(text).toContain('rel="nofollow"');
+    expect(text).toContain(`ref=${BOT_KEY}`);
+  });
+
+  it('omits the attribution anchor when attribution is off', () => {
+    const text = prompt({ attribution: false });
+    expect(text).not.toContain('Powered by OyeChats');
+    expect(text).not.toContain('rel="nofollow"');
+  });
+
+  it('keeps every platform snippet free of hidden-text styling', () => {
+    for (const platform of platforms) {
+      const text = prompt({ platform });
+      expect(text).not.toContain('display:none');
+      expect(text).not.toContain('visibility:hidden');
+    }
+  });
+});
