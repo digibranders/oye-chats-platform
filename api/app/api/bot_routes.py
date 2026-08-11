@@ -680,6 +680,16 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         # widget always reflects the plan entitlement.
         effective_feature_flags["show_branding"] = True
 
+    # Mirror the show_branding lock: a plan without branding removal must also
+    # not be able to re-label or re-target the badge by PATCHing the fields
+    # directly. The admin UI hides these inputs for such plans, but the API is
+    # the real boundary.
+    effective_branding_text = bot.branding_text or "Powered by OyeChats"
+    effective_branding_url = bot.branding_url or "https://www.oyechats.com"
+    if not _plan_branding_removable:
+        effective_branding_text = "Powered by OyeChats"
+        effective_branding_url = "https://www.oyechats.com"
+
     return {
         "bot_name": bot.name,
         "bot_logo": logo_url,
@@ -702,8 +712,8 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "feature_flags": effective_feature_flags,
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
-        "branding_text": bot.branding_text or "Powered by OyeChats",
-        "branding_url": bot.branding_url or "https://www.oyechats.com",
+        "branding_text": effective_branding_text,
+        "branding_url": effective_branding_url,
         "welcome_title": bot.welcome_title or "Hi there 👋",
         "welcome_subtitle": bot.welcome_subtitle or "How can we help you today?",
         "waiting_message": bot.waiting_message or "Connecting you to support...",

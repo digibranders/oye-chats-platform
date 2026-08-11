@@ -27,6 +27,16 @@ export interface ExperienceDraft {
    * turn this off; the backend force-sets it back to `true` on save
    * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
   showBranding: boolean;
+  /** `bot.branding_text` - the badge label. Only meaningful when
+   * `showBranding` is true AND the plan has `branding_removable`; the backend
+   * forces both this and `brandingUrl` back to defaults otherwise, so a
+   * non-entitled workspace cannot white-label by calling the API directly. */
+  brandingText: string;
+  /** `bot.branding_url` - where the badge links. Same entitlement rule as
+   * `brandingText`. The widget validates this independently
+   * (`widget/src/services/brandingLink.js`) and falls back to the default for
+   * anything non-http, so a bad value here can never reach a live `href`. */
+  brandingUrl: string;
 
   // ── Messages (widget_messages.*) ────────────────────────────────────────────
   welcomeGreeting: string;
@@ -81,6 +91,8 @@ const DEFAULTS = {
   welcomeGreeting: 'Hi there, how can I help you today?',
   welcomeSubtitle: 'Ask me anything - I answer from your knowledge base.',
   inputPlaceholder: 'Write a message…',
+  brandingText: 'Powered by OyeChats',
+  brandingUrl: 'https://www.oyechats.com',
 } as const;
 
 /**
@@ -161,6 +173,8 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
     botLogo: typeof raw.bot_logo === 'string' && raw.bot_logo.length > 0 ? raw.bot_logo : null,
     botLogoSource: typeof raw.bot_logo_source === 'string' ? raw.bot_logo_source : null,
     showBranding: asBoolean(featureFlags.show_branding, true),
+    brandingText: asNonEmptyString(raw.branding_text, DEFAULTS.brandingText),
+    brandingUrl: asNonEmptyString(raw.branding_url, DEFAULTS.brandingUrl),
 
     welcomeGreeting: asNonEmptyString(widgetMessages.welcome_greeting, DEFAULTS.welcomeGreeting),
     welcomeSubtitle: asNonEmptyString(widgetMessages.welcome_subtitle, DEFAULTS.welcomeSubtitle),
@@ -218,6 +232,8 @@ export function settingsFromDraft(
     // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) - other
     // stored feature flags (managed on the Advanced tab) are untouched.
     feature_flags: { show_branding: draft.showBranding },
+    branding_text: draft.brandingText.trim() || DEFAULTS.brandingText,
+    branding_url: draft.brandingUrl.trim() || DEFAULTS.brandingUrl,
 
     widget_messages: {
       ...draft.extraWidgetMessages,

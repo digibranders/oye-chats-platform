@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { settingsFromDraft, type ExperienceDraft } from './types';
+import { draftFromSettings, settingsFromDraft, type ExperienceDraft } from './types';
 
 function draftWith(overrides: Partial<ExperienceDraft> = {}): ExperienceDraft {
   return {
@@ -25,6 +25,8 @@ function draftWith(overrides: Partial<ExperienceDraft> = {}): ExperienceDraft {
     botLogo: null,
     botLogoSource: null,
     showBranding: true,
+    brandingText: 'Powered by OyeChats',
+    brandingUrl: 'https://www.oyechats.com',
     welcomeGreeting: 'Hi there',
     welcomeSubtitle: 'How can I help?',
     quickActions: [],
@@ -104,5 +106,49 @@ describe('settingsFromDraft avatar handling', () => {
     const payload = settingsFromDraft(draftWith({ botLogo: 'logos/x.png' }));
 
     expect(payload.bot_logo).toBe('logos/x.png');
+  });
+});
+
+describe('branding text/url round-trip', () => {
+  it('reads a stored custom badge label and link from the raw settings payload', () => {
+    const raw = {
+      branding_text: 'Powered by Acme',
+      branding_url: 'https://acme.example',
+    };
+
+    const draft = draftFromSettings(raw);
+
+    expect(draft.brandingText).toBe('Powered by Acme');
+    expect(draft.brandingUrl).toBe('https://acme.example');
+  });
+
+  it('falls back to the OyeChats defaults when the raw payload has no branding fields', () => {
+    const draft = draftFromSettings({});
+
+    expect(draft.brandingText).toBe('Powered by OyeChats');
+    expect(draft.brandingUrl).toBe('https://www.oyechats.com');
+  });
+
+  it('falls back to the defaults when the stored values are blank', () => {
+    const draft = draftFromSettings({ branding_text: '   ', branding_url: '' });
+
+    expect(draft.brandingText).toBe('Powered by OyeChats');
+    expect(draft.brandingUrl).toBe('https://www.oyechats.com');
+  });
+
+  it('persists a custom badge label and link unchanged', () => {
+    const payload = settingsFromDraft(
+      draftWith({ brandingText: 'Powered by Acme', brandingUrl: 'https://acme.example' }),
+    );
+
+    expect(payload.branding_text).toBe('Powered by Acme');
+    expect(payload.branding_url).toBe('https://acme.example');
+  });
+
+  it('saves whitespace-only input as the default rather than a blank value', () => {
+    const payload = settingsFromDraft(draftWith({ brandingText: '   ', brandingUrl: '   ' }));
+
+    expect(payload.branding_text).toBe('Powered by OyeChats');
+    expect(payload.branding_url).toBe('https://www.oyechats.com');
   });
 });
