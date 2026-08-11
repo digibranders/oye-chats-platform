@@ -41,7 +41,17 @@ def _session(**overrides):
 
 
 def _lead_info(**overrides):
-    base = dict(name="Jane", email="jane@acme.com", phone=None, company="Acme", is_valid_email=None, email_score=None)
+    base = dict(
+        name="Jane",
+        email="jane@acme.com",
+        phone=None,
+        company="acme.com",
+        is_valid_email=None,
+        email_score=None,
+        company_name=None,
+        company_description=None,
+        company_logo_url=None,
+    )
     base.update(overrides)
     return SimpleNamespace(**base)
 

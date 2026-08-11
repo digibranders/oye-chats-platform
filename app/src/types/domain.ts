@@ -235,6 +235,15 @@ export interface LeadContact {
   is_valid_email?: boolean | null;
   /** Present only when the caller's plan includes Visitor Intelligence (Professional). */
   email_score?: number | null;
+  /**
+   * The company behind `company`, resolved from the domain's own declared
+   * identity — "infosys.com" becomes "Infosys Limited". Professional-gated,
+   * like the rest of visitor intelligence, because the same paid enrichment
+   * produces it. `company` above stays the raw domain on every plan.
+   */
+  company_name?: string | null;
+  company_description?: string | null;
+  company_logo_url?: string | null;
 }
 
 /** One dimension's decayed value + score inside a lead's framework breakdown. */

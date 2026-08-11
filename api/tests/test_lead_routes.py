@@ -548,6 +548,9 @@ def _lead_info(**overrides):
         company="fynix.digital",
         is_valid_email=True,
         email_score=None,
+        company_name=None,
+        company_description=None,
+        company_logo_url=None,
         last_followup_sent_at=None,
         followup_sent_by_operator_id=None,
     )

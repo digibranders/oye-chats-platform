@@ -609,7 +609,22 @@ class LeadInfo(Base):
     name = Column(String, nullable=True)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    # The registrable domain of the captured email, e.g. "infosys.com". Kept as
+    # the raw domain, NOT overwritten with a resolved name: it is free, always
+    # available, and the only thing this column has ever meant. Consumers
+    # (CSV export, webhooks, the leads list) already read it.
     company = Column(String, nullable=True)
+
+    # ── Resolved company identity (company_profile_service) ─────────────────
+    #
+    # Populated from the cross-tenant `company_profile` cache, which turns a
+    # domain into the company's own declared identity — "infosys.com" becomes
+    # "Infosys Limited". Separate columns rather than overwriting `company`
+    # so a failed or pending resolution always degrades to the domain rather
+    # than to nothing, and so an operator can see both.
+    company_name = Column(String, nullable=True)
+    company_description = Column(Text, nullable=True)
+    company_logo_url = Column(String, nullable=True)
 
     metadata_json = Column(JSONB, nullable=True)
     suppression_reason = Column(String, nullable=True)

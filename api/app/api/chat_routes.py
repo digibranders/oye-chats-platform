@@ -744,6 +744,77 @@ def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int |
             session.rollback()
             logger.warning(f"Failed to save background lead enrichment for {session_id}: {e}")
 
+    # Resolve the domain to the company's own declared identity, LAST.
+    #
+    # Deliberately after the commit above, on this same thread rather than a
+    # second `submit_background`: the pool has three workers shared
+    # platform-wide, and this can take tens of seconds (a crawl, then possibly
+    # an LLM call). Running it before the write would hold the email verdict —
+    # the more actionable signal — behind a slower, optional one; running it on
+    # its own worker would consume a second of three slots per lead.
+    _resolve_lead_company(session_id, domain, bot_id)
+
+
+def _resolve_lead_company(session_id: str, domain: str | None, bot_id: int | None) -> None:
+    """Turn the lead's email domain into a company name, description and logo.
+
+    "infosys.com" becomes "Infosys Limited". The work happens in
+    ``company_profile_service``, which crawls the domain root, prefers the
+    site's OWN declared identity (schema.org, then og:site_name) and only
+    spends an LLM call when the site declares nothing. Results are cached in a
+    cross-tenant table keyed by registrable domain, so the second lead from any
+    company — on any customer's bot — is free.
+
+    Gated exactly like the IP→company lookup, because to a customer they are
+    one feature ("who is this visitor's company?") with two signal sources:
+    the plan, the super-admin kill switch, and the per-agent toggle.
+
+    It shares the IP path's IDEMPOTENCY KEY on purpose. A session where the IP
+    already identified an employer has been charged; finding the same answer
+    again from the email domain must not bill twice. Whichever signal gets
+    there first pays, once per session.
+
+    ``lead.company`` keeps the raw domain either way — a failed resolution
+    degrades to "infosys.com", never to nothing.
+    """
+    if not domain or bot_id is None:
+        return
+
+    from app.db.models import LeadInfo
+    from app.services import credit_service
+    from app.services.company_profile_service import resolve_company
+
+    try:
+        with get_session() as session:
+            allowed = is_visitor_intelligence_enabled_for_bot(bot_id, session)
+            feature_on = credit_service.is_feature_enabled(session, "company_name")
+        if not (allowed and feature_on and _agent_enrichment_opt_in(bot_id, "company_name")):
+            return
+
+        company = resolve_company(domain)
+        if company is None:
+            return  # parked domain, unreachable site, or nothing declared
+
+        # Charge only for an answer, same rule as the IP path: we absorb the
+        # crawl when we cannot identify anyone.
+        if not _charge_for_enrichment(bot_id, "company_name", idempotency_key=f"enrich:company_name:{session_id}"):
+            logger.info("company resolved for %s but not charged — withholding", session_id)
+            return
+
+        with get_session() as session:
+            lead = session.query(LeadInfo).filter(LeadInfo.session_id == session_id).first()
+            if lead is None:
+                return
+            lead.company_name = company.name
+            lead.company_description = company.description
+            lead.company_logo_url = company.logo_url
+            session.commit()
+        logger.info("lead company resolved | session=%s | %s -> %s", session_id, domain, company.name)
+    except Exception:
+        # Enrichment must never surface to a visitor, and the lead is already
+        # captured and committed by this point.
+        logger.warning("lead company resolution failed for session=%s", session_id, exc_info=True)
+
 
 _DEFAULT_OFFLINE_MESSAGE = "We're currently away. Please leave a message and we'll get back to you soon."
 
