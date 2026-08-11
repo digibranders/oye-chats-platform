@@ -11,11 +11,12 @@ import io
 import logging
 import re
 import uuid
+from contextlib import contextmanager
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from PIL import Image
+from PIL import Image, ImageFile
 
 from app.config import R2_APPLICATION_KEY, R2_BUCKET_NAME, R2_ENDPOINT, R2_KEY_ID, R2_PUBLIC_BASE_URL
 
@@ -84,6 +85,41 @@ MAX_DECODED_PIXELS = 40_000_000
 ALLOWED_IMAGE_FORMATS = frozenset({"PNG", "JPEG", "WEBP", "GIF", "BMP"})
 
 
+@contextmanager
+def _strict_decode_limits():
+    """Pin Pillow's two process-global decode switches for the duration of ONE
+    decode, then put them back exactly as they were.
+
+    Both are module-level globals on a shared library, so their value at any
+    moment is whatever the last writer left — and a writer we do not control
+    already exists: importing ``weasyprint`` (the invoice-PDF renderer) sets
+    ``ImageFile.LOAD_TRUNCATED_IMAGES = True`` at import time, process-wide,
+    for its own rendering needs. Any process that has rendered an invoice
+    therefore stops rejecting truncated uploads, silently, and turns a corrupt
+    file into a half-decoded image with the rest filled in.
+
+    Today the API imports weasyprint only lazily, so the running API process
+    happens not to be affected — but "happens not to be" is not a security
+    boundary. It held only because a `from weasyprint import HTML` sits inside
+    a function rather than at module scope, and it broke the test suite the
+    moment everything was imported into one process.
+
+    Restoring rather than merely setting matters too: this used to assign
+    ``Image.MAX_IMAGE_PIXELS`` and leave it changed for the whole process, so a
+    logo upload silently re-tuned the bomb guard for every other decode in the
+    application.
+    """
+    prev_max_pixels = Image.MAX_IMAGE_PIXELS
+    prev_truncated = ImageFile.LOAD_TRUNCATED_IMAGES
+    Image.MAX_IMAGE_PIXELS = MAX_DECODED_PIXELS
+    ImageFile.LOAD_TRUNCATED_IMAGES = False
+    try:
+        yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = prev_max_pixels
+        ImageFile.LOAD_TRUNCATED_IMAGES = prev_truncated
+
+
 def process_image_for_logo(file_data, target_size=(512, 512)):
     """
     Process image: Square center crop and resize to target_size.
@@ -95,26 +131,26 @@ def process_image_for_logo(file_data, target_size=(512, 512)):
     customer, so the format is established by DECODING, and the decode itself
     is bounded against a compression bomb.
     """
-    Image.MAX_IMAGE_PIXELS = MAX_DECODED_PIXELS
-    try:
-        img = Image.open(io.BytesIO(file_data))
-        # `open` is lazy — it reads the header and returns. Verifying the
-        # format here would be checking a claim the file makes about itself
-        # before anything has actually been decoded, so the real decode below
-        # is what proves it.
-        detected = (img.format or "").upper()
-        if detected not in ALLOWED_IMAGE_FORMATS:
-            raise UnsupportedImage(f"Unsupported image format: {detected or 'unrecognised'}")
-        img.load()
-    except Image.DecompressionBombError as exc:
-        raise UnsupportedImage("Image dimensions are too large to process.") from exc
-    except UnsupportedImage:
-        raise
-    except Exception as exc:
-        # UnidentifiedImageError, truncated files, and anything else Pillow
-        # throws on hostile input. The caller must not see a 500 for a file
-        # the customer chose.
-        raise UnsupportedImage("That file could not be read as an image.") from exc
+    with _strict_decode_limits():
+        try:
+            img = Image.open(io.BytesIO(file_data))
+            # `open` is lazy — it reads the header and returns. Verifying the
+            # format here would be checking a claim the file makes about itself
+            # before anything has actually been decoded, so the real decode below
+            # is what proves it.
+            detected = (img.format or "").upper()
+            if detected not in ALLOWED_IMAGE_FORMATS:
+                raise UnsupportedImage(f"Unsupported image format: {detected or 'unrecognised'}")
+            img.load()
+        except Image.DecompressionBombError as exc:
+            raise UnsupportedImage("Image dimensions are too large to process.") from exc
+        except UnsupportedImage:
+            raise
+        except Exception as exc:
+            # UnidentifiedImageError, truncated files, and anything else Pillow
+            # throws on hostile input. The caller must not see a 500 for a file
+            # the customer chose.
+            raise UnsupportedImage("That file could not be read as an image.") from exc
 
     # Convert to RGBA if not already (to preserve transparency)
     if img.mode != "RGBA":

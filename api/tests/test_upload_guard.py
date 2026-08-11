@@ -15,7 +15,7 @@ import io
 
 import pytest
 from fastapi import HTTPException, UploadFile
-from PIL import Image
+from PIL import Image, ImageFile
 
 from app.core.upload_guard import IMAGE_UPLOAD_TYPES, ensure_allowed_type, read_bounded
 from app.services.r2_service import UnsupportedImage, process_image_for_logo
@@ -23,6 +23,24 @@ from app.services.r2_service import UnsupportedImage, process_image_for_logo
 
 def _upload(data: bytes, content_type: str = "image/png", name: str = "logo.png") -> UploadFile:
     return UploadFile(filename=name, file=io.BytesIO(data), headers={"content-type": content_type})
+
+
+@pytest.fixture(autouse=True)
+def _restore_pillow_globals():
+    """Snapshot and restore Pillow's process-global decode switches.
+
+    Several tests below flip these deliberately to reproduce a process that has
+    imported weasyprint. Leaving one flipped would hand the next test — and
+    every later module in the run — a different decoder, which is precisely the
+    failure being tested for.
+    """
+    prev_max_pixels = Image.MAX_IMAGE_PIXELS
+    prev_truncated = ImageFile.LOAD_TRUNCATED_IMAGES
+    try:
+        yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = prev_max_pixels
+        ImageFile.LOAD_TRUNCATED_IMAGES = prev_truncated
 
 
 def _png(width: int, height: int) -> bytes:
@@ -92,24 +110,57 @@ class TestTheActualDecodeIsTheBoundary:
         with pytest.raises(UnsupportedImage):
             process_image_for_logo(b"MZ\x90\x00" + b"\x00" * 500)  # a PE header
 
-    def test_a_truncated_image_is_rejected_not_crashed(self):
+    @pytest.mark.parametrize("weasyprint_already_imported", [False, True])
+    def test_a_truncated_image_is_rejected_not_crashed(self, weasyprint_already_imported):
         """A header that parses over pixel data that stops early.
 
-        The cut is a FRACTION of the encoded file, and asserted to be one. It
-        used to be a fixed `[:120]`, which silently stopped testing anything on
-        a machine whose Pillow encodes this image in under 120 bytes — the
-        slice was then the whole valid file, `load()` succeeded, and the test
-        failed with DID NOT RAISE. PNG size here is decided by which row filter
-        the build picks: a solid colour under filter "Up" is 400 rows of zeros
-        and compresses to almost nothing, so the encoded length is a property
-        of the platform, never something to hard-code against.
+        Parametrized over Pillow's `LOAD_TRUNCATED_IMAGES`, because that global
+        is not ours: importing `weasyprint` (the invoice-PDF renderer) sets it
+        True process-wide for its own rendering. Whether it is set therefore
+        depends on what else the process has imported — which is why this test
+        passed on a Mac, where weasyprint cannot import without
+        DYLD_FALLBACK_LIBRARY_PATH, and failed on CI, where everything lands in
+        one process. Under True, and before `_strict_decode_limits`, the
+        validator quietly ACCEPTED the corrupt file and half-decoded it.
+
+        The cut is a fraction of the encoded length, never a fixed byte count:
+        PNG size here depends on which row filter the platform's build picks.
         """
+        ImageFile.LOAD_TRUNCATED_IMAGES = weasyprint_already_imported
+
         full = _png(400, 400)
         truncated = full[: len(full) // 2]
         assert 0 < len(truncated) < len(full), "the fixture must actually be missing data"
 
         with pytest.raises(UnsupportedImage):
             process_image_for_logo(truncated)
+
+    def test_the_decode_switches_are_left_exactly_as_they_were(self):
+        """Our decode must not re-tune Pillow for the rest of the process.
+
+        `MAX_IMAGE_PIXELS` used to be assigned and never restored, so one logo
+        upload silently changed the decompression-bomb threshold for every
+        other decode in the application.
+        """
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        unchanged = 12_345_678
+        Image.MAX_IMAGE_PIXELS = unchanged
+
+        process_image_for_logo(_png(64, 64))
+
+        assert unchanged == Image.MAX_IMAGE_PIXELS
+        assert ImageFile.LOAD_TRUNCATED_IMAGES is True
+
+    def test_the_switches_are_restored_even_when_the_decode_fails(self):
+        ImageFile.LOAD_TRUNCATED_IMAGES = False
+        unchanged = 999_999
+        Image.MAX_IMAGE_PIXELS = unchanged
+
+        with pytest.raises(UnsupportedImage):
+            process_image_for_logo(b"not an image at all")
+
+        assert unchanged == Image.MAX_IMAGE_PIXELS
+        assert ImageFile.LOAD_TRUNCATED_IMAGES is False
 
     def test_empty_input_is_rejected(self):
         with pytest.raises(UnsupportedImage):
