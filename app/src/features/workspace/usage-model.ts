@@ -428,6 +428,36 @@ export function aggregatePool(balance: CreditBalance): PoolCredit {
  * then a synthetic aggregate when the agent still draws from the workspace
  * balance. `null` (All agents) resolves to the whole-workspace aggregate.
  */
+/**
+ * The one honest statement this app can make about top-up expiry.
+ *
+ * "Top-up credits never expire" is a TERM OF SALE, true only when
+ * `pricing_config.topup_expiry_months = 0` — a server-side value no endpoint
+ * exposes. The only evidence the client holds is the customer's own ledger:
+ * `soonestExpiry` is non-null exactly when a top-up they hold carries an
+ * `expires_at` that the daily sweep will act on.
+ *
+ *   - a dated grant  → state the date; "forever" is false for this customer
+ *   - grants, undated → "never expire" is demonstrably true for them
+ *   - no grants       → no evidence, so NO CLAIM
+ *
+ * That last case is deliberate and costs a sentence on the sales page. An
+ * unbacked guarantee at the point of sale is the defect this replaces: the
+ * app promised lifetime credits while the database said 12 months, and a
+ * customer could see a concrete expiry date in the hero and "never expire"
+ * 400px below it on the same screen.
+ *
+ * Lives here rather than in one modal so every surface states the same thing.
+ */
+export function describeTopupExpiry(balance: CreditBalance): string | null {
+  if (balance.soonestExpiry) {
+    return `Your top-up credits do expire - the earliest on ${formatDate(balance.soonestExpiry)}.`;
+  }
+  if (balance.topupRemaining > 0) return 'Top-up credits never expire.';
+  return null;
+}
+
+
 export function resolveScopedPool(balance: CreditBalance, botId: number | null): PoolCredit {
   if (botId != null) {
     return (
