@@ -71,7 +71,10 @@ export function buildBrandingHref(brandingUrl, botKey) {
 export function resolveBrandingText(brandingText) {
     const trimmed = typeof brandingText === 'string' ? brandingText.trim() : '';
     if (!trimmed) return DEFAULT_BRANDING_TEXT;
-    return trimmed.slice(0, MAX_BRANDING_TEXT_LENGTH);
+    // Slice by code point, not UTF-16 code unit, so an astral character
+    // (e.g. an emoji) straddling the cut never gets split into an unpaired
+    // surrogate that would render as a corrupted glyph in the footer.
+    return Array.from(trimmed).slice(0, MAX_BRANDING_TEXT_LENGTH).join('');
 }
 
 /**

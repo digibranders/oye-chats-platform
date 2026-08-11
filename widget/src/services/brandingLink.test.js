@@ -1,3 +1,10 @@
+/**
+ * Tests for the branding link helper (brandingLink.js).
+ *
+ * Run with: `node --test src/services/brandingLink.test.js`
+ * (Node 18+ has a built-in test runner — no vitest/jest dep needed.)
+ */
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -61,6 +68,26 @@ test('resolveBrandingText trims, falls back, and caps length', () => {
     assert.equal(resolveBrandingText('   '), DEFAULT_BRANDING_TEXT);
     assert.equal(resolveBrandingText('  Powered by Acme  '), 'Powered by Acme');
     assert.equal(resolveBrandingText('x'.repeat(80)).length, 60);
+});
+
+test('resolveBrandingText never splits a surrogate pair at the cap', () => {
+    // 59 ASCII code units + 2 astral emoji (2 code units each) = 63 code
+    // units total, straddling the 60-code-unit cap right inside the first
+    // emoji's surrogate pair. A naive `.slice(0, 60)` would cut mid-pair and
+    // leave a lone high surrogate ('\ud83d') dangling at the end.
+    const input = 'x'.repeat(59) + '🚀🚀';
+    const result = resolveBrandingText(input);
+
+    // No unpaired surrogate: every code unit pairs up cleanly into whole
+    // code points when re-decoded.
+    assert.equal(Array.from(result).join(''), result);
+    assert.doesNotMatch(result, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    assert.doesNotMatch(result, /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+
+    // Whole-character cap: 59 'x' characters plus one complete rocket emoji,
+    // the second rocket dropped rather than split.
+    assert.equal(Array.from(result).length, 60);
+    assert.equal(result, 'x'.repeat(59) + '🚀');
 });
 
 test('splitBrandingText separates the trailing brand word', () => {
