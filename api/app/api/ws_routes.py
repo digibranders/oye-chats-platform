@@ -127,6 +127,54 @@ async def _heartbeat(ws: WebSocket) -> None:
         await ws.send_json({"type": "ping"})
 
 
+# One DB write per this many server heartbeats. `touch_last_seen` exists to keep
+# `Operator.last_seen_at` fresh enough for the Redis-outage fallback (120s
+# window) without hammering Postgres — at a 30s heartbeat, every other tick is
+# a write every 60s, inside that window with room to spare.
+_LAST_SEEN_EVERY_N_BEATS = 2
+
+
+async def _operator_presence_heartbeat(ws: WebSocket, operator_id: int, client_id: int) -> None:
+    """Ping the operator AND re-stamp their presence, server-side.
+
+    Presence used to be refreshed ONLY when the operator's client sent a
+    ``{"type": "heartbeat"}`` message. The Redis key lives 60s, so any client
+    that does not send it — the mobile app, or a web client on a tab the browser
+    has throttled — went invisible one minute after connecting while its socket
+    stayed open and its own UI still showed "connected". Every handoff after
+    that minute resolved to ``all_offline`` and the visitor got the offline
+    form, with an operator sitting right there. Observed in production on
+    2026-08-11: operator connected 13:03:35, key expired ~13:04:35, visitor
+    asked for a human 13:08:43 → ``reason=all_offline``.
+
+    An OPEN SOCKET is the presence signal. Asserting it from the server removes
+    the dependency on client behaviour entirely; the client-sent ``heartbeat``
+    message still works and is now belt-and-braces rather than load-bearing.
+
+    Also drives ``touch_last_seen``, which had no callers at all — so
+    ``last_seen_at`` was NULL for every operator and ``is_online``'s documented
+    "if Redis is down, fall back to the DB" path could never return True.
+    """
+    from app.db.session import get_session
+    from app.services import operator_presence_service as presence
+
+    beat = 0
+    while True:
+        await asyncio.sleep(_HEARTBEAT_INTERVAL)
+        await ws.send_json({"type": "ping"})
+
+        beat += 1
+        # Never let a presence write break the socket: this coroutine dying
+        # would stop the pings too, and the connection with it.
+        try:
+            presence.mark_online(operator_id, client_id)
+            if beat % _LAST_SEEN_EVERY_N_BEATS == 0:
+                with get_session() as session:
+                    presence.touch_last_seen(operator_id, session)
+        except Exception:
+            logger.debug("presence heartbeat failed for operator=%s", operator_id, exc_info=True)
+
+
 # ── CAS session transitions for the WS close paths (audit F31) ────────────────
 #
 # These used to be plain read-then-write status mutations inside the handlers,
@@ -715,7 +763,7 @@ async def operator_websocket(
         subprotocol=accepted_subprotocol,
     )
 
-    heartbeat_task = asyncio.create_task(_heartbeat(ws))
+    heartbeat_task = asyncio.create_task(_operator_presence_heartbeat(ws, operator_id, client_id))
     rate_limiter = _RateLimiter(_OPERATOR_MSG_LIMIT)
 
     try:

@@ -59,23 +59,13 @@ import {
   leadInitials,
   normalizeTier,
 } from './leadModel';
+import { planIncludesVisitorIntelligence } from '../../lib/planGates';
 
 const CONTACT_FILTER_OPTIONS: ReadonlyArray<{ value: ContactFilter; label: string }> = [
   { value: 'named', label: 'Named leads' },
   { value: 'anonymous', label: 'Anonymous only' },
   { value: 'all', label: 'Everyone' },
 ];
-
-/**
- * Plan slugs allowed to see Visitor Intelligence (company signal, email
- * validity, manual follow-up). Mirrors ``VISITOR_INTELLIGENCE_SLUGS`` in
- * ``plan_entitlements_service.py`` — Professional only.
- *
- * Matched against the SELECTED AGENT's slug, not the account's, because
- * billing is per-agent: a workspace can hold a Professional agent and a Free
- * one, and the backend gates each agent's leads independently.
- */
-const VISITOR_INTELLIGENCE_PLAN_SLUGS = new Set<string>(['professional']);
 
 /** How the lead table is ordered. Exposed via the "Sort by" control. */
 const SORT_OPTIONS = [
@@ -236,7 +226,7 @@ export function LeadsPage(): ReactElement {
   // gate closed rather than flashing paid UI we'd then have to take away.
   const selectedBotPlanSlug = useSelectedBotPlanSlug();
   const visitorIntelligenceUnlocked =
-    selectedBotPlanSlug !== null && VISITOR_INTELLIGENCE_PLAN_SLUGS.has(selectedBotPlanSlug);
+    selectedBotPlanSlug !== null && planIncludesVisitorIntelligence(selectedBotPlanSlug);
   const { openUpgradeModal } = useUpgradeModal();
 
   // Free-plan workspaces never get the list - the backend's `/leads` route
