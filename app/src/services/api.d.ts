@@ -179,6 +179,13 @@ export interface JourneySummary {
    *  both converted AND kept browsing. Optional for backward compat
    *  with older API builds. */
   sessions_no_activity?: number;
+  /** Sessions with a journey that fired NO conversion event but DID
+   *  visit at least one post-chat page — "kept browsing, no outcome".
+   *  The right-hand outcome column needs this bucket to reconcile with
+   *  `sessions_with_journey`: conversions + this + `sessions_no_activity`
+   *  partition every journey exactly once. Optional for backward compat
+   *  with older API builds (card is simply omitted when absent). */
+  sessions_browsed_no_conversion?: number;
   leads_captured: number;
 }
 
