@@ -89,10 +89,13 @@ export default function ForgotPassword() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="relative z-10 flex items-center gap-3"
+          className="relative z-10 flex items-center"
         >
-          <img src="/logo-icon.png" alt="OyeChats" className="h-12 w-auto object-contain" />
-          <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
+          {/* White wordmark for the dark branding panel — the same asset Login
+              and Register use. This page kept the older icon-plus-text lockup
+              on an identical panel, so a customer resetting their password saw
+              a different brand from the one they had just signed in against. */}
+          <img src="/new_white.png" alt="OyeChats" className="h-9 w-auto object-contain" />
         </motion.div>
 
         <div className="relative z-10 my-auto max-w-sm">

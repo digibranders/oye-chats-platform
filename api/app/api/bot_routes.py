@@ -25,6 +25,7 @@ from app.core.origin_check import extract_hostname, normalize_domain_input
 from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import Bot, BotGrowthEvent
+from app.db.repository import stamp_manual_avatar
 from app.db.session import get_session
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 
@@ -243,7 +244,7 @@ class UpdateBotRequest(BaseModel):
     email_on_handoff: bool | None = None
     email_on_offline: bool | None = None
     email_visitor_confirmation: bool | None = None
-    # Metered lead-enrichment opt-OUTs, both default ON. Each is the third of
+    # Metered lead-enrichment opt-INs, both default OFF. Each is the third of
     # three independent gates (plan, super-admin kill switch, this customer
     # toggle); see Bot.email_verification_enabled / Bot.company_lookup_enabled.
     email_verification_enabled: bool | None = None
@@ -344,6 +345,10 @@ class BotResponse(BaseModel):
     # the AI & Personality tab.
     manual_field_overrides: list[str] = []
     bot_logo: str | None
+    # Who set the avatar: null (nobody has), "manual" (the customer) or
+    # "derived" (taken from the site's favicon during a crawl). Lets the avatar
+    # picker caption a derived image rather than pass it off as an upload.
+    bot_logo_source: str | None = None
     launcher_name: str
     launcher_logo: str | None
     primary_color: str
@@ -358,8 +363,12 @@ class BotResponse(BaseModel):
     orb_color: str | None
     lead_form_enabled: bool = False
     lead_form_fields: list[dict] | None = None
-    email_verification_enabled: bool = True
-    company_lookup_enabled: bool = True
+    # Default FALSE, matching the column. Both construction sites pass explicit
+    # values today, so this is only a fallback — but a fallback pointing the
+    # wrong way is how a future construction that omits them would publish ON
+    # for a row that is OFF, and the frontend renders the switch on `=== true`.
+    email_verification_enabled: bool = False
+    company_lookup_enabled: bool = False
     notification_email: str | None = None
     notification_emails: dict | None = None
     reply_to_email: str | None = None
@@ -481,6 +490,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         company_description=bot.company_description,
         manual_field_overrides=bot.manual_field_overrides or [],
         bot_logo=bl,
+        bot_logo_source=bot.bot_logo_source,
         launcher_name=bot.launcher_name or "Have Questions?",
         launcher_logo=ll,
         primary_color=bot.primary_color or "#ba68c8",
@@ -670,6 +680,16 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         # widget always reflects the plan entitlement.
         effective_feature_flags["show_branding"] = True
 
+    # Mirror the show_branding lock: a plan without branding removal must also
+    # not be able to re-label or re-target the badge by PATCHing the fields
+    # directly. The admin UI hides these inputs for such plans, but the API is
+    # the real boundary.
+    effective_branding_text = bot.branding_text or "Powered by OyeChats"
+    effective_branding_url = bot.branding_url or "https://www.oyechats.com"
+    if not _plan_branding_removable:
+        effective_branding_text = "Powered by OyeChats"
+        effective_branding_url = "https://www.oyechats.com"
+
     return {
         "bot_name": bot.name,
         "bot_logo": logo_url,
@@ -692,8 +712,8 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "feature_flags": effective_feature_flags,
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
-        "branding_text": bot.branding_text or "Powered by OyeChats",
-        "branding_url": bot.branding_url or "https://www.oyechats.com",
+        "branding_text": effective_branding_text,
+        "branding_url": effective_branding_url,
         "welcome_title": bot.welcome_title or "Hi there 👋",
         "welcome_subtitle": bot.welcome_subtitle or "How can we help you today?",
         "waiting_message": bot.waiting_message or "Connecting you to support...",
@@ -1949,6 +1969,10 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 update_data["launcher_logo"] = update_data["bot_logo"]
             elif "launcher_logo" in update_data:
                 update_data["bot_logo"] = update_data["launcher_logo"]
+
+            # Any avatar write here is the customer's, including clearing it —
+            # which is what stops the crawl re-deriving a deleted avatar.
+            stamp_manual_avatar(bot, update_data)
 
             # Merge feature_flags — partial updates must not wipe existing flags
             if "feature_flags" in update_data and update_data["feature_flags"] is not None:

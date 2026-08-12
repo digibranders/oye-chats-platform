@@ -17,7 +17,8 @@ import {
   categoryOrder,
 } from '../../../data/platformIntegrations';
 import { getApiBaseUrl, getBotDemoUrl, trackDemoShareClick } from '../../../services/api';
-import { cn, platformLogos } from '../../../design-system';
+import { cn, platformLogos, Skeleton } from '../../../design-system';
+import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getEmbedEnvironment } from './embedEnvironment';
 import { buildInstallPrompt } from './installPrompt';
 
@@ -82,6 +83,22 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   const demoUrl = getBotDemoUrl(botKey);
   const env = getEmbedEnvironment(getApiBaseUrl());
 
+  // Plans entitled to remove branding get a snippet with no attribution anchor.
+  // Note this keys off the entitlement, not the bot's live `showBranding` flag,
+  // which this screen does not load - a paid customer who chooses to keep the
+  // badge still gets an anchor-free snippet.
+  //
+  // `loading` guards this: the entitlements fallback defaults `branding_removable`
+  // to `false`, so a not-yet-resolved fetch would otherwise compute `attribution
+  // = true` even for a workspace entitled to remove it. Unlike `FeatureGate`'s
+  // optimistic `loadingFallback` (safe there only because the backend re-checks
+  // the gated action), nothing re-verifies a value the user has already copied to
+  // their clipboard - so instead of guessing, the steps and the copy-prompt
+  // button below stay inert (skeleton / disabled) until entitlements resolve,
+  // matching `JourneyPage`'s "wait for entitlements before deciding" pattern.
+  const { hasFeature, loading: entitlementsLoading } = useEntitlements();
+  const attribution = !hasFeature('branding_removable');
+
   const copyKey = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(botKey);
@@ -109,9 +126,13 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
   };
 
   const copyAgentPrompt = async (): Promise<void> => {
+    // Belt-and-suspenders alongside the button's `disabled` state: never build a
+    // prompt from an unresolved `attribution` - see the comment above its
+    // computation for why this can't default safely like `FeatureGate` does.
+    if (entitlementsLoading) return;
     try {
       await navigator.clipboard.writeText(
-        buildInstallPrompt({ botKey, apiBaseUrl: getApiBaseUrl(), env, platform }),
+        buildInstallPrompt({ botKey, apiBaseUrl: getApiBaseUrl(), env, platform, attribution }),
       );
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 2000);
@@ -189,14 +210,17 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
             <button
               type="button"
               onClick={copyAgentPrompt}
+              disabled={entitlementsLoading}
               aria-label={
-                promptCopied
-                  ? 'Install prompt copied'
-                  : platform
-                    ? `Copy the ${platform.name} install prompt for a coding agent`
-                    : 'Copy the install prompt for a coding agent'
+                entitlementsLoading
+                  ? 'Copy prompt for AI agent (resolving your plan…)'
+                  : promptCopied
+                    ? 'Install prompt copied'
+                    : platform
+                      ? `Copy the ${platform.name} install prompt for a coding agent`
+                      : 'Copy the install prompt for a coding agent'
               }
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[var(--ds-bg-surface)]"
             >
               {promptCopied ? (
                 <Check size={14} className="text-[var(--ds-success)]" aria-hidden="true" />
@@ -230,24 +254,32 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               Change platform
             </button>
 
-            <ol className="space-y-4">
-              {platform.getSteps(botKey, env).map((step, index) => (
-                <li key={step.title} className="flex gap-3">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[11px] font-semibold text-[var(--ds-accent-text)]">
-                    {index + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13px] font-medium text-[var(--ds-text)]">{step.title}</p>
-                    <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
-                      {step.description}
-                    </p>
-                    {step.code ? (
-                      <CopyableCode code={step.code} label={`${platform.name} snippet`} />
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ol>
+            {entitlementsLoading ? (
+              <div className="space-y-4" aria-busy="true" aria-label="Resolving your plan">
+                <Skeleton className="h-16 w-full rounded-lg" />
+                <Skeleton className="h-16 w-full rounded-lg" />
+                <Skeleton className="h-16 w-full rounded-lg" />
+              </div>
+            ) : (
+              <ol className="space-y-4">
+                {platform.getSteps(botKey, env, { attribution }).map((step, index) => (
+                  <li key={step.title} className="flex gap-3">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[11px] font-semibold text-[var(--ds-accent-text)]">
+                      {index + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-medium text-[var(--ds-text)]">{step.title}</p>
+                      <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--ds-text-muted)]">
+                        {step.description}
+                      </p>
+                      {step.code ? (
+                        <CopyableCode code={step.code} label={`${platform.name} snippet`} />
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
         ) : (
           <div className="space-y-4">

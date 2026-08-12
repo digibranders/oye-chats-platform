@@ -10,6 +10,11 @@ import {
     matchSlashCommand,
 } from '../lib/slashCommands';
 import { getSlashHintSeenKey } from '../services/storage-keys';
+import {
+    buildBrandingHref,
+    resolveBrandingText,
+    splitBrandingText,
+} from '../services/brandingLink';
 
 // Read the "visitor has already seen the slash palette" flag for this bot.
 // sessionStorage-scoped so a fresh visit weeks later gets the hint again if
@@ -86,6 +91,20 @@ const ChatInput = ({
     onNewChat,
     onClearMessages,
 }) => {
+    // Badge href/label come from the bot's own branding settings. Memoised on
+    // the two inputs that can change; the bot key is a page-lifetime global set
+    // by the loader, so it is read directly rather than threaded as a prop.
+    const branding = useMemo(() => {
+        const text = resolveBrandingText(settings?.branding_text);
+        return {
+            href: buildBrandingHref(
+                settings?.branding_url,
+                typeof window !== 'undefined' ? window.OYECHATS_BOT_KEY : undefined,
+            ),
+            ...splitBrandingText(text),
+        };
+    }, [settings?.branding_text, settings?.branding_url]);
+
     const messages = settings?.widget_messages || {};
     const inputPlaceholder = messages.input_placeholder || placeholder || 'Write a message...';
 
@@ -727,13 +746,13 @@ const ChatInput = ({
                     </p>
                     {showBranding ? (
                         <a
-                            href="https://www.oyechats.com"
+                            href={branding.href}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="whitespace-nowrap text-[10px] font-semibold text-gray-300 hover:text-gray-400 transition-colors justify-self-end"
                         >
-                            Powered by{' '}
-                            <span style={{ color: 'rgb(49% 23% 93%)' }}>OyeChats</span>
+                            {branding.lead ? `${branding.lead} ` : ''}
+                            <span style={{ color: 'rgb(49% 23% 93%)' }}>{branding.brand}</span>
                         </a>
                     ) : (
                         <span className="justify-self-end" />

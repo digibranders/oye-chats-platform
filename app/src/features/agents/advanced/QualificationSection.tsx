@@ -80,8 +80,14 @@ export function QualificationSection({
           <Card
             className={cn(
               'space-y-5 p-5 transition-opacity',
-              !bantEnabled && 'pointer-events-none select-none opacity-50',
+              !bantEnabled && 'select-none opacity-50',
             )}
+            // `inert` disables the subtree for KEYBOARD and assistive tech too.
+            // `pointer-events-none` only stopped the mouse: tabbing in still
+            // reached the framework Select and the "Edit scoring model" button,
+            // and changing either marked the page dirty and PATCHed
+            // qualification config for an agent whose scoring is switched off.
+            inert={!bantEnabled}
             aria-disabled={!bantEnabled}>
             <div className="max-w-sm space-y-1.5">
               <label

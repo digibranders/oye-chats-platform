@@ -152,8 +152,18 @@ function buildTree(urls: readonly string[]): PageNode {
  * tree renders — one URL per page, near-duplicate path variants (a trailing
  * slash, a re-ordered query, etc.) collapsed into a single node. Seed the
  * selection with this so the submitted crawl list matches what the user sees
- * and never carries redundant duplicates. Order follows the tree's own
- * folders-before-leaves, alpha sort.
+ * and never carries redundant duplicates. Order is DISCOVERY order, not the
+ * tree's.
+ *
+ * That distinction is load-bearing. This list is submitted as ``ordered_urls``,
+ * and the backend truncates it to what the plan and the credit balance allow
+ * (``document_routes``: ``same_origin[:effective_max_pages]``, then per-page
+ * deduction "in order"). The tree sorts folders before leaves and then
+ * alphabetically, which is right for reading and wrong for buying: on a site
+ * whose budget covers a fraction of its pages, a ``/blog`` subtree would sort
+ * ahead of the ``/about`` and ``/pricing`` leaves and consume the entire
+ * allowance, leaving an agent that cannot answer a pricing question. Discovery
+ * order puts the seed URL first and follows the site's own sitemap priority.
  *
  * Intentionally co-located with the component: it wraps the private ``buildTree``
  * used by the tree, so splitting it into its own module would fragment that
@@ -161,7 +171,17 @@ function buildTree(urls: readonly string[]): PageNode {
  */
 // eslint-disable-next-line react-refresh/only-export-components
 export function canonicalCrawlUrls(urls: readonly string[]): string[] {
-  return buildTree(urls).urls;
+  // `buildTree` decides WHICH url survives each collapse (trailing slash, www,
+  // scheme); this keeps that choice and only restores the incoming order.
+  const canonical = new Set(buildTree(urls).urls);
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const url of urls) {
+    if (!canonical.has(url) || seen.has(url)) continue;
+    seen.add(url);
+    ordered.push(url);
+  }
+  return ordered;
 }
 
 type CheckState = 'checked' | 'indeterminate' | 'unchecked';

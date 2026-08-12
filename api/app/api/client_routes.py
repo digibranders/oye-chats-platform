@@ -101,6 +101,13 @@ def update_client_settings(
             elif "launcher_logo" in update_data:
                 update_data["bot_logo"] = update_data["launcher_logo"]
 
+            # Same stamp as the primary settings patch in `bot_routes`. This
+            # legacy route writes the same columns, so leaving it out would let
+            # an avatar removal made through it be silently re-derived.
+            from app.db.repository import stamp_manual_avatar
+
+            stamp_manual_avatar(bot_db, update_data)
+
             field_mapping = {"bot_name": "name"}
 
             for key, value in update_data.items():

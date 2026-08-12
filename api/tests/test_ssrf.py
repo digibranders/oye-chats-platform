@@ -166,3 +166,204 @@ class TestFetchTextSafelyUsesPinnedConnection:
             result = await fetch_text_safely(session, "http://rebinding-attempt.test/")
 
         assert result is None
+
+
+# ── TLS verification on the pinned fetches ──────────────────────────────────
+#
+# Every fetch in this module used to pass `ssl=False`, so an https:// URL was
+# retrieved with no certificate check at all. Pinning the resolved IP never
+# required that — `_PinnedResolver` reports the real hostname, so SNI and
+# hostname verification still work against the name in the URL. Pinning decides
+# WHERE we connect; TLS decides WHETHER the thing that answered is who the URL
+# said it would be. Without the second one, an on-path attacker substitutes the
+# sitemap that decides which pages get ingested, or the icon that becomes the
+# agent's avatar, and we serve it back to the customer as their own content.
+
+
+def _self_signed(hostname: str, tmp_path):
+    """A certificate for ``hostname``, signed by nobody the system trusts.
+
+    Stands in for the real-world cases that make this worth a kill switch: an
+    expired certificate, or one issued for a different name.
+    """
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    # Fixed window around a fixed instant: the test must not depend on the
+    # wall clock beyond "this cert is not the problem, the signer is".
+    not_before = datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_before)
+        .not_valid_after(not_before + datetime.timedelta(days=36500))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    return cert_path, key_path
+
+
+class TestTlsVerificationOnPinnedFetches:
+    HOST = "pinned-tls-host.test"
+
+    async def _serve_https(self, tmp_path):
+        import ssl as ssl_mod
+
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+
+        async def handler(request):
+            return web.Response(text="secret content")
+
+        cert_path, key_path = _self_signed(self.HOST, tmp_path)
+        ctx = ssl_mod.SSLContext(ssl_mod.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(cert_path), str(key_path))
+
+        app = web.Application()
+        app.router.add_get("/", handler)
+        server = TestServer(app)
+        # `ssl` is consumed by start_server, not by the constructor — passing
+        # it to TestServer(...) silently yields a PLAIN HTTP server, and then
+        # every assertion below passes for the wrong reason.
+        await server.start_server(ssl=ctx)
+        return server
+
+    @pytest.mark.asyncio
+    async def test_an_untrusted_certificate_is_refused(self, monkeypatch, tmp_path):
+        import aiohttp
+
+        server = await self._serve_https(tmp_path)
+        try:
+            monkeypatch.setattr("app.core.ssrf.validate_public_url", lambda u: u)
+            monkeypatch.setattr("app.core.ssrf._resolve_pinned_public_ip", lambda host: server.host)
+            monkeypatch.setattr("app.core.ssrf.SSRF_TLS_VERIFY_ENABLED", True)
+
+            async with aiohttp.ClientSession() as session:
+                result = await fetch_text_safely(session, f"https://{self.HOST}:{server.port}/")
+
+            assert result is None, "an unverifiable certificate must not yield content"
+        finally:
+            await server.close()
+
+    @pytest.mark.asyncio
+    async def test_the_body_is_reachable_once_verification_is_switched_off(self, monkeypatch, tmp_path):
+        """Proves the previous test failed on the CERTIFICATE and not on the
+        harness — same server, same pinning, only the flag differs. Also pins
+        the kill switch itself: it has to actually restore service, or it is
+        not the stopgap it is documented as."""
+        import aiohttp
+
+        server = await self._serve_https(tmp_path)
+        try:
+            monkeypatch.setattr("app.core.ssrf.validate_public_url", lambda u: u)
+            monkeypatch.setattr("app.core.ssrf._resolve_pinned_public_ip", lambda host: server.host)
+            monkeypatch.setattr("app.core.ssrf.SSRF_TLS_VERIFY_ENABLED", False)
+
+            async with aiohttp.ClientSession() as session:
+                result = await fetch_text_safely(session, f"https://{self.HOST}:{server.port}/")
+
+            assert result == (200, "secret content")
+        finally:
+            await server.close()
+
+    @pytest.mark.asyncio
+    async def test_the_icon_fetch_is_verified_too_not_just_the_page_fetch(self, monkeypatch, tmp_path):
+        """`fetch_bytes_safely` is a separate code path with its own connector,
+        and it is the one that pulls the image used as the agent's avatar."""
+        import aiohttp
+
+        from app.core.ssrf import fetch_bytes_safely
+
+        server = await self._serve_https(tmp_path)
+        try:
+            monkeypatch.setattr("app.core.ssrf.validate_public_url", lambda u: u)
+            monkeypatch.setattr("app.core.ssrf._resolve_pinned_public_ip", lambda host: server.host)
+            monkeypatch.setattr("app.core.ssrf.SSRF_TLS_VERIFY_ENABLED", True)
+
+            async with aiohttp.ClientSession() as session:
+                result = await fetch_bytes_safely(session, f"https://{self.HOST}:{server.port}/", max_bytes=1024)
+
+            assert result is None
+        finally:
+            await server.close()
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_certificate_is_logged_by_host(self, monkeypatch, tmp_path, caplog):
+        """The failure is otherwise indistinguishable from a timeout, and
+        identifying the affected host is the whole diagnosis before anyone
+        reaches for the kill switch."""
+        import logging
+
+        import aiohttp
+
+        server = await self._serve_https(tmp_path)
+        try:
+            monkeypatch.setattr("app.core.ssrf.validate_public_url", lambda u: u)
+            monkeypatch.setattr("app.core.ssrf._resolve_pinned_public_ip", lambda host: server.host)
+            monkeypatch.setattr("app.core.ssrf.SSRF_TLS_VERIFY_ENABLED", True)
+
+            with caplog.at_level(logging.WARNING, logger="app.core.ssrf"):
+                async with aiohttp.ClientSession() as session:
+                    await fetch_text_safely(session, f"https://{self.HOST}:{server.port}/")
+
+            messages = [r.getMessage() for r in caplog.records]
+            assert any("TLS verification failed" in m for m in messages), messages
+            assert any(self.HOST in m for m in messages), messages
+        finally:
+            await server.close()
+
+    def test_the_verifying_context_actually_verifies(self):
+        """`create_default_context` is only the right choice if it is checking
+        both the chain and the hostname — a context with either turned off
+        would satisfy every test above that asserts a refusal, for the wrong
+        reason."""
+        import ssl as ssl_mod
+
+        from app.core import ssrf as ssrf_mod
+
+        ctx = ssrf_mod._VERIFYING_SSL_CONTEXT
+        assert ctx.verify_mode == ssl_mod.CERT_REQUIRED
+        assert ctx.check_hostname is True
+
+    @pytest.mark.asyncio
+    async def test_a_tls_failure_never_confirms_a_url_as_dead(self, monkeypatch, tmp_path):
+        """`probe_url_alive` feeds the orphan sweep, which DELETES a
+        customer's ingested pages for URLs it reports gone. Turning
+        verification on must not turn a certificate problem into data loss:
+        only a confirmed 404/410 means gone, and everything else — including a
+        refused certificate — stays conservatively alive."""
+        import aiohttp
+
+        from app.core.ssrf import probe_url_alive
+
+        server = await self._serve_https(tmp_path)
+        try:
+            monkeypatch.setattr("app.core.ssrf.validate_public_url", lambda u: u)
+            monkeypatch.setattr("app.core.ssrf._resolve_pinned_public_ip", lambda host: server.host)
+            monkeypatch.setattr("app.core.ssrf.SSRF_TLS_VERIFY_ENABLED", True)
+
+            async with aiohttp.ClientSession() as session:
+                alive = await probe_url_alive(session, f"https://{self.HOST}:{server.port}/")
+
+            assert alive is True
+        finally:
+            await server.close()

@@ -185,11 +185,29 @@ EMAIL_ENABLED = bool(BREVO_API_KEY)
 # Brand & public URLs (used by email templates and any other branded surface)
 # ─────────────────────────────────────────────────────────────────────────────
 # Public marketing site root, e.g. "https://www.oyechats.com". No trailing slash.
-MARKETING_URL = os.getenv("MARKETING_URL", "https://www.oyechats.com").rstrip("/")
+# Named constants so the DEFAULTS themselves are testable. Simulating "unset"
+# by reloading this module cannot work — `load_dotenv()` at import repopulates
+# from `api/.env` — which is precisely how a localhost default reached
+# production unnoticed.
+DEFAULT_MARKETING_URL = "https://www.oyechats.com"
+DEFAULT_APP_URL = "https://app.oyechats.com"
+DEFAULT_API_BASE_URL = "https://api.oyechats.com"
+
+MARKETING_URL = os.getenv("MARKETING_URL", DEFAULT_MARKETING_URL).rstrip("/")
 # Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
 # Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
-APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+APP_URL = os.getenv("APP_URL", DEFAULT_APP_URL).rstrip("/")
+# Public API root, e.g. "https://api.oyechats.com". No trailing slash.
+#
+# Defaults to the PRODUCTION host, like MARKETING_URL and APP_URL above — it
+# used to default to "http://localhost:8000" and was the only one of the three
+# that did. It is also the only one that lands in a customer's inbox: the
+# unsubscribe link in a manual follow-up is built from it
+# (`lead_routes.send_manual_follow_up`). Unset in production, every follow-up
+# email shipped an unsubscribe pointing at http://localhost:8000 — dead for the
+# recipient, and an unsubscribe that cannot be actioned is a compliance
+# problem, not a cosmetic one. Local development overrides it in `api/.env`.
+API_BASE_URL = os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
 # Address users should reach out to for help. Different from EMAIL_FROM_ADDRESS,
 # which is the no-reply sender. SUPPORT_EMAIL is what appears in "Contact us".
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support@oyechats.com")
@@ -586,30 +604,65 @@ CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))
 # When a site is crawled, harvest its favicon / Apple touch icon and set it as
 # the bot's avatar. Kill switch for the whole favicon path.
 #
-# DEFAULT OFF, deliberately, until the fetcher is rebuilt. Review of the commit
-# that added it found the network-facing half unsafe, and this flag is the
-# cheapest way to keep the rest of that commit while none of the following can
-# fire in production:
+# This flag was added because review of the commit that introduced the feature
+# found the network-facing half unsafe. All three of those defects are fixed:
 #
-#   * SSRF. `favicon_extractor` builds its own `httpx.AsyncClient` with
-#     `follow_redirects=True`, so a 302 from a customer's site is followed to
-#     an unvalidated host — `validate_public_url` runs once, on the PRE-redirect
-#     URL only, and DNS is re-resolved at connect time. Both docstrings claim
-#     redirects are not followed. `core/ssrf.py` already ships
-#     `fetch_text_safely` with per-hop re-validation and a pinned resolver;
-#     none of it is reused.
-#   * The size caps are decorative: `resp.content` buffers the entire body
-#     before slicing, so a 4GB drip OOMs the crawl worker.
-#   * `_discover_icon_urls` is unbounded (300 <link> tags → 302 candidates,
-#     sequential, 10s each) and is awaited BEFORE the terminal crawl-status
-#     write, so an ARQ timeout mid-favicon leaves the customer's crawl spinner
-#     hung forever on work that was already done and billed.
+#   * SSRF — the extractor built its own `httpx.AsyncClient` with
+#     `follow_redirects=True` and validated only the PRE-redirect URL. It now
+#     goes through `core/ssrf`'s `fetch_text_safely` / `fetch_bytes_safely`,
+#     which re-validate every hop and connect to a pinned pre-validated IP.
+#   * The size caps were decorative (`resp.content` buffered the whole body
+#     before slicing). The shared helpers reject an oversized body instead.
+#   * `_discover_icon_urls` was unbounded and ran BEFORE the terminal crawl
+#     status write. Candidates are now capped at `_MAX_ICON_CANDIDATES`, the
+#     step runs after the terminal result is published, and the whole thing is
+#     wrapped in `asyncio.wait_for(_FAVICON_TOTAL_BUDGET_S)`.
 #
-# `docs/superpowers/plans/2026-08-10-derived-chat-avatar.md` already specifies
-# this feature properly — streamed `fetch_bytes_safely`, bounded parallel task,
-# provenance in its own column rather than `avatar_type`. Turn this on when the
-# implementation matches that plan.
+# STILL DEFAULT OFF — nothing here has run against real customer sites yet, and
+# the write touches a customer-visible brand asset. The write path is covered
+# by behavioural tests in `tests/test_favicon_extractor.py`; flip the GitHub
+# Actions repository variable of the same name to `true` and redeploy to try it.
+#
+# Known divergence from `docs/superpowers/plans/2026-08-10-derived-chat-avatar.md`:
+# that plan puts provenance in a new `Bot.bot_logo_source` column. This
+# implementation has no such column. It never touches `avatar_type` and only
+# ever fills a slot that is empty on BOTH fields, so it cannot overwrite an
+# avatar the customer currently has — but "empty" is not the same as "never
+# chosen", and without provenance the two are indistinguishable:
+#
+#   * A customer who REMOVES their avatar lands in exactly the empty state
+#     (`AvatarPicker` clears `bot_logo`, `bot_routes` mirrors it into
+#     `launcher_logo`, and `bot_logo` is not in `_AUTO_FILL_FIELDS`, so the
+#     deletion is never recorded in `manual_field_overrides`). Their next
+#     re-crawl re-derives the favicon they deleted.
+#   * A derived avatar is presented in the admin UI as an uploaded one.
+#
+# Neither destroys data, and both are fixed by the plan's provenance column.
+# Weigh them before flipping this on.
 CRAWL_FAVICON_AVATAR_ENABLED = _env("CRAWL_FAVICON_AVATAR_ENABLED", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# Verify TLS certificates on the SSRF-guarded fetches in `core/ssrf` — sitemap
+# and robots.txt discovery, the liveness probe, the footer/colour/favicon reads.
+#
+# DEFAULT ON, which is the correction: every one of those fetches passed
+# `ssl=False`, so an https:// URL was fetched with no certificate check at all
+# and an on-path attacker could substitute the sitemap that decides which pages
+# get ingested, or the icon that becomes the agent's avatar. Pinning the
+# resolved IP never required this — `_PinnedResolver` reports the real hostname,
+# so SNI and hostname verification still work against the URL's own name.
+#
+# The switch exists because verifying can only reduce what we successfully
+# fetch: a customer whose certificate is expired or mismatched now fails where
+# they used to succeed, silently and only for them (discovery falls back to a
+# recursive crawl; the brand extras yield nothing). Set this to false to restore
+# service for them from a variable while the certificate is fixed — it is a
+# stopgap, not a setting. `core/ssrf` logs a distinct warning per rejected
+# certificate so the affected host is identifiable before you reach for it.
+SSRF_TLS_VERIFY_ENABLED = _env("SSRF_TLS_VERIFY_ENABLED", "true").strip().lower() in (
     "1",
     "true",
     "yes",

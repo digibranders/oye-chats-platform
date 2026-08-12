@@ -3,6 +3,10 @@ import { Check, Minus } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
 import { formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
+import {
+  planIncludesEmailVerification,
+  planIncludesVisitorIntelligence,
+} from '../../../lib/planGates';
 
 /** Standard is the value pick - matches MOST_POPULAR_SLUG on the marketing site. */
 const MOST_POPULAR_SLUG = 'standard';
@@ -45,6 +49,25 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
   { group: 'Features', label: 'Webhooks + REST API', kind: 'bool', value: (p) => Boolean(p.features.webhooks) },
   { group: 'Features', label: 'Remove OyeChats branding', kind: 'bool', value: (p) => Boolean(p.features.branding_removable) },
   { group: 'Features', label: 'Online support', kind: 'bool', value: (p) => Boolean(p.features.online_support) },
+  // These two are gated by SLUG on the server (`plan_entitlements_service`),
+  // not by a `features` flag — no plan row carries a key for either, so reading
+  // `p.features.*` here would render an empty column on every tier. Without
+  // them the matrix showed Standard and Professional as identical on every
+  // boolean, which is what the plan payload literally says: the only thing
+  // Professional actually adds over Standard is the company lookup, and a
+  // customer comparing the two could not see it.
+  {
+    group: 'Features',
+    label: 'Email verification',
+    kind: 'bool',
+    value: (p) => planIncludesEmailVerification(p.slug),
+  },
+  {
+    group: 'Features',
+    label: 'Visitor company intelligence',
+    kind: 'bool',
+    value: (p) => planIncludesVisitorIntelligence(p.slug),
+  },
 ];
 
 const GROUP_ORDER: readonly string[] = ['Usage', 'Features'];

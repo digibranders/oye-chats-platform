@@ -289,11 +289,15 @@ function formatCreditCost(cost: number): string {
 function CreditCostItem({
   row,
   agentBasePath,
+  agentName,
 }: {
   row: CreditCostRow;
   /** `/agents/:id` for the switcher-selected agent, or null when the account
    *  has no agent yet — the deep-link arrow is hidden in that case. */
   agentBasePath: string | null;
+  /** Name of the agent the arrow resolves to; null when no single agent is in
+   *  scope, in which case no arrow is shown. */
+  agentName: string | null;
 }): ReactElement {
   const [expanded, setExpanded] = useState(false);
   const Icon = row.icon;
@@ -326,10 +330,16 @@ function CreditCostItem({
             {row.linkTab && agentBasePath && (
               <Link
                 to={`${agentBasePath}/${row.linkTab}`}
+                // The agent is NAMED in both labels: this is a per-agent
+                // setting reached from a workspace-level page, so "configure
+                // this" alone left the customer no way to know which ledger
+                // they were about to start spending from.
                 aria-label={`Open ${
                   row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
-                } to configure this`}
-                title={`Open ${row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'}`}
+                } for ${agentName ?? 'this agent'} to configure this`}
+                title={`Open ${
+                  row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
+                } for ${agentName ?? 'this agent'}`}
                 className="shrink-0 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)] focus-visible:text-[var(--ds-accent-text)] focus-visible:outline-none"
               >
                 <ArrowUpRight size={14} aria-hidden="true" />
@@ -385,13 +395,19 @@ function CreditCostItem({
  * above their price context.
  */
 function CreditCostReference(): ReactElement {
-  // Deep links resolve against the switcher-selected agent; when the workspace
-  // scope is "All agents" (selectedBot null) fall back to the first agent so
-  // the arrow still lands somewhere useful. Null only when the account has no
-  // agents at all, in which case CreditCostItem hides the arrow.
-  const { selectedBot, bots } = useBotContext();
-  const targetAgent = selectedBot ?? bots[0] ?? null;
-  const agentBasePath = targetAgent ? `/agents/${targetAgent.id}` : null;
+  // Deep links resolve ONLY against the switcher-selected agent. These rows
+  // link to per-agent spend controls, and billing attaches to the Bot — so
+  // falling back to `bots[0]` when the scope is "All agents" pointed a customer
+  // at an agent they had not chosen, with nothing on screen saying which. They
+  // would switch enrichment on there, start metered spend on that agent's
+  // ledger, and believe it was live on the one capturing their leads.
+  //
+  // With no single agent in scope the arrow is withheld and the row says which
+  // agent to pick, which is honest about the fact that this is a per-agent
+  // setting. Null also covers an account with no agents at all.
+  const { selectedBot } = useBotContext();
+  const agentBasePath = selectedBot ? `/agents/${selectedBot.id}` : null;
+  const agentName = selectedBot?.name ?? null;
 
   return (
     <section aria-label="How credits work" className="space-y-4">
@@ -401,7 +417,12 @@ function CreditCostReference(): ReactElement {
       />
       <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
         {CREDIT_COSTS.map((row) => (
-          <CreditCostItem key={row.label} row={row} agentBasePath={agentBasePath} />
+          <CreditCostItem
+            key={row.label}
+            row={row}
+            agentBasePath={agentBasePath}
+            agentName={agentName}
+          />
         ))}
       </div>
     </section>
