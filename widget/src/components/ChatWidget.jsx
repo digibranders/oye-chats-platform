@@ -19,43 +19,6 @@ const usePendingMessage = () => {
 const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
 const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
 
-/**
- * Returns true if the current time is within the bot's configured business hours.
- * Returns true (open) when business_hours is absent or disabled.
- */
-function isWithinBusinessHours(businessHours) {
-  if (!businessHours?.enabled) return true;
-
-  try {
-    const tz = businessHours.timezone || 'UTC';
-    const now = new Date();
-
-    // Resolve current day key (mon/tue/.../sun) in the bot's timezone
-    const dayName = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' }).toLowerCase();
-    const dayKey = dayName.slice(0, 3); // "mon", "tue", etc.
-
-    const day = businessHours.days?.[dayKey];
-    if (!day?.enabled) return false;
-
-    // Resolve current HH:MM in the bot's timezone
-    const timeParts = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(now);
-
-    const hour = timeParts.find((p) => p.type === 'hour')?.value ?? '00';
-    const minute = timeParts.find((p) => p.type === 'minute')?.value ?? '00';
-    const currentTime = `${hour}:${minute}`;
-
-    return currentTime >= day.start && currentTime <= day.end;
-  } catch {
-    // Fallback: treat as open on any parsing error (e.g. unknown timezone)
-    return true;
-  }
-}
-
 // Read the persisted open state SYNCHRONOUSLY before the first render so a
 // page navigated to from a bot CTA renders the widget already open — no
 // "closed → opening → open" flicker. Resolves from sessionStorage (same-origin,
@@ -84,9 +47,6 @@ const ChatWidget = () => {
     business_hours: null,
     feature_flags: {},
   });
-
-  // Derived: is the bot currently "online" per its business hours schedule?
-  const isOnline = isWithinBusinessHours(settings.business_hours);
 
   // Pending message from greeting bubble → auto-sent on chat open
   const pendingMessageRef = usePendingMessage();
@@ -391,7 +351,6 @@ const ChatWidget = () => {
             onClose={closeChat}
             initialSettings={settings}
             isAnimating={isAnimating}
-            isOnline={isOnline}
             initialMessage={pendingMessageRef}
           />
         </Suspense>

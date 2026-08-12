@@ -266,6 +266,25 @@ export interface LeadDimensionScore {
 }
 
 /**
+ * One captured qualification signal — an append-only evidence row. A visitor
+ * who states a need (or budget/authority/timeline) several times produces one
+ * of these per mention, so the detail view can show every value, not just the
+ * single rolling high-water-mark kept in ``LeadDimensionScore``. Returned by the
+ * lead-detail endpoint only, and only on plans with the intelligence feature.
+ */
+export interface LeadSignal {
+  dimension: string;
+  signal_text: string | null;
+  extracted_value: string | null;
+  confidence: number | string | null;
+  score_before: number | null;
+  score_after: number | null;
+  /** llm | cta_click | operator_override */
+  source: string | null;
+  created_at: string | null;
+}
+
+/**
  * A qualified/unqualified lead row from getLeads. ``tier`` and ``status`` are
  * the same value (status is a backward-compat alias). Scores are server-decayed.
  */
@@ -278,6 +297,11 @@ export interface Lead {
   status: string;
   dimensions_assessed?: number;
   bant?: Record<string, LeadDimensionScore>;
+  /**
+   * Full evidence trail — every captured value across all dimensions. Present
+   * only on the single-lead detail response, and only on intelligence plans.
+   */
+  signals?: LeadSignal[];
   behavioral?: Record<string, unknown>;
   contact: LeadContact | null;
   location?: string;

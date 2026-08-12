@@ -14,6 +14,7 @@ import WelcomeScreen from './WelcomeScreen';
 import QualificationCTA from './QualificationCTA';
 import OperatorJoinedToast from './OperatorJoinedToast';
 import ConnectRequestPopup from './ConnectRequestPopup';
+import QualifiedLeadCard from './QualifiedLeadCard';
 import ErrorBoundary from './ErrorBoundary';
 import ChunkLoadNotice from './ChunkLoadNotice';
 import { lazyWithRetry } from '../services/lazyWithRetry';
@@ -155,7 +156,7 @@ const DateSeparator = ({ date }) => {
     );
 };
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true, initialMessage }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, initialMessage }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
@@ -197,10 +198,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => readSessionId());
-    const [showWelcome, setShowWelcome] = useState(isOnline);
+    // The AI assistant is available 24/7 — business hours only gate the HUMAN
+    // handoff (enforced server-side when the visitor actually requests a
+    // person). So we always boot into the bot chat + welcome screen; we never
+    // drop a returning or first-time visitor straight into the offline
+    // "leave a message" form just because the team is off the clock.
+    const [showWelcome, setShowWelcome] = useState(true);
     const [welcomeExiting, setWelcomeExiting] = useState(false);
     const [showLeadForm, setShowLeadForm] = useState(false);
-    const [chatMode, setChatModeRaw] = useState(isOnline ? 'bot' : 'unavailable');
+    const [chatMode, setChatModeRaw] = useState('bot');
     const setChatMode = useCallback((next) => {
         setChatModeRaw(prev => {
             const allowed = _VALID_TRANSITIONS[prev];
@@ -246,6 +252,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [calendlyUrl, setCalendlyUrl] = useState(null);
     const [meetingProvider, setMeetingProvider] = useState(null);
     const [meetingBooked, setMeetingBooked] = useState(false);
+    // Qualified-lead popup — surfaced when the backend flags a warm lead
+    // (2+ BANT dimensions) AND meeting booking is configured. Holds
+    // { calendly_url, meeting_provider, live_chat_enabled }; null when hidden.
+    const [qualifiedPopup, setQualifiedPopup] = useState(null);
     // Inline "Leave a message" CTA — triggered by the [LEAVE_MESSAGE_CARD]
     // sentinel from the RAG pipeline when the visitor asks to email or write
     // to the team. Clicking the button drops them into the offline-message
@@ -323,6 +333,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const hasActiveHandoffForm = messages.some(
         (m) => m.type === 'handoff_form' && m.status !== 'submitted'
     );
+    // Qualified-lead card is up: gates both its own inline render and hiding the
+    // composer, so the two can never drift out of sync.
+    const showQualifiedCard = !!qualifiedPopup && chatMode === 'bot' && !showBooking && !meetingBooked;
 
     // ── Mobile viewport sizing (keyboard + iOS safe area) ──────────────────────
     // Exposed imperatively so ChatInput's onBlur can force a re-sync when iOS
@@ -1026,6 +1039,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setCalendlyUrl(null);
         setMeetingBooked(false);
         setMeetingProvider(null);
+        setQualifiedPopup(null);
         consecutiveFallbacks.current = 0;
         setExistingLeadInfo(null);
         setLiveMessages([]);
@@ -1159,6 +1173,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setCalendlyUrl(finalMeta.calendly_url);
                         setMeetingProvider(finalMeta.meeting_provider || 'calendly');
                         setShowBooking(true);
+                    }
+                    // Qualified-lead popup — offers live-chat + book-a-meeting
+                    // CTAs. Skipped once a meeting is already booked this session.
+                    if (finalMeta.team_connect_popup && !meetingBooked) {
+                        setQualifiedPopup(finalMeta.team_connect_popup);
                     }
                     if (
                         finalMeta.show_leave_message &&
@@ -2428,6 +2447,58 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
+                {/* Qualified-lead card — warm lead (2+ BANT dimensions) on a bot
+                    with meeting booking configured. Rendered inline right after
+                    the bot's answer; the composer is hidden while it's shown so
+                    the visitor's next action is one of the CTAs (or continue with
+                    AI). Suppressed once a meeting is booked or the booking panel
+                    is open. */}
+                {showQualifiedCard && (
+                    <QualifiedLeadCard
+                        liveChatEnabled={
+                            qualifiedPopup.live_chat_enabled !== false && settings.live_chat_enabled !== false
+                        }
+                        hasMeeting={!!qualifiedPopup.calendly_url}
+                        primaryColor={settings.primary_color}
+                        onConnectSupport={() => {
+                            setQualifiedPopup(null);
+                            triggerHandoff();
+                        }}
+                        onBookMeeting={() => {
+                            setCalendlyUrl(qualifiedPopup.calendly_url);
+                            setMeetingProvider(qualifiedPopup.meeting_provider || 'calendly');
+                            setQualifiedPopup(null);
+                            setShowBooking(true);
+                        }}
+                        onDismiss={() => {
+                            // "Continue with AI": dismiss the card and surface the
+                            // deferred BANT probe (held back so the answer + card
+                            // didn't both carry a question). The probe becomes a
+                            // bot bubble; its chips render below via activeCTA.
+                            const followUp = qualifiedPopup.follow_up;
+                            setQualifiedPopup(null);
+                            if (followUp?.prompt) {
+                                setMessages((prev) => [
+                                    ...prev,
+                                    {
+                                        id: `followup-${followUp.dimension || 'q'}-${prev.length}`,
+                                        text: followUp.prompt,
+                                        sender: 'bot',
+                                        timestamp: new Date().toISOString(),
+                                        feedback: null,
+                                    },
+                                ]);
+                                // Chips render below the bubble when the bot opted
+                                // this dimension into quick-replies; otherwise the
+                                // visitor free-types their answer.
+                                if (followUp.options?.length) {
+                                    setActiveCTA({ dimension: followUp.dimension, options: followUp.options });
+                                }
+                            }
+                        }}
+                    />
+                )}
+
                 {/* BANT qualification quick-reply chips */}
                 <QualificationCTA
                     cta={activeCTA}
@@ -2961,10 +3032,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </ErrorBoundary>
             )}
 
-            {/* ── Unified ChatInput — hidden when any form is active ── */}
+            {/* ── Unified ChatInput — hidden when any form is active ──
+                Also hidden while the qualified-lead card is up so the visitor's
+                only next action is one of its CTAs (or "Continue with AI"). */}
             {!showLeadForm &&
              !showRating &&
              !hasActiveHandoffForm &&
+             !showQualifiedCard &&
              chatMode !== 'unavailable' && (
                 <ChatInput
                     inputText={inputText}

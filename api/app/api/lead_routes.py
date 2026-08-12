@@ -540,6 +540,9 @@ def get_lead_detail(
                     "confidence": s.confidence,
                     "score_before": s.score_before,
                     "score_after": s.score_after,
+                    # llm | cta_click | operator_override — lets the UI separate
+                    # visitor-stated evidence from manual operator score edits.
+                    "source": getattr(s, "source", None),
                     "created_at": s.created_at.isoformat() if s.created_at else None,
                 }
                 for s in signals
