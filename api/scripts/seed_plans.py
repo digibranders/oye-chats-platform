@@ -1,7 +1,7 @@
 """Seed the canonical plan matrix (idempotent).
 
 Single source of truth for the customer-facing plans on a fresh database:
-Free / Starter / Standard / Professional. Matches the pricing on
+Free / Starter / Standard / Professional / Enterprise. Matches the pricing on
 the marketing site (oyechats.com/pricing).
 
 Prices are stored in minor units: ``*_cents`` is INR paise (``currency='INR'``),
@@ -212,6 +212,52 @@ _PLANS: list[dict] = [
             "integrations": "all",
         },
         "marketing": {"tagline": "For teams scaling qualified pipeline with deeper frameworks."},
+    },
+    {
+        "slug": "enterprise",
+        "name": "Enterprise",
+        "description": "For agencies running many client sites from one account.",
+        "credits_per_month": 13000,
+        "monthly_price_cents": 479900,  # ₹4,799
+        "annual_price_cents": 4606800,  # ₹46,068 (₹3,839/mo × 12)
+        "monthly_price_usd_cents": 9199,  # $91.99
+        "annual_price_usd_cents": 91188,  # $911.88 ($75.99/mo × 12)
+        "annual_discount_percent": 20,
+        "trial_days": 0,
+        "included_operator_seats": -1,
+        "extra_seat_price_cents": 0,
+        "extra_seat_price_usd_cents": 0,
+        "is_default": False,
+        "sort_order": 5,
+        "limits": {
+            "credits": 13000,
+            # Unlimited bots is the whole point of this tier. Credits still
+            # meter real cost (5 per page, 1 per 250 words), so uncapped
+            # ingestion is self-limiting — no separate knowledge cap needed.
+            "bots": -1,
+            "operators": -1,
+            "leads": -1,
+            "page_scraping": -1,
+            "documents": -1,
+            "knowledge_characters": -1,
+            "chat_history_days": 365,
+            "max_crawl_depth": 5,
+            "max_crawl_pages": -1,
+            "max_crawl_js_pages": -1,
+            "max_crawl_concurrency": 8,
+        },
+        "features": {
+            "live_chat": True,
+            "bant": True,
+            "branding_removable": True,
+            "webhooks": True,
+            "api_access": True,
+            "online_support": True,
+            "topup_allowed": True,
+            "auto_recrawl": True,
+            "integrations": "all",
+        },
+        "marketing": {"tagline": "For agencies running many client sites from one account."},
     },
 ]
 
