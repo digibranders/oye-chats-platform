@@ -6256,7 +6256,21 @@ def rag_pipeline(
             propagate_attributes(
                 user_id=str(cid) if cid else None,
                 session_id=session_id,
-                metadata={"bot_id": bid, "question": question, "device": device, "location": location},
+                # PRIVACY — ``location`` is deliberately absent. Do not add it back.
+                # ``chat_routes`` stamps it as "IP: <address>" on the request path
+                # (the background geo lookup rewrites the stored column later, not
+                # this in-flight value), so every traced chat request shipped the
+                # visitor's raw IP to Langfuse, a third-party processor. An IP is
+                # personal data under GDPR and under India's DPDP Act, where this
+                # product's basis is consent-only with no legitimate-interest
+                # fallback. Redaction is not the fix here: running it through
+                # ``app.core.visitor_privacy.format_visitor_location`` collapses the
+                # "IP: …" stamp to a constant "Unknown", which carries no
+                # observability value — so the field is dropped, not scrubbed.
+                # ``location`` still reaches ``ensure_chat_session`` /
+                # ``add_chat_message`` below: what we store is unchanged, only what
+                # we transmit.
+                metadata={"bot_id": bid, "question": question, "device": device},
                 tags=["rag", f"bot:{bid}"] if bid else ["rag"],
             ),
             lf.start_as_current_observation(
@@ -6322,7 +6336,14 @@ async def rag_pipeline_stream(
         _lf_attr_mgr = _propagate_attributes(
             user_id=str(cid) if cid else None,
             session_id=session_id,
-            metadata={"bot_id": bid, "question": question, "device": device, "location": location},
+            # PRIVACY — ``location`` is deliberately absent, exactly as in the
+            # non-streaming ``rag_pipeline`` above; see the full note there. It
+            # arrives as "IP: <address>", and sending a visitor's IP to a
+            # third-party processor has no consent basis under GDPR/DPDP.
+            # Do not add it back while debugging. Storage is untouched —
+            # ``location`` still flows into ``ensure_chat_session`` /
+            # ``add_chat_message`` further down.
+            metadata={"bot_id": bid, "question": question, "device": device},
             tags=["rag", f"bot:{bid}"] if bid else ["rag"],
         )
         _lf_obs_mgr = _lf.start_as_current_observation(

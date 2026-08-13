@@ -31,6 +31,17 @@ WHAT IS NOT REDACTED HERE
     calls :func:`format_visitor_location` for the value it actually returns.
     That key is a dict key on the server and is never serialised.
 
+WHY OBSERVABILITY DOES NOT CALL THIS MODULE
+    ``rag_service`` used to attach ``location`` to the Langfuse trace for every
+    chat request, sending visitor IPs to a third-party processor. It does not
+    route through :func:`format_visitor_location` now, because on the request
+    path the value is always the ``"IP: <addr>"`` stamp — redacting it yields
+    the constant ``"Unknown"`` for every trace, a field with no observability
+    value. The field is dropped at both Langfuse call sites instead; see the
+    PRIVACY notes in ``rag_pipeline`` / ``rag_pipeline_stream``. Redaction is
+    for boundaries where a customer is entitled to the geography; a third-party
+    processor is not a boundary, it is a transfer.
+
 MIRROR
     The admin dashboard keeps a TypeScript twin at
     ``app/src/features/leads/leadModel.ts`` (``formatLocation`` /
