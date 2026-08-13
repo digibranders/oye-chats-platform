@@ -743,6 +743,16 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     return `Updated ${mins}m ago`;
   }, [lastUpdatedAt, nowTick]);
 
+  // Human label for the active flow-count scope ("Top 5" / "Top 10" /
+  // "All"), surfaced as an always-visible header chip so the reader can
+  // tell how many page flows the diagram is limited to without opening
+  // the filter popover. Falls back defensively if maxFlows ever holds a
+  // value outside FLOW_COUNT_OPTIONS.
+  const flowCountLabel = useMemo(
+    () => FLOW_COUNT_OPTIONS.find((o) => o.value === maxFlows)?.label ?? `Top ${maxFlows}`,
+    [maxFlows],
+  );
+
   // Distinct "starting pages" — the FIRST page of each pre-chat
   // sequence, aggregated across ALL sequences (not just the top 6
   // rendered rows) so the filter picker exposes every entry point a
@@ -1480,6 +1490,21 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
               {freshnessLabel}
             </span>
           )}
+          {/* Always-visible flow-count scope chip. Unlike the start/outcome
+              chips it is never cleared (the diagram is always limited to
+              some number of flows), so it opens the filter popover rather
+              than carrying a ✕. Tells the reader at a glance that they're
+              looking at, e.g., the Top 5 flows. */}
+          <button
+            type="button"
+            onClick={() => setFilterOpen((v) => !v)}
+            className="flex items-center gap-1.5 rounded-full border border-[var(--ds-border-strong)] bg-[var(--ds-bg-sunken)] px-2.5 py-1 text-[11px] font-medium text-[var(--ds-text)] hover:bg-[var(--ds-bg-hover)]"
+            aria-label={`Showing ${flowCountLabel} page flows. Click to change how many are shown.`}
+            title="Change how many page flows are shown"
+          >
+            <span className="text-[var(--ds-text-muted)]">Showing:</span>
+            <span>{flowCountLabel === 'All' ? 'All flows' : `${flowCountLabel} flows`}</span>
+          </button>
           {startFilter && (
             <button
               type="button"

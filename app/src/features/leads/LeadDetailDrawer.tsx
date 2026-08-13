@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { Button, EmptyState, LockedFeatureCard, Skeleton, StatusBadge, Textarea, cn } from '../../design-system';
 import { useCountUp } from '../../hooks/useCountUp';
-import { type ChatMessage } from '../../types/domain';
+import { type ChatMessage, type LeadSignal } from '../../types/domain';
 import { type LeadDetailData } from './useLeadDetail';
 import { type LeadAnnotationController } from './useLeadAnnotations';
 import { LeadInsights } from './LeadInsights';
@@ -193,6 +193,36 @@ function formatClock(iso: string | null | undefined): string {
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return '';
   return new Date(parsed).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * Every distinct value a visitor stated for one dimension, in the order they
+ * said them. Backs the per-dimension evidence list so a lead who mentioned
+ * three different needs shows all three, not just the highest-scoring one.
+ *
+ * Operator score overrides are excluded — their ``extracted_value`` is the raw
+ * numeric score, not visitor-stated text. Values are de-duplicated
+ * case-insensitively so a repeated identical mention appears once.
+ */
+function distinctSignalValues(
+  signals: LeadSignal[] | undefined,
+  dimension: string,
+): string[] {
+  if (!signals?.length) return [];
+  const target = dimension.toLowerCase();
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const signal of signals) {
+    if ((signal.dimension ?? '').toLowerCase() !== target) continue;
+    if (signal.source === 'operator_override') continue;
+    const value = (signal.extracted_value ?? '').trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    values.push(value);
+  }
+  return values;
 }
 
 function TranscriptBubble({ message }: { message: ChatMessage }): ReactElement {
@@ -600,11 +630,39 @@ export function LeadDetailDrawer({
                               }}
                             />
                           </div>
-                          {dim.value && (
-                            <p className="mt-2 text-[13px] text-[var(--ds-text-muted)]">
-                              {dim.value}
-                            </p>
-                          )}
+                          {(() => {
+                            // Prefer the full evidence trail (every distinct
+                            // value the visitor stated for this dimension); fall
+                            // back to the single rolling value when signals
+                            // aren't available (older leads, or the query was
+                            // skipped). A multi-value list is what surfaces the
+                            // 3–4 separate needs a visitor mentioned.
+                            const values = distinctSignalValues(detail.signals, key);
+                            if (values.length > 1) {
+                              return (
+                                <ul className="mt-2 space-y-1">
+                                  {values.map((value, index) => (
+                                    <li
+                                      key={index}
+                                      className="flex gap-2 text-[13px] text-[var(--ds-text-muted)]"
+                                    >
+                                      <span
+                                        aria-hidden
+                                        className="mt-[7px] h-1 w-1 flex-shrink-0 rounded-full bg-[var(--ds-text-subtle)]"
+                                      />
+                                      <span>{value}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              );
+                            }
+                            const single = values[0] ?? dim.value;
+                            return single ? (
+                              <p className="mt-2 text-[13px] text-[var(--ds-text-muted)]">
+                                {single}
+                              </p>
+                            ) : null;
+                          })()}
                         </div>
                       );
                     });

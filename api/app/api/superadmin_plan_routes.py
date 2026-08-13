@@ -6,9 +6,10 @@ and can be modified at runtime without code changes.
 """
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
@@ -17,11 +18,29 @@ from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_
 from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
+from app.services.plan_entitlements_service import UNLIMITED
 from app.services.plan_service import get_pricing_content, set_pricing_content
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/superadmin", tags=["superadmin-plans"])
+
+
+def _validate_included_seats(value: int) -> int:
+    """Allow the UNLIMITED sentinel (``-1``) alongside any positive seat count.
+
+    A plain ``ge=1`` bound made the seeded Enterprise row (unlimited seats)
+    unable to round-trip through this editor, while a plain ``ge=-1`` would
+    admit ``0`` — a plan that includes no seats at all, which the seat add-on
+    floor and MRR maths both treat as a misconfiguration. ``-1`` is therefore
+    the ONLY meaningful non-positive value.
+    """
+    if value == UNLIMITED or value >= 1:
+        return value
+    raise ValueError(f"included_operator_seats must be a positive seat count or {UNLIMITED} for unlimited.")
+
+
+IncludedOperatorSeats = Annotated[int, AfterValidator(_validate_included_seats)]
 
 
 def _to_usd_cents(amount_minor: int | None, currency: str | None) -> int:
@@ -84,7 +103,7 @@ class CreatePlanRequest(BaseModel):
     marketing: dict | None = None
     overage_rate_cents: int = Field(0, ge=0)
     credits_per_month: int = Field(0, ge=0)
-    included_operator_seats: int = Field(1, ge=1)
+    included_operator_seats: IncludedOperatorSeats = 1
     # Defaults to the canonical charged seat price so a plan created without an
     # explicit value stays consistent with what the seat add-on actually bills.
     extra_seat_price_cents: int = Field(RAZORPAY_SEAT_PLAN_PRICE_CENTS, ge=0)
@@ -114,7 +133,7 @@ class UpdatePlanRequest(BaseModel):
     marketing: dict | None = None
     overage_rate_cents: int | None = Field(None, ge=0)
     credits_per_month: int | None = Field(None, ge=0)
-    included_operator_seats: int | None = Field(None, ge=1)
+    included_operator_seats: IncludedOperatorSeats | None = None
     extra_seat_price_cents: int | None = Field(None, ge=0)
     is_active: bool | None = None
     is_default: bool | None = None
@@ -664,8 +683,12 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
                 # `plan_monthly × operator_quantity` double/triple-counted seat
                 # revenue — a 3-seat Standard reported ~$144 instead of ~$58
                 # (finding K).
+                # UNLIMITED (-1) included seats: the plan price already covers
+                # every seat, so there is never a billable seat add-on.
+                # Subtracting -1 would instead invent one phantom paid seat per
+                # subscription (and more once operator_quantity moves).
                 included = int(plan.included_operator_seats or 1)
-                extra_seats = max(int(sub.operator_quantity or included) - included, 0)
+                extra_seats = 0 if included < 0 else max(int(sub.operator_quantity or included) - included, 0)
                 mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle)
                 if extra_seats:
                     # Finding H3: seats bill the global seat add-on at the canonical

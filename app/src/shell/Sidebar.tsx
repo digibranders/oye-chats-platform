@@ -23,9 +23,10 @@ import type { UpgradeIntentKey } from '../context/upgradeIntents';
  *  - `/inbox`    Support / live chat requires the `live_chat` feature (Free
  *                is the only plan without it — Starter and up ship it).
  *  - `/journey`  Journey analytics is Standard+; on the backend it's a slug
- *                gate (`JOURNEY_ANALYTICS_SLUGS = {standard, professional}`),
- *                on the frontend the `bant` feature has the same membership
- *                so we key on that. Both Free and Starter see it locked. */
+ *                gate (`JOURNEY_ANALYTICS_SLUGS = {standard, professional,
+ *                enterprise}`), on the frontend the `bant` feature has the
+ *                same membership so we key on that. Both Free and Starter see
+ *                it locked. */
 interface LockRule {
   readonly intent: UpgradeIntentKey;
   readonly requiredFeature: Parameters<ReturnType<typeof useEntitlements>['hasFeature']>[0];

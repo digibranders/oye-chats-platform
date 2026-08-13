@@ -130,7 +130,7 @@ class PlanEntitlements:
     """Resolved entitlements for a single client. Returned by ``get_entitlements``."""
 
     client_id: int
-    plan_slug: str  # "free" | "starter" | "standard" | "professional" | custom slug
+    plan_slug: str  # "free" | "starter" | "standard" | "professional" | "enterprise" | custom slug
     plan_name: str
     # Subscription status: "active" | "trialing" | "past_due" | "canceled" |
     # "expired" | "none" (no subscription row). Drives the dashboard banner.
@@ -368,11 +368,12 @@ def invalidate_bot(bot_id: int) -> None:
 # The gate lives here so backend routes and the frontend entitlement
 # response agree on the rule without duplicating the slug list.
 #
-# Rule: "Standard" and "Professional" plans expose full attribution.
-# Everyone else (Free / Starter / custom slugs) sees leads without the
-# source badge and journey timeline. The Leads UI renders an upsell tile
-# in the same slot so the feature is discoverable without leaking data.
-LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
+# Rule: "Standard", "Professional" and "Enterprise" plans expose full
+# attribution. Everyone else (Free / Starter / custom slugs) sees leads
+# without the source badge and journey timeline. The Leads UI renders an
+# upsell tile in the same slot so the feature is discoverable without
+# leaking data.
+LEAD_SOURCE_ATTRIBUTION_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
 
 
 def is_lead_source_attribution_enabled(client_id: int, db_session: Session) -> bool:
@@ -423,7 +424,7 @@ def is_lead_source_attribution_enabled_for_bot(bot_id: int, db_session: Session)
 # history); this gate controls only whether the READ endpoints under
 # /analytics/journeys/* return data. Same paid-tier set as lead source
 # attribution.
-JOURNEY_ANALYTICS_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
+JOURNEY_ANALYTICS_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
 
 
 def is_journey_analytics_enabled(client_id: int, db_session: Session) -> bool:
@@ -520,17 +521,23 @@ def is_lead_intelligence_enabled(client_id: int, db_session: Session) -> bool:
 # Visitor Intelligence is the IP-based company/threat signal
 # (``ChatSession.visitor_metadata``), the Reoon-validated email display
 # (``LeadInfo.is_valid_email`` / ``email_score``), and the manual "Send
-# Follow-up" action — all strictly Professional-only, narrower than the
-# general lead-intelligence layer (score/tier/BANT), which is Starter+.
+# Follow-up" action — the top-tier slice, narrower than the general
+# lead-intelligence layer (score/tier/BANT), which is Starter+. Standard
+# and below are excluded; Enterprise is listed because it is Professional
+# plus unlimited agents/seats, so every Professional feature carries over.
 # Kept as its own frozenset (rather than reusing ``plan_slug != "free"``)
 # so a future plan tier change to lead intelligence can't silently loosen
 # this boundary too.
-VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional"})
+VISITOR_INTELLIGENCE_SLUGS: frozenset[str] = frozenset({"professional", "enterprise"})
 
 # The slugs `seed_plans.py` creates. Anything else is a BESPOKE plan a
 # super-admin provisioned for an individual deal — the seed script's own
 # docstring says unknown slugs are left untouched precisely because they exist.
-_SEEDED_PLAN_SLUGS: frozenset[str] = frozenset({"free", "starter", "standard", "professional"})
+#
+# NOTE: "enterprise" is a SEEDED ladder tier, not a bespoke deal. Bespoke
+# slugs for individual contracts are distinct strings (e.g. "enterprise-acme")
+# and still take rule 2 in :func:`_paid_tier_includes`.
+_SEEDED_PLAN_SLUGS: frozenset[str] = frozenset({"free", "starter", "standard", "professional", "enterprise"})
 
 
 def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
@@ -555,7 +562,11 @@ def _paid_tier_includes(slug: str, ladder_slugs: frozenset[str]) -> bool:
 
     A newly SEEDED tier is not covered by rule 2: adding it to
     ``_SEEDED_PLAN_SLUGS`` is part of adding the tier, which forces a
-    deliberate choice per feature rather than a silent grant.
+    deliberate choice per feature rather than a silent grant. The seeded
+    ``enterprise`` tier made that choice explicitly — it is named in every
+    ladder above, because it is Professional plus unlimited agents/seats and
+    must not lose a feature by moving onto the ladder. Rule 2 still covers
+    the per-contract slugs (``enterprise-acme`` and friends).
     """
     if slug in ladder_slugs:
         return True
@@ -612,17 +623,17 @@ def is_visitor_intelligence_enabled_for_bot(bot_id: int, db_session: Session) ->
     return _paid_tier_includes(entitlements.plan_slug, VISITOR_INTELLIGENCE_SLUGS)
 
 
-# ── Email verification gate (Standard + Professional) ───────────────────────
+# ── Email verification gate (Standard + Professional + Enterprise) ──────────
 #
 # Reoon email verification powers both the widget's real-time blur check
 # (``POST /chat/validate-email``) and the background lead-enrichment check that
 # persists ``LeadInfo.is_valid_email`` / ``email_score``. It is a metered,
 # credit-costing feature (``credit_cost.email_verification``), so it is scoped
-# to the Standard and Professional tiers — Free and Starter are excluded and
-# skip the Reoon call entirely (rather than paying for a check they can't act
-# on). A slug allow-list (not "not free") keeps this boundary explicit so a
-# future Starter change can't silently switch the paid feature on.
-EMAIL_VERIFICATION_SLUGS: frozenset[str] = frozenset({"standard", "professional"})
+# to the Standard, Professional and Enterprise tiers — Free and Starter are
+# excluded and skip the Reoon call entirely (rather than paying for a check
+# they can't act on). A slug allow-list (not "not free") keeps this boundary
+# explicit so a future Starter change can't silently switch the paid feature on.
+EMAIL_VERIFICATION_SLUGS: frozenset[str] = frozenset({"standard", "professional", "enterprise"})
 
 
 def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> bool:
@@ -631,9 +642,9 @@ def is_email_validation_enabled_for_bot(bot_id: int, db_session: Session) -> boo
     Bot-scoped (mirrors :func:`is_lead_source_attribution_enabled_for_bot`)
     because the gated call sites — ``POST /chat/validate-email`` and the
     background lead-enrichment Reoon check — are both authenticated via
-    ``X-Bot-Key``, not a client session. Restricted to the Standard and
-    Professional tiers (see :data:`EMAIL_VERIFICATION_SLUGS`). Denies on any
-    resolver error.
+    ``X-Bot-Key``, not a client session. Restricted to the Standard,
+    Professional and Enterprise tiers (see :data:`EMAIL_VERIFICATION_SLUGS`).
+    Denies on any resolver error.
     """
     try:
         entitlements = get_bot_entitlements(bot_id, db_session, include_usage=False)
@@ -904,6 +915,32 @@ def can_client_add_new_bot(client_id: int, db_session: Session) -> AddBotDecisio
         must_subscribe=True,
         active_bot_count=active_bots,
     )
+
+
+def plan_grants_unlimited_bots(plan: Plan) -> bool:
+    """Is this plan's included agent quota the :data:`UNLIMITED` (-1) sentinel?
+
+    Such a plan is an ACCOUNT product: its whole promise is one pooled credit
+    balance shared across every agent. It must therefore never be attached to a
+    **bot-scoped** subscription, which routes the plan's credits into that one
+    bot's isolated ledger (``credit_service.resolve_bot_ledger_bot_id``) and
+    leaves every further agent it entitles draining the unfunded shared pool.
+    The two doors onto a bot-scoped subscription — ``POST /bots/checkout`` and
+    ``POST /subscriptions/change-plan`` with a ``bot_id`` — both gate on this
+    predicate, which is why it lives here rather than in either route module.
+
+    Keyed off ``limits.bots`` rather than a slug so every future unlimited-agent
+    plan is covered the moment it is seeded.
+
+    Conservative on bad data: a missing, non-numeric, or otherwise unreadable
+    quota is NOT unlimited, so a hand-provisioned plan row can still be bought
+    per-bot exactly as before. Only the explicit sentinel trips the guard.
+    """
+    limits = plan.limits if isinstance(plan.limits, dict) else {}
+    try:
+        return int(limits.get("bots")) == UNLIMITED
+    except (TypeError, ValueError):
+        return False
 
 
 # ── Usage population ───────────────────────────────────────────────────────

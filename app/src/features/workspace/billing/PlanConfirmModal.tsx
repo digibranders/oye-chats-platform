@@ -6,7 +6,9 @@ import {
   formatCredits,
   formatFreeMonths,
   formatMoneyMinor,
+  formatSeatAllowance,
   promotionAppliesToPlan,
+  SALES_EMAIL,
   type PlanView,
   type PromotionView,
 } from '../billingModel';
@@ -17,9 +19,7 @@ import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
 function PlanHighlights({ plan }: { plan: PlanView }): ReactElement {
   const items = [
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
-    plan.includedSeats > 0
-      ? `${plan.includedSeats} operator seat${plan.includedSeats === 1 ? '' : 's'}`
-      : 'No operator seats',
+    formatSeatAllowance(plan.includedSeats),
   ];
   return (
     <ul className="space-y-2 text-[13px] text-[var(--ds-text-muted)]">
@@ -34,8 +34,6 @@ function PlanHighlights({ plan }: { plan: PlanView }): ReactElement {
     </ul>
   );
 }
-
-const SALES_EMAIL = 'developer@oyechats.com';
 
 type Intent = 'trial' | 'subscribe' | 'upgrade' | 'downgrade' | 'downgrade_free';
 
@@ -253,9 +251,10 @@ export function PlanConfirmModal({
     // All quote state is set inside this async closure (never synchronously in
     // the effect body) so a fast re-open can't cascade renders.
     void (async () => {
-      // An enterprise tier is priced on request - there is no checkout quote to
-      // fetch; it routes to sales instead.
-      if (plan.isEnterprise) {
+      // A bespoke contact-sales tier is priced on request - there is no
+      // checkout quote to fetch; it routes to sales instead. The seeded
+      // Enterprise tier is NOT one of these: it is priced and quotes normally.
+      if (plan.isContactSales) {
         if (!cancelled) {
           setQuote({ loading: false, amountDisplay: 'Custom', blockedReason: null, contactSales: null });
         }
@@ -305,9 +304,9 @@ export function PlanConfirmModal({
     currentSubscriptionStatus,
   );
   const blocked = quote.blockedReason !== null;
-  // A "contact sales" tier (enterprise) or a genuinely blocked checkout (intl
-  // USD pending) both route to the sales team rather than the pay button.
-  const contactOnly = blocked || plan.isEnterprise;
+  // A bespoke contact-sales tier, or a genuinely blocked checkout (intl USD
+  // pending), both route to the sales team rather than the pay button.
+  const contactOnly = blocked || plan.isContactSales;
 
   // Chat-history visibility drop. On a paid→paid downgrade to a tier with a
   // shorter (finite) retention window, older conversations disappear from view.
@@ -534,7 +533,7 @@ export function PlanConfirmModal({
         {contactOnly ? (
           <div className="flex items-start gap-2 rounded-lg border border-[var(--ds-warning)] bg-[var(--ds-warning-soft)] px-3 py-2.5 text-[13px] text-[var(--ds-text)]">
             <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--ds-warning)]" />
-            {plan.isEnterprise
+            {plan.isContactSales
               ? 'This plan is tailored to your needs - our team will set you up with custom pricing and onboarding.'
               : 'International USD billing is coming soon - our team will set you up directly.'}
           </div>

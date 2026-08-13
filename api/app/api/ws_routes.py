@@ -729,10 +729,12 @@ async def operator_websocket(
     # Best-effort check: counts operators flagged is_online in the DB. The auth
     # path above already set this operator's flag to True, so the count includes
     # self. If the total exceeds the seat allowance, roll back and reject.
+    # A negative mirror is the codebase-wide UNLIMITED (-1) sentinel, carried
+    # over from a plan with ``included_operator_seats = -1`` — no cap to apply.
     with get_session() as db:
         sub = get_client_subscription(db, client_id)
-        if sub is not None:
-            seat_limit = max(int(sub.operator_quantity or 1), 1)
+        if sub is not None and (seat_quantity := int(sub.operator_quantity or 1)) >= 0:
+            seat_limit = max(seat_quantity, 1)
             online_count = (
                 db.scalar(
                     select(func.count(Operator.id)).where(

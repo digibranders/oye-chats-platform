@@ -10,7 +10,13 @@ import { openRazorpayCheckout } from '../../lib/razorpay';
 import { type Bot } from '../../types/domain';
 import { Button, Input, cn } from '../../design-system';
 import { requiresSubscription } from '../../utils/apiErrors';
-import { buildPlan, formatCredits, formatMoneyMinor, type PlanView } from '../workspace/billingModel';
+import {
+  buildPlan,
+  formatCredits,
+  formatMoneyMinor,
+  planGrantsUnlimitedAgents,
+  type PlanView,
+} from '../workspace/billingModel';
 
 export interface CreateAgentDialogProps {
   /** Whether the modal is mounted/visible. */
@@ -148,9 +154,19 @@ export function CreateAgentDialog({
     setPlansLoading(true);
     try {
       const raw = await getSubscriptionPlans();
+      // Paid plans only, minus any plan whose `limits.bots` is UNLIMITED.
+      //
+      // An unlimited-agent plan is an ACCOUNT product: it sells one credit pool
+      // shared across every agent. This dialog buys a per-agent subscription,
+      // which scopes the plan's credits to that single agent's isolated ledger
+      // and leaves every further agent it entitles unfunded. The backend rejects
+      // such a plan on `POST /bots/checkout`; this filter is the matching UI
+      // half, so the option is never offered in the first place. A plan row
+      // without a `bots` quota is not unlimited and stays selectable — same
+      // conservative reading as the server.
       const parsed = (Array.isArray(raw) ? raw : [])
         .map((r) => buildPlan(r))
-        .filter((p): p is PlanView => p !== null && p.isPaid);
+        .filter((p): p is PlanView => p !== null && p.isPaid && !planGrantsUnlimitedAgents(p));
       setPlans(parsed);
       setSelectedSlug((prev) => prev || (parsed[0]?.slug ?? ''));
     } catch (err) {

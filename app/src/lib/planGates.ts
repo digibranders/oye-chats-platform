@@ -20,6 +20,11 @@
  * added to `seed_plans.py`, add it to {@link SEEDED_PLAN_SLUGS} here too —
  * a new seeded tier that is missing from this set would be read as bespoke and
  * handed every paid feature.
+ *
+ * That addition is a PAIRED edit, never a lone one: registering a slug here
+ * REVOKES rule 2 for it, so it must be named in every ladder below that it is
+ * entitled to in the same change. Adding `enterprise` to `_SEEDED_PLAN_SLUGS`
+ * on its own is what silently revoked Visitor Intelligence server-side.
  */
 
 /** Slugs `seed_plans.py` creates. Anything else is bespoke — see rule 2. */
@@ -28,13 +33,29 @@ export const SEEDED_PLAN_SLUGS: ReadonlySet<string> = new Set([
   'starter',
   'standard',
   'professional',
+  // A SEEDED ladder tier, not a bespoke deal. Per-contract slugs are distinct
+  // strings ('enterprise-acme' and friends) and still take rule 2.
+  'enterprise',
 ]);
 
 /** Ladder tiers that include Reoon email verification. */
-export const EMAIL_VERIFICATION_SLUGS: ReadonlySet<string> = new Set(['standard', 'professional']);
+export const EMAIL_VERIFICATION_SLUGS: ReadonlySet<string> = new Set([
+  'standard',
+  'professional',
+  'enterprise',
+]);
 
-/** Ladder tiers that include Visitor Intelligence (the company lookup). */
-export const VISITOR_INTELLIGENCE_SLUGS: ReadonlySet<string> = new Set(['professional']);
+/**
+ * Ladder tiers that include Visitor Intelligence (the company lookup).
+ *
+ * Enterprise is listed because it is Professional plus unlimited agents, seats
+ * and knowledge — every Professional feature carries over, so moving it onto
+ * the seeded ladder must not cost it one.
+ */
+export const VISITOR_INTELLIGENCE_SLUGS: ReadonlySet<string> = new Set([
+  'professional',
+  'enterprise',
+]);
 
 /**
  * Does `slug` include a feature granted to `ladderSlugs`?

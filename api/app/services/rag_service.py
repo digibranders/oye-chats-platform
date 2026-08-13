@@ -2945,6 +2945,18 @@ def _maybe_append_name_ask(
 _NAME_REQUEST_MESSAGE = "Hi there! Before I help you out, may I know your name so I can address you properly?"
 
 
+def _name_ack_message(name: str, company_name: str | None) -> str:
+    """Warm one-liner acknowledging a just-captured name when the visitor's reply
+    was ONLY their name (nothing else to answer). Without this the bare name
+    ("steve") falls through to retrieval and trips the off-scope guardrail
+    ("That's not something I can speak to, I cover X only")."""
+    co = f"**{company_name}**" if company_name else "us"
+    return (
+        f"Nice to meet you, {name}! "
+        f"What would you like to know — our services, recent work, or how to get started with {co}?"
+    )
+
+
 def _msg_role(message) -> str | None:
     return getattr(message, "role", None) or (message.get("role") if isinstance(message, dict) else None)
 
@@ -3021,7 +3033,12 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
             # current turn flow normally so the visitor is simply greeted by name.
             if deferred and route_intent(deferred, company_name) is None:
                 return (None, deferred, name, True)
-            return (None, None, name, True)
+            # Name-only reply (their whole message was the name; the deferred
+            # item, if any, was a greeting the router already covers). Emit a
+            # warm acknowledgment by name and STOP via the ask-message channel.
+            # Returning the name with no message here would send the bare name
+            # ("steve") into retrieval, which trips the off-scope guardrail.
+            return (_name_ack_message(name, company_name), None, name, True)
 
         # They didn't give a name. If they DECLINED (or sent filler), still answer
         # their original deferred question so their first query is never dropped.
@@ -3057,6 +3074,7 @@ def build_hybrid_prompt(
     services: list[str | dict] | None = None,
     services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
     team_connect_offer: bool = False,
+    suppress_probe: bool = False,
     visitor_name: str | None = None,
     visitor_just_named: bool = False,
 ) -> tuple[str, str]:
@@ -3254,6 +3272,31 @@ RULES:
 - Rephrasing is allowed but must keep the same intent and be one short sentence (≤14 words). Examples: "Would you like to connect with our team?" · "Want me to loop in someone from our team?" · "Happy to connect you with our team if that helps — want me to?"
 - CLOSURE OVERRIDE still wins: if the visitor's latest message is a farewell/thanks, skip the offer and just acknowledge.
 - This offer is being extended once for the entire session. Do not re-issue it on future turns even if BANT changes."""
+
+        if suppress_probe:
+            # The qualified-lead card ("Want to talk to our team?") is being
+            # shown as a separate inline card this turn, and the next probing
+            # question is deferred behind its "Continue with AI" option. So the
+            # answer must stand ALONE — no trailing qualifying question, no CTA
+            # marker — otherwise the visitor sees both a probe and the card.
+            #
+            # This is the streaming path's ONLY lever: tokens are sent to the
+            # visitor live, so a leaked question cannot be stripped after the
+            # fact. Hence the forceful, override-everything framing.
+            probing_instruction = (
+                "ANSWER-ONLY TURN — HARD RULE, overrides every other qualification "
+                "instruction in this section:\n"
+                "- Answer the visitor's question fully and warmly, then STOP.\n"
+                "- Your reply MUST end on a STATEMENT, never a question. The last "
+                "sentence cannot be a question of any kind.\n"
+                "- Do NOT ask a qualifying question, a follow-up question, a "
+                "next-step question, or ANY question this turn — no 'when do you "
+                "want to start?', no 'what matters more?', nothing.\n"
+                "- Do NOT suggest booking, a demo, or talking to the team — an "
+                "on-screen card already handles that.\n"
+                "- Do NOT emit any [CTA:…] or [CTA_Q:…] marker."
+            )
+            cta_instruction = ""
 
         qualification_section = f"""
 5. LEAD QUALIFICATION (ACTIVE & CONVERSATIONAL):
@@ -4698,6 +4741,66 @@ def _scrub_cta_sentinels(text: str) -> str:
     return clean.rstrip()
 
 
+_TRAILING_Q_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _strip_trailing_question(text: str) -> str:
+    """Remove a trailing question the model appended despite an answer-only
+    instruction. Deterministic belt-and-suspenders for suppressed-probe turns
+    (the qualified-lead card): the streaming path buffers those answers and
+    strips here before sending, because a disobeyed "do not ask a question"
+    can't be un-streamed once its tokens have reached the visitor.
+
+    Drops trailing blank-line-separated paragraphs that are questions, then a
+    trailing question sentence inside the final paragraph — but never returns
+    empty (an answer with no non-question content is left untouched)."""
+    if not text or not text.strip():
+        return text
+    paras = re.split(r"\n\s*\n", text.rstrip())
+    while len(paras) > 1 and paras[-1].rstrip().endswith("?"):
+        paras.pop()
+    last = paras[-1].rstrip()
+    if last.endswith("?"):
+        sentences = _TRAILING_Q_SENTENCE_RE.split(last)
+        if len(sentences) > 1 and sentences[-1].rstrip().endswith("?"):
+            sentences.pop()
+            paras[-1] = " ".join(sentences).rstrip()
+    cleaned = "\n\n".join(p.rstrip() for p in paras if p.strip()).rstrip()
+    return cleaned or text.rstrip()
+
+
+def _next_dimension_cta(bant_config: dict | None, bant_state: dict | None) -> dict | None:
+    """Deterministic quick-reply CTA for the next unassessed, CTA-enabled
+    dimension. Used as the DEFERRED follow-up carried by the qualified-lead
+    card: when the visitor picks "Continue with AI" the widget surfaces this as
+    the bot's next probing question + chips, instead of the probe being woven
+    into the answer this turn.
+
+    Returns ``{"dimension", "prompt", "options"}`` (same shape as
+    ``_strip_cta_marker``'s CTA payload) or ``None`` when every dimension is
+    already assessed or none has chips configured.
+    """
+    if not bant_config:
+        return None
+    bs = bant_state or {}
+    order = bant_config.get("conversation_order") or _framework_dimensions(bant_config)
+    for dim in order:
+        dim_cfg = bant_config.get(dim, {}) if isinstance(bant_config.get(dim), dict) else {}
+        opts = dim_cfg.get("options") or []
+        prompt = dim_cfg.get("cta_prompt") or ""
+        if not prompt:
+            # No probe text configured for this dimension — nothing to defer.
+            continue
+        max_score = max((int(o.get("score", 0)) for o in opts), default=25)
+        assess_threshold = max(1, int(round(max_score * 0.6)))
+        if int(bs.get(f"{dim}_score", 0) or 0) < assess_threshold:
+            # Chips only when the bot opted this dimension into quick-replies;
+            # otherwise the probe is a plain question the visitor free-types.
+            options = [o["label"] for o in opts] if dim_cfg.get("cta_enabled", False) else []
+            return {"dimension": dim, "prompt": prompt, "options": options}
+    return None
+
+
 def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, dict | None, str | None]:
     """Strip [CTA:dimension] (+ optional [CTA_Q:question]) markers from the
     visible response.
@@ -5172,7 +5275,13 @@ def rag_pipeline(
                 client_id=cid,
                 threshold=_bot_threshold,
             )
-            if not _is_relevant:
+            # ``cta_dimension`` set → the visitor tapped a qualification chip
+            # (budget/authority/timeline/need answer), NOT a KB question. Skip
+            # the off-topic gate entirely: judging "$1K–5K/mo" against KB chunks
+            # always fails, which used to refuse the answer AND drop the BANT
+            # signal. Let it flow to generation (acknowledge + next probe); the
+            # deterministic CTA scoring runs afterwards.
+            if not _is_relevant and not cta_dimension:
                 # Distinguish "on-scope but no info" from "actually off-topic":
                 # ─ on-scope (e.g. "is the CEO on linkedin?", "what time zone
                 #   are you in?"): use the no-info pivot, which acknowledges
@@ -5228,9 +5337,11 @@ def rag_pipeline(
             # on — refuse before invoking the LLM. This closes the "free
             # ChatGPT" loophole where the model would otherwise be told to
             # "craft a helpful natural answer" from general knowledge.
-            if not final_results:
+            if not final_results and not cta_dimension:
                 # Same on-scope check — empty retrieval on an on-scope
                 # question gets the graceful pivot instead of the refusal.
+                # (A qualification-chip answer skips this: it needs no KB
+                # grounding — see the relevance-gate guard above.)
                 if _question_looks_on_scope(question, _company_name) or (
                     search_query != question and _question_looks_on_scope(search_query, _company_name)
                 ):
@@ -5307,6 +5418,13 @@ def rag_pipeline(
                 and _count_marked_bant_dimensions(current_bant) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
             )
+            # When the visitor is qualified (2+ dimensions) AND this bot has
+            # meeting booking configured, surface a richer "connect with the
+            # team" popup (live-chat + book-a-meeting CTAs) instead of the
+            # plain-text offer. Resolved here so the text-offer prompt injection
+            # can be suppressed when the popup will render.
+            _qualified_popup = _resolve_meeting_booking(bot, session, session_id, bid) if _team_connect_offer else {}
+            _show_qualified_popup = bool(_qualified_popup)
 
             system_prompt, prompt = build_hybrid_prompt(
                 client,
@@ -5325,7 +5443,8 @@ def rag_pipeline(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
-                team_connect_offer=_team_connect_offer,
+                team_connect_offer=_team_connect_offer and not _show_qualified_popup,
+                suppress_probe=_show_qualified_popup,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
             )
@@ -5376,6 +5495,12 @@ def rag_pipeline(
 
             # Strip CTA marker before saving
             answer, _cta, _cta_q = _strip_cta_marker(answer, bant_config)
+
+            # Answer-only turn (qualified-lead card showing): strip any trailing
+            # question the model appended despite the instruction, so the card is
+            # the sole call-to-action and the probe stays deferred behind it.
+            if _show_qualified_popup:
+                answer = _strip_trailing_question(answer)
 
             # Strip [MEETING_CARD] token from LLM response (non-streaming path)
             _meeting_card_detected = bool(_meeting_card_re.search(answer))
@@ -5611,10 +5736,34 @@ def rag_pipeline(
                         session=session_id,
                     )
 
+            # Qualified-lead popup: 2+ BANT dimensions marked AND meeting
+            # booking configured. Offers live-chat + book-a-meeting CTAs in one
+            # card. Yields to any explicit handoff / meeting / leave-message CTA
+            # already firing this turn so two calls-to-action never compete.
+            if (
+                _show_qualified_popup
+                and not result.get("suggest_handoff")
+                and not result.get("show_booking")
+                and not result.get("show_leave_message")
+            ):
+                result["team_connect_popup"] = {
+                    "calendly_url": _qualified_popup["calendly_url"],
+                    "meeting_provider": _qualified_popup["meeting_provider"],
+                    "live_chat_enabled": live_chat_on,
+                    # Deferred BANT probe: surfaced by the widget when the visitor
+                    # picks "Continue with AI". None when all dimensions are
+                    # assessed — then Continue with AI simply resumes the chat.
+                    "follow_up": _next_dimension_cta(bant_config, current_bant),
+                }
+                _mark_card_shown(chat_session, "team_connect")
+
             # Team-connect offer was injected into the prompt this turn — flag
             # it as shown so the offer never repeats in this session, even if
             # the LLM's paraphrase drifts or a later turn's BANT state changes.
-            if _team_connect_offer:
+            # When the popup was eligible (``_show_qualified_popup``) it owns the
+            # dedupe mark above; leaving it unmarked here lets the popup retry on
+            # a later turn if a competing CTA suppressed it this turn.
+            if _team_connect_offer and not _show_qualified_popup:
                 _mark_card_shown(chat_session, "team_connect")
 
             # Persist any inline_cards_shown mutation from _mark_card_shown().
@@ -6040,7 +6189,9 @@ async def rag_pipeline_stream(
             _is_relevant, _gate_score = await asyncio.to_thread(
                 check_relevance, question, final_results, bid, cid, _bot_threshold
             )
-            if not _is_relevant:
+            # Qualification-chip answer → bypass the off-topic gate; see the
+            # non-streaming path for the full rationale.
+            if not _is_relevant and not cta_dimension:
                 # Mirror of the non-stream path: on-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
                 # instead of the off-topic refusal.
@@ -6083,7 +6234,8 @@ async def rag_pipeline_stream(
                 return
 
             # ── Empty-context short-circuit (streaming path) ─────────────────
-            if not final_results:
+            # Skipped for qualification-chip answers (they need no KB grounding).
+            if not final_results and not cta_dimension:
                 if _question_looks_on_scope(question, _company_name) or (
                     search_query != question and _question_looks_on_scope(search_query, _company_name)
                 ):
@@ -6152,6 +6304,12 @@ async def rag_pipeline_stream(
                 and _count_marked_bant_dimensions(current_bant) >= 2
                 and not _card_already_shown(chat_session, "team_connect")
             )
+            # Qualified-lead popup eligibility — see non-streaming path for the
+            # full rationale. Resolved before the LLM call so the plain-text
+            # team-connect prompt injection can be suppressed when the popup
+            # will render instead.
+            _qualified_popup = _resolve_meeting_booking(bot, session, session_id, bid) if _team_connect_offer else {}
+            _show_qualified_popup = bool(_qualified_popup)
 
             system_prompt, prompt = build_hybrid_prompt(
                 client,
@@ -6170,7 +6328,8 @@ async def rag_pipeline_stream(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
-                team_connect_offer=_team_connect_offer,
+                team_connect_offer=_team_connect_offer and not _show_qualified_popup,
+                suppress_probe=_show_qualified_popup,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
             )
@@ -6205,9 +6364,16 @@ async def rag_pipeline_stream(
                     if chunk:
                         chunk_count += 1
                         full_answer += chunk
-                        safe_chunk = cta_sanitizer.feed(chunk)
-                        if safe_chunk:
-                            yield safe_chunk
+                        # Suppressed-probe turns (the qualified-lead card is
+                        # showing) buffer the WHOLE answer instead of streaming
+                        # it — see the post-loop strip. Streaming can't un-send a
+                        # probe the model appends despite the answer-only rule, so
+                        # we hold the answer, strip any trailing question, then
+                        # emit it at once. These turns are rare (once per session).
+                        if not _show_qualified_popup:
+                            safe_chunk = cta_sanitizer.feed(chunk)
+                            if safe_chunk:
+                                yield safe_chunk
                         # Output-side leakage guard: if the accumulated answer
                         # contains a system-prompt sentinel, stop streaming and
                         # replace the persisted message with the refusal. We
@@ -6231,9 +6397,17 @@ async def rag_pipeline_stream(
                 # "[" that turned out not to be a sentinel). Skip on leak-abort —
                 # the buffer at that point may be partial sentinel and is unsafe.
                 if not _leak_aborted:
-                    tail = cta_sanitizer.flush()
-                    if tail:
-                        yield tail
+                    if _show_qualified_popup:
+                        # Buffered answer-only turn: scrub CTA sentinels, strip any
+                        # trailing question the model appended despite the rule,
+                        # then emit the whole answer at once.
+                        full_answer = _strip_trailing_question(_scrub_cta_sentinels(full_answer))
+                        if full_answer:
+                            yield full_answer
+                    else:
+                        tail = cta_sanitizer.flush()
+                        if tail:
+                            yield tail
 
                 if chunk_count == 0:
                     logger.warning(f"LLM returned zero chunks for session {session_id}")
@@ -6290,7 +6464,7 @@ async def rag_pipeline_stream(
             # quick-reply chips still render. Only the *streaming* path needs
             # this — every visitor turn goes through here today, and the
             # non-streaming path does not surface CTA chips to the widget.
-            if cta_data is None and is_bant_enabled:
+            if cta_data is None and is_bant_enabled and not _show_qualified_popup:
                 cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
 
             # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
@@ -6553,12 +6727,33 @@ async def rag_pipeline_stream(
                                 session=session_id,
                             )
 
+                    # Qualified-lead popup — see non-streaming path for rationale.
+                    # Yields to any explicit handoff / meeting / leave-message CTA
+                    # already firing this turn so two CTAs never compete.
+                    if (
+                        _show_qualified_popup
+                        and not final_meta.get("suggest_handoff")
+                        and not final_meta.get("show_booking")
+                        and not final_meta.get("show_leave_message")
+                    ):
+                        final_meta["team_connect_popup"] = {
+                            "calendly_url": _qualified_popup["calendly_url"],
+                            "meeting_provider": _qualified_popup["meeting_provider"],
+                            "live_chat_enabled": live_chat_on,
+                            # Deferred BANT probe — see non-streaming path.
+                            "follow_up": _next_dimension_cta(bant_config, current_bant),
+                        }
+                        _mark_card_shown(chat_session, "team_connect")
+
                     # BANT-based meeting card (only if [MEETING_CARD] didn't already
                     # trigger AND meeting hasn't already been shown this session).
                     # Unlike the explicit [MEETING_CARD], this card is opportunistic —
                     # so a handoff suggestion wins over it (mirrors leave-message).
+                    # Also yields to the qualified-lead popup, which already carries
+                    # a book-a-meeting CTA of its own.
                     if (
-                        not final_meta.get("show_booking")
+                        not final_meta.get("team_connect_popup")
+                        and not final_meta.get("show_booking")
                         and not final_meta.get("suggest_handoff")
                         and not _card_already_shown(chat_session, "meeting")
                     ):
@@ -6571,8 +6766,10 @@ async def rag_pipeline_stream(
 
                     # Team-connect offer was injected into the prompt this turn;
                     # flag it as shown so the offer never repeats in this session,
-                    # regardless of the LLM's paraphrase fidelity.
-                    if _team_connect_offer:
+                    # regardless of the LLM's paraphrase fidelity. When the popup
+                    # was eligible it owns the dedupe mark above (or retries later
+                    # if a competing CTA suppressed it this turn).
+                    if _team_connect_offer and not _show_qualified_popup:
                         _mark_card_shown(chat_session, "team_connect")
 
                     # Persist any mutation made to chat_session.inline_cards_shown

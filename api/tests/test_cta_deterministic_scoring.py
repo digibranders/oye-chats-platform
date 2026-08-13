@@ -15,8 +15,98 @@ pipeline call sites bypass ``_should_skip_bant_extraction`` whenever it
 successfully resolves.
 """
 
+from copy import deepcopy
+
 from app.services.qualification_service import get_framework_config
-from app.services.rag_service import _score_cta_answer, _should_skip_bant_extraction
+from app.services.rag_service import (
+    _next_dimension_cta,
+    _score_cta_answer,
+    _should_skip_bant_extraction,
+    _strip_trailing_question,
+)
+
+
+class TestStripTrailingQuestion:
+    """Deterministic guard for suppressed-probe (qualified-lead card) turns:
+    a trailing question the model appends despite the answer-only instruction
+    must be removed before the answer reaches the visitor."""
+
+    def test_drops_trailing_question_paragraph(self):
+        text = "Five months is a reasonable target for a small rollout.\n\nWhat size fleet are you migrating?"
+        assert _strip_trailing_question(text) == "Five months is a reasonable target for a small rollout."
+
+    def test_drops_trailing_question_sentence_in_final_paragraph(self):
+        text = "That fits the 4-6 month window. When do you want to start?"
+        assert _strip_trailing_question(text) == "That fits the 4-6 month window."
+
+    def test_leaves_statement_only_answer_untouched(self):
+        text = "Four months is a workable timeline for a phased rollout."
+        assert _strip_trailing_question(text) == text
+
+    def test_never_returns_empty_when_answer_is_only_a_question(self):
+        # Degenerate: nothing but a question — keep it rather than send nothing.
+        text = "What size fleet are you migrating?"
+        assert _strip_trailing_question(text) == text
+
+    def test_preserves_mid_answer_question_marks(self):
+        text = 'A "what if" plan? We cover that in onboarding. It scales cleanly.'
+        assert _strip_trailing_question(text) == text
+
+    def test_handles_empty(self):
+        assert _strip_trailing_question("") == ""
+
+
+class TestNextDimensionCta:
+    """The deferred follow-up carried by the qualified-lead card: when the
+    visitor picks "Continue with AI", the widget surfaces the next unassessed
+    dimension's probe + chips from this payload."""
+
+    def test_returns_first_unassessed_dimension_prompt(self):
+        config = get_framework_config(None)  # default BANT preset
+        order = config.get("conversation_order") or ["need", "timeline", "authority", "budget"]
+
+        cta = _next_dimension_cta(config, {})  # nothing assessed yet
+
+        assert cta is not None
+        assert cta["dimension"] == order[0]
+        assert cta["prompt"], "the probe question must be populated"
+        # Default preset has cta_enabled=False, so chips stay empty (free-text).
+        assert cta["options"] == []
+
+    def test_chips_populated_when_dimension_opts_into_quick_replies(self):
+        config = deepcopy(get_framework_config(None))
+        first = (config.get("conversation_order") or ["need"])[0]
+        config[first]["cta_enabled"] = True
+
+        cta = _next_dimension_cta(config, {})
+
+        assert cta is not None
+        assert cta["dimension"] == first
+        assert cta["options"], "cta_enabled dimension must expose its chip labels"
+
+    def test_skips_already_assessed_dimensions(self):
+        config = get_framework_config(None)
+        order = config.get("conversation_order") or ["need", "budget", "authority", "timeline"]
+        first = order[0]
+        # Assess the first dimension past its 60% threshold so it's skipped.
+        first_max = max((int(o.get("score", 0)) for o in config[first].get("options", [])), default=25)
+
+        cta = _next_dimension_cta(config, {f"{first}_score": first_max})
+
+        assert cta is not None
+        assert cta["dimension"] != first
+
+    def test_returns_none_when_all_dimensions_assessed(self):
+        config = get_framework_config(None)
+        state = {}
+        for dim in config.get("conversation_order") or ["need", "budget", "authority", "timeline"]:
+            dim_max = max((int(o.get("score", 0)) for o in config[dim].get("options", [])), default=25)
+            state[f"{dim}_score"] = dim_max
+
+        assert _next_dimension_cta(config, state) is None
+
+    def test_none_config_is_a_noop(self):
+        assert _next_dimension_cta(None, {}) is None
 
 
 class TestScoreCtaAnswer:

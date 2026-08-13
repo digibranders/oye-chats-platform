@@ -15,6 +15,22 @@
  * TODO(multi-currency): switch the price source once the USD rail ships.
  */
 
+/**
+ * Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`.
+ * Plan rows serialize it raw (`included_operator_seats: -1`, `limits.bots: -1`),
+ * so every surface that renders one of those numbers has to recognise it.
+ */
+export const UNLIMITED_LIMIT = -1;
+
+/**
+ * Where a contact-sales tier routes. One constant because every surface that
+ * offers "Contact sales" must reach a mailbox that exists - this is the address
+ * the backend itself hands back as `contact_sales` on a blocked quote
+ * (`subscription_routes.py`). A server-supplied `contact_sales` always wins;
+ * this is the fallback when there is no quote to read one from.
+ */
+export const SALES_EMAIL = 'developer@oyechats.com';
+
 // ── Coercion helpers (loose record → strict primitive) ───────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -62,12 +78,19 @@ export interface PlanView {
   extraSeatPriceMinor: number;
   isPaid: boolean;
   /**
-   * True for a "contact sales" tier - priced on request, not self-serve
-   * checkout. Derived from `slug === 'enterprise'` or a `contact_sales` /
-   * `enterprise` feature flag, so a seeded enterprise plan routes to sales
-   * instead of the Razorpay money-path.
+   * True for a BESPOKE tier - priced on request, sold by a human, with no
+   * self-serve checkout. Driven purely by the `contact_sales` / `enterprise`
+   * feature flags, which is the only signal a super-admin sets deliberately
+   * when provisioning a per-contract plan (`enterprise-acme` and friends).
+   *
+   * Deliberately NOT keyed off `slug === 'enterprise'`. The seeded `enterprise`
+   * tier is a real, priced rung of the public ladder (₹4,799/mo · 13,000 pooled
+   * credits · unlimited agents), sold through the same Razorpay checkout as
+   * every other plan - the backend says as much in
+   * `plan_entitlements_service.py::_SEEDED_PLAN_SLUGS`. Matching on the slug
+   * priced it as "Custom" and dead-ended its checkout at a mailto.
    */
-  isEnterprise: boolean;
+  isContactSales: boolean;
   /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
   annualDiscountPercent: number;
   /** Free-trial length in days; 0 for plans with no trial (Free). */
@@ -188,7 +211,7 @@ export function buildPlan(raw: unknown): PlanView | null {
     // Currency-independent: INR is the canonical column and is always set for
     // a paid tier, so this stays correct regardless of display currency.
     isPaid: monthlyPriceMinor > 0,
-    isEnterprise: slug === 'enterprise' || features.contact_sales === true || features.enterprise === true,
+    isContactSales: features.contact_sales === true || features.enterprise === true,
     annualDiscountPercent: toNumber(record.annual_discount_percent),
     trialDays: toNumber(record.trial_days),
     sortOrder: toNumber(record.sort_order),
@@ -218,9 +241,21 @@ export function buildPromotion(raw: unknown): PromotionView | null {
   };
 }
 
-/** Whether a promotion's free period applies to a plan (paid, non-enterprise, in scope). */
+/**
+ * Whether a promotion's free period applies to a plan (paid, self-serve, in scope).
+ *
+ * Mirrors `promotion_service._plan_eligible`, which scopes an offer by
+ * `eligible_plan_ids` alone and otherwise covers every paid plan - the seeded
+ * Enterprise tier included. This projection must not be stricter than the
+ * server: showing the full price for an offer the backend would grant also
+ * routes the purchase through change-plan instead of the checkout path that
+ * realises the deferred free period, silently losing the offer. A bespoke
+ * contact-sales tier is still excluded - it has no self-serve checkout for a
+ * free period to defer. To keep an offer off Enterprise, scope it with
+ * `eligible_plan_ids`.
+ */
 export function promotionAppliesToPlan(promo: PromotionView | null, plan: PlanView): boolean {
-  if (!promo || !plan.isPaid || plan.isEnterprise) return false;
+  if (!promo || !plan.isPaid || plan.isContactSales) return false;
   return promo.eligiblePlanIds === null || promo.eligiblePlanIds.includes(plan.id);
 }
 
@@ -361,6 +396,40 @@ export function formatMoneyMinor(minorUnits: number, currency = 'INR'): string {
 
 export function formatCredits(count: number): string {
   return count.toLocaleString('en-IN');
+}
+
+/**
+ * Operator-seat allowance as a display phrase.
+ *
+ * `included_operator_seats` is serialized raw to the frontend, and `-1` is the
+ * UNLIMITED sentinel (`plan_entitlements_service.py::UNLIMITED`) — never a real
+ * count. Every seat-rendering surface goes through here so an unlimited tier
+ * can't print "-1 operator seats", nor be described as having none by a bare
+ * `> 0` test.
+ */
+export function formatSeatAllowance(includedSeats: number): string {
+  if (includedSeats === UNLIMITED_LIMIT) return 'Unlimited operator seats';
+  if (includedSeats <= 0) return 'No operator seats';
+  return `${includedSeats} operator seat${includedSeats === 1 ? '' : 's'}`;
+}
+
+/**
+ * Does this plan include UNLIMITED AI agents (`limits.bots === -1`)?
+ *
+ * Such a plan is an ACCOUNT product: it sells one credit pool shared across
+ * every agent. Bought per-agent it would scope those credits to a single
+ * agent's isolated ledger and leave every further agent it entitles unfunded,
+ * so the backend refuses it on both per-agent money paths
+ * (`POST /bots/checkout` and `POST /subscriptions/change-plan` with a
+ * `bot_id`). Every per-agent picker filters on this predicate so the option is
+ * never offered in the first place - mirrors
+ * `plan_entitlements_service.plan_grants_unlimited_bots`.
+ *
+ * Conservative on bad data, exactly like the server: a plan row with no `bots`
+ * quota is NOT unlimited and stays selectable.
+ */
+export function planGrantsUnlimitedAgents(plan: PlanView): boolean {
+  return plan.limits.bots === UNLIMITED_LIMIT;
 }
 
 export function formatDate(iso: string | null | undefined): string {
