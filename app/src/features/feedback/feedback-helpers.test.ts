@@ -249,4 +249,36 @@ describe('buildTrend', () => {
       'Jul 20',
     ]);
   });
+
+  it('rounds the daily rate over every rating in the day', () => {
+    /* The arithmetic, on a day that is neither all-positive nor all-negative —
+       the single-rating days above exercise only 100 and 0, so a bucket that
+       summed wrongly or divided by the wrong denominator would still pass them.
+       1 of 3 is 33.33%, which also pins the rounding rather than truncation. */
+    const oneOfThree = [ratedOn(5, 1), ratedOn(5, -1), ratedOn(5, -1)];
+
+    expect(buildTrend(oneOfThree, 0)).toEqual([{ date: 'Jul 5', rate: 33, total: 3 }]);
+
+    // 2 of 3 is 66.67% — rounds up, so the two cases together show it is not
+    // flooring.
+    const twoOfThree = [ratedOn(6, 1), ratedOn(6, 1), ratedOn(6, -1)];
+    expect(buildTrend(twoOfThree, 0)).toEqual([{ date: 'Jul 6', rate: 67, total: 3 }]);
+  });
+
+  it('keeps the same calendar day in different years apart', () => {
+    /* The label carries no year, so keying buckets on it merged this Jul 21
+       with last year's into one averaged point. Reachable from the "All" range
+       on any workspace older than a year — and the merged bucket took the older
+       timestamp, so it also sorted as ancient and could fall out of the most
+       recent 14 entirely. Two real days, two points. */
+    const acrossYears = [
+      item({ message_id: 1, created_at: new Date(2026, 6, 21, 12).toISOString(), feedback: 1 }),
+      item({ message_id: 2, created_at: new Date(2025, 6, 21, 12).toISOString(), feedback: -1 }),
+    ];
+
+    expect(buildTrend(acrossYears, 0)).toEqual([
+      { date: 'Jul 21', rate: 0, total: 1 },
+      { date: 'Jul 21', rate: 100, total: 1 },
+    ]);
+  });
 });

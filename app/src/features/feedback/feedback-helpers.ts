@@ -91,6 +91,11 @@ const TREND_DAYS = 14;
  *
  * Oldest-first is what the consumer needs: Recharts plots the array
  * left-to-right along a categorical axis, so index order *is* the time axis.
+ *
+ * Two points can therefore share a `date` label when the window spans a year
+ * boundary — two distinct "Jul 21"s, a year apart. That is the honest rendering:
+ * they are different days, and collapsing them into one averaged point is the
+ * bug this keys around.
  */
 export function buildTrend(items: readonly FeedbackItem[], days: number): FeedbackTrendPoint[] {
   const cutoff = days ? new Date(Date.now() - days * DAY_MS) : null;
@@ -100,14 +105,21 @@ export function buildTrend(items: readonly FeedbackItem[], days: number): Feedba
   for (const item of filtered) {
     const ratedAt = new Date(item.created_at);
     const at = ratedAt.getTime();
+    // Key on the absolute day, label with the short form. They cannot be the
+    // same string: the label carries no year, so keying on it merges this
+    // Jul 21 with last year's into a single averaged point — reachable from the
+    // "All" range on any workspace older than a year, and worse than it looks,
+    // because the merged bucket inherits the OLDER timestamp below and can then
+    // be dropped from the "most recent 14" entirely.
+    const key = `${ratedAt.getFullYear()}-${ratedAt.getMonth()}-${ratedAt.getDate()}`;
     const date = ratedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const bucket = buckets.get(date) ?? { date, at, positive: 0, total: 0 };
+    const bucket = buckets.get(key) ?? { date, at, positive: 0, total: 0 };
     // Earliest instant in the day, so the sort key is the same whichever order
     // that day's ratings happen to arrive in.
     bucket.at = Math.min(bucket.at, at);
     bucket.total += 1;
     if (item.feedback === 1) bucket.positive += 1;
-    buckets.set(date, bucket);
+    buckets.set(key, bucket);
   }
 
   return Array.from(buckets.values())
