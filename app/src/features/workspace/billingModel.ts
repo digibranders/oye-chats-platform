@@ -15,6 +15,13 @@
  * TODO(multi-currency): switch the price source once the USD rail ships.
  */
 
+/**
+ * Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`.
+ * Plan rows serialize it raw (`included_operator_seats: -1`, `limits.bots: -1`),
+ * so every surface that renders one of those numbers has to recognise it.
+ */
+export const UNLIMITED_LIMIT = -1;
+
 // ── Coercion helpers (loose record → strict primitive) ───────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -361,6 +368,21 @@ export function formatMoneyMinor(minorUnits: number, currency = 'INR'): string {
 
 export function formatCredits(count: number): string {
   return count.toLocaleString('en-IN');
+}
+
+/**
+ * Operator-seat allowance as a display phrase.
+ *
+ * `included_operator_seats` is serialized raw to the frontend, and `-1` is the
+ * UNLIMITED sentinel (`plan_entitlements_service.py::UNLIMITED`) — never a real
+ * count. Every seat-rendering surface goes through here so an unlimited tier
+ * can't print "-1 operator seats", nor be described as having none by a bare
+ * `> 0` test.
+ */
+export function formatSeatAllowance(includedSeats: number): string {
+  if (includedSeats === UNLIMITED_LIMIT) return 'Unlimited operator seats';
+  if (includedSeats <= 0) return 'No operator seats';
+  return `${includedSeats} operator seat${includedSeats === 1 ? '' : 's'}`;
 }
 
 export function formatDate(iso: string | null | undefined): string {

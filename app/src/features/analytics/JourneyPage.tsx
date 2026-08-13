@@ -15,8 +15,15 @@ import { UserJourneyFlow } from './UserJourneyFlow';
  * ones (UserJourneyFlow and PageInfluence each have their own gated
  * fallback for defence in depth on lower-tier plans that somehow hit
  * this page directly).
+ *
+ * A bare membership test, like the server's — NOT the `planIncludes`
+ * ladder in `lib/planGates`, which additionally hands an unrecognised
+ * (bespoke) slug the feature. Every seeded tier from Standard up is
+ * listed explicitly, Enterprise included: it is Professional plus
+ * unlimited agents, seats and knowledge, so it must never see the
+ * upgrade teaser for a view its own API already serves.
  */
-const JOURNEY_PLAN_SLUGS = new Set<string>(['standard', 'professional']);
+const JOURNEY_PLAN_SLUGS = new Set<string>(['standard', 'professional', 'enterprise']);
 
 /**
  * JourneyPage — the visitor-journey surface for one agent. Stacks the

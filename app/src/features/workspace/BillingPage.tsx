@@ -63,9 +63,11 @@ import {
   buildSubscription,
   formatDate,
   formatMoneyMinor,
+  formatSeatAllowance,
   getRenewalDisplay,
   INVOICE_KIND_LABEL,
   statusTone,
+  UNLIMITED_LIMIT,
   type BillingDetailsView,
   type InvoiceView,
   type PlanView,
@@ -372,10 +374,15 @@ export function BillingPage(): ReactElement {
   // (Free) always shows 0 total, ignoring the Subscription model's legacy
   // default of operator_quantity = 1.
   const includedSeats = plan?.includedSeats ?? 0;
+  // `-1` is the UNLIMITED sentinel, never a seat count: an unlimited tier has
+  // no seat arithmetic to do (nothing to add, nothing to bill), so it renders a
+  // read-only card instead of the add/remove controls.
+  const unlimitedSeats = includedSeats === UNLIMITED_LIMIT;
   const totalSeats = useMemo(() => {
+    if (unlimitedSeats) return UNLIMITED_LIMIT;
     if (includedSeats === 0) return 0;
     return subscription && subscription.seats > 0 ? subscription.seats : includedSeats;
-  }, [includedSeats, subscription]);
+  }, [includedSeats, unlimitedSeats, subscription]);
 
   const cycleLabel = subscription?.billingCycle === 'annual' ? 'year' : 'month';
   const priceMinor =
@@ -518,8 +525,9 @@ export function BillingPage(): ReactElement {
                   things on Razorpay, and the panel keeps them visibly apart. */}
               <PaymentMethodsPanel provider={provider} hasPaidPlan={Boolean(plan?.isPaid)} />
 
-              {/* Operator seats - only meaningful once the plan includes them. */}
-              {includedSeats > 0 && (
+              {/* Operator seats - only meaningful once the plan includes them
+                  (any positive allowance, or the unlimited sentinel). */}
+              {(includedSeats > 0 || unlimitedSeats) && (
                 <SeatManager
                   totalSeats={totalSeats}
                   includedSeats={includedSeats}
@@ -759,6 +767,9 @@ function SeatManager({
   onAddSeat: () => void;
   onRemoveSeat: () => void;
 }): ReactElement {
+  // An unlimited allowance has nothing to add or remove, and no per-seat price
+  // to quote - the controls would offer a purchase that cannot exist.
+  const unlimited = includedSeats === UNLIMITED_LIMIT;
   return (
     <Card>
       <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -768,32 +779,36 @@ function SeatManager({
           </span>
           <div>
             <p className="text-[15px] font-semibold text-[var(--ds-text)]">
-              {totalSeats} operator seat{totalSeats === 1 ? '' : 's'}
+              {formatSeatAllowance(totalSeats)}
             </p>
             <p className="text-[13px] text-[var(--ds-text-muted)]">
-              {includedSeats} included with your plan · {seatPriceLabel} per extra seat
+              {unlimited
+                ? 'Included with your plan · invite as many operators as you need'
+                : `${includedSeats} included with your plan · ${seatPriceLabel} per extra seat`}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            onClick={onRemoveSeat}
-            disabled={totalSeats <= includedSeats}
-            title={
-              totalSeats <= includedSeats
-                ? `You can’t go below the ${includedSeats} included with your plan`
-                : undefined
-            }
-          >
-            <Minus size={16} aria-hidden="true" />
-            Remove
-          </Button>
-          <Button variant="outline" onClick={onAddSeat}>
-            <Plus size={16} aria-hidden="true" />
-            Add seat
-          </Button>
-        </div>
+        {!unlimited && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              onClick={onRemoveSeat}
+              disabled={totalSeats <= includedSeats}
+              title={
+                totalSeats <= includedSeats
+                  ? `You can’t go below the ${includedSeats} included with your plan`
+                  : undefined
+              }
+            >
+              <Minus size={16} aria-hidden="true" />
+              Remove
+            </Button>
+            <Button variant="outline" onClick={onAddSeat}>
+              <Plus size={16} aria-hidden="true" />
+              Add seat
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

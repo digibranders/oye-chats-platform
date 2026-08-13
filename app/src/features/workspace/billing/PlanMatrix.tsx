@@ -1,7 +1,7 @@
 import { type ReactElement } from 'react';
 import { Check, Minus } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
-import { formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
+import { UNLIMITED_LIMIT, formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 import {
   planIncludesEmailVerification,
@@ -39,7 +39,14 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
     group: 'Usage',
     label: 'Operator seats',
     kind: 'text',
-    value: (p) => (p.includedSeats > 0 ? String(p.includedSeats) : 'None'),
+    // `-1` is the UNLIMITED sentinel, not a count — a bare `> 0` test filed the
+    // unlimited-seat tier under "None", i.e. the exact opposite of what it sells.
+    value: (p) =>
+      p.includedSeats === UNLIMITED_LIMIT
+        ? 'Unlimited'
+        : p.includedSeats > 0
+          ? String(p.includedSeats)
+          : 'None',
   },
   { group: 'Usage', label: 'Crawl pages / month', kind: 'text', value: (p) => limitText(p.limits.max_crawl_pages) },
   { group: 'Usage', label: 'Chat history', kind: 'text', value: (p) => historyText(p.limits.chat_history_days) },

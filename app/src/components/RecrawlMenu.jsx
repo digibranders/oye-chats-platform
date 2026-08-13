@@ -23,13 +23,18 @@ import { Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
  * is the security boundary. This component is a UX affordance only.
  *
  * @param {object} props
- * @param {string} props.planSlug - Entitlements plan slug ('free' | 'starter' | 'standard' | 'professional').
+ * @param {string} props.planSlug - Entitlements plan slug ('free' | 'starter' | 'standard' | 'professional' | 'enterprise', or a bespoke per-contract slug).
  * @param {() => void} props.onFullRecrawl - Called when the user picks "Full recrawl".
  * @param {() => void} props.onDeltaRecrawl - Called when the user picks "Updated pages only" AND is entitled.
  * @param {() => void} [props.onUpgradeClick] - Called when a non-entitled user clicks the upgrade CTA.
  * @param {boolean} [props.loading] - Show a spinner instead of the RefreshCw icon; disables the trigger.
  * @param {boolean} [props.disabled] - Hard-disable the trigger (e.g. crawl already running).
  */
+// Plan slugs that unlock delta recrawl. Mirrors
+// `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test —
+// a bespoke per-contract slug is NOT granted delta here, matching the server.
+const DELTA_RECRAWL_SLUGS = new Set(['standard', 'professional', 'enterprise']);
+
 // Popover width in px - must match the Tailwind class below (w-72 = 18rem).
 const POPOVER_WIDTH = 288;
 // Gap between the trigger's bottom edge and the popover's top edge.
@@ -51,8 +56,7 @@ export default function RecrawlMenu({
   const triggerRef = useRef(null);
   const popoverRef = useRef(null);
 
-  const canUseDelta =
-    planSlug === 'standard' || planSlug === 'professional';
+  const canUseDelta = DELTA_RECRAWL_SLUGS.has(planSlug);
 
   // Right-align the popover to the trigger's right edge, drop it below with
   // a small gap. Clamped to the viewport so it never renders offscreen on a

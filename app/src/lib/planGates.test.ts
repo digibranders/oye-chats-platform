@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   EMAIL_VERIFICATION_SLUGS,
+  SEEDED_PLAN_SLUGS,
   VISITOR_INTELLIGENCE_SLUGS,
   planIncludes,
   planIncludesEmailVerification,
@@ -30,19 +31,47 @@ describe('the standard ladder', () => {
   });
 });
 
+describe('the seeded Enterprise tier', () => {
+  /* `enterprise` is a SEEDED ladder tier (`seed_plans.py`), not a bespoke deal.
+     Registering it in SEEDED_PLAN_SLUGS revokes rule 2 for it, so every ladder
+     must name it explicitly — that pairing is the whole point of these cases.
+     The backend learned this the hard way in 594383d: adding the slug to
+     `_SEEDED_PLAN_SLUGS` alone silently revoked Visitor Intelligence. */
+  it('is registered as a seeded tier, not read as bespoke', () => {
+    expect(SEEDED_PLAN_SLUGS.has('enterprise')).toBe(true);
+  });
+
+  it('passes every ladder Professional passes', () => {
+    const ladders: ReadonlySet<string>[] = [EMAIL_VERIFICATION_SLUGS, VISITOR_INTELLIGENCE_SLUGS];
+    for (const ladder of ladders) {
+      expect(planIncludes('professional', ladder)).toBe(true);
+      expect(planIncludes('enterprise', ladder)).toBe(true);
+    }
+  });
+
+  it('gets both enrichments by ladder membership', () => {
+    expect(planIncludesEmailVerification('enterprise')).toBe(true);
+    expect(planIncludesVisitorIntelligence('enterprise')).toBe(true);
+  });
+});
+
 describe('bespoke plans', () => {
   /* The server's rule 2: a slug off the seeded ladder was provisioned by hand
      for a deal, so it gets the feature. The UI used a bare allow-list, so an
      enterprise customer's switches rendered disabled under "Available on the
      Professional plan" for enrichments their own API was already running. */
-  it('gives an enterprise plan both enrichments', () => {
-    expect(planIncludesEmailVerification('enterprise')).toBe(true);
-    expect(planIncludesVisitorIntelligence('enterprise')).toBe(true);
-  });
-
   it('gives a hand-provisioned custom slug both enrichments', () => {
     expect(planIncludesEmailVerification('acme-negotiated-2026')).toBe(true);
     expect(planIncludesVisitorIntelligence('acme-negotiated-2026')).toBe(true);
+  });
+
+  it('treats a per-contract enterprise slug as bespoke, not as the seeded tier', () => {
+    /* `enterprise-acme` is a DIFFERENT string from the seeded `enterprise`. It
+       stays off the ladder and keeps taking rule 2, so narrowing the seeded
+       tier can never strip a negotiated contract of a feature it was sold. */
+    expect(SEEDED_PLAN_SLUGS.has('enterprise-acme')).toBe(false);
+    expect(planIncludesEmailVerification('enterprise-acme')).toBe(true);
+    expect(planIncludesVisitorIntelligence('enterprise-acme')).toBe(true);
   });
 });
 

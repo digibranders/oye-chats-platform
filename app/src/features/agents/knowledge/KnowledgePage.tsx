@@ -53,6 +53,20 @@ import {
 } from './knowledge-utils';
 
 /**
+ * Plan slugs that unlock delta ("updated pages only") recrawl. Mirrors
+ * `plan_service._DELTA_RECRAWL_PLAN_SLUGS`, which is a bare membership test —
+ * NOT the `planIncludes` ladder in `lib/planGates`, whose rule 2 hands an
+ * unrecognised (bespoke) slug the feature. A bespoke contract slug gets a full
+ * recrawl here exactly as the server gives it one, so the UI can't promise a
+ * cheaper crawl than the API will run.
+ */
+const DELTA_RECRAWL_SLUGS: ReadonlySet<string> = new Set([
+  'standard',
+  'professional',
+  'enterprise',
+]);
+
+/**
  * KnowledgePage - the agent's "Knowledge" tab. Answers one question: *what does
  * my AI know?* It lists every learned source (websites + documents), summarises
  * coverage, and lets the user add or remove knowledge. All crawl lifecycle is
@@ -70,10 +84,12 @@ export function KnowledgePage(): ReactElement {
   // Delta ("updated pages only") re-crawl is a Standard+ perk. The menu still
   // surfaces the option to lower tiers for discoverability; clicks route to the
   // upgrade flow instead of the diff endpoint. The backend re-enforces the gate.
-  // Slugs MUST mirror `plan_service._DELTA_RECRAWL_PLAN_SLUGS` = {standard,
-  // professional}; there is no 'enterprise' tier, so 'professional' (the top
-  // paid tier) must be granted delta here or it's wrongly shown an upgrade badge.
-  const canUseDeltaRecrawl = planSlug === 'standard' || planSlug === 'professional';
+  // Every paid tier from Standard up must be listed or it is wrongly shown an
+  // upgrade badge for a mode its own API already runs. Enterprise especially:
+  // it is the agency tier with pooled credits across many client sites, so
+  // falling back to a full recrawl would re-embed and charge for every page of
+  // every site on the plan sold with the largest ingestion volume.
+  const canUseDeltaRecrawl = DELTA_RECRAWL_SLUGS.has(planSlug);
 
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);

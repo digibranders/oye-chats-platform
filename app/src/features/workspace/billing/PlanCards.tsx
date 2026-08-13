@@ -6,6 +6,7 @@ import {
   formatDate,
   formatFreeMonths,
   formatMoneyMinor,
+  formatSeatAllowance,
   promotionAppliesToPlan,
   type PlanView,
   type PromotionView,
@@ -21,9 +22,7 @@ function isUnconverted(status: string | null | undefined): boolean {
 function highlights(plan: PlanView): string[] {
   const out = [
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
-    plan.includedSeats > 0
-      ? `${plan.includedSeats} operator seat${plan.includedSeats === 1 ? '' : 's'}`
-      : 'No operator seats',
+    formatSeatAllowance(plan.includedSeats),
   ];
   if (plan.features.live_chat) out.push('Live chat & handoff');
   if (plan.features.bant) out.push('BANT lead qualification');

@@ -9,6 +9,9 @@
  */
 import { FALLBACK_USD_TO_INR } from '../../../lib/currency';
 
+/** Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`. */
+const UNLIMITED = -1;
+
 /** A subscription plan row as returned by `getSubscriptionPlans`. */
 export interface PlanRow {
   id: number;
@@ -26,7 +29,14 @@ export interface PlanRow {
   extra_seat_price_cents?: number | null;
   extra_seat_price_usd_cents?: number | null;
   trial_days?: number | null;
-  limits?: { max_crawl_pages?: number | null; max_crawl_depth?: number | null } | null;
+  limits?: {
+    max_crawl_pages?: number | null;
+    max_crawl_depth?: number | null;
+    /** `-1` = unlimited AI agents (the Enterprise/agency entitlement). */
+    bots?: number | null;
+    /** `-1` = unlimited knowledge documents. */
+    documents?: number | null;
+  } | null;
   features?: { live_chat?: boolean; bant?: boolean; webhooks?: boolean } | null;
 }
 
@@ -171,7 +181,12 @@ export function buildFeatureList(plan: PlanRow, geo: Geo | null): string[] {
   if (credits != null) {
     out.push(`${credits.toLocaleString()} credits / month`);
   }
-  if (seats > 0 && plan.slug !== 'free') {
+  if (seats === UNLIMITED) {
+    // `-1` is the UNLIMITED sentinel, never a real count — rendering it raw
+    // would print "-1 operator seats included". No extra-seat price either:
+    // there is nothing to buy beyond unlimited.
+    out.push('Unlimited operator seats');
+  } else if (seats > 0 && plan.slug !== 'free') {
     out.push(
       seatCents > 0
         ? `${seats} operator seat${seats === 1 ? '' : 's'} included (+${sym}${(seatCents / 100).toFixed(0)}/mo each extra)`
@@ -203,6 +218,19 @@ export function buildFeatureList(plan: PlanRow, geo: Geo | null): string[] {
     out.push('Behavioral tracking & UTM capture');
     if ((plan.trial_days ?? 0) > 0) out.push(`${plan.trial_days}-day free trial`);
   } else if (plan.slug === 'professional') {
+    out.push('Behavioral tracking & UTM capture');
+    out.push('MEDDIC / CHAMP frameworks');
+    out.push('White-label custom domain');
+    out.push('Priority chat support');
+    if ((plan.trial_days ?? 0) > 0) out.push(`${plan.trial_days}-day free trial`);
+  } else if (plan.slug === 'enterprise') {
+    // Enterprise is Professional plus unlimited agents, seats and knowledge —
+    // so it carries EVERY Professional bullet. Without a branch here the tier
+    // rendered with no feature bullets at all, reading as the emptiest plan on
+    // the comparison while being the largest. The unlimited entitlements lead
+    // because they are what the agency tier is actually sold on.
+    if (planLimits.bots === UNLIMITED) out.push('Unlimited AI agents');
+    if (planLimits.documents === UNLIMITED) out.push('Unlimited knowledge sources');
     out.push('Behavioral tracking & UTM capture');
     out.push('MEDDIC / CHAMP frameworks');
     out.push('White-label custom domain');

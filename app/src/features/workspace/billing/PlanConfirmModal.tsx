@@ -6,6 +6,7 @@ import {
   formatCredits,
   formatFreeMonths,
   formatMoneyMinor,
+  formatSeatAllowance,
   promotionAppliesToPlan,
   type PlanView,
   type PromotionView,
@@ -17,9 +18,7 @@ import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
 function PlanHighlights({ plan }: { plan: PlanView }): ReactElement {
   const items = [
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
-    plan.includedSeats > 0
-      ? `${plan.includedSeats} operator seat${plan.includedSeats === 1 ? '' : 's'}`
-      : 'No operator seats',
+    formatSeatAllowance(plan.includedSeats),
   ];
   return (
     <ul className="space-y-2 text-[13px] text-[var(--ds-text-muted)]">
