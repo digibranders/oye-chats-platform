@@ -15,6 +15,7 @@ import {
   buildPlan,
   buildPromotion,
   buildSubscription,
+  SALES_EMAIL,
   type PlanView,
   type PromotionView,
   type SubscriptionView,
@@ -176,14 +177,21 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
 
   const handlePlanSelect = useCallback(
     (plan: PlanView): void => {
-      if (!plan.isPaid && !plan.isEnterprise) {
+      if (!plan.isPaid && !plan.isContactSales) {
         // Free — account is already on Free; advance immediately.
         setPlanChosen(true);
         onContinue();
         return;
       }
-      if (plan.isEnterprise) {
-        window.open('mailto:sales@oyechats.com?subject=Enterprise%20Plan%20Enquiry', '_blank');
+      // A bespoke, per-contract tier is sold by a human — there is no checkout
+      // to open. The priced Enterprise tier is NOT one of these and falls
+      // through to the confirm modal like any other paid plan.
+      if (plan.isContactSales) {
+        window.open(
+          `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(`${plan.name} plan inquiry`)}`,
+          '_blank',
+          'noopener,noreferrer',
+        );
         return;
       }
       setConfirmPlan(plan);

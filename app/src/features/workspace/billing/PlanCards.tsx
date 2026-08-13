@@ -40,7 +40,7 @@ function price(
   plan: PlanView,
   cycle: BillingCycle,
 ): { amount: string; suffix: string | null; billed: string | null } {
-  if (plan.isEnterprise) return { amount: 'Custom', suffix: null, billed: null };
+  if (plan.isContactSales) return { amount: 'Custom', suffix: null, billed: null };
   if (!plan.isPaid) return { amount: 'Free', suffix: null, billed: null };
   const useAnnual = cycle === 'annual' && plan.annualPriceMinor > 0;
   if (useAnnual) {
@@ -142,13 +142,15 @@ export function PlanCards({
         // CTA hierarchy: a trialing current plan gets a live primary "activate"
         // CTA; a paid current plan is a disabled ghost; recommended = filled
         // primary; other upgrade = outline; downgrade = quiet ghost. An
-        // enterprise tier always routes to sales rather than checkout.
+        // bespoke contact-sales tier always routes to sales rather than
+        // checkout - the priced Enterprise tier is not one, and checks out
+        // like any other plan.
         const isCurrentFree = isCurrent && !plan.isPaid;
 
         const ctaVariant =
           isTrialingCurrent || isRecommended || promoApplies
             ? 'primary'
-            : plan.isEnterprise
+            : plan.isContactSales
               ? 'outline'
               : isDowngrade
                 ? 'ghost'
@@ -159,7 +161,7 @@ export function PlanCards({
             ? 'Continue with Free'
             : isCurrent
               ? 'Current plan'
-              : plan.isEnterprise
+              : plan.isContactSales
                 ? 'Contact sales'
                 : promoApplies && promotion
                   ? `Start ${formatFreeMonths(promotion.freeCycles)} free`

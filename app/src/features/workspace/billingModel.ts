@@ -22,6 +22,15 @@
  */
 export const UNLIMITED_LIMIT = -1;
 
+/**
+ * Where a contact-sales tier routes. One constant because every surface that
+ * offers "Contact sales" must reach a mailbox that exists - this is the address
+ * the backend itself hands back as `contact_sales` on a blocked quote
+ * (`subscription_routes.py`). A server-supplied `contact_sales` always wins;
+ * this is the fallback when there is no quote to read one from.
+ */
+export const SALES_EMAIL = 'developer@oyechats.com';
+
 // ── Coercion helpers (loose record → strict primitive) ───────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -69,12 +78,19 @@ export interface PlanView {
   extraSeatPriceMinor: number;
   isPaid: boolean;
   /**
-   * True for a "contact sales" tier - priced on request, not self-serve
-   * checkout. Derived from `slug === 'enterprise'` or a `contact_sales` /
-   * `enterprise` feature flag, so a seeded enterprise plan routes to sales
-   * instead of the Razorpay money-path.
+   * True for a BESPOKE tier - priced on request, sold by a human, with no
+   * self-serve checkout. Driven purely by the `contact_sales` / `enterprise`
+   * feature flags, which is the only signal a super-admin sets deliberately
+   * when provisioning a per-contract plan (`enterprise-acme` and friends).
+   *
+   * Deliberately NOT keyed off `slug === 'enterprise'`. The seeded `enterprise`
+   * tier is a real, priced rung of the public ladder (₹4,799/mo · 13,000 pooled
+   * credits · unlimited agents), sold through the same Razorpay checkout as
+   * every other plan - the backend says as much in
+   * `plan_entitlements_service.py::_SEEDED_PLAN_SLUGS`. Matching on the slug
+   * priced it as "Custom" and dead-ended its checkout at a mailto.
    */
-  isEnterprise: boolean;
+  isContactSales: boolean;
   /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
   annualDiscountPercent: number;
   /** Free-trial length in days; 0 for plans with no trial (Free). */
@@ -195,7 +211,7 @@ export function buildPlan(raw: unknown): PlanView | null {
     // Currency-independent: INR is the canonical column and is always set for
     // a paid tier, so this stays correct regardless of display currency.
     isPaid: monthlyPriceMinor > 0,
-    isEnterprise: slug === 'enterprise' || features.contact_sales === true || features.enterprise === true,
+    isContactSales: features.contact_sales === true || features.enterprise === true,
     annualDiscountPercent: toNumber(record.annual_discount_percent),
     trialDays: toNumber(record.trial_days),
     sortOrder: toNumber(record.sort_order),
@@ -225,9 +241,21 @@ export function buildPromotion(raw: unknown): PromotionView | null {
   };
 }
 
-/** Whether a promotion's free period applies to a plan (paid, non-enterprise, in scope). */
+/**
+ * Whether a promotion's free period applies to a plan (paid, self-serve, in scope).
+ *
+ * Mirrors `promotion_service._plan_eligible`, which scopes an offer by
+ * `eligible_plan_ids` alone and otherwise covers every paid plan - the seeded
+ * Enterprise tier included. This projection must not be stricter than the
+ * server: showing the full price for an offer the backend would grant also
+ * routes the purchase through change-plan instead of the checkout path that
+ * realises the deferred free period, silently losing the offer. A bespoke
+ * contact-sales tier is still excluded - it has no self-serve checkout for a
+ * free period to defer. To keep an offer off Enterprise, scope it with
+ * `eligible_plan_ids`.
+ */
 export function promotionAppliesToPlan(promo: PromotionView | null, plan: PlanView): boolean {
-  if (!promo || !plan.isPaid || plan.isEnterprise) return false;
+  if (!promo || !plan.isPaid || plan.isContactSales) return false;
   return promo.eligiblePlanIds === null || promo.eligiblePlanIds.includes(plan.id);
 }
 

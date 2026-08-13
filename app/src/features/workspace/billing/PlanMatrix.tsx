@@ -86,7 +86,7 @@ function priceLabel(
   plan: PlanView,
   cycle: BillingCycle,
 ): { amount: string; suffix: string | null; billed: string | null } {
-  if (plan.isEnterprise) return { amount: 'Custom', suffix: null, billed: null };
+  if (plan.isContactSales) return { amount: 'Custom', suffix: null, billed: null };
   if (!plan.isPaid) return { amount: 'Free', suffix: null, billed: null };
   const useAnnual = cycle === 'annual' && plan.annualPriceMinor > 0;
   if (useAnnual) {
@@ -204,7 +204,7 @@ export function PlanMatrix({
                           ? 'Subscribe'
                           : isCurrent
                             ? 'Current'
-                            : plan.isEnterprise
+                            : plan.isContactSales
                               ? 'Contact'
                               : 'Select'}
                       </Button>
