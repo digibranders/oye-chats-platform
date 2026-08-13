@@ -3447,7 +3447,15 @@ Eligible dimensions (use the exact dimension key, lowercase):
                 config.get("framework") or "bant",
                 next_dim_to_probe,
                 next_dim_cta,
-                seed=int(hashlib.sha256((question or "").encode()).hexdigest()[:8], 16),
+                # Seed off the question AND the running history so the suggested
+                # wording rotates every TURN — not just when the question text
+                # changes. Without the history, re-asking the same question kept
+                # landing on the same variant, so the probe read as "the one
+                # question" over and over.
+                seed=int(
+                    hashlib.sha256(((question or "") + "||" + (history_context or "")).encode()).hexdigest()[:8],
+                    16,
+                ),
                 avoid_text=history_context or "",
             )
 
@@ -3463,8 +3471,9 @@ Eligible dimensions (use the exact dimension key, lowercase):
 EMBEDDING RULES:
 - Answer the question FIRST. The qualifying question always comes at the end.
 - Make it feel like genuine curiosity, not a sales script. One short sentence is enough.
-- Suggested angle: "{next_dim_cta}"
-- Connect the question to what you just discussed; do not switch context abruptly.
+- End your reply with EXACTLY this question, word for word. Do NOT rephrase it, do NOT reword it to "sound more contextual", do NOT swap in synonyms, do NOT merge it with your answer: "{next_dim_cta}"
+- This exact wording is picked fresh every turn ON PURPOSE — using it verbatim is the whole mechanism that keeps your follow-ups from repeating. Inventing your own phrasing (e.g. asking "What are you evaluating this for?" every single turn) is exactly the failure to avoid.
+- You may add a short, natural lead-in BEFORE it (e.g. "By the way," "Quick question:") but the question itself must stay word-for-word as given.
 - FORMAT: Put the follow-up question on its OWN line, separated from your answer by a BLANK LINE (two newlines). Never run it inline at the end of your last sentence or glued to the end of a bullet point.
 - MARKDOWN CRITICAL: When your answer ends with a bulleted or numbered list, you MUST emit two newlines (a blank line) between the last list item and the follow-up question. Without the blank line, markdown renderers glue the question into the last bullet (e.g. `- 24x7 supportWhich of these…`). Always end the list, hit Enter twice, then start the question as a new paragraph.
 - GOOD example (bulleted answer + follow-up):

@@ -10,7 +10,7 @@ restrict the bot's answer scope. Nullable with no server default: NULL means
 for every existing bot.
 
 Revision ID: c9e2a4f7b1d3
-Revises: e4c2a8b17f65
+Revises: a9fc12693ff6
 Create Date: 2026-08-13
 """
 
@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import context, op
 
 revision: str = "c9e2a4f7b1d3"
-down_revision: str | Sequence[str] | None = "e4c2a8b17f65"
+down_revision: str | Sequence[str] | None = "a9fc12693ff6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

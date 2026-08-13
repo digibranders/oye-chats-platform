@@ -171,6 +171,28 @@ const MessageActionButton = ({ children, label, onClick, active = false, success
     </button>
 );
 
+// When a bot reply renders a media card (YouTube / downloadable file) below the
+// answer, a trailing follow-up question (the qualification probe the bot weaves
+// in on its own line) would otherwise sit ABOVE the card, in the middle. Split
+// that trailing question off so it can render AFTER the card and always land
+// last. The backend puts the follow-up on its own line separated by a blank line
+// (``_ensure_followup_spacing`` + the prompt's EMBEDDING RULES), so the last
+// paragraph is a reliable anchor. Conservative: only a short, single-line
+// question with no list marker is treated as the follow-up.
+const _splitTrailingFollowUp = (text) => {
+    const src = (text || '').trimEnd();
+    const idx = src.lastIndexOf('\n\n');
+    if (idx === -1) return { body: text, followUp: '' };
+    const tail = src.slice(idx + 2).trim();
+    const isFollowUp =
+        tail.endsWith('?') &&
+        !tail.includes('\n') &&
+        tail.length <= 160 &&
+        !/^[-*+>#]|^\d+[.)]/.test(tail);
+    if (!isFollowUp) return { body: text, followUp: '' };
+    return { body: src.slice(0, idx).trimEnd(), followUp: tail };
+};
+
 const MessageBubble = ({
     msg,
     currentTheme,
@@ -229,6 +251,16 @@ const MessageBubble = ({
         const isStreaming = streamingId === msg.id;
         const hasPersistedId = !!msg.id && !isStreaming && !!msg.text?.trim();
         const showActions = hasPersistedId && !!onFeedback;
+        // Only reorder around a media card on a finished reply. Mid-stream the
+        // card hasn't arrived yet and the text isn't final, so render as-is.
+        // Split the FORMATTED text: formatBotMarkdown is what breaks the trailing
+        // follow-up question onto its own paragraph (the blank line the split
+        // keys off), so splitting the raw text would never see the separator.
+        const hasCard = !!msg.media_card && !isStreaming;
+        const formattedText = formatBotMarkdown(msg.text);
+        const { body, followUp } = hasCard
+            ? _splitTrailingFollowUp(formattedText)
+            : { body: formattedText, followUp: '' };
         // AI message — avatar + plain text, NO bubble
         return (
             <div className="group flex items-start gap-2 w-full">
@@ -243,7 +275,7 @@ const MessageBubble = ({
                                     a: SafeLink,
                                 }}
                             >
-                                {formatBotMarkdown(msg.text)}
+                                {body}
                             </ReactMarkdown>
                             {isStreaming && (
                                 <span className="inline-block animate-pulse text-gray-400">▌</span>
@@ -254,12 +286,25 @@ const MessageBubble = ({
                             stream's FINAL_METADATA carries a media_card object,
                             so it only renders on completed replies — never
                             mid-stream — and never on user turns. */}
-                        {msg.media_card && !isStreaming && (
+                        {hasCard && (
                             <ErrorBoundary label="MediaCard" fallback={null}>
                                 <Suspense fallback={null}>
                                     <MediaCard card={msg.media_card} secondary={msg.media_secondary} />
                                 </Suspense>
                             </ErrorBoundary>
+                        )}
+                        {/* Follow-up question, split off the answer so it renders
+                            AFTER the card (never sandwiched above it). */}
+                        {followUp && (
+                            <div className="prose prose-sm max-w-none break-words font-light mt-3">
+                                <ReactMarkdown
+                                    components={{
+                                        a: SafeLink,
+                                    }}
+                                >
+                                    {followUp}
+                                </ReactMarkdown>
+                            </div>
                         )}
                     </div>
                     {showActions && (
