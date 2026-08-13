@@ -5,7 +5,6 @@ import {
   ArrowUpRight,
   Building2,
   CalendarClock,
-  ChevronDown,
   FileText,
   Globe,
   ListOrdered,
@@ -167,25 +166,11 @@ const LEDGER_TONE_CLASS: Record<LedgerTone, string> = {
 
 // ── How credits work (per-action cost reference) ─────────────────────────────
 
-/** One size bucket in a tiered action's expandable breakdown. */
-interface CreditCostTier {
-  readonly label: string;
-  readonly cost: number;
-}
-
 interface CreditCostRow {
   readonly icon: LucideIcon;
   readonly label: string;
   readonly detail: string;
   readonly cost: number;
-  /**
-   * When present, the row becomes expandable (chevron) and reveals a
-   * size→credits table. The flat `cost` acts as the entry-tier floor shown on
-   * the collapsed badge. Mirrors the backend
-   * `credit_cost.document_upload_tiers` defaults (credit_service.py); max_words
-   * is exclusive, so a 100-word doc lands in the 100–500 bucket.
-   */
-  readonly tiers?: readonly CreditCostTier[];
   /**
    * When set, the card's name gets a deep-link arrow that jumps to the agent
    * tab where this action is configured (e.g. crawl/upload live under
@@ -206,14 +191,13 @@ interface CreditCostRow {
 }
 
 /**
- * Per-action credit costs. Ported as static values from the legacy Billing.jsx
- * `COST_ROWS` defaults (`ai_chat: 1, document_upload: 3, url_scan: 5` -
- * Billing.jsx:408): there is no typed pricing endpoint in `services/api.d.ts`
- * to read these from, and the credit-balance payload this page consumes doesn't
- * carry the per-action costs. Super-admins can override them via PricingConfig,
- * but these match the shipped backend defaults. Keep in sync if the defaults
- * change. `email_send` is intentionally omitted - the legacy COST_ROWS kept it
- * commented out as a not-yet-surfaced activity.
+ * Per-action credit costs, as static values: there is no typed pricing endpoint
+ * in `services/api.d.ts` to read these from, and the credit-balance payload this
+ * page consumes doesn't carry the per-action costs. Super-admins can override
+ * them via PricingConfig, but these match the shipped backend defaults
+ * (`_DEFAULT_PRICING` in credit_service.py). Keep in sync if the defaults
+ * change. `email_send` is intentionally omitted - it is free and not a
+ * surfaced activity.
  */
 const CREDIT_COSTS: readonly CreditCostRow[] = [
   {
@@ -231,27 +215,16 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
   },
   {
     icon: FileText,
+    // The rate is stated in the detail line rather than expanded into a size
+    // table, because the backend charges one rate and not a set of buckets:
+    // `ceil(words / 250)`, floored at 1 (credit_cost.document_upload_words_per_credit,
+    // credit_service.py). The bucket table this replaced had to restate four
+    // EXCLUSIVE boundaries here, and got every one of them wrong in the
+    // direction that overcharges. A rate has no boundaries to restate.
     label: 'Document upload',
-    detail: 'Charged by document size. Refunded if a file fails to save.',
-    cost: 5,
+    detail: '1 credit per 250 words, rounded up. Refunded if a file fails to save.',
+    cost: 1,
     linkTab: 'knowledge',
-    // Ranges are stated to match the backend gate EXACTLY. `max_words` there
-    // is exclusive (`word_count < cap`, credit_service.py), so the inclusive
-    // phrasing these labels used to carry ("Up to 100 words", "100–500 words")
-    // was wrong at every boundary — and wrong in the direction that
-    // overcharges. Verified against the live function:
-    //     100 words   → advertised 5,  charged 15   (3x)
-    //     500 words   → advertised 15, charged 30
-    //   2,000 words   → advertised 30, charged 75
-    //  10,000 words   → advertised 75, charged 150
-    // Keep these upper bounds one below the config's `max_words` values.
-    tiers: [
-      { label: 'Under 100 words', cost: 5 },
-      { label: '100–499 words', cost: 15 },
-      { label: '500–1,999 words', cost: 30 },
-      { label: '2,000–9,999 words', cost: 75 },
-      { label: '10,000+ words', cost: 150 },
-    ],
   },
   {
     icon: MailCheck,
@@ -266,11 +239,11 @@ const CREDIT_COSTS: readonly CreditCostRow[] = [
     // States the charge condition, because it is unusual and in the customer's
     // favour: an IP only names a company when that company owns its range, so
     // most visitors — anyone on a home or mobile connection — resolve to no
-    // employer at all. Those cost nothing. Saying only "10 credits" would read
-    // as 10 per visitor, which is what it would have been had the charge stayed
+    // employer at all. Those cost nothing. Saying only "5 credits" would read
+    // as 5 per visitor, which is what it would have been had the charge stayed
     // ahead of the lookup.
     detail: 'Identifies a visitor’s company from their IP. Charged only when a company is found. Professional plan.',
-    cost: 10,
+    cost: 5,
     linkTab: 'advanced',
   },
 ];
@@ -280,12 +253,7 @@ function formatCreditCost(cost: number): string {
   return cost === 1 ? '1 credit' : `${cost} credits`;
 }
 
-/**
- * A single cost card. Flat rows render statically; a row carrying `tiers`
- * becomes expandable — a chevron toggles a size→credits table, and the badge
- * shows the full span (e.g. "5–150 credits") so the range is legible before
- * expanding.
- */
+/** A single cost card: icon, action name, what triggers the charge, price. */
 function CreditCostItem({
   row,
   agentBasePath,
@@ -299,25 +267,10 @@ function CreditCostItem({
    *  scope, in which case no arrow is shown. */
   agentName: string | null;
 }): ReactElement {
-  const [expanded, setExpanded] = useState(false);
   const Icon = row.icon;
-  // A "coming soon" row is inert — no expandable tiers, no live price.
-  const tiers = row.comingSoon ? undefined : row.tiers;
-  const badge =
-    tiers && tiers.length > 0
-      ? `${tiers[0].cost}–${tiers[tiers.length - 1].cost} credits`
-      : formatCreditCost(row.cost);
 
   return (
-    // `relative` so the expanded tier list can float as an absolute dropdown —
-    // it must NOT reflow the grid, or opening one card shoves the cards in the
-    // next row down. `z-20` lifts the open panel above sibling cards.
-    <div
-      className={cn(
-        'relative flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]',
-        expanded && 'z-20',
-      )}
-    >
+    <div className="flex items-start gap-3 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 shadow-[var(--ds-shadow-sm)]">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--ds-bg-sunken)] text-[var(--ds-text-subtle)]">
         <Icon size={16} aria-hidden="true" />
       </span>
@@ -352,39 +305,12 @@ function CreditCostItem({
             </span>
           ) : (
             <span className="shrink-0 rounded-md bg-[var(--ds-bg-sunken)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ds-text)]">
-              {badge}
+              {formatCreditCost(row.cost)}
             </span>
           )}
         </div>
         <p className="mt-1 text-[12px] leading-relaxed text-[var(--ds-text-subtle)]">{row.detail}</p>
-        {tiers && tiers.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setExpanded((prev) => !prev)}
-            aria-expanded={expanded}
-            className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ds-accent-text)] hover:underline focus-visible:underline focus-visible:outline-none"
-          >
-            {expanded ? 'Hide size ranges' : 'See size ranges'}
-            <ChevronDown
-              size={14}
-              aria-hidden="true"
-              className={cn('transition-transform duration-200', expanded && 'rotate-180')}
-            />
-          </button>
-        )}
       </div>
-      {tiers && tiers.length > 0 && expanded && (
-        <ul className="absolute left-3 right-3 top-full z-20 mt-1.5 space-y-1.5 rounded-xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-3 shadow-[var(--ds-shadow-lg)]">
-          {tiers.map((tier) => (
-            <li key={tier.label} className="flex items-center justify-between gap-2 text-[12px]">
-              <span className="text-[var(--ds-text-muted)]">{tier.label}</span>
-              <span className="shrink-0 font-semibold tabular-nums text-[var(--ds-text)]">
-                {formatCreditCost(tier.cost)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

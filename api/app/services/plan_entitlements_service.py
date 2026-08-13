@@ -925,9 +925,24 @@ def plan_grants_unlimited_bots(plan: Plan) -> bool:
     **bot-scoped** subscription, which routes the plan's credits into that one
     bot's isolated ledger (``credit_service.resolve_bot_ledger_bot_id``) and
     leaves every further agent it entitles draining the unfunded shared pool.
-    The two doors onto a bot-scoped subscription — ``POST /bots/checkout`` and
-    ``POST /subscriptions/change-plan`` with a ``bot_id`` — both gate on this
-    predicate, which is why it lives here rather than in either route module.
+
+    Every door onto a bot-scoped subscription gates on this predicate, which is
+    why it lives here rather than in any one route module. They split into three
+    responses, by whether a subscription already exists to protect:
+
+    * REFUSE — the mutation would land the plan on an EXISTING bot-scoped row:
+      ``POST /bots/checkout`` (per-agent by contract),
+      ``POST /subscriptions/change-plan`` Branches 1/2a/2b,
+      ``POST /subscriptions/resume`` Mode 2,
+      ``PUT /superadmin/subscriptions/{id}`` (manual plan override), and
+      ``transition_service.promote_scheduled_change`` (the downgrade cutover
+      cron, which copies ``sub.bot_id`` onto its grace row).
+    * DEMOTE to ``bot_id=None`` — no subscription exists yet, so an
+      account-scoped mandate is simply what the customer is buying:
+      ``POST /subscriptions/change-plan`` Branch 3.
+    * SINK — ``razorpay_service._handle_subscription_activated`` refuses the
+      INSERT whichever door the mandate came through, including one authorised
+      before the route guards shipped.
 
     Keyed off ``limits.bots`` rather than a slug so every future unlimited-agent
     plan is covered the moment it is seeded.

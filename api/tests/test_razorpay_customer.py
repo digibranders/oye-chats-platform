@@ -15,6 +15,7 @@ class _FakeCustomerAPI:
     def __init__(self):
         self.created = []
         self.edited = []
+        self.fetched = []
 
     def create(self, data):
         self.created.append(data)
@@ -23,6 +24,13 @@ class _FakeCustomerAPI:
     def edit(self, customer_id, data):
         self.edited.append((customer_id, data))
         return {"id": customer_id, **data}
+
+    def fetch(self, customer_id):
+        # A freshly-created id is always live on the gateway that just
+        # minted it — tests that don't care about the existence check
+        # (idempotency, payload shape) get that for free.
+        self.fetched.append(customer_id)
+        return {"id": customer_id}
 
 
 class _FakeClient:
@@ -69,6 +77,59 @@ def test_is_idempotent(db, monkeypatch):
 
     assert first == second
     assert len(fake.customer.created) == 1
+
+
+def test_reissues_when_the_stored_id_is_stale_on_the_gateway(db, monkeypatch):
+    """A live→test key switch (or a gateway-side delete) leaves a
+    syntactically-valid id the CURRENT key cannot see. Handing that to
+    Razorpay Checkout is what surfaces mid-payment as "The id provided does
+    not exist" — ensure_customer must catch it before it ever reaches
+    checkout, not just create-on-empty.
+    """
+    from razorpay.errors import BadRequestError
+
+    from app.services import razorpay_customer_service as svc
+
+    class _StaleThenFresh(_FakeCustomerAPI):
+        def fetch(self, customer_id):
+            self.fetched.append(customer_id)
+            raise BadRequestError("The id provided does not exist")
+
+    fake = _FakeClient()
+    fake.customer = _StaleThenFresh()
+    monkeypatch.setattr(svc, "_client", lambda: fake)
+
+    client = _client_row(db, "stale@test.dev", razorpay_customer_id="cust_stale_live_mode")
+    cid = svc.ensure_customer(db, client)
+
+    assert fake.customer.fetched == ["cust_stale_live_mode"]
+    assert cid == "cust_fake1"
+    assert cid != "cust_stale_live_mode"
+    assert client.razorpay_customer_id == cid
+
+
+def test_a_transient_fetch_failure_does_not_reissue(db, monkeypatch):
+    """Only a definite 'not found' (BadRequestError) means stale. A network
+    blip or a gateway 5xx is not evidence the id is dead, and reissuing on
+    one would mint a needless duplicate customer on a mere hiccup.
+    """
+    from app.services import razorpay_customer_service as svc
+
+    class _Flaky(_FakeCustomerAPI):
+        def fetch(self, customer_id):
+            self.fetched.append(customer_id)
+            raise RuntimeError("gateway timeout")
+
+    fake = _FakeClient()
+    fake.customer = _Flaky()
+    monkeypatch.setattr(svc, "_client", lambda: fake)
+
+    client = _client_row(db, "flaky@test.dev", razorpay_customer_id="cust_still_good")
+    cid = svc.ensure_customer(db, client)
+
+    assert cid == "cust_still_good"
+    assert fake.customer.created == []
+    assert client.razorpay_customer_id == "cust_still_good"
 
 
 def test_prefers_billing_email_over_the_login_email(db, monkeypatch):

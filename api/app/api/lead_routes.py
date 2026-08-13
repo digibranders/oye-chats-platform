@@ -12,6 +12,7 @@ from sqlalchemy import desc, func, select, update
 
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
+from app.core.csv_safety import csv_safe_row
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
 from app.services.email_design import esc, h1, p, shell
@@ -315,6 +316,26 @@ def mark_lead_viewed(
         return Response(status_code=204)
 
 
+def _qualification_value(lead: dict, dimension: str) -> str:
+    """Read one BANT dimension out of a lead payload, tolerating other frameworks.
+
+    ``build_lead_response`` emits the dimensions of the bot's *actual*
+    framework, so a bot on MEDDIC / CHAMP / GPCTBA+C&I has no ``need`` key at
+    all — it has ``metrics``, ``economic_buyer``, and so on. Indexing the four
+    BANT names directly raised ``KeyError`` for those bots, and since this
+    handler has no ``except``, every one of those customers got a 500 and could
+    never export their leads.
+
+    This restores the export for them with the file's shape unchanged: the four
+    BANT columns come back empty rather than crashing. Emitting each bot's real
+    dimensions instead would be the better end state, but it changes what the
+    columns *mean* per row and is a product decision, not a bug fix — tracked
+    separately so it doesn't gate unbreaking the endpoint.
+    """
+    entry = (lead.get("bant") or {}).get(dimension) or {}
+    return entry.get("value") or ""
+
+
 @router.get("/export")
 def export_leads_csv(
     bot_id: int | None = Query(None),
@@ -416,6 +437,15 @@ def export_leads_csv(
                 bot=bot_map.get(chat_session.bot_id),
                 include_attribution=attribution_enabled,
             )
+            # Nearly every string in this row reaches it from outside the
+            # server: the session id is minted by the widget, contact fields are
+            # typed into the lead form by a visitor, the qualification values
+            # are LLM-extracted from what that visitor said, and location/device
+            # are derived from request headers. ``csv_safe_row`` escapes the
+            # whole row as a unit rather than each cell at its call site, so a
+            # column added below is safe without its author having to know that.
+            # Integers (score, message count) pass through untouched and stay
+            # numeric in the recipient's sheet.
             row = [
                 chat_session.id,
                 lead_info.name if lead_info else "",
@@ -424,10 +454,10 @@ def export_leads_csv(
                 lead_info.company if lead_info else "",
                 lead["score"],
                 lead["tier"],
-                lead["bant"]["need"]["value"] or "",
-                lead["bant"]["budget"]["value"] or "",
-                lead["bant"]["authority"]["value"] or "",
-                lead["bant"]["timeline"]["value"] or "",
+                _qualification_value(lead, "need"),
+                _qualification_value(lead, "budget"),
+                _qualification_value(lead, "authority"),
+                _qualification_value(lead, "timeline"),
                 chat_session.location or "",
                 chat_session.device or "",
                 msg_count,
@@ -441,6 +471,10 @@ def export_leads_csv(
                 journey_summary = " → ".join(
                     entry.get("path", "") for entry in journey if isinstance(entry, dict) and entry.get("path")
                 )
+                # All six come off the host page the widget was embedded on —
+                # query string, document.referrer, and the recorded path list —
+                # so an attacker controls them by linking a visitor to the
+                # customer's own site with a crafted URL.
                 row.extend(
                     [
                         utm.get("utm_source", "") or "",
@@ -451,6 +485,7 @@ def export_leads_csv(
                         journey_summary,
                     ]
                 )
+            row = csv_safe_row(row)
             writer.writerow(row)
 
         output.seek(0)

@@ -227,13 +227,31 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           // Stage 2 - server-side signature verification. The customer has
           // ALREADY been charged, so a failure here must NOT read as a payment
           // error. The activation webhook is the authoritative reconciler.
+          let verified: Record<string, unknown> | undefined;
           try {
-            await verifyRazorpaySubscription({
+            verified = (await verifyRazorpaySubscription({
               razorpay_payment_id: cb.razorpay_payment_id,
               razorpay_subscription_id: cb.razorpay_subscription_id || String(res.subscription_id),
               razorpay_signature: cb.razorpay_signature,
-            });
+            })) as Record<string, unknown>;
           } catch {
+            setNotice(
+              'Payment received - we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
+            );
+            onSuccess('Payment received - finalising your subscription.');
+            onDone();
+            return;
+          }
+
+          // A 200 from `/subscriptions/verify` means the SIGNATURE checked out,
+          // not that a subscription exists: the route answers
+          // `subscription_known: false` whenever neither the activation webhook
+          // nor the inline reconcile produced a local row (Razorpay still
+          // reporting created/pending, a reconcile failure, or a sink refusal).
+          // Asserting "You're now subscribed" on that told a charged customer
+          // they had a plan the app could not see - the same bug the reactivate
+          // path fixed by refusing to assert an outcome it hasn't observed.
+          if (verified?.subscription_known === false) {
             setNotice(
               'Payment received - we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
             );

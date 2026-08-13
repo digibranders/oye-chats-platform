@@ -22,6 +22,7 @@ import {
   type LiveChatConfig,
   type ServiceEntry,
   type SliceKey,
+  type SmartLink,
   type WidgetCopy,
   COPY_PLACEHOLDERS,
   HANDOFF_DELAY_OPTIONS,
@@ -30,12 +31,15 @@ import {
   LIVE_CHAT_PLACEHOLDERS,
   MAX_QUEUE,
   QUEUE_TIMEOUT,
+  answerLinksPatch,
   copyPatch,
   draftFromBot,
+  isHttpUrl,
   leadFormPatch,
   liveChatPatch,
   normalizeLiveChat,
   normalizeServiceEntries,
+  normalizeSmartLinkEntries,
   servicesPatch,
   sliceEqual,
 } from './botConfig';
@@ -55,6 +59,7 @@ const INITIAL_STATUS: Record<SliceKey, SliceStatus> = {
   liveChat: IDLE,
   leadForm: IDLE,
   services: IDLE,
+  answerLinks: IDLE,
   copy: IDLE,
 };
 
@@ -239,6 +244,20 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
         onSave={() => {
           const value = normalizeServiceEntries(draft.services);
           void runSave('services', () => servicesPatch(value), (prev) => ({ ...prev, services: value }));
+        }}
+      />
+
+      <SmartLinksCard
+        links={draft.answerLinks}
+        onChange={(links) => patchSlice('answerLinks', () => links)}
+        dirty={!sliceEqual(draft.answerLinks, baseline.answerLinks)}
+        status={status.answerLinks}
+        onSave={() => {
+          const value = normalizeSmartLinkEntries(draft.answerLinks);
+          void runSave('answerLinks', () => answerLinksPatch(value), (prev) => ({
+            ...prev,
+            answerLinks: value,
+          }));
         }}
       />
 
@@ -721,6 +740,111 @@ function ServicesCard({
         </p>
 
         <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save services" />
+      </Card>
+    </section>
+  );
+}
+
+// ── #11 Smart links (keyword → page) ──────────────────────────────────────────
+
+function SmartLinksCard({
+  links,
+  onChange,
+  dirty,
+  status,
+  onSave,
+}: {
+  links: SmartLink[];
+  onChange: (links: SmartLink[]) => void;
+  dirty: boolean;
+  status: SliceStatus;
+  onSave: () => void;
+}): ReactElement {
+  const updateAt = (index: number, patch: Partial<SmartLink>): void => {
+    onChange(links.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  };
+  const removeAt = (index: number): void => {
+    onChange(links.filter((_, i) => i !== index));
+  };
+  const add = (): void => {
+    onChange([...links, { keyword: '', url: '' }]);
+  };
+
+  return (
+    <section className="space-y-5">
+      <SectionHeader
+        title="Smart links"
+        description="Map a keyword to a page. When the bot's answer mentions it, the word becomes a link to that page. Separate from Services - this never limits what the bot can answer."
+      />
+      <Card>
+        {links.length === 0 ? (
+          <p className="rounded-[var(--ds-radius-lg)] border border-dashed border-[var(--ds-border)] px-3 py-4 text-[13px] text-[var(--ds-text-subtle)]">
+            No smart links yet. Add one - for example, keyword “pricing” linking to your pricing page - and
+            the bot will hyperlink it whenever it naturally comes up in an answer.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {links.map((link, index) => {
+              // Rows are only appended/removed (never reordered), so a positional key is stable.
+              const urlInvalid = link.url.trim().length > 0 && !isHttpUrl(link.url);
+              return (
+                <div
+                  key={index}
+                  className="flex flex-col gap-2 rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-2"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      value={link.keyword}
+                      aria-label={`Smart link ${index + 1} keyword`}
+                      placeholder="Keyword (e.g. pricing)"
+                      maxLength={80}
+                      onChange={(e) => updateAt(index, { keyword: e.target.value })}
+                      className="flex-1 bg-[var(--ds-bg-surface)] sm:max-w-[40%]"
+                    />
+                    <Input
+                      type="url"
+                      value={link.url}
+                      aria-label={`Smart link ${index + 1} URL`}
+                      placeholder="https://example.com/pricing"
+                      aria-invalid={urlInvalid || undefined}
+                      onChange={(e) => updateAt(index, { url: e.target.value })}
+                      className="flex-1 bg-[var(--ds-bg-surface)]"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Remove smart link ${index + 1}`}
+                      onClick={() => removeAt(index)}
+                      className="shrink-0 hover:text-[var(--ds-danger)]"
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  </div>
+                  {urlInvalid && (
+                    <p className="px-1 text-[11px] text-[var(--ds-danger)]">
+                      Enter a full link starting with http:// or https:// - other rows are saved but this
+                      one is skipped until it is valid.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div>
+          <Button variant="outline" size="sm" onClick={add}>
+            <Plus size={15} />
+            Add smart link
+          </Button>
+        </div>
+
+        <p className="text-[11px] text-[var(--ds-text-subtle)]">
+          The bot links a keyword only where it fits the sentence, at most once per reply. Every row needs a
+          keyword and an http(s) link; blank or invalid rows are dropped when you save.
+        </p>
+
+        <SaveFooter dirty={dirty} status={status} onSave={onSave} label="Save smart links" />
       </Card>
     </section>
   );

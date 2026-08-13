@@ -1,8 +1,15 @@
-import { useCallback } from 'react';
-import { Bot as BotIcon, Check, ChevronsUpDown } from 'lucide-react';
-import { cn, Popover } from '../design-system';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Bot as BotIcon, Check, ChevronsUpDown, Search } from 'lucide-react';
+import { cn, Input, Popover } from '../design-system';
 import { useBotContext } from '../context/BotContext';
 import type { Bot } from '../types/domain';
+import {
+  agentIdFromPath,
+  filterAgents,
+  shouldShowAgentFilter,
+  swapAgentInPath,
+} from './agentSwitcherModel';
 
 /**
  * BotSwitcher - the TopBar control that scopes the whole dashboard to one
@@ -14,29 +21,75 @@ import type { Bot } from '../types/domain';
  * consumed by Home, Analytics, Leads, Inbox, and Integrations. The dashboard is
  * always scoped to a single agent - there is no workspace-aggregated view.
  *
+ * Two scopes, one control
+ * -----------------------
+ * Agent pages are URL objects (`/agents/:agentId/<tab>`) and `AgentContext`
+ * resolves the active agent from the route param, deliberately never from
+ * `selectedBot`. So on those routes this control must NAVIGATE - writing the
+ * shell scope alone would relabel the chip while the page kept rendering the
+ * previous agent. Off those routes (`/workspace/*`, `/leads`, `/inbox`, ...)
+ * pages read `selectedBot`, so switching is a pure state write and the URL is
+ * left alone.
+ *
+ * The same split keeps the persisted choice honest: while an agent-scoped
+ * route is open the URL is the authority and this component mirrors it back
+ * into `selectBot` (which persists it). Without that, opening an agent from
+ * the Agents grid - which navigates without touching the shell scope - would
+ * leave localStorage pointing at a different agent than the address bar, and a
+ * reload would silently rescope every workspace-level page to the stale one.
+ * `AgentContext` documents this component as the sole writer of that scope,
+ * and it stays that way.
+ *
  * Rendered only when the workspace has 2+ bots - a single-bot workspace has no
  * choice to make and the chrome stays quiet.
  */
 export function BotSwitcher() {
   const { bots, selectedBot, selectBot } = useBotContext();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  // The agent the URL is pinned to, when the current route is agent-scoped.
+  const routeBot = useMemo<Bot | null>(() => {
+    const routeAgentId = agentIdFromPath(pathname);
+    if (routeAgentId === null) return null;
+    return bots.find((bot) => String(bot.id) === routeAgentId) ?? null;
+  }, [bots, pathname]);
+
+  // URL wins on agent routes: fold it back into the shell scope so the
+  // persisted id and the address bar can never disagree across a reload.
+  // Skipped when the route id resolves to no known agent (deleted, or another
+  // workspace's) - there is nothing truthful to sync in that case.
+  useEffect(() => {
+    if (routeBot !== null && routeBot.id !== selectedBot?.id) {
+      selectBot(routeBot);
+    }
+  }, [routeBot, selectedBot, selectBot]);
+
+  // Prefer the URL's agent for display so a direct navigation renders the
+  // right label immediately, without waiting a frame for the sync effect.
+  const activeBot = routeBot ?? selectedBot;
 
   const handleSelect = useCallback(
     (bot: Bot, close: () => void) => {
       close();
-      // No-op when the user picks what's already selected - avoids a needless
+      // No-op when the user picks what's already active - avoids a needless
       // rerender + persistence write and keeps the popover feel snappy.
-      if (bot.id === selectedBot?.id) return;
+      if (bot.id === activeBot?.id) return;
       selectBot(bot);
+      // Same tab, new agent. `null` means this route isn't agent-scoped, so
+      // the state write above is the whole switch.
+      const nextPath = swapAgentInPath(pathname, bot.id);
+      if (nextPath !== null) navigate(nextPath);
     },
-    [selectBot, selectedBot],
+    [activeBot, navigate, pathname, selectBot],
   );
 
   // The context always resolves a concrete agent when bots exist; guard anyway
   // so a transient null (during the initial load) renders nothing rather than
   // an empty control.
-  if (bots.length < 2 || !selectedBot) return null;
+  if (bots.length < 2 || !activeBot) return null;
 
-  const label = selectedBot.name || 'Agent';
+  const label = activeBot.name || 'Agent';
 
   return (
     <Popover
@@ -55,10 +108,10 @@ export function BotSwitcher() {
           className="flex h-9 max-w-[42vw] items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] md:max-w-[200px]"
         >
           <BotAvatar
-            logo={selectedBot.bot_logo}
-            avatarType={selectedBot.avatar_type}
-            orbColor={selectedBot.orb_color}
-            primaryColor={selectedBot.primary_color}
+            logo={activeBot.bot_logo}
+            avatarType={activeBot.avatar_type}
+            orbColor={activeBot.orb_color}
+            primaryColor={activeBot.primary_color}
             size={18}
           />
           <span className="truncate text-[13px] font-medium">{label}</span>
@@ -67,28 +120,92 @@ export function BotSwitcher() {
       )}
     >
       {(close) => (
-        <div>
-          <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Switch agent
-          </p>
-          <div className="max-h-80 overflow-y-auto p-1">
-            {bots.map((bot) => (
-              <BotOption
-                key={bot.id}
-                logo={bot.bot_logo}
-                avatarType={bot.avatar_type}
-                orbColor={bot.orb_color}
-                primaryColor={bot.primary_color}
-                label={bot.name || `Agent #${bot.id}`}
-                sublabel={bot.bot_key ?? undefined}
-                active={selectedBot?.id === bot.id}
-                onSelect={() => handleSelect(bot, close)}
-              />
-            ))}
-          </div>
-        </div>
+        <AgentPickerPanel
+          bots={bots}
+          activeBotId={activeBot.id}
+          onSelect={(bot) => handleSelect(bot, close)}
+        />
       )}
     </Popover>
+  );
+}
+
+/**
+ * AgentPickerPanel - the switcher's popover body: an optional filter box above
+ * a scrolling list of agents.
+ *
+ * Deliberately its own component rather than inline JSX. `Popover` unmounts
+ * its panel on close, so the filter query lives and dies with one open/close
+ * cycle - reopening the switcher always starts from the full list, with no
+ * reset effect or `onOpenChange` callback to keep in sync.
+ */
+function AgentPickerPanel({
+  bots,
+  activeBotId,
+  onSelect,
+}: {
+  bots: Bot[];
+  activeBotId: number;
+  onSelect: (bot: Bot) => void;
+}) {
+  const [query, setQuery] = useState('');
+  // Short lists are scannable at a glance; the input would be pure chrome.
+  const showFilter = shouldShowAgentFilter(bots.length);
+  const visibleBots = useMemo(
+    () => (showFilter ? filterAgents(bots, query) : bots),
+    [bots, query, showFilter],
+  );
+
+  return (
+    <div>
+      <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
+        Switch agent
+      </p>
+
+      {showFilter && (
+        <div className="relative border-b border-[var(--ds-border)] p-2">
+          <Search
+            size={14}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-[18px] top-1/2 -translate-y-1/2 text-[var(--ds-text-subtle)]"
+          />
+          {/* Not auto-focused on purpose: `Popover` focuses its panel on open,
+              and a focus race with that would be fragile. From the panel, one
+              Tab or ArrowDown lands here - it is the first focusable item. */}
+          <Input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            aria-label="Filter agents"
+            placeholder="Filter agents"
+            autoComplete="off"
+            className="h-9 pl-8 text-[13px]"
+          />
+        </div>
+      )}
+
+      <div className="max-h-80 overflow-y-auto p-1">
+        {visibleBots.length === 0 ? (
+          <p role="status" className="px-3 py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
+            No agents match &ldquo;{query.trim()}&rdquo;
+          </p>
+        ) : (
+          visibleBots.map((bot) => (
+            <BotOption
+              key={bot.id}
+              logo={bot.bot_logo}
+              avatarType={bot.avatar_type}
+              orbColor={bot.orb_color}
+              primaryColor={bot.primary_color}
+              label={bot.name || `Agent #${bot.id}`}
+              sublabel={bot.bot_key ?? undefined}
+              active={activeBotId === bot.id}
+              onSelect={() => onSelect(bot)}
+            />
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

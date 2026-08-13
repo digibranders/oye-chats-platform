@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 from collections.abc import Iterator
@@ -42,7 +43,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import requests
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import config
@@ -60,7 +61,16 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.pricing import charge_currency, format_amount
-from app.db.models import Bot, Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
+from app.db.models import (
+    Bot,
+    Client,
+    DiscountedPlanCache,
+    FailedWebhook,
+    Invoice,
+    Plan,
+    ProcessedWebhook,
+    Subscription,
+)
 from app.services import credit_service, email_service, invoice_service
 
 if TYPE_CHECKING:
@@ -1460,6 +1470,146 @@ def _record_or_skip_event(session: Session, event_id: str | None, payload_digest
     return (result.rowcount or 0) > 0
 
 
+def _release_idempotency_key(session: Session, event_id: str | None) -> None:
+    """Undo :func:`_record_or_skip_event` for an event that changed NOTHING.
+
+    The idempotency row exists to stop a redelivery re-granting credits or
+    re-creating a subscription. A handler that refuses BEFORE any of that has a
+    row recording work it never did: the key is burned, so the same event can
+    never be reprocessed — not by a redelivery, not by a superadmin replay, and
+    not by ``reconcile_subscription_from_razorpay`` — and unsticking the
+    customer after a fix ships means deleting a row in production by hand.
+
+    Releasing it is safe precisely because nothing was persisted: a later
+    reprocess starts from the same clean state the first attempt did. It is also
+    not a retry loop — the caller still ACKs (returns rather than raising), so
+    the provider is told the delivery succeeded and stops redelivering. What the
+    release buys is a DELIBERATE second attempt after a code or data fix.
+
+    Runs in the caller's session on purpose: on the reconcile path the row was
+    inserted (and only flushed) in that same transaction, so a separate session
+    could not see it.
+    """
+    if not event_id:
+        return
+    session.execute(
+        delete(ProcessedWebhook).where(
+            ProcessedWebhook.provider == "razorpay",
+            ProcessedWebhook.event_id == event_id,
+        )
+    )
+    session.flush()
+
+
+# Deterministic dead-letter key for a pooled-plan scope refusal: one durable
+# record per refused MANDATE, however many doors (webhook + verify-reconcile,
+# or a redelivery) hit the same refusal.
+_POOLED_SCOPE_DEAD_LETTER_PREFIX = "pooled-plan-scope-refusal:"
+
+
+def _dead_letter_pooled_scope_refusal(
+    *,
+    razorpay_sub_id: str,
+    client_id: int | None,
+    plan_id: int | None,
+    plan_slug: str | None,
+    bot_id: int | str | None,
+    payment_id: str | None,
+    event_id: str | None,
+    sub_entity: dict[str, Any],
+) -> None:
+    """Record a refused (but already CHARGED) activation for manual reconciliation.
+
+    Written in its OWN session so it survives whatever the caller's transaction
+    does — the same reason ``webhook_billing_routes._dead_letter`` opens one.
+    Reuses ``failed_webhooks`` rather than inventing a table so the row shows up
+    in the superadmin dead-letter list that ops already watches.
+
+    Two deliberate departures from an ordinary dead-letter row:
+
+    * ``event_id`` is a synthetic ``pooled-plan-scope-refusal:<sub>`` key, not
+      the provider's event id, so the webhook and the ``/subscriptions/verify``
+      reconcile that both hit this refusal collapse into ONE row instead of
+      accumulating duplicates. The provider's event id is carried in ``headers``.
+    * ``signature`` is NULL: this row is synthesised from the parsed entity, not
+      captured from a signed request body, so the superadmin *replay* button
+      cannot re-verify it and will refuse. That is honest — replaying would only
+      re-run a refusal that is deterministic in the notes and the plan row. The
+      recovery path is the released idempotency key: once the mandate is moved
+      to account scope (or the plan corrected), reconcile/redelivery
+      materialises it.
+
+    Best-effort, exactly like the webhook route's helper: a failure to record
+    must never turn an ACK into a 5xx that burns the provider's retry window.
+    """
+    from app.db.session import get_session
+
+    context = {
+        "razorpay_subscription_id": razorpay_sub_id,
+        "razorpay_payment_id": payment_id,
+        "provider_event_id": event_id,
+        "client_id": client_id,
+        "plan_id": plan_id,
+        "plan_slug": plan_slug,
+        "bot_id": str(bot_id) if bot_id is not None else None,
+    }
+    dedup_key = f"{_POOLED_SCOPE_DEAD_LETTER_PREFIX}{razorpay_sub_id}"
+    try:
+        with get_session() as session:
+            already = (
+                session.execute(
+                    select(FailedWebhook.id).where(
+                        FailedWebhook.provider == "razorpay",
+                        FailedWebhook.event_id == dedup_key,
+                        FailedWebhook.status == "pending",
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if already is not None:
+                return
+            session.add(
+                FailedWebhook(
+                    provider="razorpay",
+                    event_id=dedup_key,
+                    event_type="subscription.activated",
+                    raw_payload=json.dumps({"context": context, "subscription": sub_entity}, default=str).encode(
+                        "utf-8"
+                    ),
+                    signature=None,
+                    headers=context,
+                    # Explicit rather than leaning on the column default: this row
+                    # is an OPEN task, and the dedup read above filters on
+                    # ``status == "pending"`` so a row an admin has already
+                    # triaged to ``ignored`` does not suppress a fresh report.
+                    status="pending",
+                    error=(
+                        "MANUAL RECONCILIATION REQUIRED (replay will not help — this row has no signed "
+                        f"body). Razorpay subscription {razorpay_sub_id} authorised plan {plan_slug!r} "
+                        f"(id={plan_id}) at BOT scope (bot={bot_id}) for client {client_id}, payment "
+                        f"{payment_id}. That plan grants unlimited agents and sells ONE pooled credit "
+                        "balance, so it must be billed with bot_id NULL — no local subscription was "
+                        "created and no credits were granted. The customer HAS been charged: cancel "
+                        "this mandate and re-sell at account level, or re-scope it, then re-run "
+                        "reconciliation (the idempotency key was released, so the event can be "
+                        "reprocessed)."
+                    ),
+                )
+            )
+            session.commit()
+    except Exception:
+        logger.critical(
+            "Failed to dead-letter pooled-plan scope refusal for Razorpay subscription %s "
+            "(client %s, plan %s, bot %s) — the charge is now recorded ONLY in the ERROR log above",
+            razorpay_sub_id,
+            client_id,
+            plan_id,
+            bot_id,
+            exc_info=True,
+        )
+
+
 def _record_seat_invoice(session: Session, sub: Subscription, payload: dict[str, Any]) -> None:
     """Emit a payment-history invoice for a seat add-on charge (finding A).
 
@@ -1624,6 +1774,13 @@ def handle_webhook_event(
     handler = handlers.get(event_name)
     if handler is None:
         return f"Unhandled event type: {event_name}"
+    if handler is _handle_subscription_activated:
+        # The only handler that can refuse an ALREADY-CHARGED activation without
+        # persisting anything. It needs the event id so it can release the
+        # idempotency key it would otherwise burn on work it never did — see
+        # ``_release_idempotency_key``. Passed explicitly rather than widening
+        # every handler's signature or smuggling it through a context var.
+        return handler(session, payload, event_id=event_id)
     return handler(session, payload)
 
 
@@ -1817,7 +1974,11 @@ def reconcile_subscription_from_razorpay(
     # consults ``notes.oyechats_client_id`` / ``oyechats_plan_id`` set at
     # ``create_subscription`` time.
     synthetic_payload = {"subscription": {"entity": sub_entity}}
-    _handle_subscription_activated(session, synthetic_payload)
+    # Hand the synthetic key down so a refusal inside the handler can release it
+    # (``_release_idempotency_key``). Without that, one refused reconcile would
+    # permanently close the verify door on this mandate — the customer's own
+    # retry, and every ops re-run, would short-circuit as "already processed".
+    _handle_subscription_activated(session, synthetic_payload, event_id=synthetic_event_id)
     return _resolve_local_subscription(session, razorpay_subscription_id)
 
 
@@ -2117,11 +2278,18 @@ def _handle_subscription_authenticated(session: Session, payload: dict[str, Any]
     return _handle_subscription_activated(session, payload)
 
 
-def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
+def _handle_subscription_activated(session: Session, payload: dict[str, Any], *, event_id: str | None = None) -> str:
     """First mandate-authentication or restart after a paused state.
 
     Creates the local Subscription row if it doesn't exist yet, grants the
     initial month's credits, and stores the Razorpay customer id.
+
+    ``event_id`` is the idempotency key ``_record_or_skip_event`` already burned
+    for this delivery (the provider's ``x-razorpay-event-id``, or the synthetic
+    ``reconcile:<sub>`` key on the verify path). It is used ONLY by the pooled-
+    plan sink guard below, which returns without persisting anything and
+    therefore releases the key rather than leaving it recording work it never
+    did. Optional so direct callers that have no key still work.
     """
     from app.services import plan_entitlements_service
 
@@ -2226,6 +2394,88 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # A brand-new bot is minted only for a per-bot subscription that does
         # NOT name an existing one.
         mints_new_bot = is_per_bot and resume_bot_id is None
+
+        # ── The sink guard: a POOLED plan may never land on a BOT-SCOPED row ──
+        #
+        # Every route that can attach a plan to a subscription — per-bot
+        # checkout, change-plan revive, resume, the upgrade/downgrade cutovers,
+        # the promotion cron — ends here, at the single INSERT below. Guarding
+        # the mint sites one by one drifts; this is the one place that cannot be
+        # bypassed, including by a per-bot mandate created BEFORE the route
+        # guards shipped and only authorised afterwards.
+        #
+        # The invariant is ``plan_entitlements_service.plan_grants_unlimited_bots``:
+        # such a plan sells ONE pooled credit balance across unlimited agents, so
+        # scoping it to one bot's isolated ledger funds that agent and silently
+        # starves every other one the tier entitles.
+        #
+        # Failure mode — the money is ALREADY taken by the time this webhook
+        # arrives, so the choice is which bad outcome to take:
+        #
+        # * NOT raising. A raise dead-letters and 5xxs (see
+        #   ``webhook_billing_routes``), which asks Razorpay to redeliver — but
+        #   the refusal is deterministic in the notes + plan row, so every retry
+        #   re-fails identically: the whole retry window burns, N duplicate
+        #   dead-letters accumulate, and the outcome is the same as ACKing, only
+        #   noisier. Retries fix transient faults, and this is not one.
+        # * NOT demoting to account scope (``funded_bot_id = None``). Tempting —
+        #   a pooled plan on ``bot_id IS NULL`` is exactly what the customer
+        #   bought — but the sibling sweep below would then cancel the client's
+        #   EXISTING account subscription and irreversibly cancel its mandate at
+        #   Razorpay, destroying a subscription the customer never asked to
+        #   touch. Silently doing that on a webhook is worse than not guarding.
+        # * NOT persisting the row anyway: that is the incoherent state itself.
+        #
+        # So: log at ERROR (→ Sentry) and ACK, exactly like the other
+        # unrecoverable shapes in this handler (missing notes, unparseable
+        # ``oyechats_bot_id``).
+        #
+        # An ERROR log is not enough on its own, though — the customer has been
+        # CHARGED and, before this, the only durable artifact of that was a
+        # Sentry event: no Subscription, no Invoice, and the idempotency key
+        # already burned so the activation could never be reprocessed. Two
+        # things therefore happen before the return:
+        #
+        # 1. A ``failed_webhooks`` row, written in its own transaction, so the
+        #    charge lands in the dead-letter list ops already triages and
+        #    carries the ids needed to act (see
+        #    ``_dead_letter_pooled_scope_refusal``).
+        # 2. The idempotency key is RELEASED. Nothing was persisted, so there is
+        #    no double-grant to protect against, and keeping it burned is what
+        #    forces a production row deletion before the mandate can ever be
+        #    reprocessed. This does not create a retry loop: we still ACK, so the
+        #    provider stops redelivering — the release only enables a deliberate
+        #    reprocess (verify-reconcile, or a redelivery) after the mandate is
+        #    re-scoped or the plan corrected.
+        if mints_new_bot or resume_bot_id is not None:
+            # ``plan_id`` is non-NULL here — the missing-notes return above.
+            candidate_plan = session.get(Plan, plan_id)
+            if candidate_plan is not None and plan_entitlements_service.plan_grants_unlimited_bots(candidate_plan):
+                refused_bot = "new" if mints_new_bot else resume_bot_id
+                logger.error(
+                    "REFUSING bot-scoped activation of pooled plan %s (id=%s) on Razorpay subscription %s "
+                    "(client %s, bot %s): this plan grants unlimited agents and sells one POOLED credit "
+                    "balance, so it must be billed with bot_id NULL. The customer HAS been charged — "
+                    "cancel this mandate and re-sell the plan at account level, or move the payment over "
+                    "manually. No local subscription was created; recorded in failed_webhooks.",
+                    candidate_plan.slug,
+                    plan_id,
+                    razorpay_sub_id,
+                    client_id,
+                    refused_bot,
+                )
+                _dead_letter_pooled_scope_refusal(
+                    razorpay_sub_id=razorpay_sub_id,
+                    client_id=client_id,
+                    plan_id=plan_id,
+                    plan_slug=candidate_plan.slug,
+                    bot_id=refused_bot,
+                    payment_id=(_extract_payment_entity(payload) or {}).get("id"),
+                    event_id=event_id,
+                    sub_entity=sub_entity,
+                )
+                _release_idempotency_key(session, event_id)
+                return "pooled plan on a bot-scoped activation; subscription NOT created"
 
         # Launch-promo sub: ``starts_in_future`` is True for its whole free
         # window, but the semantics are the OPPOSITE of the resume cutover —
@@ -2355,6 +2605,9 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
 
         # The bot this subscription funds: a freshly-minted one (per-bot), the
         # existing bot being resumed or revived, or NULL (account-level).
+        # Non-NULL here has already cleared the pooled-plan sink guard above —
+        # which runs before the sweep and the bot INSERT precisely so refusing
+        # commits nothing.
         funded_bot_id = new_bot.id if new_bot is not None else resume_bot_id
 
         # Close the per-bot downgrade re-auth seam. A per-bot downgrade's grace

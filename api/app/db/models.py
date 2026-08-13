@@ -461,6 +461,14 @@ class Bot(Base):
     services = Column(JSONB, nullable=True)  # list[str] of admin-defined service names
     services_url = Column(String, nullable=True)
 
+    # Smart links — admin-defined keyword→URL map, independent of ``services``.
+    # When the bot's answer naturally references one of these keywords it links
+    # the phrase to the mapped page (e.g. "pricing" → the pricing page). Stored
+    # as ``list[{"keyword": str, "url": str}]``. Nullable and additive: a bot
+    # that never sets it behaves exactly as before. Distinct from the services
+    # answer-scope above — smart links never restrict what the bot may answer.
+    answer_links = Column(JSONB, nullable=True)
+
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
     # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
     # match an entry in ``allowed_domains``. Entries support exact hostnames
@@ -1909,6 +1917,23 @@ class CreditLedger(Base):
     # row created before the per-bot rollout, plus any deductions made
     # against legacy-pooled bots after rollout).
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
+    # REPORTING ONLY — deliberately *not* a second scope key. ``bot_id`` above
+    # answers "which ledger does this row live in?"; this answers "which bot
+    # spent it?". The two diverge whenever credits are pooled: a pooled
+    # account's deductions all land in the client pool (``bot_id IS NULL``),
+    # so without this column per-bot spend is simply not recoverable — and it
+    # cannot be backfilled after the fact, which is why the column exists
+    # before the first pooled account does.
+    #
+    # ``reference_id`` is not a substitute: it is a polymorphic audit label
+    # (bot_id / document_id / invoice_id depending on ``reason``), so it cannot
+    # be grouped on without silently mixing id spaces.
+    #
+    # Balance maths MUST keep keying off ``bot_id`` alone (``_scope_clause`` /
+    # ``get_balance`` in credit_service). Summing on this column instead would
+    # re-scope pooled deductions into per-bot ledgers and corrupt both the pool
+    # balance and the per-bot one.
+    attributed_bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
     delta = Column(Integer, nullable=False)
     # The DB column is the native PG ENUM ``credit_reason``. The model MUST
     # declare it as such: with a plain String, a multi-row flush (a deduction

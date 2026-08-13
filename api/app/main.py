@@ -231,6 +231,13 @@ app.add_middleware(
     allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The dashboard is served from a different origin than this API, so a
+    # response header is invisible to its JavaScript unless it is explicitly
+    # exposed — Content-Disposition is not on the CORS-safelist. File exports
+    # (the per-agent report CSV) name themselves server-side, including the
+    # reporting window; without this the browser reads no filename at all and
+    # the download lands as an opaque blob.
+    expose_headers=["Content-Disposition"],
 )
 
 # --- Request Timeout (60s for non-streaming endpoints) ---

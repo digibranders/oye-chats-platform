@@ -18,6 +18,7 @@ from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_
 from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
+from app.services import plan_entitlements_service
 from app.services.plan_entitlements_service import UNLIMITED
 from app.services.plan_service import get_pricing_content, set_pricing_content
 
@@ -624,6 +625,30 @@ def update_subscription(
             plan = session.execute(select(Plan).where(Plan.id == request.plan_id)).scalars().first()
             if not plan:
                 raise HTTPException(status_code=400, detail="Target plan not found.")
+            # A plan whose ``limits.bots`` is the UNLIMITED sentinel sells ONE
+            # credit balance pooled across every agent, so it is only coherent on
+            # an ACCOUNT-scoped subscription (``bot_id IS NULL``). Stamped onto a
+            # bot-scoped row its credits are granted into that bot's isolated
+            # ledger while every other agent it entitles drains the unfunded
+            # shared pool.
+            #
+            # REJECTED rather than silently forced to ``bot_id=None``: this is a
+            # manual plan override, and re-scoping the subscription as a side
+            # effect would move the customer's credit ledger without anyone
+            # asking, and could collide with the client's existing account row on
+            # the ``ix_subscriptions_client_bot_active`` partial unique index —
+            # failing at COMMIT, after the audit log says it succeeded. An admin
+            # who genuinely wants the move should make the scope change
+            # deliberately.
+            if sub.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(plan):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Subscription {sub.id} is scoped to agent {sub.bot_id}, and the {plan.name} plan "
+                        "includes unlimited AI agents — it sells one pooled credit balance and can only be "
+                        "billed at account level (bot_id NULL). Move the subscription to account scope first."
+                    ),
+                )
             sub.plan_id = request.plan_id
 
         if request.status is not None:

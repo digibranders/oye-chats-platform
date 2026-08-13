@@ -63,13 +63,38 @@ def _payload(client: Client) -> dict[str, str]:
     return payload
 
 
+def _customer_exists(customer_id: str) -> bool:
+    """Is ``customer_id`` still live on the currently-configured gateway key?
+
+    A stored id can go stale without our data ever changing: switching the
+    account between Razorpay's live and test key sets (or the customer being
+    deleted on the gateway side) leaves a syntactically valid id that the
+    *current* key simply cannot see. Razorpay answers that with a 400
+    (``BadRequestError``) — the one case here that means "reissue". Anything
+    else (a network blip, a 5xx) is not evidence the id is dead, and treating
+    it as such would mint a needless duplicate customer on a mere hiccup, so
+    those fail open (assume it still exists).
+    """
+    from razorpay.errors import BadRequestError
+
+    try:
+        _client().customer.fetch(customer_id)
+        return True
+    except BadRequestError:
+        return False
+    except Exception as exc:  # noqa: BLE001 — transient gateway/network issue
+        logger.warning("razorpay customer fetch failed transiently for %s: %s", customer_id, exc)
+        return True
+
+
 def ensure_customer(session: Session, client: Client) -> str:
     """Return this client's Razorpay customer id, creating it if needed.
 
-    Idempotent: a client that already has an id short-circuits without a
-    gateway call. On gateway failure the column is left NULL and the caller
-    decides whether that is fatal — a customer is required for saving an
-    instrument, but not for a plain one-off charge.
+    Idempotent: a client that already has a *live* id short-circuits with
+    only a cheap existence check, not a full create. On gateway failure the
+    column is left NULL and the caller decides whether that is fatal — a
+    customer is required for saving an instrument, but not for a plain
+    one-off charge.
 
     ``client`` MUST be attached to ``session``. ``get_current_client`` returns a
     DETACHED row loaded in another session, and assigning to a detached
@@ -84,7 +109,19 @@ def ensure_customer(session: Session, client: Client) -> str:
             "ensure_customer requires a session-attached Client; re-read it with session.get(Client, client.id) first"
         )
     if client.razorpay_customer_id:
-        return client.razorpay_customer_id
+        if _customer_exists(client.razorpay_customer_id):
+            return client.razorpay_customer_id
+        # Stale across a live/test key switch (or deleted on the gateway) —
+        # handing this id to Razorpay Checkout is what surfaces as "The id
+        # provided does not exist" mid-checkout. Clear and fall through to
+        # mint a fresh one under the key that is actually live right now.
+        logger.warning(
+            "razorpay customer %s for client %s not found on the current gateway key — reissuing",
+            client.razorpay_customer_id,
+            client.id,
+        )
+        client.razorpay_customer_id = None
+        session.flush()
 
     try:
         created = _client().customer.create(_payload(client))

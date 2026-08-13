@@ -6,14 +6,48 @@
  * the one path where a dropped field leaves the product for good — it needs
  * tests of its own.
  */
+import { csvSafe } from '../../lib/csvSafe';
 import { type Lead } from '../../types/domain';
 
-import { TIER_META, companyDisplay, formatDateTime, formatLocation, normalizeTier } from './leadModel';
+import {
+  EMPTY_PLACEHOLDER,
+  TIER_META,
+  companyDisplay,
+  formatDateTime,
+  formatLocation,
+  normalizeTier,
+} from './leadModel';
 
-/** Escape one CSV field: quote it and double any embedded quotes (RFC 4180). */
+/**
+ * Escape one CSV field. Two independent defences, in order:
+ *
+ * 1. `csvSafe` stops a visitor-typed value from opening as a formula in the
+ *    recipient's spreadsheet. Every cell goes through it — the columns are
+ *    almost entirely visitor-supplied, and routing them all through one funnel
+ *    means a column added later is safe without anyone remembering to be.
+ * 2. RFC-4180 quoting keeps commas, quotes and newlines from breaking the
+ *    record apart. It does nothing for defence 1: Excel evaluates `"=1+1"`
+ *    exactly as it evaluates `=1+1`.
+ */
 function csvField(value: string | number | null | undefined): string {
   const raw = value === null || value === undefined ? '' : String(value);
-  return `"${raw.replace(/"/g, '""')}"`;
+  return `"${csvSafe(raw).replace(/"/g, '""')}"`;
+}
+
+/**
+ * Drop the table's absence placeholder, which must not reach the file.
+ *
+ * A CSV says "no value" with an empty cell, not with a glyph meant for a table
+ * cell — a CRM importing this would store a literal dash as the last-active
+ * date. It also keeps `csvSafe` from quoting the placeholder: a bare `-` is a
+ * formula trigger, so an absent timestamp would otherwise export as `'-`.
+ *
+ * Compares against `EMPTY_PLACEHOLDER` rather than a local `'-'` so the two
+ * cannot drift apart: a hardcoded copy here would silently stop matching the
+ * day `leadModel` switches to a true em-dash, and nothing would fail.
+ */
+function blankIfPlaceholder(formatted: string): string {
+  return formatted === EMPTY_PLACEHOLDER ? '' : formatted;
 }
 
 /**
@@ -52,7 +86,7 @@ export function buildSelectedLeadsCsv(
       csvField(lead.score),
       csvField(formatLocation(lead.location)),
       csvField(tagsFor(lead.session_id).join('; ')),
-      csvField(formatDateTime(lead.last_active_at)),
+      csvField(blankIfPlaceholder(formatDateTime(lead.last_active_at))),
     ].join(',');
   });
   return [header.map(csvField).join(','), ...rows].join('\r\n');

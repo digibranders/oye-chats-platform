@@ -1,11 +1,16 @@
+import csv
+import io
 import logging
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
+from app.core.csv_safety import csv_safe_row
 from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
     get_dashboard_stats,
@@ -19,6 +24,7 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
+from app.services.reporting_service import get_per_bot_rollup
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +345,115 @@ def get_feedback_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch feedback logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e
+
+
+@router.get("/by-bot")
+def get_per_bot_rollup_endpoint(
+    days: int = Query(30, ge=1, le=365, description="Trailing window of N days"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Per-bot activity rollup for the account: credits, conversations, leads.
+
+    Built for the agency case — many client sites on one account, one shared
+    credit pool — so each bot's spend is read from the ledger's
+    ``attributed_bot_id`` and stays correct even when the deduction came out
+    of the pool. Bots with no activity in the window are omitted.
+    """
+    try:
+        until = datetime.now(UTC)
+        since = until - timedelta(days=days)
+        with get_session() as session:
+            rows = get_per_bot_rollup(session, client_id=auth["client_id"], since=since, until=until)
+
+        return {
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            "rows": rows,
+            "totals": {
+                "credits_spent": sum(row["credits_spent"] for row in rows),
+                "conversations": sum(row["conversations"] for row in rows),
+                "leads": sum(row["leads"] for row in rows),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch per-bot rollup: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load per-bot rollup.") from e
+
+
+# ─── Per-bot report CSV ──────────────────────────────────────────────────────
+
+_CSV_HEADER: tuple[str, ...] = ("Agent", "Conversations", "Leads", "Credits used")
+
+
+@router.get("/by-bot.csv")
+def get_per_bot_rollup_csv(
+    days: int = Query(30, ge=1, le=365, description="Trailing window of N days"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """The ``/analytics/by-bot`` rollup as a downloadable CSV.
+
+    Same window and same auth as the JSON endpoint — an agency owner pulls one
+    file per reporting period and forwards it to the client it covers, so the
+    filename carries the window (``oyechats-report-2026-07-14-to-2026-08-13.csv``)
+    and the rows arrive in the same order the dashboard shows them.
+
+    No totals row: a trailing aggregate in a CSV double-counts the moment
+    anyone pivots or concatenates it, and a bot legitimately named "Total"
+    would be indistinguishable from it. The dashboard renders the totals.
+    """
+    try:
+        until = datetime.now(UTC)
+        since = until - timedelta(days=days)
+        # Materialise before streaming: the response body is produced after
+        # this handler returns, by which point the session context manager has
+        # already closed. ``get_per_bot_rollup`` returns plain dicts, so there
+        # is nothing lazy left to resolve.
+        with get_session() as session:
+            rows = get_per_bot_rollup(session, client_id=auth["client_id"], since=since, until=until)
+
+        filename = f"oyechats-report-{since:%Y-%m-%d}-to-{until:%Y-%m-%d}.csv"
+
+        def stream_csv() -> Iterator[str]:
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+
+            def flush() -> str:
+                chunk = buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                return chunk
+
+            writer.writerow(_CSV_HEADER)
+            yield flush()
+            for row in rows:
+                writer.writerow(
+                    # Only the agent name is customer-supplied today; the other
+                    # three are integers this service computed. Routed through
+                    # the row funnel anyway so that stays true by construction
+                    # rather than by the next author noticing.
+                    csv_safe_row(
+                        [
+                            row["bot_name"],
+                            row["conversations"],
+                            row["leads"],
+                            row["credits_spent"],
+                        ]
+                    )
+                )
+                yield flush()
+
+        return StreamingResponse(
+            stream_csv(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export per-bot rollup CSV: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export the per-agent report.") from e
 
 
 # ─── Journeys view ───────────────────────────────────────────────────────────

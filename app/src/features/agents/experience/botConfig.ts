@@ -52,6 +52,18 @@ export interface ServiceEntry {
   url: string;
 }
 
+// ── Smart links (#11) ─────────────────────────────────────────────────────────
+/**
+ * Admin-defined keyword→link. Independent of {@link ServiceEntry}: it never
+ * scopes what the bot may answer, it only lets the bot hyperlink the keyword to
+ * the mapped page when it naturally comes up in an answer. Both fields are
+ * required for a row to persist (a link with no destination is meaningless).
+ */
+export interface SmartLink {
+  keyword: string;
+  url: string;
+}
+
 // ── Remaining widget copy (#11) ───────────────────────────────────────────────
 export interface WidgetCopy {
   /** `widget_messages.offline_message` - distinct from the top-level live-chat
@@ -63,16 +75,17 @@ export interface WidgetCopy {
   endChatLabel: string;
 }
 
-/** The full editable model, split into the four independently-saved slices. */
+/** The full editable model, split into the independently-saved slices. */
 export interface BotConfigDraft {
   liveChat: LiveChatConfig;
   leadForm: LeadFormConfig;
   services: ServiceEntry[];
+  answerLinks: SmartLink[];
   copy: WidgetCopy;
 }
 
-/** The four slices, each with its own dirty-tracking + save. */
-export type SliceKey = 'liveChat' | 'leadForm' | 'services' | 'copy';
+/** The slices, each with its own dirty-tracking + save. */
+export type SliceKey = 'liveChat' | 'leadForm' | 'services' | 'answerLinks' | 'copy';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 export const LEAD_FIELD_ORDER: readonly LeadFieldName[] = ['name', 'email', 'phone', 'company'];
@@ -164,6 +177,17 @@ function normalizeServices(value: unknown): ServiceEntry[] {
   return out;
 }
 
+/** Parse the raw `answer_links` payload into editable rows (loss-tolerant). */
+function normalizeSmartLinks(value: unknown): SmartLink[] {
+  if (!Array.isArray(value)) return [];
+  const out: SmartLink[] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    out.push({ keyword: asString(record.keyword), url: asString(record.url) });
+  }
+  return out;
+}
+
 /**
  * Build the editable draft from a raw `getBot(botId)` payload. The `Bot` domain
  * type omits these config fields, so the caller passes the response widened to a
@@ -186,6 +210,7 @@ export function draftFromBot(raw: Record<string, unknown>): BotConfigDraft {
       fields: normalizeLeadFields(raw.lead_form_fields),
     },
     services: normalizeServices(raw.services),
+    answerLinks: normalizeSmartLinks(raw.answer_links),
     copy: {
       offlineMessage: asString(widgetMessages.offline_message),
       liveChatLabel: asString(widgetMessages.live_chat_label),
@@ -218,6 +243,32 @@ export function normalizeServiceEntries(services: ServiceEntry[]): ServiceEntry[
     .filter((s) => s.name.length > 0);
 }
 
+/** True when a string is a well-formed http(s) URL the widget can safely link. */
+export function isHttpUrl(value: string): boolean {
+  return /^https?:\/\/\S+/i.test(value.trim());
+}
+
+/**
+ * Trim smart-link rows and drop the ones the server would reject: a row needs
+ * both a keyword and a valid http(s) URL. Mirrors the backend's
+ * `_normalize_answer_links` (blank/invalid dropped, first keyword wins) so the
+ * committed baseline matches exactly what was persisted.
+ */
+export function normalizeSmartLinkEntries(links: SmartLink[]): SmartLink[] {
+  const out: SmartLink[] = [];
+  const seen = new Set<string>();
+  for (const link of links) {
+    const keyword = link.keyword.trim();
+    const url = link.url.trim();
+    if (!keyword || !isHttpUrl(url)) continue;
+    const key = keyword.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ keyword, url });
+  }
+  return out;
+}
+
 // ── Per-slice PATCH builders ──────────────────────────────────────────────────
 export function liveChatPatch(config: LiveChatConfig): Record<string, unknown> {
   const c = normalizeLiveChat(config);
@@ -244,6 +295,10 @@ export function servicesPatch(services: ServiceEntry[]): Record<string, unknown>
     url: s.url.length > 0 ? s.url : null,
   }));
   return { services: cleaned };
+}
+
+export function answerLinksPatch(links: SmartLink[]): Record<string, unknown> {
+  return { answer_links: normalizeSmartLinkEntries(links) };
 }
 
 export function copyPatch(copy: WidgetCopy): Record<string, unknown> {

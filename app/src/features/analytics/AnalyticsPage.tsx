@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactElement, useMemo, useRef, useState } from 'react';
+import { type ReactElement, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -24,6 +24,7 @@ import {
   type MetricTrend,
   PageContainer,
   SectionHeader,
+  SegmentedControl,
   Skeleton,
   Tabs,
 } from '../../design-system';
@@ -92,89 +93,6 @@ function deriveInsight(
   }
 
   return null;
-}
-
-/**
- * Segmented control for picking the trend window. A one-of-N choice, so it is
- * modelled as a WAI-ARIA radio group (`role="radiogroup"` + `role="radio"` /
- * `aria-checked`) with roving `tabIndex` and arrow / Home / End navigation -
- * this reads as a mutually-exclusive selection to assistive tech rather than a
- * row of independent toggles.
- */
-function RangeControl({
-  value,
-  onChange,
-}: {
-  value: TrendRange;
-  onChange: (range: TrendRange) => void;
-}): ReactElement {
-  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  function selectAt(index: number): void {
-    const range = TREND_RANGES[index];
-    if (!range) return;
-    buttonRefs.current[index]?.focus();
-    onChange(range.id);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
-    const count = TREND_RANGES.length;
-    switch (event.key) {
-      case 'ArrowRight':
-      case 'ArrowDown':
-        event.preventDefault();
-        selectAt((index + 1) % count);
-        break;
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        event.preventDefault();
-        selectAt((index - 1 + count) % count);
-        break;
-      case 'Home':
-        event.preventDefault();
-        selectAt(0);
-        break;
-      case 'End':
-        event.preventDefault();
-        selectAt(count - 1);
-        break;
-      default:
-        break;
-    }
-  }
-
-  return (
-    <div
-      className="inline-flex items-center gap-1 rounded-lg bg-[var(--ds-bg-sunken)] p-1"
-      role="radiogroup"
-      aria-label="Message trend time range"
-    >
-      {TREND_RANGES.map((range, index) => {
-        const selected = range.id === value;
-        return (
-          <button
-            key={range.id}
-            ref={(node) => {
-              buttonRefs.current[index] = node;
-            }}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
-            onClick={() => onChange(range.id)}
-            onKeyDown={(event) => handleKeyDown(event, index)}
-            className={
-              selected
-                ? 'rounded-md bg-[var(--ds-bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]'
-                : 'rounded-md px-2.5 py-1 text-[12px] font-medium text-[var(--ds-text-muted)] transition-colors hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]'
-            }
-          >
-            {range.label}
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 function LoadingState(): ReactElement {
@@ -353,7 +271,14 @@ export function AnalyticsPage(): ReactElement {
                   <SectionHeader
                     title="Message volume"
                     description="Daily messages across every agent"
-                    actions={<RangeControl value={range} onChange={setRange} />}
+                    actions={
+                      <SegmentedControl
+                        options={TREND_RANGES}
+                        value={range}
+                        onChange={setRange}
+                        ariaLabel="Message trend time range"
+                      />
+                    }
                   />
                 </CardHeader>
                 <CardContent className="pt-0">

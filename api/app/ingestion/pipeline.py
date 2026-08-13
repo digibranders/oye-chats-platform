@@ -703,8 +703,9 @@ def batch_web_ingestion(
                         cost_per_page,
                         reason=deduct_reason,
                         reference_id=deduct_reference_id,
-                        bot_id=ledger_bot_id,
+                        bot_id=ledger_bot_id,  # scope — None when pooled
                         idempotency_key=idem_key,
+                        attributed_bot_id=bot_id,  # attribution — always the real bot
                     )
                 session.commit()
                 total += count

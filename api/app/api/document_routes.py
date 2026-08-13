@@ -739,7 +739,8 @@ def ingest_documents(
                     total_cost,
                     reason="document_upload",
                     reference_id=bot_id,
-                    bot_id=ledger_bot_id,
+                    bot_id=ledger_bot_id,  # scope — None when pooled
+                    attributed_bot_id=bot_id,  # attribution — always the real bot
                 )
                 db.commit()
                 deducted_amount = total_cost

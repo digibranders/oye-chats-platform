@@ -156,6 +156,36 @@ export function getRatingsSummary(botId?: number): Promise<Record<string, unknow
 export function getResolutionSummary(botId?: number): Promise<Record<string, unknown>>;
 export function getFeedbackData(botId?: number): Promise<FeedbackItem[]>;
 
+// ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
+/** One agent's activity in the reporting window. Agents with no activity at
+ *  all are omitted by the backend, so a row always has a non-zero metric. */
+export interface PerAgentReportRow {
+  bot_id: number;
+  bot_name: string;
+  /** Consumption credits only - grants, top-ups, refunds and expiries excluded. */
+  credits_spent: number;
+  conversations: number;
+  leads: number;
+}
+
+export interface PerAgentReport {
+  /** ISO-8601 window bounds, both inclusive. */
+  since: string;
+  until: string;
+  rows: PerAgentReportRow[];
+  totals: {
+    credits_spent: number;
+    conversations: number;
+    leads: number;
+  };
+}
+
+export function getPerAgentReport(days?: number): Promise<PerAgentReport>;
+/** Downloads the report as CSV (triggers a browser download; resolves to void).
+ *  The filename comes from the server's `Content-Disposition` and carries the
+ *  window; `fallbackFilename` is used only if that header is unreadable. */
+export function downloadPerAgentReportCsv(days?: number, fallbackFilename?: string): Promise<void>;
+
 // ── Journey analytics (Standard / Professional gated) ──────────────────────
 // Period is a UTC calendar month, formatted `YYYY-MM` (e.g. `2026-08`).
 // Kept as a plain string for API-layer simplicity; the backend validates
