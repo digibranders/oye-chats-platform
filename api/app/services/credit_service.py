@@ -146,26 +146,18 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # once per resolved visitor. Professional-only and gated to the
     # ``feature.company_name_enabled`` kill switch; skipped silently on an
     # empty balance.
-    "credit_cost.company_name": 10,
-    # Per-file knowledge base upload — legacy flat rate. Retained as the
-    # fallback / small-doc minimum; the real cost now scales with document
-    # size via ``credit_cost.document_upload_tiers`` (see below).
-    "credit_cost.document_upload": 3,
-    # Size-based upload pricing (word buckets). ``max_words`` is EXCLUSIVE:
-    # a doc of exactly 100 words falls into the second tier, not the first.
-    # ``max_words: null`` is the catch-all tier for anything above the
-    # largest bounded bucket. Fully overridable from the super-admin panel
-    # by writing a JSONB array to ``pricing_config.credit_cost.document_upload_tiers``.
-    # Bumped from a flat 3 credits/file so bulky uploads pay their share
-    # of embedding cost and low-tier users can't game the shelf-space cap
-    # by dumping large files.
-    "credit_cost.document_upload_tiers": [
-        {"max_words": 100, "credits": 5},
-        {"max_words": 500, "credits": 15},
-        {"max_words": 2000, "credits": 30},
-        {"max_words": 10000, "credits": 75},
-        {"max_words": None, "credits": 150},
-    ],
+    "credit_cost.company_name": 5,
+    # Per-file knowledge base upload — the MINIMUM charge for one file. The
+    # cost scales with document size (below); a file short enough to price
+    # under this floor still costs this much.
+    "credit_cost.document_upload": 1,
+    # Size-based upload pricing: one flat rate, no buckets. A document costs
+    # ``ceil(words / 250)`` credits — 1 credit per 250 words — floored at the
+    # minimum above. Both halves are super-admin tunable from the pricing
+    # panel; this replaced a five-bucket word-tier table whose EXCLUSIVE
+    # ``max_words`` edges had to be restated identically in the customer-facing
+    # table, and drifted from it (see ``get_document_upload_cost_for_size``).
+    "credit_cost.document_upload_words_per_credit": 250,
     "seat_price_cents": 1500,
     # Lifetime top-ups: 0 (or any non-positive value) means top-up grants never
     # expire — ``grant_topup`` writes ``expires_at=None`` and the daily
@@ -190,35 +182,43 @@ _DEFAULT_PRICING: dict[str, Any] = {
     # editable. Priced per the 2026-08 credit reprice.
     "topup_packs": [
         {
-            "inr": 3999,
-            "usd": 49,
-            "credits": 6000,
+            "inr": 1000,
+            "usd": 13,
+            "credits": 2000,
+            "bonus_pct": 0,
+            "stripe_price_id": None,
+            "razorpay_plan_id": None,
+        },
+        {
+            "inr": 4000,
+            "usd": 50,
+            "credits": 8000,
             "bonus_pct": 0,
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },
         {
             "inr": 10000,
-            "usd": 119,
-            "credits": 36000,
-            "bonus_pct": 140,
+            "usd": 125,
+            "credits": 30000,
+            "bonus_pct": 50,
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },
         {
             "inr": 20000,
-            "usd": 239,
-            "credits": 75000,
-            "bonus_pct": 150,
+            "usd": 250,
+            "credits": 70000,
+            "bonus_pct": 75,
             "badge": "Best value",
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },
         {
             "inr": 30000,
-            "usd": 359,
+            "usd": 375,
             "credits": 100000,
-            "bonus_pct": 120,
+            "bonus_pct": 67,
             "stripe_price_id": None,
             "razorpay_plan_id": None,
         },
@@ -262,6 +262,13 @@ def invalidate_pricing_cache() -> None:
 # leak revenue on a typo'd/unpriced action or a non-numeric config value (§5).
 _DEFAULT_CREDIT_COST = 1
 
+# Document-upload rate, used when pricing_config carries no usable override.
+# Mirrors ``_DEFAULT_PRICING`` above; kept as named constants because
+# ``get_document_upload_cost_for_size`` needs them as a fail-closed fallback
+# for a config value it cannot parse.
+_DEFAULT_WORDS_PER_CREDIT = 250
+_MIN_DOCUMENT_UPLOAD_COST = 1
+
 
 def get_credit_cost(session: Session, action: str) -> int:
     """Return the credit cost for an action (e.g. ``'ai_chat'``, ``'url_scan'``).
@@ -289,9 +296,11 @@ def count_words(text: str) -> int:
 
     Uses whitespace-split — matches how a user would eyeball the doc's
     length. Punctuation attached to words counts as one word; hyphenated
-    compounds count as one. Good enough for tier bucketing where a 10-word
-    imprecision doesn't cross any boundary. Empty / whitespace-only input
-    returns 0 (which lands in the smallest tier via ``get_document_upload_cost_for_size``).
+    compounds count as one. Good enough for a 250-words-per-credit rate, where
+    a 10-word imprecision moves the charge only on an exact multiple of 250.
+    Empty / whitespace-only input returns 0 (which prices at the per-file
+    minimum via ``get_document_upload_cost_for_size``; the ingest route skips
+    billing zero-word files outright).
     """
     if not text:
         return 0
@@ -301,59 +310,47 @@ def count_words(text: str) -> int:
 def get_document_upload_cost_for_size(session: Session, word_count: int) -> int:
     """Return the credit cost for uploading a document of ``word_count`` words.
 
-    Reads the ``credit_cost.document_upload_tiers`` list from pricing config
-    (super-admin editable) and returns the first tier whose ``max_words`` is
-    None or strictly greater than ``word_count``. Fails CLOSED: an unparseable
-    config falls back to the flat ``credit_cost.document_upload`` so a broken
-    JSON never grants a free upload.
+    One flat rate: ``ceil(words / rate)`` credits, where ``rate`` is
+    ``credit_cost.document_upload_words_per_credit`` (250 — i.e. 1 credit per
+    250 words), never below the ``credit_cost.document_upload`` minimum. Both
+    keys are super-admin tunable from the pricing panel.
 
-    Bucket edge semantics: ``max_words`` is EXCLUSIVE, so a doc of exactly
-    100 words lands in the SECOND bucket (15 credits), not the first.
+    This replaced a five-bucket word-tier table. The buckets priced the same
+    idea in a shape that had to be restated — with EXCLUSIVE edges — in the
+    customer-facing table in ``UsagePage.tsx``, and the two drifted: every
+    bounded boundary advertised one price and charged the next bucket up, 3x
+    at 100 words. A single rate has no edges to restate.
 
-    This docstring previously said "25 credits" and claimed it "matches the
-    marketing table shown to customers". Both were wrong: the tier is 15, and
-    the customer-facing table in ``UsagePage.tsx`` was labelled INCLUSIVELY
-    ("Up to 100 words → 5 credits"), so all four bounded boundaries advertised
-    a price and then charged the next tier up — 3x at 100 words. The labels now
-    state exclusive ranges; if you change these caps, change them there too.
+    Fails CLOSED: a missing or non-numeric rate falls back to the shipped 250
+    rather than to a divisor that would make an upload free.
     """
     word_count = max(int(word_count or 0), 0)
     pricing = get_pricing(session)
-    raw_tiers = pricing.get("credit_cost.document_upload_tiers")
 
-    fallback = get_credit_cost(session, "document_upload")
+    # The floor is the per-file minimum, and it is a minimum of at least 1:
+    # a zeroed-out ``credit_cost.document_upload`` must not make uploads free.
+    minimum = max(get_credit_cost(session, "document_upload"), _MIN_DOCUMENT_UPLOAD_COST)
 
-    if not isinstance(raw_tiers, list) or not raw_tiers:
-        logger.warning(
-            "credit_cost.document_upload_tiers missing or malformed (%r) — "
-            "falling back to flat credit_cost.document_upload=%d",
-            raw_tiers,
-            fallback,
-        )
-        return fallback
-
+    raw_rate = pricing.get(
+        "credit_cost.document_upload_words_per_credit",
+        _DEFAULT_WORDS_PER_CREDIT,
+    )
     try:
-        for tier in raw_tiers:
-            cap = tier.get("max_words")
-            credits = int(tier.get("credits", 0))
-            if cap is None or word_count < int(cap):
-                return max(credits, 0)
-    except (TypeError, ValueError, AttributeError):
+        words_per_credit = int(raw_rate)
+    except (TypeError, ValueError):
+        words_per_credit = 0
+    if words_per_credit <= 0:
         logger.warning(
-            "credit_cost.document_upload_tiers has non-numeric bucket (%r) — "
-            "falling back to flat credit_cost.document_upload=%d",
-            raw_tiers,
-            fallback,
+            "credit_cost.document_upload_words_per_credit is missing or not a positive "
+            "integer (%r) — falling back to %d words per credit",
+            raw_rate,
+            _DEFAULT_WORDS_PER_CREDIT,
         )
-        return fallback
+        words_per_credit = _DEFAULT_WORDS_PER_CREDIT
 
-    # Ran off the end of a config that had bounded ``max_words`` on every
-    # tier — treat the largest tier's credits as the effective ceiling
-    # rather than accidentally billing 0.
-    try:
-        return max(int(raw_tiers[-1].get("credits", 0)), 0)
-    except (TypeError, ValueError, AttributeError):
-        return fallback
+    # Integer ceiling division — a partial block of words is a whole credit.
+    charged = (word_count + words_per_credit - 1) // words_per_credit
+    return max(charged, minimum)
 
 
 def is_kill_switch_active(session: Session) -> bool:

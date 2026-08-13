@@ -19,11 +19,11 @@ def _plan(slug: str) -> dict:
 def test_enterprise_plan_exists_with_agency_entitlements():
     ent = _plan("enterprise")
 
-    assert ent["credits_per_month"] == 13000
-    assert ent["monthly_price_cents"] == 479900  # ₹4,799
-    assert ent["annual_price_cents"] == 4606800  # ₹46,068 (₹3,839/mo)
-    assert ent["monthly_price_usd_cents"] == 9199  # $91.99
-    assert ent["annual_price_usd_cents"] == 91188  # $911.88 ($75.99/mo)
+    assert ent["credits_per_month"] == 10000
+    assert ent["monthly_price_cents"] == 279900  # ₹2,799
+    assert ent["annual_price_cents"] == 2686800  # ₹26,868 (₹2,239/mo × 12)
+    assert ent["monthly_price_usd_cents"] == 8999  # $89.99
+    assert ent["annual_price_usd_cents"] == 86388  # $863.88 ($71.99/mo × 12)
 
     # Unlimited is -1 everywhere in this codebase.
     assert ent["limits"]["bots"] == -1

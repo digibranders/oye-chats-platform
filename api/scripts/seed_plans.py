@@ -87,10 +87,10 @@ _PLANS: list[dict] = [
         "description": "For a solo site that wants live chat + a real AI agent.",
         "credits_per_month": 1000,
         "monthly_price_cents": 59900,  # ₹599
-        "annual_price_cents": 598800,  # ₹5,988 (₹499/mo × 12)
-        "monthly_price_usd_cents": 1900,  # $19
-        "annual_price_usd_cents": 18000,  # $180 ($15/mo × 12)
-        "annual_discount_percent": 17,
+        "annual_price_cents": 574800,  # ₹5,748 (₹479/mo × 12)
+        "monthly_price_usd_cents": 799,  # $7.99
+        "annual_price_usd_cents": 7788,  # $77.88 ($6.49/mo × 12)
+        "annual_discount_percent": 20,  # ₹5,748 vs ₹7,188 (12 × monthly)
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 1,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -130,10 +130,10 @@ _PLANS: list[dict] = [
         "description": "The lead-machine — grounded AI plus BANT qualification.",
         "credits_per_month": 2500,
         "monthly_price_cents": 119900,  # ₹1,199
-        "annual_price_cents": 1198800,  # ₹11,988 (₹999/mo × 12)
-        "monthly_price_usd_cents": 3100,  # $31
-        "annual_price_usd_cents": 30000,  # $300 ($25/mo × 12)
-        "annual_discount_percent": 17,
+        "annual_price_cents": 1150800,  # ₹11,508 (₹959/mo × 12)
+        "monthly_price_usd_cents": 1599,  # $15.99
+        "annual_price_usd_cents": 15588,  # $155.88 ($12.99/mo × 12)
+        "annual_discount_percent": 20,  # ₹11,508 vs ₹14,388 (12 × monthly)
         "trial_days": 7,  # the 7-day full-Standard trial
         "included_operator_seats": 2,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -175,11 +175,11 @@ _PLANS: list[dict] = [
         "name": "Professional",
         "description": "For teams scaling qualified pipeline with deeper frameworks.",
         "credits_per_month": 10000,
-        "monthly_price_cents": 359900,  # ₹3,599
-        "annual_price_cents": 3598800,  # ₹35,988 (₹2,999/mo × 12)
-        "monthly_price_usd_cents": 3900,  # $39
-        "annual_price_usd_cents": 37200,  # $372 ($31/mo × 12)
-        "annual_discount_percent": 17,
+        "monthly_price_cents": 239900,  # ₹2,399
+        "annual_price_cents": 3600000,  # ₹36,000 (₹3,000/mo × 12)
+        "monthly_price_usd_cents": 4599,  # $45.99
+        "annual_price_usd_cents": 45588,  # $455.88 ($37.99/mo × 12)
+        "annual_discount_percent": -25,  # ₹36,000 vs ₹28,788 (12 × monthly)
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 3,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -217,12 +217,12 @@ _PLANS: list[dict] = [
         "slug": "enterprise",
         "name": "Enterprise",
         "description": "For agencies running many client sites from one account.",
-        "credits_per_month": 13000,
-        "monthly_price_cents": 479900,  # ₹4,799
-        "annual_price_cents": 4606800,  # ₹46,068 (₹3,839/mo × 12)
-        "monthly_price_usd_cents": 9199,  # $91.99
-        "annual_price_usd_cents": 91188,  # $911.88 ($75.99/mo × 12)
-        "annual_discount_percent": 20,
+        "credits_per_month": 10000,
+        "monthly_price_cents": 279900,  # ₹2,799
+        "annual_price_cents": 2686800,  # ₹26,868 (₹2,239/mo × 12)
+        "monthly_price_usd_cents": 8999,  # $89.99
+        "annual_price_usd_cents": 86388,  # $863.88 ($71.99/mo × 12)
+        "annual_discount_percent": 20,  # ₹26,868 vs ₹33,588 (12 × monthly)
         "trial_days": 0,
         "included_operator_seats": -1,
         "extra_seat_price_cents": 0,

@@ -185,10 +185,10 @@ def test_a_second_message_does_not_pay_for_the_same_lookups_again(db):
 def test_the_company_lookup_is_charged_once_per_session_not_once_per_message(db):
     """The billing property, asserted at the charge rather than the lookup.
 
-    `fetch_ip_intel` is metered at `credit_cost.company_name` (10). It is
+    `fetch_ip_intel` is metered at `credit_cost.company_name` (5). It is
     submitted from /chat and /chat/stream on EVERY message, so charging before
-    the dedup check bills a 15-turn conversation 150 credits of enrichment
-    against 15 credits of actual AI replies — roughly 67 conversations would
+    the dedup check bills a 15-turn conversation 75 credits of enrichment
+    against 15 credits of actual AI replies — roughly 133 conversations would
     exhaust a Professional plan's whole monthly allowance.
 
     The two halves of this — the metering and the dedup — were written

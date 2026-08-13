@@ -5,8 +5,8 @@ test covered is the thing that actually costs money: a real visitor filling the
 widget form, against a real Postgres, with a real `CreditLedger` — and then
 doing it a SECOND time, because the widget POSTs `/chat/lead-capture` from both
 the pre-chat form and the handoff form. One visitor, two POSTs, and the
-question the customer's invoice answers is whether that visitor cost 20 credits
-or 40.
+question the customer's invoice answers is whether that visitor cost 15 credits
+or 30.
 
 Only the two paid vendors are faked (Reoon, and the company resolver's crawl).
 The route, the session, the lead row, the three gates, and every ledger write
@@ -34,9 +34,10 @@ pytestmark = pytest.mark.skipif(not os.getenv("DB_URL"), reason="needs a reachab
 _SESSION_ID = "sess-money-path"
 _EMAIL = "priya@infosys.com"
 
-# Both enrichments cost 10; a fully-enriched lead is 20 credits, once.
+# A fully-enriched lead is 15 credits, once: 10 for the address, 5 for the
+# employer.
 _EMAIL_COST = 10
-_COMPANY_COST = 10
+_COMPANY_COST = 5
 
 _REOON_VALID = {
     "is_valid_syntax": True,
@@ -137,8 +138,8 @@ def capture(db, paid_bot, monkeypatch):
 
 
 class TestOneVisitorOneCharge:
-    def test_a_captured_lead_is_verified_identified_and_billed_twenty(self, db, capture):
-        """The happy path, priced: 10 for the address, 10 for the employer."""
+    def test_a_captured_lead_is_verified_identified_and_billed_fifteen(self, db, capture):
+        """The happy path, priced: 10 for the address, 5 for the employer."""
         with (
             patch("app.services.reoon_service.verify_email", return_value=_REOON_VALID) as verify,
             patch("app.services.company_profile_service.resolve_company", return_value=_PROFILE) as resolve,
