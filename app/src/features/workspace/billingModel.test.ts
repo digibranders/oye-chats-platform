@@ -75,6 +75,40 @@ describe('planGrantsUnlimitedAgents', () => {
     const plan = buildPlan({ id: 9, slug: 'bespoke-acme', name: 'Acme', limits: { bots: 'unlimited' } });
     expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
   });
+
+  /* `limits` is JSONB with nothing enforcing its value types, and the server
+     reads the quota through `int(...)` — which accepts `"-1"`. Dropping the
+     string here made the picker offer a plan `POST /bots/checkout` then
+     refused, so the customer chose it and hit a dead end. */
+  it('is true for the unlimited sentinel stored as a string', () => {
+    const plan = buildPlan({ id: 5, slug: 'enterprise', name: 'Enterprise', limits: { bots: '-1' } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(true);
+  });
+
+  it('is false for a finite agent quota stored as a string', () => {
+    const plan = buildPlan({ id: 3, slug: 'professional', name: 'Professional', limits: { bots: '1' } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
+  });
+});
+
+describe('buildPlan limits coercion', () => {
+  it('keeps a numeric-string quota as a number, so consumers never compare a string', () => {
+    const plan = buildPlan({ slug: 'x', name: 'X', limits: { bots: '-1', max_crawl_pages: ' 250 ' } });
+    expect(plan?.limits.bots).toBe(-1);
+    expect(plan?.limits.max_crawl_pages).toBe(250);
+  });
+
+  /* Unreadable values are dropped, not defaulted to 0: an absent key reads as
+     "this plan declares no such quota", which consumers already treat
+     conservatively, while a 0 would read as a real quota of zero. */
+  it('drops values that cannot be read as a finite number', () => {
+    const plan = buildPlan({
+      slug: 'x',
+      name: 'X',
+      limits: { bots: 'unlimited', operators: '', credits: null, seats: true, docs: [1] },
+    });
+    expect(plan?.limits).toEqual({});
+  });
 });
 
 describe('buildPlan', () => {

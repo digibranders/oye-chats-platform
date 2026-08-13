@@ -182,13 +182,39 @@ export interface BillingDetailsView {
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
-/** Coerce a raw `limits` object to a flat number map (`-1` = unlimited passes through). */
+/**
+ * Coerce a raw `limits` object to a flat number map (`-1` = unlimited passes through).
+ *
+ * Numeric STRINGS count. `Plan.limits` is JSONB with no schema behind it, and a
+ * super-admin editing the Plans page (or seeding a bespoke tier by hand) can
+ * store `{"bots": "-1"}` just as easily as `{"bots": -1}`. The backend reads
+ * that quota through `int(...)`, which accepts both — so dropping the string
+ * here made the client and the server disagree about the same plan row: the
+ * picker kept offering an unlimited-agents tier that `POST /bots/checkout`
+ * then refused, and the customer's only feedback was a dead-end error after
+ * they had chosen it. Matching `toNumber`'s existing string handling is what
+ * keeps the two ends reading one value the same way.
+ *
+ * Anything that is not a finite number after coercion is still DROPPED rather
+ * than defaulted to 0: an absent key reads as "this plan declares no such
+ * quota", which every consumer already treats conservatively, whereas a 0
+ * would read as a real quota of zero.
+ */
 function toNumberMap(raw: unknown): Record<string, number> {
   const record = asRecord(raw);
   if (!record) return {};
   const out: Record<string, number> = {};
   for (const [key, value] of Object.entries(record)) {
-    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value;
+      continue;
+    }
+    // `Number('')` and `Number('   ')` are 0, so an empty string would land as
+    // a hard quota of zero without this guard.
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) out[key] = parsed;
+    }
   }
   return out;
 }
@@ -430,7 +456,9 @@ export function formatSeatAllowance(includedSeats: number): string {
  * Mirrors `plan_entitlements_service.plan_grants_unlimited_bots`.
  *
  * Conservative on bad data, exactly like the server: a plan row with no `bots`
- * quota is NOT unlimited and stays selectable.
+ * quota — or one that cannot be read as a number at all — is NOT unlimited and
+ * stays selectable. A quota stored as the STRING `"-1"` does count, because
+ * `int("-1")` is what the server reads it as; `toNumberMap` normalises it.
  */
 export function planGrantsUnlimitedAgents(plan: PlanView): boolean {
   return plan.limits.bots === UNLIMITED_LIMIT;
