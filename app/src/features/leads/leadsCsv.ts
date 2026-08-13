@@ -6,7 +6,7 @@
  * the one path where a dropped field leaves the product for good — it needs
  * tests of its own.
  */
-import { csvSafe } from '../../lib/csvSafe';
+import { csvField } from '../../lib/csvSafe';
 import { type Lead } from '../../types/domain';
 
 import {
@@ -17,22 +17,6 @@ import {
   formatLocation,
   normalizeTier,
 } from './leadModel';
-
-/**
- * Escape one CSV field. Two independent defences, in order:
- *
- * 1. `csvSafe` stops a visitor-typed value from opening as a formula in the
- *    recipient's spreadsheet. Every cell goes through it — the columns are
- *    almost entirely visitor-supplied, and routing them all through one funnel
- *    means a column added later is safe without anyone remembering to be.
- * 2. RFC-4180 quoting keeps commas, quotes and newlines from breaking the
- *    record apart. It does nothing for defence 1: Excel evaluates `"=1+1"`
- *    exactly as it evaluates `=1+1`.
- */
-function csvField(value: string | number | null | undefined): string {
-  const raw = value === null || value === undefined ? '' : String(value);
-  return `"${csvSafe(raw).replace(/"/g, '""')}"`;
-}
 
 /**
  * Drop the table's absence placeholder, which must not reach the file.

@@ -10,6 +10,9 @@ have Postgres reachable. The route-level tests that prove each export actually
 
 from __future__ import annotations
 
+import csv
+import io
+
 import pytest
 
 from app.core.csv_safety import CSV_FORMULA_PREFIXES, csv_safe, csv_safe_row
@@ -110,10 +113,37 @@ def test_csv_safe_row_leaves_numbers_numeric() -> None:
     recipient's sheet, breaking every SUM and sort built on the export — which
     is why this cannot be a plain ``[csv_safe(v) for v in row]``.
     """
-    row = csv_safe_row(["Acme", 0, 42, 3.5, None, True])
+    row = csv_safe_row(["Acme", 0, 42, 3.5, True])
 
-    assert row == ["Acme", 0, 42, 3.5, None, True]
-    assert [type(cell) for cell in row[1:]] == [int, int, float, type(None), bool]
+    assert row == ["Acme", 0, 42, 3.5, True]
+    assert [type(cell) for cell in row[1:]] == [int, int, float, bool]
+
+
+def test_csv_safe_row_renders_a_missing_value_like_csv_safe_does() -> None:
+    """``None`` is the one non-string the funnel does not pass through.
+
+    The two helpers used to disagree: ``csv_safe(None)`` returned ``""`` while
+    ``csv_safe_row([None])`` returned ``[None]``. Every export still looked
+    right, but only because ``csv.writer`` happens to render ``None`` as an
+    empty field — a property of that consumer, not of this function. The first
+    caller to build a row for anything else (an xlsx sheet, a JSON preview, a
+    ``join``) would have found a literal "None" sitting in a cell.
+    """
+    assert csv_safe_row([None]) == [csv_safe(None)] == [""]
+    assert csv_safe_row(["Acme", None, 42]) == ["Acme", "", 42]
+
+
+def test_csv_safe_row_none_normalisation_is_invisible_to_the_csv_writer() -> None:
+    """...and no shipped export changes a byte because of it.
+
+    Both live callers write through ``csv.writer``, which renders ``None`` and
+    ``""`` identically. Pinned so the consistency fix above is provably a
+    forward-looking one rather than a silent change to a customer's download.
+    """
+    buffer = io.StringIO()
+    csv.writer(buffer).writerow(csv_safe_row(["Acme", None, 42]))
+
+    assert buffer.getvalue() == "Acme,,42\r\n"
 
 
 def test_csv_safe_row_preserves_column_order_and_count() -> None:
@@ -122,7 +152,7 @@ def test_csv_safe_row_preserves_column_order_and_count() -> None:
     row = csv_safe_row(values)
 
     assert len(row) == len(values)
-    assert [str(cell).lstrip("'") for cell in row] == ["=a", "1", "b", "None", "@c"]
+    assert [str(cell).lstrip("'") for cell in row] == ["=a", "1", "b", "", "@c"]
 
 
 def test_csv_safe_row_accepts_a_generator() -> None:

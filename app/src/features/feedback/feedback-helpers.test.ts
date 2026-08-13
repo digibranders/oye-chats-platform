@@ -1,18 +1,19 @@
 /**
- * The feedback CSV export.
+ * The two feedback helpers a customer reads conclusions off: the CSV export and
+ * the satisfaction trend.
  *
  * Question and Answer are raw chat content — whatever a website visitor typed,
- * verbatim — so this is the second place (after the lead exports) where
+ * verbatim — so the export is the second place (after the lead exports) where
  * untrusted text leaves the product as a file the customer opens in Excel. The
  * escape itself is unit-tested in `lib/csvSafe.test.ts`; these prove it is
  * wired into the file that actually gets downloaded, and pin the two data-
  * integrity bugs the previous implementation shipped.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type FeedbackItem } from './types';
 
-import { buildFeedbackCsv } from './feedback-helpers';
+import { buildFeedbackCsv, buildTrend } from './feedback-helpers';
 
 const TRIGGERS = ['=', '+', '-', '@', '\t', '\r'] as const;
 
@@ -143,5 +144,109 @@ describe('buildFeedbackCsv — data integrity', () => {
     expect(row[3]).toBe('What is "RAG"?');
     expect(row[4]).toBe('Retrieval-"augmented".');
     expect(row).toHaveLength(5);
+  });
+});
+
+/**
+ * The satisfaction trend.
+ *
+ * Every assertion below names the actual days, because the failure mode here is
+ * one that counting points cannot see. `/analytics/feedback` returns rows
+ * newest-first (`sorted(…, reverse=True)` in `get_feedback_endpoint`), while
+ * Recharts plots an array left-to-right, so the chart wants the opposite order —
+ * oldest first — capped to the *most recent* 14 days. A cap that kept the wrong
+ * end still returns 14 points and still renders a plausible-looking line; it
+ * just shows a fortnight from weeks ago under a heading that says "trend". That
+ * is worse than a blank chart, because nothing about it looks wrong, so the
+ * only test that can catch it is one that pins which days survive.
+ */
+describe('buildTrend', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** One rating on 2026-07-`day`, as the ISO instant the API sends. */
+  function ratedOn(day: number, feedback: 1 | -1): FeedbackItem {
+    return item({
+      message_id: day,
+      created_at: new Date(2026, 6, day, 12).toISOString(),
+      feedback,
+    });
+  }
+
+  /**
+   * Twenty consecutive days, newest first — the order the endpoint returns.
+   * Only the newest day is positive, so each day's rate identifies it.
+   */
+  const twentyDays = Array.from({ length: 20 }, (_, index) =>
+    ratedOn(20 - index, index === 0 ? 1 : -1),
+  );
+
+  it('keeps the most recent 14 days, not the oldest 14', () => {
+    /* The bug this pins: `.slice(-14)` over newest-first input takes from the
+       wrong end, so the chart rendered Jul 1-14 while the customer's latest
+       week — the only part they can still act on — was dropped. */
+    expect(buildTrend(twentyDays, 0).map((point) => point.date)).toEqual([
+      'Jul 7',
+      'Jul 8',
+      'Jul 9',
+      'Jul 10',
+      'Jul 11',
+      'Jul 12',
+      'Jul 13',
+      'Jul 14',
+      'Jul 15',
+      'Jul 16',
+      'Jul 17',
+      'Jul 18',
+      'Jul 19',
+      'Jul 20',
+    ]);
+  });
+
+  it("carries each day's own numbers, with the newest day last", () => {
+    /* Order and payload pinned together: a chart whose last point is not the
+       newest day is reading right-to-left, whatever the labels say. */
+    const points = buildTrend(twentyDays, 0);
+
+    expect(points.at(-1)).toEqual({ date: 'Jul 20', rate: 100, total: 1 });
+    expect(points.at(0)).toEqual({ date: 'Jul 7', rate: 0, total: 1 });
+  });
+
+  it('keeps every day, oldest first, when there are fewer than 14', () => {
+    /* Below the cap the slice is a no-op, so this isolates the orientation:
+       chronological is a property of the output, not a side effect of the cap. */
+    const threeDays = [ratedOn(3, 1), ratedOn(2, -1), ratedOn(1, 1)];
+
+    expect(buildTrend(threeDays, 0).map((point) => point.date)).toEqual([
+      'Jul 1',
+      'Jul 2',
+      'Jul 3',
+    ]);
+  });
+
+  it('does not depend on the order the endpoint returned rows in', () => {
+    /* The coupling that caused the bug: the helper inferred chronology from
+       the caller's sort order. `get_feedback_endpoint` could switch to `ORDER
+       BY created_at` tomorrow — a change with no visible connection to this
+       chart — and the wrong fortnight would silently come back. */
+    expect(buildTrend([...twentyDays].reverse(), 0)).toEqual(buildTrend(twentyDays, 0));
+  });
+
+  it('applies the `days` window before capping', () => {
+    /* The 7d/30d segmented control feeds this argument; the 14-bucket cap is a
+       second, independent limit on top of it. */
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 20, 18));
+
+    expect(buildTrend(twentyDays, 7).map((point) => point.date)).toEqual([
+      'Jul 14',
+      'Jul 15',
+      'Jul 16',
+      'Jul 17',
+      'Jul 18',
+      'Jul 19',
+      'Jul 20',
+    ]);
   });
 });
