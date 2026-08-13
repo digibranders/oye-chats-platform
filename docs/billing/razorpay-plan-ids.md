@@ -1,7 +1,7 @@
 # Razorpay Plan IDs — Canonical Reference
 
 **Single source of truth** for which Razorpay plan IDs are wired into each environment.
-Last updated: **3 Aug 2026** — USD (international) rail created in Test + Live.
+Last updated: **13 Aug 2026** — Enterprise tier created in Test (INR + USD).
 
 > **Relaunch context.** OyeChats is relaunching on new pricing
 > (**Starter ₹449 · Standard ₹949 · Professional ₹1,399**). The production database is
@@ -32,6 +32,16 @@ the full yearly charge at ~20% off monthly.
 | Standard Annual | `plan_TE3QE2KpwbeQTd` | ₹9,108 | **Yearly** |
 | Professional Monthly | `plan_TE3Rj85kkmkhQx` | ₹1,399 | Monthly |
 | Professional Annual | `plan_TE3TU2vQsQJtHQ` | ₹13,428 | **Yearly** |
+| Enterprise Monthly | `plan_TPIlGXkYkdihvl` | ₹2,799 | Monthly |
+| Enterprise Annual | `plan_TPIlGiLEiZ027p` | ₹26,868 | **Yearly** |
+
+The two **Enterprise** rows were created 13 Aug 2026 (the rest are from the 16 Jul batch) and
+carry `notes = {"oyechats_slug": "enterprise", "cycle": …}`.
+
+> ⚠️ **The Starter / Standard / Professional ids above bill the 16 Jul amounts (₹449 / ₹949 /
+> ₹1,399), which `scripts/seed_plans.py` no longer holds** — it now seeds ₹599 / ₹1,199 / ₹2,999.
+> Only Enterprise's ids match what the seed writes. Until those three tiers get re-minted plans,
+> a Test checkout on them displays the new price and charges the old one. Enterprise is unaffected.
 
 ### Seed to a reset DB (Test)
 A fresh DB is built and seeded by `scripts/reset_and_seed.sh` (schema baseline →
@@ -46,10 +56,13 @@ cd api && uv run python scripts/set_razorpay_plan_ids.py \
   --standard-annual      plan_TE3QE2KpwbeQTd \
   --professional-monthly plan_TE3Rj85kkmkhQx \
   --professional-annual  plan_TE3TU2vQsQJtHQ \
+  --enterprise-monthly   plan_TPIlGXkYkdihvl \
+  --enterprise-annual    plan_TPIlGiLEiZ027p \
   --apply
 ```
-The `--professional-*` flags and the Professional plan row are both in place. The extra-seat
-add-on is configured via the `RAZORPAY_SEAT_PLAN_ID` env var (not a plan row).
+The `--professional-*` / `--enterprise-*` flags and the Professional and Enterprise plan rows are
+all in place. The extra-seat add-on is configured via the `RAZORPAY_SEAT_PLAN_ID` env var (not a
+plan row) — Enterprise includes unlimited seats, so it never bills the add-on.
 
 ---
 
@@ -105,8 +118,14 @@ Seat add-on (live): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLF7UFHVzhJU0R` ($5/seat/mon
 | Standard Annual | `plan_TLFBRC1uN9YHjj` | $180 | Yearly |
 | Professional Monthly | `plan_TLFBROcMoO4A9R` | $39 | Monthly |
 | Professional Annual | `plan_TLFBRaOh3Dv5rq` | $372 | Yearly |
+| Enterprise Monthly | `plan_TPIlGtrKGvGxKZ` | $89.99 | Monthly |
+| Enterprise Annual | `plan_TPIlH5qqhl60dD` | $863.88 | Yearly |
 
 Seat add-on (test): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLFBRlMIoz1QeC` ($5/seat/month).
+
+The two **Enterprise** rows were created 13 Aug 2026 and match `seed_plans.py`'s
+`monthly_price_usd_cents` / `annual_price_usd_cents` (8999 / 86388). There is **no Live-mode
+Enterprise plan** — the tier exists in Test only.
 
 ### Seed the USD ids
 
@@ -118,6 +137,8 @@ cd api && uv run python scripts/set_razorpay_plan_ids.py \
   --standard-annual-usd      plan_XXXXXXXXXXXXXXXX \
   --professional-monthly-usd plan_XXXXXXXXXXXXXXXX \
   --professional-annual-usd  plan_XXXXXXXXXXXXXXXX \
+  --enterprise-monthly-usd   plan_XXXXXXXXXXXXXXXX \
+  --enterprise-annual-usd    plan_XXXXXXXXXXXXXXXX \
   --apply
 ```
 

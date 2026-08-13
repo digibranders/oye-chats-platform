@@ -30,6 +30,8 @@ Add --apply to commit:
 Optional extras:
     --professional-monthly plan_XXXXXXXXXXXXXXXX
     --professional-annual  plan_XXXXXXXXXXXXXXXX
+    --enterprise-monthly   plan_XXXXXXXXXXXXXXXX
+    --enterprise-annual    plan_XXXXXXXXXXXXXXXX
 
 USD rail (international customers):
     --starter-monthly-usd      plan_XXXXXXXXXXXXXXXX
@@ -38,6 +40,8 @@ USD rail (international customers):
     --standard-annual-usd      plan_XXXXXXXXXXXXXXXX
     --professional-monthly-usd plan_XXXXXXXXXXXXXXXX
     --professional-annual-usd  plan_XXXXXXXXXXXXXXXX
+    --enterprise-monthly-usd   plan_XXXXXXXXXXXXXXXX
+    --enterprise-annual-usd    plan_XXXXXXXXXXXXXXXX
 
 The extra-seat add-on plans are NOT stored on a plan row — they are configured
 via the ``RAZORPAY_SEAT_PLAN_ID`` (INR) and ``RAZORPAY_SEAT_PLAN_ID_USD``
@@ -64,7 +68,7 @@ from sqlalchemy import select
 from app.db.models import Plan
 from app.db.session import get_session
 
-_SLUGS: tuple[str, ...] = ("starter", "standard", "professional")
+_SLUGS: tuple[str, ...] = ("starter", "standard", "professional", "enterprise")
 
 # CLI flag suffix → Plan column, per rail. The flag for a given tier is
 # ``--<slug>-<suffix>`` and its argparse attribute is ``<slug>_<suffix>``.
