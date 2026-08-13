@@ -31,6 +31,10 @@ const WORKSPACE_SECTIONS: readonly WorkspaceSection[] = [
   { path: 'members', label: 'Members', lockIntent: 'view_team' },
   { path: 'billing', label: 'Billing' },
   { path: 'usage', label: 'Usage' },
+  // Directly after Usage on purpose: Usage answers "how much did the workspace
+  // consume", Reports answers the same question broken out per agent and made
+  // exportable - the view an agency hands to each of its own clients.
+  { path: 'reports', label: 'Reports' },
   { path: 'api-keys', label: 'API Keys' },
   { path: 'integrations', label: 'Integrations', lockIntent: 'view_integrations' },
 ];

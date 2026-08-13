@@ -27,6 +27,7 @@ import { GeneralPage } from '../features/workspace/GeneralPage';
 import { MembersPage } from '../features/workspace/MembersPage';
 import { BillingPage } from '../features/workspace/BillingPage';
 import { UsagePage } from '../features/workspace/UsagePage';
+import { ReportsPage } from '../features/workspace/ReportsPage';
 import { ApiKeysPage } from '../features/workspace/ApiKeysPage';
 import { IntegrationsPage } from '../features/workspace/IntegrationsPage';
 import { AffiliatePage } from '../features/affiliate/AffiliatePage';
@@ -140,6 +141,7 @@ export const router = createBrowserRouter([
                       { path: 'members', handle: { crumb: 'Members' }, element: <MembersPage /> },
                       { path: 'billing', handle: { crumb: 'Billing' }, element: <BillingPage /> },
                       { path: 'usage', handle: { crumb: 'Usage' }, element: <UsagePage /> },
+                      { path: 'reports', handle: { crumb: 'Reports' }, element: <ReportsPage /> },
                       { path: 'api-keys', handle: { crumb: 'API Keys' }, element: <ApiKeysPage /> },
                       { path: 'integrations', handle: { crumb: 'Integrations' }, element: <IntegrationsPage /> },
                       { path: 'affiliate', handle: { crumb: 'Affiliate' }, element: <AffiliatePage /> },

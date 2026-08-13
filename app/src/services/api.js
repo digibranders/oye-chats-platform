@@ -917,6 +917,76 @@ export const getResolutionSummary = async (botId) => {
     }
 };
 
+// ── Per-agent report (Workspace ▸ Reports) ──────────────────────────────────
+// Account-wide, never scoped to the shell's agent switcher: the whole point is
+// one row per agent side by side, so an agency can show each of its own clients
+// that client's numbers.
+
+/**
+ * Per-agent activity rollup for the account over a trailing window.
+ * @param {number} days - Trailing window, 1-365. Backend 422s outside that.
+ * @returns {Promise<Object>} `{ since, until, rows[], totals }`
+ */
+export const getPerAgentReport = async (days = 30) => {
+    try {
+        const response = await api.get(`/analytics/by-bot?days=${days}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching per-agent report:', error);
+        throw buildApiError(error, 'Failed to load the per-agent report');
+    }
+};
+
+/**
+ * Pull the `filename` out of a Content-Disposition header.
+ *
+ * The server names the file after the window it covers, so the download keeps
+ * that name rather than a generic one - an agency archives one file per client
+ * per period. Reduced to a bare basename: this header is ours, but a filename
+ * is written straight into the user's Downloads folder, so path separators
+ * never survive the trip.
+ *
+ * @param {unknown} header - Raw `content-disposition` value, if any.
+ * @returns {string|null} The filename, or null when the header is absent
+ *   (cross-origin responses hide it unless the API exposes it) or unparseable.
+ */
+const parseContentDispositionFilename = (header) => {
+    if (typeof header !== 'string') return null;
+    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+    if (!match) return null;
+    const name = decodeURIComponent(match[1].trim()).split(/[\\/]/).pop();
+    return name || null;
+};
+
+/**
+ * Download the per-agent report as a CSV file.
+ *
+ * Mirrors `exportLeadsCsv`, with one difference: the filename comes from the
+ * server so it carries the reporting window. `fallbackFilename` covers an API
+ * build that predates the exposed header.
+ *
+ * @param {number} days - Trailing window, 1-365.
+ * @param {string} fallbackFilename - Used only when the server sends no name.
+ * @returns {Promise<void>} Resolves once the download has been triggered.
+ */
+export const downloadPerAgentReportCsv = async (days = 30, fallbackFilename = 'oyechats-report.csv') => {
+    try {
+        const response = await api.get(`/analytics/by-bot.csv?days=${days}`, { responseType: 'blob' });
+        const filename = parseContentDispositionFilename(response.headers?.['content-disposition']) ?? fallbackFilename;
+        const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('API Error exporting the per-agent report:', error);
+        throw buildApiError(error, 'Failed to export the per-agent report');
+    }
+};
+
 // ── Journey analytics (paid-tier: Standard / Professional) ──────────────────
 // Backend gates the read side on the `journey_analytics` plan flag and
 // returns HTTP 402 for Free / Starter. The hook layer catches that and
