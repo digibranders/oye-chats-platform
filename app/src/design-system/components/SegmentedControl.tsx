@@ -56,6 +56,10 @@ export function SegmentedControl<T extends string | number>({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
+    // The click path is blocked by the native `disabled` attribute; this keeps
+    // the keyboard path from depending on a browser refusing to focus a
+    // disabled button, so the two are locked by the same rule.
+    if (disabled) return;
     const count = options.length;
     switch (event.key) {
       case 'ArrowRight':

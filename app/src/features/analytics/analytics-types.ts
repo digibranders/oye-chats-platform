@@ -177,11 +177,11 @@ export function buildTrendSeries(activity: ActivityPoint[]): TrendPoint[] {
 /** Selectable trend windows. `all` keeps the full series. */
 export type TrendRange = '7d' | '30d' | '90d' | 'all';
 
-export const TREND_RANGES: ReadonlyArray<{ id: TrendRange; label: string }> = [
-  { id: '7d', label: '7 days' },
-  { id: '30d', label: '30 days' },
-  { id: '90d', label: '90 days' },
-  { id: 'all', label: 'All time' },
+export const TREND_RANGES: ReadonlyArray<{ value: TrendRange; label: string }> = [
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
+  { value: 'all', label: 'All time' },
 ];
 
 /** Slice a full daily series down to the trailing window `range` selects. */

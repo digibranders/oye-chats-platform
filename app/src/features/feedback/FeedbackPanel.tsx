@@ -1,6 +1,12 @@
-import { type KeyboardEvent, type ReactElement, useMemo, useRef, useState } from 'react';
+import { type ReactElement, useMemo, useState } from 'react';
 import { Download, MessageSquare, RefreshCw, TriangleAlert } from 'lucide-react';
-import { Button, cn, EmptyState, Skeleton } from '../../design-system';
+import {
+  Button,
+  EmptyState,
+  SegmentedControl,
+  type SegmentedOption,
+  Skeleton,
+} from '../../design-system';
 import { FeedbackFilterTabs } from './FeedbackFilterTabs';
 import {
   buildTopDownvoted,
@@ -20,93 +26,12 @@ import { useFeedback } from './useFeedback';
 /** Days represented by each date-range option, for `buildTrend`'s `days` argument. */
 const RANGE_DAYS: Record<DateRange, number> = { '7d': 7, '30d': 30, all: 0 };
 
-const RANGES: readonly { id: DateRange; label: string }[] = [
-  { id: '7d', label: '7d' },
-  { id: '30d', label: '30d' },
-  { id: 'all', label: 'All' },
+/** The date windows the panel offers, as `SegmentedControl` options. */
+const RANGES: readonly SegmentedOption<DateRange>[] = [
+  { value: '7d', label: '7d' },
+  { value: '30d', label: '30d' },
+  { value: 'all', label: 'All' },
 ];
-
-/**
- * Segmented date-range control (7d / 30d / All). Modelled as a WAI-ARIA radio
- * group - a one-of-N choice - with roving `tabIndex` and arrow/Home/End
- * navigation, matching the pattern used by `AnalyticsPage`'s `RangeControl`.
- */
-function DateRangeControl({
-  value,
-  onChange,
-}: {
-  value: DateRange;
-  onChange: (range: DateRange) => void;
-}): ReactElement {
-  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  function selectAt(index: number): void {
-    const range = RANGES[index];
-    if (!range) return;
-    buttonRefs.current[index]?.focus();
-    onChange(range.id);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
-    const count = RANGES.length;
-    switch (event.key) {
-      case 'ArrowRight':
-      case 'ArrowDown':
-        event.preventDefault();
-        selectAt((index + 1) % count);
-        break;
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        event.preventDefault();
-        selectAt((index - 1 + count) % count);
-        break;
-      case 'Home':
-        event.preventDefault();
-        selectAt(0);
-        break;
-      case 'End':
-        event.preventDefault();
-        selectAt(count - 1);
-        break;
-      default:
-        break;
-    }
-  }
-
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Feedback date range"
-      className="inline-flex items-center gap-1 rounded-lg bg-[var(--ds-bg-sunken)] p-1"
-    >
-      {RANGES.map((range, index) => {
-        const selected = range.id === value;
-        return (
-          <button
-            key={range.id}
-            ref={(node) => {
-              buttonRefs.current[index] = node;
-            }}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
-            onClick={() => onChange(range.id)}
-            onKeyDown={(event) => handleKeyDown(event, index)}
-            className={cn(
-              'rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]',
-              selected
-                ? 'bg-[var(--ds-bg-surface)] text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
-                : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-            )}
-          >
-            {range.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function LoadingState(): ReactElement {
   return (
@@ -202,7 +127,12 @@ export function FeedbackPanel({ agentId }: FeedbackPanelProps): ReactElement {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <DateRangeControl value={dateRange} onChange={setDateRange} />
+        <SegmentedControl
+          options={RANGES}
+          value={dateRange}
+          onChange={setDateRange}
+          ariaLabel="Feedback date range"
+        />
         <Button variant="outline" size="sm" onClick={() => exportFeedbackCsv(filtered)}>
           <Download size={13} aria-hidden="true" />
           Export CSV

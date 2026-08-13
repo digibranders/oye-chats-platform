@@ -61,6 +61,29 @@ describe('SegmentedControl', () => {
     }
   });
 
+  it('follows the controlled value when the parent re-renders', () => {
+    const onChange = vi.fn<(next: StringRange) => void>();
+    const control = (next: StringRange) => (
+      <SegmentedControl
+        options={STRING_OPTIONS}
+        value={next}
+        onChange={onChange}
+        ariaLabel="Trend window"
+      />
+    );
+    const { rerender } = render(control('30d'));
+
+    rerender(control('90d'));
+
+    // Both halves matter: the parent owns the state, so a component that
+    // latched onto its first `value` would keep announcing the stale segment
+    // and leave the tab stop behind on it.
+    expect(screen.getByRole('radio', { name: '90 days' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: '30 days' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: '90 days' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('radio', { name: '30 days' })).toHaveAttribute('tabindex', '-1');
+  });
+
   it('reports the clicked option', () => {
     const { onChange } = setup();
 
@@ -138,6 +161,7 @@ describe('SegmentedControl', () => {
     }
 
     fireEvent.click(within(group).getByRole('radio', { name: '7 days' }));
+    fireEvent.keyDown(within(group).getByRole('radio', { name: '30 days' }), { key: 'ArrowRight' });
     expect(onChange).not.toHaveBeenCalled();
   });
 

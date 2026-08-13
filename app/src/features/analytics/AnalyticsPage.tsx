@@ -25,7 +25,6 @@ import {
   PageContainer,
   SectionHeader,
   SegmentedControl,
-  type SegmentedOption,
   Skeleton,
   Tabs,
 } from '../../design-system';
@@ -95,11 +94,6 @@ function deriveInsight(
 
   return null;
 }
-
-/** The trend windows as `SegmentedControl` options. */
-const TREND_RANGE_OPTIONS: ReadonlyArray<SegmentedOption<TrendRange>> = TREND_RANGES.map(
-  (range) => ({ value: range.id, label: range.label }),
-);
 
 function LoadingState(): ReactElement {
   return (
@@ -279,7 +273,7 @@ export function AnalyticsPage(): ReactElement {
                     description="Daily messages across every agent"
                     actions={
                       <SegmentedControl
-                        options={TREND_RANGE_OPTIONS}
+                        options={TREND_RANGES}
                         value={range}
                         onChange={setRange}
                         ariaLabel="Message trend time range"
