@@ -10,11 +10,13 @@ import {
 } from '../../design-system';
 import { useBotContext } from '../../context/BotContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { useEntitlements } from '../../hooks/useEntitlements';
 import { type Bot } from '../../types/domain';
 import { hasLaunchProgress, resumeLaunchPath } from '../launch-studio/resume';
 import { AgentCard } from './AgentCard';
 import { CreateAgentDialog } from './CreateAgentDialog';
 import { AgentActionsMenu } from './AgentActionsMenu';
+import { resolveAgentCreationGate } from './agentLimit';
 
 /**
  * One agent in the grid: the shared, fully-navigational <AgentCard> tile with
@@ -66,18 +68,25 @@ function AgentsLoading(): ReactElement {
  * no local fetch state, no synchronous setState in an effect. Creating an agent
  * reuses the legacy `createBot` API via the CreateAgentDialog.
  *
- * Add-Agent is plan-gated on the `bots` limit: the per-bot billing model means
- * only the first (free) agent is unconditional - a workspace already at its
- * `bots` ceiling gets the upgrade modal instead of the create dialog. The
- * backend enforces the same rule server-side (`can_client_add_new_bot`), so
- * `CreateAgentDialog` also routes a 402 `must_subscribe` response from
- * `createBot` to the identical modal rather than a raw error.
+ * Add-Agent reads the plan's `bots` quota so the create dialog can say up front
+ * that this agent will need its own subscription - under the per-bot billing
+ * model only the first agent is free. The control itself is never taken away:
+ * that second agent is a sale, and `CreateAgentDialog` completes it by routing
+ * the server's 402 `must_subscribe` into a plan picker + per-agent checkout.
+ * The quota is advisory copy; `can_client_add_new_bot` server-side is the rule.
  */
 export function AgentsPage(): ReactElement {
   const { bots, loading, error, refreshBots } = useBotContext();
   const { currentWorkspaceId } = useWorkspace();
+  const { limitFor, planName } = useEntitlements();
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
+
+  // Counted from the live agent list rather than `entitlements.usage.bots`,
+  // which is only refetched on mount and on workspace switch and so would
+  // still read 0 right after the first agent is created. `deleteBot` is a hard
+  // delete, so the list matches the server's active-agent count.
+  const creationGate = resolveAgentCreationGate(bots.length, limitFor('bots'));
 
   // Always open the create dialog. Whether the new agent is free or needs a paid
   // plan is decided inside the dialog (free → created immediately; paywalled →
@@ -194,6 +203,8 @@ export function AgentsPage(): ReactElement {
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreated}
         onCheckoutComplete={handleCheckoutComplete}
+        gate={creationGate}
+        planName={planName}
       />
     </PageContainer>
   );

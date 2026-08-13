@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from 'react';
-import { Bot as BotIcon, Check, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Bot as BotIcon, Check, Loader2, AlertCircle, ArrowLeft, Sparkles } from 'lucide-react';
 import {
   createBot,
   createBotCheckout,
@@ -10,6 +11,7 @@ import { openRazorpayCheckout } from '../../lib/razorpay';
 import { type Bot } from '../../types/domain';
 import { Button, Input, cn } from '../../design-system';
 import { requiresSubscription } from '../../utils/apiErrors';
+import { describeAgentLimit, type AgentCreationGate } from './agentLimit';
 import {
   buildPlan,
   formatCredits,
@@ -27,6 +29,16 @@ export interface CreateAgentDialogProps {
   onCreated: (bot: Bot) => void;
   /** Called after a paid agent's checkout completes, with the new agent's id. */
   onCheckoutComplete: (botId: number) => void;
+  /**
+   * Whether the workspace's plan still funds another agent, resolved from
+   * entitlements BEFORE the form opens. Advisory only - it never decides
+   * anything, it just lets the name step say up front that this agent will
+   * need its own plan instead of letting the user find out from a 402 after
+   * filling the form in. The server remains the decision-maker.
+   */
+  gate: AgentCreationGate;
+  /** The workspace's current plan display name, for the gate notice. */
+  planName: string;
 }
 
 type Step = 'name' | 'plan';
@@ -56,12 +68,22 @@ function asRecord(value: unknown): Record<string, unknown> {
  * on an account is free and completes at step 1; additional agents run the
  * per-agent Razorpay checkout (`/bots/checkout` → Razorpay → `/bots/checkout/verify`),
  * which materialises the agent server-side only after the payment captures.
+ *
+ * `gate` (from the plan's `limits.bots` quota) only changes what step 1 SAYS.
+ * The step-2 route is still reached the same way it always was - by `createBot`
+ * answering 402 `must_subscribe` - so the server stays the single decider and
+ * the paths it alone knows about keep working: the idempotent same-website
+ * retry that returns the existing agent, and any plan whose quota the client
+ * snapshot has not caught up with. The gate can be wrong; it can never be
+ * load-bearing.
  */
 export function CreateAgentDialog({
   open,
   onClose,
   onCreated,
   onCheckoutComplete,
+  gate,
+  planName,
 }: CreateAgentDialogProps): ReactElement | null {
   const titleId = useId();
   const [step, setStep] = useState<Step>('name');
@@ -145,6 +167,10 @@ export function CreateAgentDialog({
   const trimmedName = name.trim();
   const canSubmitName = trimmedName.length > 0 && !submitting;
   const selectedPlan = plans.find((p) => p.slug === selectedSlug) ?? null;
+  // Non-null exactly when the workspace is already at its plan's agent quota,
+  // i.e. when `createBot` is expected to answer 402 and hand this dialog to
+  // its pricing step.
+  const limitNotice = describeAgentLimit(gate, planName);
 
   const resetAndClose = (): void => {
     onClose();
@@ -287,9 +313,11 @@ export function CreateAgentDialog({
                 {step === 'name' ? 'Create a new agent' : `Choose a plan for ${trimmedName || 'your agent'}`}
               </h2>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
-                {step === 'name'
-                  ? 'Give it a name - you can train and customize it next.'
-                  : 'Each agent runs on its own plan. Pick one to activate it.'}
+                {step === 'plan'
+                  ? 'Each agent runs on its own plan. Pick one to activate it.'
+                  : limitNotice
+                    ? 'Name it, then choose the plan it runs on.'
+                    : 'Give it a name - you can train and customize it next.'}
               </p>
             </div>
           </div>
@@ -301,6 +329,25 @@ export function CreateAgentDialog({
             >
               <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {/* Say the price before the form, not after it. Without this the
+              user names the agent, submits, and only then learns from the 402
+              that this one is paid. The upgrade path stays open either way -
+              this is copy, not a blocker. */}
+          {step === 'name' && limitNotice && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] p-3 text-[13px] text-[var(--ds-text-muted)]">
+              <Sparkles size={15} className="mt-px shrink-0 text-[var(--ds-accent)]" aria-hidden="true" />
+              <span>
+                {limitNotice}{' '}
+                <Link
+                  to="/workspace/billing"
+                  className="font-medium text-[var(--ds-accent-text)] underline-offset-2 hover:underline"
+                >
+                  Compare plans
+                </Link>
+              </span>
             </div>
           )}
 
@@ -353,6 +400,8 @@ export function CreateAgentDialog({
                       <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                       Creating&hellip;
                     </>
+                  ) : limitNotice ? (
+                    'Continue to plans'
                   ) : (
                     'Continue'
                   )}
