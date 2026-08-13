@@ -418,12 +418,16 @@ export function formatSeatAllowance(includedSeats: number): string {
  *
  * Such a plan is an ACCOUNT product: it sells one credit pool shared across
  * every agent. Bought per-agent it would scope those credits to a single
- * agent's isolated ledger and leave every further agent it entitles unfunded,
- * so the backend refuses it on both per-agent money paths
- * (`POST /bots/checkout` and `POST /subscriptions/change-plan` with a
- * `bot_id`). Every per-agent picker filters on this predicate so the option is
- * never offered in the first place - mirrors
- * `plan_entitlements_service.plan_grants_unlimited_bots`.
+ * agent's isolated ledger and leave every further agent it entitles unfunded.
+ *
+ * Exactly ONE picker filters on this: `CreateAgentDialog`, which drives
+ * `POST /bots/checkout` - a per-agent product that cannot sell a pooled plan,
+ * and where the backend refuses accordingly. The workspace Billing picker
+ * deliberately does NOT filter: `POST /subscriptions/change-plan` demotes such a
+ * purchase to account scope, which is what the tier sells, and filtering there
+ * hid the tier from every customer who could buy it.
+ *
+ * Mirrors `plan_entitlements_service.plan_grants_unlimited_bots`.
  *
  * Conservative on bad data, exactly like the server: a plan row with no `bots`
  * quota is NOT unlimited and stays selectable.

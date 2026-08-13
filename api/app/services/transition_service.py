@@ -585,7 +585,7 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     mandate — this function emails them that re-auth link itself (via
     ``short_url``) so the cutover never silently strands them (NB-3).
     """
-    from app.services import plan_service, razorpay_service
+    from app.services import plan_entitlements_service, plan_service, razorpay_service
 
     # Serialize the promotion decision so a webhook (subscription.cancelled /
     # subscription.completed) and the cron backstop can't both read a non-null
@@ -623,6 +623,36 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
         sub.scheduled_billing_cycle = None
         sub.scheduled_change_at = None
         session.flush()
+        return None
+
+    # A POOLED plan (``limits.bots == UNLIMITED``) sells ONE credit balance
+    # shared across every agent, so it is only coherent on an account-scoped
+    # subscription. This cutover copies ``sub.bot_id`` straight onto the grace
+    # row it INSERTs below, with no plan check — and that grace row is a real
+    # active-set row: it drives entitlements and scopes the credit ledger for the
+    # whole re-authorisation window. Nothing upstream can currently queue this
+    # shape (``/change-plan`` guards both in-place branches), so this is
+    # defense-in-depth against a future queueing path or a hand-edited row.
+    #
+    # Refused rather than demoted: minting the grace row at ``bot_id IS NULL``
+    # instead would collide with the client's existing account row on the
+    # ``ix_subscriptions_client_bot_active`` partial unique index. The scheduled
+    # trio is deliberately LEFT SET — clearing it would destroy the customer's
+    # requested change and hide the defect; leaving it keeps the row visible and
+    # re-promotable the moment a human corrects the scope.
+    if sub.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(new_plan):
+        logger.error(
+            "REFUSING to promote scheduled change on sub=%s (client=%s, bot=%s) onto pooled plan %s "
+            "(id=%s): that plan grants unlimited agents and sells one POOLED credit balance, so it "
+            "cannot be billed at agent scope. Nothing was cancelled or minted and the scheduled "
+            "change is still queued — move the subscription to account scope, or clear the "
+            "scheduled change, to unblock it.",
+            sub.id,
+            sub.client_id,
+            sub.bot_id,
+            new_plan.slug,
+            new_plan.id,
+        )
         return None
 
     billing_cycle = sub.scheduled_billing_cycle or "monthly"
@@ -732,8 +762,6 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     # Drop them immediately instead of waiting out the 60s TTL, so the downgrade
     # takes effect at cutover.
     if client is not None:
-        from app.services import plan_entitlements_service
-
         plan_entitlements_service.invalidate(client.id)
 
     payload = razorpay_service.create_subscription(

@@ -486,7 +486,12 @@ def test_webhook_dispatcher_routes_known_events_to_handlers():
     routed: list[str] = []
 
     def _capture(name):
-        def _handler(_session, _payload):
+        # ``**_kwargs`` because the dispatcher hands ``event_id`` to the
+        # activation handler specifically — it is the only one that can refuse an
+        # already-charged event without persisting anything, and it needs the key
+        # to release it (``_release_idempotency_key``). Routing is what's under
+        # test here, so the fakes accept whatever the dispatcher passes.
+        def _handler(_session, _payload, **_kwargs):
             routed.append(name)
             return f"ok-{name}"
 
