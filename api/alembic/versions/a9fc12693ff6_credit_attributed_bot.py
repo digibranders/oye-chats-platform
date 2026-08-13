@@ -20,8 +20,26 @@ cannot be reconstructed after the fact: a deduction row that was written
 without a spender has no other record of which bot served the request.
 
 Additive and backfill-free. Every existing row keeps NULL, which reads as
-"spender not recorded" — correct for history, and distinguishable from a real
-attribution.
+"spender not recorded" — correct for history.
+
+That NULL is not exclusive to history, though, and a recorded attribution is
+not permanent. The FK is ``ON DELETE SET NULL`` and bots are HARD-deleted
+(``DELETE /bots/{id}`` → ``session.delete(bot)`` in ``app/api/bot_routes.py``),
+so removing an agent rewrites every historical deduction attributed to it back
+to NULL. A pooled account that deletes an agent therefore loses that agent's
+whole spend history into the same "unattributed" bucket as pre-rollout rows,
+and loses it silently: the scope column (``bot_id``) is untouched, so balances
+and account totals still reconcile and nothing alarms.
+``reporting_service._credits_by_bot`` inner-joins ``Bot`` on this column, so
+the affected rows drop out of the per-bot rollup rather than resurfacing
+misattributed — the loss is invisible, not wrong.
+
+If that fidelity ever matters, the codebase already has the pattern that
+survives a delete: ``reference_id`` on this same table is a plain ``Integer``
+with no FK precisely so an audit label is not coupled to another row's
+lifecycle. Modelling attribution that way is a product decision — it trades
+referential integrity (and the FK's guarantee that the id resolves) for
+retained history — and is deliberately NOT taken here.
 
 Index and FK are built NON-concurrently. ``credit_ledger`` is the platform's
 highest-write table in principle, but the relaunch reset it in July and it
