@@ -125,6 +125,46 @@ def test_unlimited_quota_waives_the_paid_subscription_requirement(monkeypatch):
     assert any(isinstance(row, Bot) for row in added)
 
 
+def test_missing_bots_quota_denies_and_leaves_a_support_trail(monkeypatch, caplog):
+    """A contract plan that loses its ``bots`` term fails closed — and says so.
+
+    ``limit_for`` answers 0 for a missing key, so the widening simply stops and
+    the account is pushed back through per-bot checkout. Nothing else about the
+    response changes, so without this log the customer reaches support saying
+    "my contract includes unlimited agents" and there is no evidence the plan
+    row is the thing that broke.
+    """
+    import logging
+
+    from app.api import bot_routes
+
+    session = MagicMock()
+    session.execute.return_value = _ExecuteResult([])
+    monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+    no_quota = PlanEntitlements(
+        client_id=1,
+        plan_slug="bespoke-acme",
+        plan_name="Acme",
+        subscription_status="active",
+        limits={"credits": 50_000},  # the ``bots`` term is gone
+        features={},
+    )
+
+    tc = TestClient(_build_app())
+    with (
+        caplog.at_level(logging.INFO, logger=bot_routes.logger.name),
+        patch("app.services.plan_entitlements_service.can_client_add_new_bot", return_value=_DENIED),
+        patch("app.services.plan_entitlements_service.get_entitlements", return_value=no_quota),
+    ):
+        response = tc.post("/bots", json={"name": "Bespoke", "website": "https://bespoke.com"})
+
+    assert response.status_code == 402
+    session.add.assert_not_called()
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("bespoke-acme" in m and "no 'bots' quota" in m for m in messages), messages
+
+
 def test_entitlements_failure_falls_back_to_the_paid_subscription_gate(monkeypatch):
     """Fail closed: a resolver error must not hand out a free extra agent."""
     from app.api import bot_routes

@@ -1517,6 +1517,18 @@ def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> b
             exc_info=True,
         )
         return False
+    if "bots" not in entitlements.limits:
+        # A bespoke contract plan that loses its unlimited-agents term degrades
+        # to ``limit_for``'s conservative 0, so this predicate stops widening
+        # and the account is quietly pushed through per-bot checkout with no
+        # other trace. Log it so support can tell "plan data lost a term" apart
+        # from "customer is on the wrong plan" without reading the JSONB by hand.
+        logger.info(
+            "bots_limit_gate: plan '%s' declares no 'bots' quota for client=%s — "
+            "treating it as 0 (no widening); check the plan's limits JSON",
+            entitlements.plan_slug,
+            client_id,
+        )
     return entitlements.within_limit("bots", active_bot_count)
 
 
@@ -1542,9 +1554,20 @@ def create_bot(
         # Default rule: an account gets exactly one bot here, and every
         # additional bot needs its own paid subscription via
         # ``POST /bots/checkout`` so the new agent has a funded counterpart.
-        # That decision is centralised in
-        # :func:`plan_entitlements_service.can_client_add_new_bot` so the
-        # frontend's ``/me/entitlements`` view and this route stay in lockstep.
+        # That default lives in
+        # :func:`plan_entitlements_service.can_client_add_new_bot`, whose only
+        # caller is this route. It is NOT a shared source of truth with
+        # ``/me/entitlements``: that endpoint ships ``limits`` + ``usage`` and
+        # never surfaces this decision, so nothing on the frontend consumes the
+        # service's answer and the two cannot be "in lockstep". Read alone the
+        # service is in fact WRONG about what happens here — on an
+        # unlimited-agents plan it answers ``must_subscribe`` while this route
+        # returns 201, because the full rule is the service's default AND the
+        # widening below. Any surface needing the real answer has to reproduce
+        # both clauses; ``app/src/features/agents/agentLimit.ts`` is the
+        # frontend mirror that does, off ``limits.bots`` + ``usage.bots``. Fold
+        # the widening into the service the day the decision gets an endpoint
+        # of its own — until then it would centralise nothing.
         #
         # ``_plan_bots_limit_allows`` is the override: a plan whose
         # ``limits.bots`` quota still covers the account's current agent count
@@ -1700,7 +1723,20 @@ def create_bot_checkout(
         from app.db.models import Client, Plan
         from app.services import plan_entitlements_service, razorpay_service
 
-        plan = session.execute(select(Plan).where(Plan.slug == request.plan_slug)).scalars().first()
+        # ``is_active`` is part of the lookup, not a second check: ``delete_plan``
+        # soft-deletes by clearing the flag, and a super admin deactivates a tier
+        # to withdraw it from sale. Without the predicate a withdrawn plan stays
+        # purchasable by slug through a direct API call — the plan list hides it
+        # but this route would still mint a subscription on it. Matches
+        # ``/subscriptions/checkout`` and ``/subscriptions/change-plan``, which
+        # both gate on the flag. Deliberately 404 (not 400): a withdrawn plan is
+        # indistinguishable from one that never existed, so callers can't probe
+        # for retired tiers.
+        plan = (
+            session.execute(select(Plan).where(Plan.slug == request.plan_slug, Plan.is_active.is_(True)))
+            .scalars()
+            .first()
+        )
         if plan is None:
             raise HTTPException(status_code=404, detail=f"Plan '{request.plan_slug}' not found.")
         if plan.slug == "free":
