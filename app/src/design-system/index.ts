@@ -86,6 +86,8 @@ export { DataTable } from './components/DataTable';
 export type { DataTableProps, Column, ColumnAlign } from './components/DataTable';
 export { Tabs } from './components/Tabs';
 export type { TabsProps, TabItem } from './components/Tabs';
+export { SegmentedControl } from './components/SegmentedControl';
+export type { SegmentedControlProps, SegmentedOption } from './components/SegmentedControl';
 export { Modal } from './components/Modal';
 export type { ModalProps, ModalSize } from './components/Modal';
 export { Popover } from './components/Popover';

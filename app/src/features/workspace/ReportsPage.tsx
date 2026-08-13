@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactElement, useRef, useState } from 'react';
+import { type ReactElement, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, Bot as BotIcon, CalendarRange, Download, TriangleAlert } from 'lucide-react';
 import {
@@ -6,6 +6,8 @@ import {
   EmptyState,
   FeedbackBanner,
   PageContainer,
+  SegmentedControl,
+  type SegmentedOption,
   Skeleton,
   cn,
   useFeedback,
@@ -27,96 +29,10 @@ function metric(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString() : '0';
 }
 
-// ── Range selector ───────────────────────────────────────────────────────────
-
-/**
- * Segmented control for the reporting window. A one-of-N choice, so it is a
- * WAI-ARIA radio group (`role="radiogroup"` + `role="radio"` / `aria-checked`)
- * with a roving `tabIndex` and arrow / Home / End keys - the same contract the
- * Analytics page's trend-range control uses, so the two read identically to
- * assistive tech.
- */
-function RangeSelector({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: ReportRange;
-  onChange: (range: ReportRange) => void;
-  /** True while a download is in flight - the file being built covers the
-   *  window that was selected when the user clicked, so let it finish. */
-  disabled: boolean;
-}): ReactElement {
-  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  function selectAt(index: number): void {
-    const range = REPORT_RANGES[index];
-    if (!range) return;
-    buttonRefs.current[index]?.focus();
-    onChange(range.days);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
-    const count = REPORT_RANGES.length;
-    switch (event.key) {
-      case 'ArrowRight':
-      case 'ArrowDown':
-        event.preventDefault();
-        selectAt((index + 1) % count);
-        break;
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        event.preventDefault();
-        selectAt((index - 1 + count) % count);
-        break;
-      case 'Home':
-        event.preventDefault();
-        selectAt(0);
-        break;
-      case 'End':
-        event.preventDefault();
-        selectAt(count - 1);
-        break;
-      default:
-        break;
-    }
-  }
-
-  return (
-    <div
-      className="inline-flex items-center gap-1 rounded-lg bg-[var(--ds-bg-sunken)] p-1"
-      role="radiogroup"
-      aria-label="Reporting window"
-    >
-      {REPORT_RANGES.map((range, index) => {
-        const selected = range.days === value;
-        return (
-          <button
-            key={range.days}
-            ref={(node) => {
-              buttonRefs.current[index] = node;
-            }}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
-            disabled={disabled}
-            onClick={() => onChange(range.days)}
-            onKeyDown={(event) => handleKeyDown(event, index)}
-            className={cn(
-              'rounded-md px-2.5 py-1 text-[12px] transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)] disabled:cursor-not-allowed disabled:opacity-50',
-              selected
-                ? 'bg-[var(--ds-bg-surface)] font-semibold text-[var(--ds-text)] shadow-[var(--ds-shadow-sm)]'
-                : 'font-medium text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
-            )}
-          >
-            {range.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+/** The reporting windows as `SegmentedControl` options. */
+const REPORT_RANGE_OPTIONS: ReadonlyArray<SegmentedOption<ReportRange>> = REPORT_RANGES.map(
+  (range) => ({ value: range.days, label: range.label }),
+);
 
 // ── Table ────────────────────────────────────────────────────────────────────
 
@@ -267,7 +183,16 @@ export function ReportsPage(): ReactElement {
       description="What each of your AI chatbots did in the selected window - conversations held, leads captured, and credits used."
       actions={
         <>
-          <RangeSelector value={range} onChange={setRange} disabled={downloading} />
+          <SegmentedControl
+            options={REPORT_RANGE_OPTIONS}
+            value={range}
+            onChange={setRange}
+            ariaLabel="Reporting window"
+            // Locked while a download is in flight: the file being built covers
+            // the window that was selected when the user clicked, so let it
+            // finish rather than let the two disagree.
+            disabled={downloading}
+          />
           <Button
             variant="outline"
             onClick={() => void handleDownload()}
