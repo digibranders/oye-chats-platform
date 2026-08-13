@@ -12,6 +12,7 @@ import { type Lead } from '../../types/domain';
 import {
   EMPTY_PLACEHOLDER,
   TIER_META,
+  UNKNOWN_LOCATION,
   companyDisplay,
   formatDateTime,
   formatLocation,
@@ -32,6 +33,24 @@ import {
  */
 function blankIfPlaceholder(formatted: string): string {
   return formatted === EMPTY_PLACEHOLDER ? '' : formatted;
+}
+
+/**
+ * The same rule for the Location column's own placeholder.
+ *
+ * `formatLocation` answers the word "Unknown" when a session has no resolved
+ * geography — right for a table cell, wrong for a file. The server export
+ * (`GET /leads/export`) writes an empty cell for exactly that case, so the two
+ * downloads disagreed about the same lead: a customer merging them saw one row
+ * with a blank Location and one with a country named Unknown, and a CRM import
+ * created that country. An empty cell is what a spreadsheet means by "no
+ * value", so the server's answer is the one both paths now give.
+ *
+ * A real place is never lost to this: `UNKNOWN_LOCATION` is only ever produced
+ * by `formatLocation` itself, never carried through from stored geography.
+ */
+function blankIfUnknownLocation(formatted: string): string {
+  return formatted === UNKNOWN_LOCATION ? '' : formatted;
 }
 
 /**
@@ -68,7 +87,7 @@ export function buildSelectedLeadsCsv(
       csvField(lead.contact?.company),
       csvField(tier.label),
       csvField(lead.score),
-      csvField(formatLocation(lead.location)),
+      csvField(blankIfUnknownLocation(formatLocation(lead.location))),
       csvField(tagsFor(lead.session_id).join('; ')),
       csvField(blankIfPlaceholder(formatDateTime(lead.last_active_at))),
     ].join(',');

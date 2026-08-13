@@ -262,6 +262,15 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 /**
+ * What a table cell shows when a lead's geography could not be resolved.
+ *
+ * Exported for the same reason as `EMPTY_PLACEHOLDER`: it is a word chosen for
+ * a table cell, and non-table consumers have to be able to recognise it and
+ * substitute their own representation of absence. The CSV export blanks it.
+ */
+export const UNKNOWN_LOCATION = 'Unknown';
+
+/**
  * Render a lead's location WITHOUT the visitor's IP address.
  *
  * The backend stores `ChatSession.location` as `"<City>, <Country> | <IP>"`
@@ -269,17 +278,17 @@ export function filterLeads(leads: Lead[], filters: LeadFilters): Lead[] {
  * `"IP: <addr>"` placeholder before the background geo lookup resolves. A
  * visitor IP is personal data under GDPR/DPDP and has no place in an
  * operator-facing table, so everything from the `|` separator onward is
- * dropped, and the placeholder degrades to "Unknown" rather than printing a
- * bare address. The raw value is left untouched in the database, where ops
- * still needs it.
+ * dropped, and the placeholder degrades to `UNKNOWN_LOCATION` rather than
+ * printing a bare address. The raw value is left untouched in the database,
+ * where ops still needs it.
  */
 export function formatLocation(raw: string | null | undefined): string {
   const value = (raw ?? '').trim();
-  if (!value) return 'Unknown';
+  if (!value) return UNKNOWN_LOCATION;
   // "IP: 1.2.3.4" is the pre-resolution stamp — no geography in it at all.
-  if (/^ip:/i.test(value)) return 'Unknown';
+  if (/^ip:/i.test(value)) return UNKNOWN_LOCATION;
   const geo = value.split('|')[0]?.trim() ?? '';
-  return geo || 'Unknown';
+  return geo || UNKNOWN_LOCATION;
 }
 
 /**

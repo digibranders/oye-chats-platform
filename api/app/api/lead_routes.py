@@ -446,6 +446,15 @@ def export_leads_csv(
             # column added below is safe without its author having to know that.
             # Integers (score, message count) pass through untouched and stay
             # numeric in the recipient's sheet.
+            #
+            # Absence is an EMPTY CELL, never a word. ``build_lead_response``
+            # answers "Unknown" for a missing location/device because that
+            # reads well in the dashboard table, but a file says "no value"
+            # with an empty cell — a CRM importing "Unknown" creates a country
+            # by that name. The client-side "Export selected" download
+            # (``app/src/features/leads/leadsCsv.ts``) blanks the same
+            # placeholder so a customer merging the two files never sees one
+            # lead described two ways.
             row = [
                 chat_session.id,
                 lead_info.name if lead_info else "",
