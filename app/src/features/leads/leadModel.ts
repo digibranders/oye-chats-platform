@@ -281,6 +281,16 @@ export const UNKNOWN_LOCATION = 'Unknown';
  * dropped, and the placeholder degrades to `UNKNOWN_LOCATION` rather than
  * printing a bare address. The raw value is left untouched in the database,
  * where ops still needs it.
+ *
+ * MIRROR — this is the twin of `format_visitor_location` in
+ * `api/app/core/visitor_privacy.py`, which is the source of truth: the server
+ * now redacts at every serialisation boundary, so a `location` arriving here
+ * has already been through the Python copy. This one stays as belt-and-braces
+ * for payloads cached from an older build, and because the export it feeds
+ * (`leadsCsv.ts`) is assembled entirely in the browser. It is idempotent, so
+ * the two passes cannot fight. Change one, change the other — a divergence
+ * between exactly these two implementations is what leaked every lead's IP
+ * through `GET /leads/export`.
  */
 export function formatLocation(raw: string | null | undefined): string {
   const value = (raw ?? '').trim();

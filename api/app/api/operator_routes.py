@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
 from app.core.security import get_password_hash
+from app.core.visitor_privacy import redact_visitor_ip, redact_visitor_metadata
 from app.db.models import (
     BANTSignal,
     Bot,
@@ -1010,7 +1011,7 @@ def get_queue(auth=Depends(get_current_client_or_operator)):
                     "name": lead_info.name if lead_info else None,
                     "email": lead_info.email if lead_info else None,
                     "reason": chat_session.handoff_reason,
-                    "location": chat_session.location,
+                    "location": redact_visitor_ip(chat_session.location),
                     "device": chat_session.device,
                     "department_id": chat_session.department_id,
                     # ``bot_id`` / ``bot_name`` are surfaced so the operator
@@ -1691,9 +1692,18 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_oper
         return {
             "session_id": session_id,
             "status": chat_session.status,
-            "location": chat_session.location,
+            # ``None`` rather than "Unknown" when there is no geography to
+            # name, because the Inbox details panel renders this field verbatim
+            # and hides the row on a falsy value — it used to print the raw
+            # "IP: 1.2.3.4" stamp at an operator.
+            "location": redact_visitor_ip(chat_session.location),
             "device": chat_session.device,
-            "visitor_metadata": chat_session.visitor_metadata,
+            # The same visitor address reaches the wire a second way, as the
+            # ``ip_intel.resolved_for_ip`` dedup marker inside this blob — and
+            # here on every plan, since this route has no visitor-intelligence
+            # gate at all. The company/ASN/threat fields the operator actually
+            # reads survive; see ``redact_visitor_metadata``.
+            "visitor_metadata": redact_visitor_metadata(chat_session.visitor_metadata),
             "page_url": chat_session.page_url,
             "referrer": chat_session.referrer,
             "visitor_rating": chat_session.visitor_rating,
@@ -2128,7 +2138,7 @@ def get_qualified_bot_sessions(
                     "email": lead.email if lead else None,
                     "phone": lead.phone if lead else None,
                     "company": lead.company if lead else None,
-                    "location": chat_session.location,
+                    "location": redact_visitor_ip(chat_session.location),
                     "device": chat_session.device,
                     "department_id": chat_session.department_id,
                     "bant_dimensions": dims,

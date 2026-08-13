@@ -13,6 +13,7 @@ from sqlalchemy import desc, func, select, update
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
 from app.core.csv_safety import csv_safe_row
+from app.core.visitor_privacy import redact_visitor_ip
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
 from app.services.email_design import esc, h1, p, shell
@@ -454,7 +455,8 @@ def export_leads_csv(
             # by that name. The client-side "Export selected" download
             # (``app/src/features/leads/leadsCsv.ts``) blanks the same
             # placeholder so a customer merging the two files never sees one
-            # lead described two ways.
+            # lead described two ways. Hence ``or ""`` on the Location column
+            # below rather than ``format_visitor_location``.
             row = [
                 chat_session.id,
                 lead_info.name if lead_info else "",
@@ -467,7 +469,12 @@ def export_leads_csv(
                 _qualification_value(lead, "budget"),
                 _qualification_value(lead, "authority"),
                 _qualification_value(lead, "timeline"),
-                chat_session.location or "",
+                # This column is the reason ``core.visitor_privacy`` exists.
+                # It used to be ``chat_session.location or ""`` — the stored
+                # string, IP and all, for every lead in the workspace, in a file
+                # that then gets mailed around and loaded into a CRM. The
+                # dashboard beside it had been stripping the IP the whole time.
+                redact_visitor_ip(chat_session.location) or "",
                 chat_session.device or "",
                 msg_count,
                 chat_session.created_at.isoformat() if chat_session.created_at else "",

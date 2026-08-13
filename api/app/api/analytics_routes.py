@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
 from app.core.csv_safety import csv_safe_row
+from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
     get_dashboard_stats,
@@ -241,13 +242,17 @@ def get_visitors_endpoint(
 
             for item in data:
                 raw_loc = item.get("location", "") or "Unknown"
+
+                # The dedup key keeps the RAW value, and deliberately: the IP is
+                # what identifies one visitor across sessions, and a session
+                # that has resolved geography ("Mumbai, India | 1.2.3.4") has to
+                # land in the same bucket as one that has not yet ("IP:
+                # 1.2.3.4"). This is a dict key on the server and is never
+                # serialised — ``get_visitor_data`` hands back the raw column
+                # for exactly this. The value we RETURN is redacted below.
                 ip_part = raw_loc
-                display_loc = raw_loc
                 if " | " in raw_loc:
-                    display_loc, ip_part = raw_loc.split(" | ", 1)
-                elif raw_loc.startswith("IP: "):
-                    ip_part = raw_loc
-                    display_loc = "Unknown"
+                    _, ip_part = raw_loc.split(" | ", 1)
 
                 fingerprint = f"{ip_part}--{item.get('device', '')}"
 
@@ -255,7 +260,7 @@ def get_visitors_endpoint(
                     item["visitor"] = f"user{current_user_index}"
                     current_user_index += 1
                     item["all_session_ids"] = [item.get("session_id")]
-                    item["location"] = display_loc
+                    item["location"] = format_visitor_location(raw_loc)
                     unique_visitors[fingerprint] = item
                 else:
                     existing = unique_visitors[fingerprint]
