@@ -1,5 +1,5 @@
-import { type ReactElement, useMemo } from 'react';
-import { BarChart3, Compass, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
+import { type ReactElement, useMemo, useRef, useState } from 'react';
+import { BarChart3, Compass, Info, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { Button, EmptyState, LockedFeatureCard, Skeleton } from '../../design-system';
 import { useJourneyAnalytics } from './useJourneyAnalytics';
 import type { JourneyTopPageRow } from '../../services/api';
@@ -191,13 +191,14 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-6">
-      <div className="mb-5">
+      <div className="relative mb-5 flex items-center gap-1.5">
         <h3 className="text-[15px] font-semibold text-[var(--ds-text)]">
           Page Influence{' '}
           <span className="text-[13px] font-normal text-[var(--ds-text-muted)]">
             (Leads to Chatbot)
           </span>
         </h3>
+        <PageInfluenceHelp />
       </div>
 
       <ul className="flex flex-col gap-3.5">
@@ -239,5 +240,84 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
         })}
       </ul>
     </div>
+  );
+}
+
+/**
+ * PageInfluenceHelp — a small "i" icon beside the panel title that
+ * reveals a plain-language explanation ON HOVER (and on keyboard focus,
+ * so it stays accessible). Written for a non-technical bot owner: no
+ * analytics jargon, no talk of "sessions" or "denominators".
+ *
+ * The tooltip is anchored to the LEFT edge of the (relatively
+ * positioned) header rather than to the icon, so its fixed 18rem width
+ * always stays inside the card — the card clips overflow, and at the
+ * `lg` breakpoint this panel is only half-width. The panel content is
+ * non-interactive text, so opening on the icon's hover/focus (and not
+ * requiring the pointer to travel onto the panel) is enough.
+ *
+ * Input handling covers all three modes:
+ *  · Mouse — hover in/out via mouseenter/mouseleave.
+ *  · Keyboard — focus opens, blur/Escape closes.
+ *  · Touch — no hover exists, so a tap toggles via onClick. A tap also
+ *    fires `focus` BEFORE `click`; without guarding, focus would open
+ *    and the click would immediately toggle it back shut. `pointerRef`
+ *    records that the interaction came from a pointer so the focus
+ *    handler stands down and lets the click own the toggle. Keyboard
+ *    focus (no preceding pointerdown) still opens normally.
+ */
+function PageInfluenceHelp(): ReactElement {
+  const [open, setOpen] = useState(false);
+  const pointerRef = useRef(false);
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="What does Page Influence mean?"
+        aria-expanded={open}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onPointerDown={() => {
+          pointerRef.current = true;
+        }}
+        onClick={() => setOpen((v) => !v)}
+        onFocus={() => {
+          if (!pointerRef.current) setOpen(true);
+        }}
+        onBlur={() => {
+          pointerRef.current = false;
+          setOpen(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setOpen(false);
+        }}
+        className="flex h-5 w-5 items-center justify-center rounded-full text-[var(--ds-text-subtle)] transition-colors hover:bg-[var(--ds-bg-sunken)] hover:text-[var(--ds-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
+      >
+        <Info size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          role="tooltip"
+          className="absolute left-0 top-full z-30 mt-2 w-[18rem] rounded-[var(--ds-radius-lg)] border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] p-4 text-[13px] leading-relaxed text-[var(--ds-text-muted)] shadow-[var(--ds-shadow-lg)]"
+        >
+          <p className="mb-2 text-[13px] font-semibold text-[var(--ds-text)]">
+            What is Page Influence?
+          </p>
+          <p className="mb-2">
+            These are the pages people were reading right before they opened your chatbot.
+            The higher a page sits, the more visitors it sent into a chat.
+          </p>
+          <p className="mb-2">
+            Use it to spot which pages spark the most conversations, then make sure your
+            best answers and offers live on those pages.
+          </p>
+          <p>
+            <span className="font-medium text-[var(--ds-text)]">Visitors</span> is how many
+            people. <span className="font-medium text-[var(--ds-text)]">Visits</span> is the
+            total page views, since one person can reload or come back more than once.
+          </p>
+        </div>
+      )}
+    </>
   );
 }

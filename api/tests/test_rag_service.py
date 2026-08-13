@@ -2211,6 +2211,33 @@ class TestResolveNameFlow:
         assert name == "Gaurav"
         mock_save.assert_called_once()
 
+    def test_name_only_reply_acknowledges_instead_of_searching(self):
+        # Reported bug: bot asks the name, visitor replies only "steve", and the
+        # deferred item was a greeting (nothing to answer). The bare name must NOT
+        # fall through to retrieval (which returns the off-scope guardrail) — it
+        # gets a warm acknowledgment via the ask-message channel, name captured.
+        from app.services import rag_service
+
+        history = [
+            _name_msg("user", "hi"),
+            _name_msg("bot", rag_service._NAME_REQUEST_MESSAGE),
+        ]
+        with (
+            patch.object(rag_service, "get_lead_info_by_session", return_value=None),
+            patch.object(rag_service, "get_chat_history", return_value=history),
+            patch.object(rag_service, "create_or_update_lead_info") as mock_save,
+            # The deferred "hi" is a greeting the intent router already covers.
+            patch.object(rag_service, "route_intent", return_value=SimpleNamespace(intent="greeting")),
+        ):
+            ask, deferred, name, just = rag_service.resolve_name_flow(
+                MagicMock(), "s1", 3, 9, "steve", company_name="CleanStart"
+            )
+        assert ask is not None and "Steve" in ask
+        assert deferred is None
+        assert name == "Steve"
+        assert just is True
+        mock_save.assert_called_once()
+
     def test_decline_answers_original_and_does_not_renag(self):
         from app.services import rag_service
 
