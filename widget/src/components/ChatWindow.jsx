@@ -8,6 +8,7 @@ import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
 import { readSessionId, writeSessionId, clearSessionId, resolveShareDomain, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
+import { setSmartLinkUrls, setSmartLinkSession } from '../services/smartLinks';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
@@ -198,6 +199,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => readSessionId());
+
+    // Smart links: register the bot's smart-link destinations and bind the
+    // click registry to the active conversation. Once the visitor clicks a
+    // smart link, MessageBubble's SafeLink stops rendering it as a link on
+    // later answers (see services/smartLinks). Re-runs when settings load or
+    // the session changes ("New chat" starts a fresh, empty click set).
+    useEffect(() => {
+        setSmartLinkUrls(settings?.smart_link_urls);
+    }, [settings?.smart_link_urls]);
+
+    useEffect(() => {
+        setSmartLinkSession(sessionId);
+    }, [sessionId]);
     // The AI assistant is available 24/7 — business hours only gate the HUMAN
     // handoff (enforced server-side when the visitor actually requests a
     // person). So we always boot into the bot chat + welcome screen; we never
@@ -2037,14 +2051,41 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // is communicated in-band via the "<Name> joined" system line and the
     // per-message author labels.
     const renderAgentBadge = () => {
+        // Brand-coloured border (admin's primary colour) + the hover
+        // micro-interaction. The reactions themselves live as plain CSS in
+        // index.css (real :hover + @keyframes) so they work inside the widget's
+        // Shadow DOM, where Tailwind's transform/shadow custom-property
+        // composition does not resolve. ``--oyechats-brand`` feeds the hover glow.
+        const badgePrimary = sanitizeColor(settings.primary_color, '#3A0CA3');
+        const botName = settings.bot_name || 'AI Assistant';
         return (
             <div
-                className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40 pointer-events-auto"
-                style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
+                className="oyechats-bot-pill inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border pointer-events-auto"
+                style={{
+                    background: 'rgba(255,255,255,0.92)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    // Border colour is a faint brand tint applied in CSS
+                    // (color-mix on --oyechats-brand) so it stays subtle.
+                    '--oyechats-brand': badgePrimary,
+                }}
             >
-                <BotAvatar settings={settings} size="sm" />
-                <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
-                    {settings.bot_name || 'AI Assistant'}
+                <span className="oyechats-bot-pill-avatar">
+                    <BotAvatar settings={settings} size="sm" />
+                </span>
+                {/* Full name for screen readers; the visible text is split into
+                    per-letter spans so it can cascade back in on hover. */}
+                <span className="text-[12px] font-semibold text-[#16202C] leading-tight" aria-label={botName}>
+                    {Array.from(botName).map((ch, i) => (
+                        <span
+                            key={i}
+                            aria-hidden="true"
+                            className="oyechats-bot-pill-letter"
+                            style={{ animationDelay: `${i * 35}ms` }}
+                        >
+                            {ch}
+                        </span>
+                    ))}
                 </span>
             </div>
         );

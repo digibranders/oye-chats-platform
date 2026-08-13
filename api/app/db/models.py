@@ -461,6 +461,14 @@ class Bot(Base):
     services = Column(JSONB, nullable=True)  # list[str] of admin-defined service names
     services_url = Column(String, nullable=True)
 
+    # Smart links — admin-defined keyword→URL map, independent of ``services``.
+    # When the bot's answer naturally references one of these keywords it links
+    # the phrase to the mapped page (e.g. "pricing" → the pricing page). Stored
+    # as ``list[{"keyword": str, "url": str}]``. Nullable and additive: a bot
+    # that never sets it behaves exactly as before. Distinct from the services
+    # answer-scope above — smart links never restrict what the bot may answer.
+    answer_links = Column(JSONB, nullable=True)
+
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
     # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
     # match an entry in ``allowed_domains``. Entries support exact hostnames

@@ -132,6 +132,85 @@
   will-change: transform, opacity;
 }
 
+/* Chat window drop shadow — a soft, light halo around ALL four borders so the
+   floating panel lifts gently off the host page (see reference: text.com widget).
+   Written as a plain box-shadow (not Tailwind's shadow-[…] utility) because that
+   utility composes through the --tw-shadow custom property + an @property
+   registration, which does not resolve inside the widget's Shadow DOM. Desktop
+   only: on mobile the window is full-screen, so its edges sit at the viewport
+   bounds and a shadow would never be visible. */
+@media (min-width: 768px) {
+  .oyechats-window-shadow {
+    box-shadow:
+      0 0 26px 0 rgba(16, 32, 44, 0.12),
+      0 10px 34px -6px rgba(16, 32, 44, 0.17),
+      0 2px 8px -2px rgba(16, 32, 44, 0.09);
+  }
+}
+
+/* ── Bot identity pill (header chip) micro-interaction ─────────────────────────
+   The brand-coloured border is set inline (admin primary colour). Everything
+   below is plain CSS - real :hover + @keyframes - so it works inside the widget
+   Shadow DOM, where Tailwind's transform/shadow custom-property composition does
+   not resolve. On hover: the pill lifts with a brand-tinted glow, the avatar
+   jumps, and the name blinks out then cascades back in letter by letter. */
+.oyechats-bot-pill {
+  /* Very light brand-tinted hairline at rest; strengthens a touch on hover. */
+  border-color: color-mix(in srgb, var(--oyechats-brand, #3a0ca3) 18%, transparent);
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms ease,
+    border-color 220ms ease;
+  will-change: transform;
+}
+.oyechats-bot-pill:hover {
+  transform: translateY(-1px) scale(1.03);
+  border-color: color-mix(in srgb, var(--oyechats-brand, #3a0ca3) 40%, transparent);
+  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--oyechats-brand, #3a0ca3) 45%, transparent);
+}
+
+/* Avatar "jump" while the pill is hovered. */
+.oyechats-bot-pill-avatar {
+  display: inline-flex;
+  transform-origin: center bottom;
+}
+.oyechats-bot-pill:hover .oyechats-bot-pill-avatar {
+  animation: oyechatsPillAvatarJump 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes oyechatsPillAvatarJump {
+  0% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-6px) scale(1.08); }
+  55% { transform: translateY(0) scale(0.96); }
+  75% { transform: translateY(-2px) scale(1.02); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+/* Name letters: fully visible at rest; on hover each blinks out (fill:both holds
+   the 0% state during its stagger delay) then fades back in, left-to-right. The
+   per-letter animation-delay is set inline in JS. */
+.oyechats-bot-pill-letter {
+  display: inline-block;
+  white-space: pre;
+}
+.oyechats-bot-pill:hover .oyechats-bot-pill-letter {
+  animation: oyechatsPillLetterReveal 380ms ease both;
+}
+@keyframes oyechatsPillLetterReveal {
+  0% { opacity: 0; transform: translateY(5px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect reduced-motion: keep the brand border + glow, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .oyechats-bot-pill,
+  .oyechats-bot-pill:hover .oyechats-bot-pill-avatar,
+  .oyechats-bot-pill:hover .oyechats-bot-pill-letter {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}
+
 /* Desktop — scale up from launcher position */
 @keyframes widgetOpen {
   from {
@@ -268,7 +347,7 @@
 }
 
 .prose strong {
-  font-weight: 600;
+  font-weight: 500;
   color: #16202C;
 }
 

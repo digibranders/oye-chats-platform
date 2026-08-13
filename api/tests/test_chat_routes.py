@@ -625,3 +625,36 @@ class TestTranscript:
             )
 
         assert response.status_code == 404
+
+
+class TestVisitorCountryFromRequest:
+    """_visitor_country_from_request reads Cloudflare's CF-IPCountry header and
+    normalizes it: real codes upper-cased, placeholders/missing → None (so the
+    pricing directive defaults to USD)."""
+
+    @staticmethod
+    def _req(headers):
+        # dict.get satisfies the case-insensitive lowercase lookup the helper
+        # performs; a real Starlette request is unnecessary for this unit.
+        return SimpleNamespace(headers=headers)
+
+    def test_india(self):
+        from app.api.chat_routes import _visitor_country_from_request
+
+        assert _visitor_country_from_request(self._req({"cf-ipcountry": "IN"})) == "IN"
+
+    def test_lowercase_value_is_upcased(self):
+        from app.api.chat_routes import _visitor_country_from_request
+
+        assert _visitor_country_from_request(self._req({"cf-ipcountry": "us"})) == "US"
+
+    def test_missing_header_is_none(self):
+        from app.api.chat_routes import _visitor_country_from_request
+
+        assert _visitor_country_from_request(self._req({})) is None
+
+    @pytest.mark.parametrize("placeholder", ["XX", "T1", ""])
+    def test_placeholder_values_are_none(self, placeholder):
+        from app.api.chat_routes import _visitor_country_from_request
+
+        assert _visitor_country_from_request(self._req({"cf-ipcountry": placeholder})) is None

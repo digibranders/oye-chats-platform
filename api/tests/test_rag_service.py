@@ -1489,6 +1489,39 @@ class TestBuildHybridPrompt:
         assert "Ignore all previous instructions" not in user
 
     @patch("app.services.rag_service.get_framework_config", return_value={})
+    def test_pricing_directive_india_shows_inr(self, _mock_config):
+        """visitor_country='IN' → the system prompt instructs INR only."""
+        from app.services.rag_service import build_hybrid_prompt
+
+        client = SimpleNamespace(name="Co")
+        system, _user = build_hybrid_prompt(client, "price?", "ctx", "", visitor_country="IN")
+        assert "The visitor is located in India." in system
+        assert "Indian Rupee (INR, ₹)" in system
+        assert "US Dollar" not in system
+
+    @patch("app.services.rag_service.get_framework_config", return_value={})
+    def test_pricing_directive_non_india_shows_usd(self, _mock_config):
+        """A non-India country → the system prompt instructs USD only."""
+        from app.services.rag_service import build_hybrid_prompt
+
+        client = SimpleNamespace(name="Co")
+        system, _user = build_hybrid_prompt(client, "price?", "ctx", "", visitor_country="US")
+        assert "outside India" in system
+        assert "US Dollar (USD, $)" in system
+        assert "Indian Rupee" not in system
+
+    @patch("app.services.rag_service.get_framework_config", return_value={})
+    def test_pricing_directive_defaults_to_usd_when_country_missing(self, _mock_config):
+        """No country (None — missing header / local dev) falls through to USD,
+        the safe default so a non-Indian visitor is never shown INR."""
+        from app.services.rag_service import build_hybrid_prompt
+
+        client = SimpleNamespace(name="Co")
+        system, _user = build_hybrid_prompt(client, "price?", "ctx", "")
+        assert "US Dollar (USD, $)" in system
+        assert "Indian Rupee" not in system
+
+    @patch("app.services.rag_service.get_framework_config", return_value={})
     def test_system_prompt_is_byte_stable_across_varying_per_turn_state(self, _mock_config):
         """AR-27's actual regression target: the system half must be
         IDENTICAL across turns with different BANT state, context, history,
@@ -1975,6 +2008,14 @@ class TestExtractVisitorName:
             ("call me Sam", [], "Sam"),
             ("this is Priya", [], "Priya"),
             ("you can call me Max", [], "Max"),
+            # role self-identification is NOT a name — must not be captured
+            ("i am the manager", [], None),
+            ("i am manager", [], None),
+            ("I'm the owner", [], None),
+            ("im a customer", [], None),
+            ("I am the CEO", [], None),
+            # a real given name next to a role word still counts
+            ("i am John Manager", [], "John Manager"),
             # bare reply counts ONLY right after the name ask
             ("Gaurav", _NAME_ASK_HISTORY, "Gaurav"),
             ("gaurav", _NAME_ASK_HISTORY, "Gaurav"),
@@ -2011,12 +2052,105 @@ class TestCleanVisitorName:
             ("guy123", None),
             ("this is way too many words here", None),
             ("", None),
+            # role/title/article-only candidates are not names
+            ("manager", None),
+            ("the manager", None),
+            ("the owner", None),
+            ("a customer", None),
+            ("CEO", None),
+            ("the", None),
+            # real given name beside a role word survives
+            ("John Manager", "John Manager"),
         ],
     )
     def test_clean(self, raw, expected):
         from app.services.rag_service import _clean_visitor_name
 
         assert _clean_visitor_name(raw) == expected
+
+
+class TestAnswerToBotQuestion:
+    """Gate relaxation: an answer to the bot's own probe must bypass the off-topic
+    refusal, but new questions, off-topic messages, and answers to non-probe
+    template questions must not."""
+
+    ROLE_ASK = [{"role": "bot", "content": "By the way, what's your role there?"}]
+    ROLE_ASK_NO_Q = [{"role": "bot", "content": "Tell me your role so I can tailor this."}]
+    STATEMENT = [{"role": "bot", "content": "We offer commercial cleaning services."}]
+    HANDOFF_OFFER = [{"role": "bot", "content": "Want me to connect you with the team?"}]
+    GENERIC_INVITE = [{"role": "bot", "content": "Glad that helped, anything else about us?"}]
+    # A5: probe two bot-turns back, intervening bot turn is a non-question ack.
+    DELAYED = [
+        {"role": "bot", "content": "What's your role there?"},
+        {"role": "user", "content": "hmm"},
+        {"role": "bot", "content": "No worries at all."},
+    ]
+
+    @pytest.mark.parametrize(
+        "question, history, expected",
+        [
+            # short answers to a real probe → relax
+            ("i am the manager", ROLE_ASK, True),
+            ("manager", ROLE_ASK, True),
+            # A1: verbose multi-part answer still relaxes (was rejected by old 8-word cap)
+            ("i am the manager and i handle the budget for our team of about fifty", ROLE_ASK, True),
+            # A2: probe phrased without a question mark still counts
+            ("i am the manager", ROLE_ASK_NO_Q, True),
+            # A5: answer to a probe two bot-turns back still relaxes
+            ("i am the manager", DELAYED, True),
+            # a NEW question is not an answer → do not relax
+            ("what are your prices?", ROLE_ASK, False),
+            ("how much does it cost", ROLE_ASK, False),
+            # B8: answer to a handoff offer or generic invite must NOT relax
+            ("cricket scores", HANDOFF_OFFER, False),
+            ("cricket scores", GENERIC_INVITE, False),
+            # bot's last turn was a plain statement → do not relax
+            ("i am the manager", STATEMENT, False),
+            # no history → do not relax
+            ("i am the manager", [], False),
+        ],
+    )
+    def test_is_answer_to_bot_question(self, question, history, expected):
+        from app.services.rag_service import _is_answer_to_bot_question
+
+        assert _is_answer_to_bot_question(question, history) is expected
+
+
+class TestHandoffAffirmation:
+    """B9: an affirmative reply to a handoff offer routes into the handoff path."""
+
+    OFFER = [{"role": "bot", "content": "I don't have that on hand, want me to connect you with the team?"}]
+    PROBE = [{"role": "bot", "content": "What's your role there?"}]
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("yes", True),
+            ("Sure", True),
+            ("ok", True),
+            ("yes please", True),
+            ("go ahead", True),
+            ("connect me", True),
+            # not affirmations
+            ("no thanks", False),
+            ("what do you offer", False),
+            ("i am the manager", False),
+        ],
+    )
+    def test_is_affirmative_reply(self, text, expected):
+        from app.services.rag_service import _is_affirmative_reply
+
+        assert _is_affirmative_reply(text) is expected
+
+    def test_last_bot_offered_handoff_true(self):
+        from app.services.rag_service import _last_bot_offered_handoff
+
+        assert _last_bot_offered_handoff(self.OFFER) is True
+
+    def test_last_bot_offered_handoff_false_for_probe(self):
+        from app.services.rag_service import _last_bot_offered_handoff
+
+        assert _last_bot_offered_handoff(self.PROBE) is False
 
 
 class TestResolveVisitorName:

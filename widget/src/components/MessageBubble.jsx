@@ -6,6 +6,7 @@ import ErrorBoundary from './ErrorBoundary';
 import { lazyWithRetry } from '../services/lazyWithRetry';
 import { sanitizeColor } from '../services/sanitize';
 import { formatBotMarkdown } from '../services/botMarkdown';
+import { isSmartLink, isSmartLinkClicked, markSmartLinkClicked } from '../services/smartLinks';
 
 // MediaCard (YouTube/downloadable-file cards) is lazy-loaded: it only renders on
 // completed bot replies that carry a media_card, so keeping it out of the Chat
@@ -55,8 +56,34 @@ const SafeLink = ({ href, children, ...props }) => {
 
     const text = _linkText(children);
 
-    // Same-tab navigation by default. The widget persists isOpen + session_id
-    // to sessionStorage so the conversation continues after page navigation.
+    // Smart links (admin keyword→page map). Handled before the icon/pill/plain
+    // branches so a smart link always gets this behaviour regardless of its
+    // label. Once the visitor clicks one, it stops rendering as a link for the
+    // rest of the conversation — the keyword shows as plain text on every later
+    // answer. Scoped to smart-link URLs only, so service ↗ links and generic
+    // references the bot writes are untouched. Opens in a new tab (like other
+    // plain links) so clicking never closes the chat window.
+    if (isSmartLink(href)) {
+        if (isSmartLinkClicked(href)) {
+            return <span {...props}>{children}</span>;
+        }
+        return (
+            <a
+                href={href}
+                {...props}
+                onClick={() => markSmartLinkClicked(href)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 font-medium hover:underline"
+            >
+                {children}
+            </a>
+        );
+    }
+
+    // Same-tab navigation for the service icon/pill CTAs. The widget persists
+    // isOpen + session_id to sessionStorage so the conversation continues after
+    // page navigation. (Plain links below open in a NEW tab instead — see there.)
     if (_isIconLink(text)) {
         return (
             <a
@@ -85,11 +112,16 @@ const SafeLink = ({ href, children, ...props }) => {
         );
     }
 
+    // Plain links (smart-link keywords, contact/reference pages) open in a NEW
+    // tab so clicking one never unloads the host page or closes the chat window.
+    // target/rel are set AFTER {...props} so an incoming prop can't override the
+    // new-tab behaviour, and rel includes noreferrer alongside noopener.
     return (
         <a
             href={href}
-            rel="noopener"
             {...props}
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-blue-600 font-medium hover:underline"
         >
             {children}

@@ -1,6 +1,6 @@
 export const themeConfigs = {
     classic: {
-        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-[100dvh] md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-[#F8F8F8] md:rounded-2xl shadow-xl flex flex-col overflow-hidden border border-[#BBE7FF]/30 z-[9999] overscroll-none touch-none md:touch-auto",
+        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-[100dvh] md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-[#F8F8F8] md:rounded-2xl oyechats-window-shadow flex flex-col overflow-hidden border border-[#BBE7FF]/30 z-[9999] overscroll-none touch-none md:touch-auto",
         header: "bg-[#F8F8F8] px-5 py-2 flex items-center justify-between shrink-0",
         messagesArea: "flex-1 overflow-y-auto px-5 pt-4 pb-1 bg-[#F8F8F8] flex flex-col gap-5 overscroll-contain touch-pan-y",
         userBubble: "text-[#16202C] rounded-2xl",

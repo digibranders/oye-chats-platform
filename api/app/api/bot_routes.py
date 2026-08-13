@@ -163,6 +163,42 @@ def _normalize_services(raw) -> list[dict]:
     return out
 
 
+def _normalize_answer_links(raw) -> list[dict]:
+    """Coerce a stored or incoming smart-links value to ``[{keyword, url}]``.
+
+    Every entry needs both a non-empty ``keyword`` and a valid ``http(s)`` URL —
+    a smart link with no destination is meaningless, so blank/invalid rows are
+    dropped rather than persisted. ``javascript:`` and other non-http schemes are
+    rejected here (the widget's ``SafeLink`` also refuses them, this is
+    defence-in-depth). Keyword and URL are length-capped and the list is capped
+    so a runaway payload can't bloat the prompt. Returns a fresh list every call.
+    """
+    if not raw:
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        keyword = (item.get("keyword") or "").strip()
+        url = item.get("url")
+        url = url.strip() if isinstance(url, str) else ""
+        if not keyword or not url:
+            continue
+        if not (url.startswith("http://") or url.startswith("https://")):
+            continue
+        # De-dupe on the case-folded keyword so the prompt never lists the same
+        # trigger twice with conflicting destinations (first write wins).
+        key = keyword.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"keyword": keyword[:80], "url": url[:2048]})
+        if len(out) >= 50:
+            break
+    return out
+
+
 def _get_workspace_bot(session, bot_id: int, client_id: int) -> Bot:
     bot = session.execute(select(Bot).where(Bot.id == bot_id, Bot.client_id == client_id)).scalars().first()
     if not bot:
@@ -281,6 +317,9 @@ class UpdateBotRequest(BaseModel):
     # ``{"name": str, "url": None}`` in the route handler.
     services: list[dict | str] | None = None
     services_url: str | None = None  # Legacy global URL — kept for compat, no longer used by prompt.
+    # Smart links — each entry is ``{keyword: str, url: str}``. Normalized in the
+    # route handler (drops blank keywords / non-http URLs, de-dupes, caps count).
+    answer_links: list[dict] | None = None
     # Widget embed origin restriction.
     allowed_domains: list[str] | None = None
     domain_check_enabled: bool | None = None
@@ -408,6 +447,8 @@ class BotResponse(BaseModel):
     # Always returned as ``[{name, url}]`` objects regardless of stored shape.
     services: list[dict] | None = None
     services_url: str | None = None  # Legacy field kept for compat.
+    # Smart links, always returned as ``[{keyword, url}]`` objects.
+    answer_links: list[dict] | None = None
     allowed_domains: list[str] = []
     domain_check_enabled: bool = False
     session_share_domain: str | None = None
@@ -540,6 +581,7 @@ def _bot_to_response(bot: Bot, request: Request, *, plan_slug: str = "free", pla
         calcom_url=bot.calcom_url,
         services=_normalize_services(bot.services),
         services_url=bot.services_url,
+        answer_links=_normalize_answer_links(bot.answer_links),
         allowed_domains=list(bot.allowed_domains or []),
         domain_check_enabled=bool(bot.domain_check_enabled),
         session_share_domain=bot.session_share_domain,
@@ -729,6 +771,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         # domain so the conversation survives navigation across subdomains.
         "session_share_domain": bot.session_share_domain,
         "bant_cta_options": _build_public_cta_options(bot),
+        # Smart-link destinations (URLs only) so the widget can recognise which
+        # answer links are admin-configured smart links and apply the
+        # "don't re-link a smart link the visitor already clicked" behaviour.
+        # Keywords are intentionally omitted — the widget matches on URL alone.
+        "smart_link_urls": [link["url"] for link in _normalize_answer_links(bot.answer_links)],
         # ── Service status ──
         # ``is_offline=True`` flips the widget into "leave a message" mode
         # without exposing the underlying subscription status to visitors.
@@ -2100,6 +2147,12 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             # rows so the prompt never sees empty service names.
             if "services" in update_data:
                 update_data["services"] = _normalize_services(update_data["services"])
+
+            # Smart links follow the same discipline as services: normalize the
+            # incoming rows (drop blank/invalid, de-dupe, cap) before persisting
+            # so the prompt only ever sees well-formed keyword→URL pairs.
+            if "answer_links" in update_data:
+                update_data["answer_links"] = _normalize_answer_links(update_data["answer_links"])
 
             # Lock/unlock crawl auto-fill based on what the customer submitted.
             # Runs before the setattr loop so it can diff against stored values.
