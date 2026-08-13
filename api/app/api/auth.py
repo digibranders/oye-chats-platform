@@ -948,6 +948,11 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "allowed_domains": list(bot.allowed_domains or []),
         "domain_check_enabled": bool(bot.domain_check_enabled),
         "session_share_domain": getattr(bot, "session_share_domain", None),
+        # Smart-link keyword→URL map. Cached so the public settings endpoint can
+        # publish `smart_link_urls` on a cache hit; without it every cached load
+        # reports an empty list and the widget's "don't re-link a clicked smart
+        # link" behaviour silently never engages.
+        "answer_links": getattr(bot, "answer_links", None),
         "created_at": bot.created_at.isoformat() if bot.created_at else None,
     }
 

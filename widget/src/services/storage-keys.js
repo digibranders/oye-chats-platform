@@ -181,59 +181,10 @@ export function clearSessionId({ botKey, shareDomain } = {}) {
     if (cookieDomain) expireCookie(name, cookieDomain);
 }
 
-// ── Cross-subdomain widget open/closed state ────────────────────────────────
-// Same rationale as the session id above. The open flag normally lives in
-// ``sessionStorage`` so a same-origin page navigation reopens the panel with
-// the conversation intact instead of flickering shut. But sessionStorage is
-// partitioned per origin, so a hop to a subdomain drops it and the panel
-// closes. When the bot enables cross-subdomain sharing we ALSO mirror the flag
-// into the SAME parent-domain cookie scope the session id uses, so the panel —
-// like the conversation — carries across the domain family. Single-domain
-// embeds are byte-for-byte unchanged: no shareDomain → sessionStorage only.
-
-// Exported so the widget's synchronous first-paint read and this module agree
-// on the key.
-export const WIDGET_OPEN_SS_KEY = 'oyechats_widget_open';
-const OPEN_COOKIE_PREFIX = 'oyechats_open_';
-// Short-lived: the open flag is transient journey state, not a saved
-// preference. Comfortably covers a click-through to another subdomain; a return
-// hours later starts closed (the launcher still invites).
-const OPEN_COOKIE_MAX_AGE = 30 * 60; // 30 minutes
-
-function openCookieName(botKey) {
-    return `${OPEN_COOKIE_PREFIX}${botKey || currentBotKey()}`;
-}
-
-// True when the widget was left open, per sessionStorage (same-origin) OR the
-// shared cookie (cross-subdomain). Needs no settings: reading a cookie doesn't
-// require its Domain, so this resolves on a subdomain before the bot config has
-// loaded — exactly like ``readSessionId``.
-export function readWidgetOpen(botKey) {
-    try {
-        if (sessionStorage.getItem(WIDGET_OPEN_SS_KEY) === '1') return true;
-    } catch { /* storage disabled (private mode) */ }
-    return readCookie(openCookieName(botKey)) === '1';
-}
-
-// Persist the open/closed flag. sessionStorage always (same-origin continuity);
-// the parent-domain cookie only when sharing is on, so existing single-domain
-// embeds are untouched. On close the cookie is expired under both the host-only
-// and parent-domain scopes we might have written, mirroring ``clearSessionId``.
-export function writeWidgetOpen(isOpen, { botKey, shareDomain } = {}) {
-    try {
-        if (isOpen) sessionStorage.setItem(WIDGET_OPEN_SS_KEY, '1');
-        else sessionStorage.removeItem(WIDGET_OPEN_SS_KEY);
-    } catch { /* storage disabled (private mode) */ }
-    if (!shareDomain) return; // sharing off → sessionStorage only
-    const name = openCookieName(botKey);
-    const cookieDomain = toCookieDomain(shareDomain);
-    if (isOpen) {
-        writeCookie(name, '1', cookieDomain, OPEN_COOKIE_MAX_AGE);
-    } else {
-        expireCookie(name, null);
-        if (cookieDomain) expireCookie(name, cookieDomain);
-    }
-}
+// NOTE: The widget's open/closed panel state is intentionally NOT persisted.
+// The panel always starts closed on every page load and opens only when the
+// visitor taps the launcher. The conversation itself still persists via the
+// session id above, so reopening the launcher restores the chat history.
 
 export function getLeadCapturedKey(botKey) {
     return `oyechats_lead_captured_${botKey || currentBotKey()}`;

@@ -295,6 +295,23 @@ def _parse_request_context(fastapi_request: Request):
     return ip_address, formatted_device
 
 
+def _visitor_country_from_request(fastapi_request: Request) -> str | None:
+    """Return the visitor's ISO country code from Cloudflare's CF-IPCountry header.
+
+    Cloudflare stamps ``CF-IPCountry`` on every proxied request when IP
+    Geolocation is enabled for the zone. Normalized to upper-case; the
+    placeholder values Cloudflare uses for unresolvable clients (``XX``
+    unknown, ``T1`` Tor) and a missing header all collapse to ``None`` so the
+    pricing directive treats them as "not India" and defaults to USD. Header
+    lookup is case-insensitive in Starlette, so ``cf-ipcountry`` matches the
+    ``CF-IPCountry`` Cloudflare sends.
+    """
+    country = (fastapi_request.headers.get("cf-ipcountry") or "").strip().upper()
+    if country in ("", "XX", "T1"):
+        return None
+    return country
+
+
 def _is_resolver_owned_location(current: str) -> bool:
     """May this resolver overwrite ``current``?
 
@@ -1076,11 +1093,17 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
     try:
         ip_address, formatted_device = _parse_request_context(request)
         location = f"IP: {ip_address}"
+        visitor_country = _visitor_country_from_request(request)
         session_id = _resolve_session_id(body.session_id, bot.id)
 
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
 
+        # TEMPORARY (region-aware pricing rollout): confirm Cloudflare is
+        # stamping CF-IPCountry on production traffic. Demote to DEBUG once
+        # logs show real country codes (not None). See spec
+        # docs/superpowers/specs/2026-08-13-region-aware-pricing-design.md.
+        logger.info("visitor_country header | bot_id=%s | cf_ipcountry=%s", bot.id, visitor_country)
         logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
         result = rag_pipeline(
@@ -1091,6 +1114,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
             device=formatted_device,
             bot_id=bot.id,
             cta_dimension=body.cta_dimension,
+            visitor_country=visitor_country,
         )
 
         ans_len = len(result.get("answer", ""))
@@ -1219,11 +1243,15 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 
     ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
+    visitor_country = _visitor_country_from_request(request)
     session_id = _resolve_session_id(body.session_id, bot.id)
 
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)
 
+    # TEMPORARY (region-aware pricing rollout): see the matching note on
+    # POST /chat above. Confirms CF-IPCountry reaches the origin in production.
+    logger.info("visitor_country header | bot_id=%s | cf_ipcountry=%s", bot.id, visitor_country)
     logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
     async def _stream_with_refund():
@@ -1241,6 +1269,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
             device=formatted_device,
             bot_id=bot.id,
             cta_dimension=body.cta_dimension,
+            visitor_country=visitor_country,
         ):
             if isinstance(chunk, str):
                 flag = _final_metadata_failure_flag(chunk)

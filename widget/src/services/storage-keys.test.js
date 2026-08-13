@@ -22,8 +22,6 @@ import {
     writeSessionId,
     clearSessionId,
     getSessionKey,
-    readWidgetOpen,
-    writeWidgetOpen,
     detectApexDomain,
     resolveShareDomain,
 } from './storage-keys.js';
@@ -213,45 +211,10 @@ test('bare and dotted share domains both scope the cookie to the parent', () => 
     }
 });
 
-// ── Widget open/closed state carries across subdomains (the same bridge) ─────
-// sessionStorage is undefined in this harness, so these exercise the cookie
-// path — exactly the cross-subdomain behaviour the feature adds. (Same-origin
-// sessionStorage continuity is unchanged and covered by the browser itself.)
-
-test('open flag carries from apex to subdomain when sharing is on', () => {
-    const jar = new CookieJar();
-    visitPage('example.com', jar);
-    writeWidgetOpen(true, { botKey: BOT, shareDomain: 'example.com' });
-
-    // A different origin: its sessionStorage is empty, so the shared cookie is
-    // all the subdomain has to know the panel should stay open.
-    visitPage('academy.example.com', jar, new Map());
-    assert.equal(readWidgetOpen(BOT), true);
-});
-
-test('WITHOUT sharing, the subdomain does NOT reopen the panel', () => {
-    const jar = new CookieJar();
-    visitPage('example.com', jar);
-    writeWidgetOpen(true, { botKey: BOT }); // no shareDomain → sessionStorage only
-
-    visitPage('academy.example.com', jar, new Map());
-    assert.equal(readWidgetOpen(BOT), false);
-});
-
-test('closing on a subdomain expires the shared open cookie everywhere', () => {
-    const jar = new CookieJar();
-    visitPage('example.com', jar);
-    writeWidgetOpen(true, { botKey: BOT, shareDomain: 'example.com' });
-
-    // Visitor closes the panel while on a subdomain.
-    visitPage('academy.example.com', jar, new Map());
-    assert.equal(readWidgetOpen(BOT), true); // sanity: it was carried open
-    writeWidgetOpen(false, { botKey: BOT, shareDomain: 'example.com' });
-
-    // Back on the apex, the panel is closed too — no stale "open" cookie.
-    visitPage('example.com', jar, new Map());
-    assert.equal(readWidgetOpen(BOT), false);
-});
+// NOTE: The widget's open/closed PANEL state is intentionally not persisted —
+// it always starts closed on every page load (see ChatWidget's initial state),
+// so there is no storage-level open-flag behaviour to cover here. The
+// conversation (session id) continuity is covered by the tests above.
 
 // ── Zero-config apex auto-detection ──────────────────────────────────────────
 // With no ``session_share_domain`` set, the widget derives the registrable apex

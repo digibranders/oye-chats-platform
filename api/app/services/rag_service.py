@@ -40,7 +40,12 @@ from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
-from app.services.qualification_service import calculate_composite_score, get_framework_config, get_tier
+from app.services.qualification_service import (
+    calculate_composite_score,
+    get_framework_config,
+    get_tier,
+    pick_probe_variant,
+)
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
 
@@ -2748,6 +2753,71 @@ _NAME_INTRO_PATTERNS = [
 
 _NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'.\-]*$")
 
+# Role / title / relationship words a visitor uses to describe WHO THEY ARE,
+# not what they are called ("I'm the manager", "I am a customer", "I'm the
+# owner"). The intro regex captures the word(s) after "I am", so without this
+# guard these get stored as the visitor's name and the bot then greets them as
+# "Manager" / "The Manager" — which reads as broken. A candidate whose
+# meaningful tokens are ALL role/descriptor words (after stripping a leading
+# article) is rejected so the message falls through to normal handling. A real
+# given name paired with one of these ("John Manager") still survives because
+# "john" is not in the set.
+_NON_NAME_ROLE_WORDS = frozenset(
+    {
+        "manager",
+        "owner",
+        "founder",
+        "cofounder",
+        "ceo",
+        "cto",
+        "coo",
+        "cfo",
+        "cmo",
+        "director",
+        "partner",
+        "boss",
+        "admin",
+        "administrator",
+        "president",
+        "vp",
+        "head",
+        "lead",
+        "supervisor",
+        "agent",
+        "operator",
+        "employee",
+        "staff",
+        "customer",
+        "client",
+        "buyer",
+        "vendor",
+        "supplier",
+        "member",
+        "student",
+        "teacher",
+        "professor",
+        "doctor",
+        "engineer",
+        "developer",
+        "designer",
+        "consultant",
+        "contractor",
+        "freelancer",
+        "intern",
+        "representative",
+        "rep",
+        "executive",
+        "officer",
+        "chief",
+        "principal",
+    }
+)
+
+# Determiners that can lead a captured phrase ("the manager", "a customer").
+# Stripped before the role-word check; a candidate that is ONLY an article is
+# itself not a name.
+_LEADING_ARTICLES = frozenset({"the", "a", "an"})
+
 # Explicit mid-chat rename requests ("rename it to Jason", "change my name to
 # Jason", "actually I'm Jason"). Kept separate from intros so we only ever
 # OVERWRITE a stored name on a clear request, never on a stray word.
@@ -2774,6 +2844,15 @@ def _clean_visitor_name(raw: str) -> str | None:
         return None
     tokens = name.split()
     if not 1 <= len(tokens) <= 2:
+        return None
+    lowered = [t.lower() for t in tokens]
+    # Drop a single leading article so "the manager" / "a customer" reduce to
+    # the role word for the check below.
+    core = lowered[1:] if len(lowered) == 2 and lowered[0] in _LEADING_ARTICLES else lowered
+    # Reject self-described roles ("manager", "the owner") and bare articles:
+    # they state the visitor's role, not their name. "John Manager" survives
+    # because "john" is neither a role word nor an article.
+    if not core or all(t in _NON_NAME_ROLE_WORDS or t in _LEADING_ARTICLES for t in core):
         return None
     # Title-case only tokens the visitor left lowercase; preserve intentional
     # inner capitals (e.g. "McCarthy", "O'Brien").
@@ -2968,6 +3047,133 @@ def _msg_content(message) -> str:
     return content or ""
 
 
+# ── "Visitor is answering the bot's own question" detection ──────────────────
+# The relevance gate refuses any message whose retrieved chunks look irrelevant.
+# That is wrong when the bot just ASKED the visitor something (typically the
+# BANT probe woven in by build_hybrid_prompt, e.g. "By the way, what's your role
+# there?") and the visitor answered — the answer ("I'm the manager") is never in
+# the knowledge base, so the gate fires and the bot replies "I don't have that
+# detail", losing the thread of its own question. When the signals below hold,
+# the caller skips the refusal and lets the message reach the context-aware LLM
+# (which has the history and already knows to acknowledge the answer + continue).
+
+# Interrogative openers — a message starting with one of these is itself a NEW
+# question, so it is a fresh query, not an answer to the bot's probe.
+_QUESTION_LEAD_RE = re.compile(
+    r"(?i)^\s*(?:who|what|whats|when|where|why|which|how|hows|"
+    r"can|could|do|does|did|is|are|am|will|would|should|may|might)\b"
+)
+
+# Probe phrasing that ASKS the visitor something without a trailing "?" (A2):
+# "tell me your role", "let me know your budget", "curious what your timeline
+# is". Anchored on a first/second-person target so it fires on genuine probes,
+# not on generic closers like "let me know if you have questions".
+_PROBE_PHRASE_RE = re.compile(
+    r"(?i)\b(?:"
+    r"tell me (?:your|a bit|more about)|let me know (?:your|if you're|whether)|"
+    r"mind (?:sharing|telling me)|curious (?:about your|what your|to know your)|"
+    r"i'?d love to (?:know|hear) (?:your|more about)|what'?s your|whats your|"
+    r"could you (?:tell me|share)|are you the (?:one|person|decision)"
+    r")\b"
+)
+
+# Handoff / connect OFFERS the bot makes (B8/B9). These end with "?" but are NOT
+# information-gathering probes, so an answer to them must not relax the gate; and
+# an affirmative reply to one is a handoff request, not a KB query.
+_HANDOFF_OFFER_RE = re.compile(
+    r"(?i)(?:"
+    r"connect you (?:with|to)|put you in touch|"
+    r"talk to (?:a|the|our|someone) (?:human|team|agent|representative|member|expert)?|"
+    r"take (?:a|your) (?:written )?message|leave (?:a|your) (?:message|details|contact)|"
+    r"have (?:the|our) team (?:reach|follow up|get back|help)"
+    r")"
+)
+
+# Generic invites the bot closes with (B8). End with "?" but expect no specific
+# answer, so a reply after one must not relax the gate.
+_GENERIC_INVITE_RE = re.compile(
+    r"(?i)(?:"
+    r"anything else|what would you like to know|what else would you like|"
+    r"how can i help|hear about our services|see (?:our )?recent work|"
+    r"what can i help you with"
+    r")"
+)
+
+# Short affirmations to an offer (B9): "yes", "sure", "ok", "go ahead".
+_AFFIRMATIVE_RE = re.compile(
+    r"(?i)^\s*(?:yes|yep|yeah|yup|ya|sure|ok|okay|k|please|go ahead|"
+    r"sounds good|that works|connect me|do it|let'?s do it|please do|"
+    r"yes please|absolutely|definitely|i(?:'d| would) like that)"
+    r"\s*[.!]*\s*$"
+)
+
+_ANSWER_WORD_CAP = 30  # Generous: a real probe + non-question reply is an answer even when verbose (A1).
+
+
+def _text_is_question(text: str) -> bool:
+    """True if a bot message asks the visitor something (ends with '?' or uses
+    an imperative probe phrasing without one)."""
+    t = (text or "").rstrip()
+    return t.endswith("?") or bool(_PROBE_PHRASE_RE.search(t))
+
+
+def _is_real_probe(text: str) -> bool:
+    """A genuine information-gathering probe: a question that is NOT a handoff
+    offer or a generic 'anything else?' invite (B8)."""
+    return _text_is_question(text) and not _HANDOFF_OFFER_RE.search(text) and not _GENERIC_INVITE_RE.search(text)
+
+
+def _recent_bot_question(history: list, lookback: int = 2) -> str | None:
+    """Text of the most recent bot turn that was a real probe, scanning back up
+    to ``lookback`` bot turns (A5 — the answer may arrive a turn late), or None.
+    """
+    seen = 0
+    for message in reversed(history or []):
+        if _msg_role(message) not in ("bot", "assistant", "operator"):
+            continue
+        seen += 1
+        text = _msg_content(message)
+        if _is_real_probe(text):
+            return text
+        if seen >= lookback:
+            break
+    return None
+
+
+def _looks_like_answer(question: str) -> bool:
+    """True if ``question`` reads like a direct answer, not a fresh question.
+
+    Not itself a question (no trailing '?', no interrogative opener) and within a
+    generous length bound, so verbose multi-part answers still qualify (A1) while
+    new questions and pathological pastes do not.
+    """
+    q = (question or "").strip()
+    if not q or q.endswith("?"):
+        return False
+    if _QUESTION_LEAD_RE.match(q):
+        return False
+    return len(q.split()) <= _ANSWER_WORD_CAP
+
+
+def _is_answer_to_bot_question(question: str, history: list) -> bool:
+    """The current message is an answer to a real probe the bot recently asked."""
+    return _recent_bot_question(history) is not None and _looks_like_answer(question)
+
+
+def _is_affirmative_reply(question: str) -> bool:
+    """True if the whole message is a short affirmation ("yes", "sure", "ok")."""
+    return bool(_AFFIRMATIVE_RE.match((question or "").strip()))
+
+
+def _last_bot_offered_handoff(history: list) -> bool:
+    """True if the most recent bot turn offered to connect the visitor to a human
+    / take a message (B9)."""
+    for message in reversed(history or []):
+        if _msg_role(message) in ("bot", "assistant", "operator"):
+            return bool(_HANDOFF_OFFER_RE.search(_msg_content(message)))
+    return False
+
+
 def _recover_deferred_question(history: list) -> str | None:
     """The visitor's original question: the last USER message BEFORE the most
     recent bot "what's your name" turn (history is chronological, oldest first)."""
@@ -3073,10 +3279,18 @@ def build_hybrid_prompt(
     # ``list[{name, url}]`` shape — normalized inside the function.
     services: list[str | dict] | None = None,
     services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
+    # Smart links — admin-defined ``[{keyword, url}]`` map. Additive and
+    # independent of ``services``: it only adds hyperlinks, never narrows scope.
+    answer_links: list[dict] | None = None,
     team_connect_offer: bool = False,
     suppress_probe: bool = False,
     visitor_name: str | None = None,
     visitor_just_named: bool = False,
+    # Cloudflare CF-IPCountry for the visitor's request ("IN", "US", ...) or
+    # None when unavailable. Drives the region-aware pricing directive below;
+    # anything other than "IN" (including None) falls through to USD. See spec
+    # docs/superpowers/specs/2026-08-13-region-aware-pricing-design.md.
+    visitor_country: str | None = None,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -3223,6 +3437,27 @@ Eligible dimensions (use the exact dimension key, lowercase):
         next_dim_to_probe = missing_dims[0] if missing_dims else None
         next_dim_cfg = config.get(next_dim_to_probe, {}) if next_dim_to_probe else {}
         next_dim_cta = (next_dim_cfg.get("cta_prompt") or "") if next_dim_cfg else ""
+        # Rotate the suggested probe wording so the LLM doesn't echo the same
+        # sentence ("What best describes your situation?") on every re-ask. Seeded
+        # by the current message so it varies per turn; the prior conversation is
+        # the avoid-set so it never repeats the wording just shown. Custom per-bot
+        # prompts are left untouched (see ``pick_probe_variant``).
+        if next_dim_to_probe and next_dim_cta:
+            next_dim_cta = pick_probe_variant(
+                config.get("framework") or "bant",
+                next_dim_to_probe,
+                next_dim_cta,
+                # Seed off the question AND the running history so the suggested
+                # wording rotates every TURN — not just when the question text
+                # changes. Without the history, re-asking the same question kept
+                # landing on the same variant, so the probe read as "the one
+                # question" over and over.
+                seed=int(
+                    hashlib.sha256(((question or "") + "||" + (history_context or "")).encode()).hexdigest()[:8],
+                    16,
+                ),
+                avoid_text=history_context or "",
+            )
 
         if not next_dim_to_probe:
             probing_instruction = (
@@ -3236,8 +3471,9 @@ Eligible dimensions (use the exact dimension key, lowercase):
 EMBEDDING RULES:
 - Answer the question FIRST. The qualifying question always comes at the end.
 - Make it feel like genuine curiosity, not a sales script. One short sentence is enough.
-- Suggested angle: "{next_dim_cta}"
-- Connect the question to what you just discussed; do not switch context abruptly.
+- End your reply with EXACTLY this question, word for word. Do NOT rephrase it, do NOT reword it to "sound more contextual", do NOT swap in synonyms, do NOT merge it with your answer: "{next_dim_cta}"
+- This exact wording is picked fresh every turn ON PURPOSE — using it verbatim is the whole mechanism that keeps your follow-ups from repeating. Inventing your own phrasing (e.g. asking "What are you evaluating this for?" every single turn) is exactly the failure to avoid.
+- You may add a short, natural lead-in BEFORE it (e.g. "By the way," "Quick question:") but the question itself must stay word-for-word as given.
 - FORMAT: Put the follow-up question on its OWN line, separated from your answer by a BLANK LINE (two newlines). Never run it inline at the end of your last sentence or glued to the end of a bullet point.
 - MARKDOWN CRITICAL: When your answer ends with a bulleted or numbered list, you MUST emit two newlines (a blank line) between the last list item and the follow-up question. Without the blank line, markdown renderers glue the question into the last bullet (e.g. `- 24x7 supportWhich of these…`). Always end the list, hit Enter twice, then start the question as a new paragraph.
 - GOOD example (bulleted answer + follow-up):
@@ -3465,6 +3701,33 @@ MEETING BOOKING (inline card):
     message form would be redundant.
 
   Do not repeat the card if booking was already offered in this conversation."""
+    else:
+        # No online scheduler is configured for this bot, so a booking card
+        # would point nowhere. Treat a scheduling request like any other
+        # "reach the team" request: acknowledge warmly and route the visitor
+        # to the team via the leave-message card (always available) so they
+        # can follow up. Never promise a calendar link or a time slot that
+        # does not exist.
+        meeting_section = f"""
+MEETING / SCHEDULING REQUESTS (no online scheduler configured):
+  If the visitor asks to book, schedule, or set up a meeting, demo, call, or
+  appointment, do NOT offer a booking link, calendar, or specific time. None
+  is available for this business. Instead, reply with ONE short warm sentence
+  offering to connect them with the team, then output {LEAVE_MESSAGE_CARD_SENTINEL} on its own
+  line as the last thing in your response so the team can follow up.
+
+  POSITIVE EXAMPLE (copy this shape exactly):
+    visitor: "can I book a demo?"
+    you:
+    I'd love to connect you with our team about a demo. I'll open a quick form so they can reach out.
+    {LEAVE_MESSAGE_CARD_SENTINEL}
+
+  HARD RULES:
+    1. NEVER invent or mention a booking URL, scheduling page, calendar, or an
+       available time slot. None exists.
+    2. NEVER claim a meeting has been scheduled or confirmed.
+    3. NEVER emit {MEETING_CARD_SENTINEL}. That card is disabled for this bot and
+       would render as nothing."""
 
     # Media cards (YouTube video + downloadable file). Rules are static and
     # always included so OpenAI prompt caching keeps them free after the first
@@ -4079,9 +4342,11 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
         _safe_visitor_name = " ".join(str(visitor_name).split())[:40]
         personalization_section = (
             "PERSONALIZATION (the visitor just introduced themselves):\n"
-            f"- The visitor just told you their name is {_safe_visitor_name}. You MUST open THIS reply by warmly "
-            f'addressing them by name (e.g. "Thanks, {_safe_visitor_name}!" or "Great to meet you, {_safe_visitor_name},"), '
-            "then answer their question in the same message.\n"
+            f"- The visitor just told you their name is {_safe_visitor_name}. You MUST open THIS reply with a "
+            f'short, warm acknowledgment BY NAME on its OWN line (e.g. "Thanks, {_safe_visitor_name}!" or '
+            f'"Great to meet you, {_safe_visitor_name}!"), THEN a blank line, THEN answer their question in a new '
+            "paragraph below. Do NOT run the acknowledgment and the answer together on the same line or in the "
+            "same sentence — the greeting stands alone, the answer starts on the next line.\n"
             "- Keep using their name naturally after this, but a light touch — do NOT repeat it every line.\n"
             '- NEVER ask for their name again and never ask "What name should I use to address you?".'
         )
@@ -4173,6 +4438,53 @@ SERVICES (HIGHEST PRIORITY — overrides scope rules above):
   out-of-scope and use the standard scope-refusal response.{link_clause}
 """
 
+    # SMART LINKS section — admin-defined keyword→URL map. Independent of the
+    # SERVICES block above: it never narrows what the bot may answer, it only
+    # tells the bot to hyperlink a keyword to the right page when that keyword
+    # naturally appears in its answer (e.g. "pricing" → the pricing page). The
+    # LLM weaves the links in; it is told to link at most once per URL and never
+    # to force a keyword that doesn't fit. Additive — a bot with no smart links
+    # gets an empty section and behaves exactly as before.
+    smart_links_section = ""
+    cleaned_links: list[dict] = []
+    seen_keywords: set[str] = set()
+    for raw in (answer_links or [])[:50]:
+        if not isinstance(raw, dict):
+            continue
+        keyword = (raw.get("keyword") or "").strip()
+        url = raw.get("url")
+        url = url.strip() if isinstance(url, str) else ""
+        if not keyword or not (url.startswith("http://") or url.startswith("https://")):
+            continue
+        key = keyword.casefold()
+        if key in seen_keywords:
+            continue
+        seen_keywords.add(key)
+        cleaned_links.append({"keyword": keyword, "url": url})
+
+    if cleaned_links:
+        link_lines = "\n".join(f'  - "{link["keyword"]}" -> {link["url"]}' for link in cleaned_links)
+        smart_links_section = f"""
+
+SMART LINKS (MANDATORY — you MUST hyperlink these keywords):
+- The admin has mapped these keywords/phrases to pages:
+{link_lines}
+- HARD RULE: the FIRST time one of these keywords/phrases appears in your answer,
+  in ANY casing, you MUST render that phrase as a markdown link to its mapped URL.
+  Example: if "pricing" is mapped, write [pricing](https://example.com/pricing),
+  NOT the plain word "pricing". This is not optional.
+- If you would otherwise bold the phrase (e.g. **Clean Libraries**), you MUST put
+  the link INSIDE the bold instead: **[Clean Libraries](url)**. Never leave a
+  mapped keyword as plain or bold-only text on its first appearance.
+- Use ONLY the exact URLs listed above. NEVER invent, guess, or alter a URL.
+- Link each mapped URL AT MOST ONCE per reply — first appearance only; leave every
+  later mention as plain text.
+- Only link a keyword that genuinely appears in your answer; never force one in,
+  and never change what you were going to say just to insert a link.
+- These are additive hyperlinks, not a scope limit: keep following the SERVICES
+  scope rules above when they apply.
+"""
+
     today_iso = date.today().isoformat()
 
     # Platform-wide style block. Comes from a dedicated module so it can be
@@ -4182,6 +4494,28 @@ SERVICES (HIGHEST PRIORITY — overrides scope rules above):
     from app.services.response_style import get_response_style_block
 
     response_style_block = get_response_style_block()
+
+    # Region-aware pricing. ``visitor_country`` is Cloudflare's CF-IPCountry for
+    # the visitor's request; anything that isn't India (including None from a
+    # missing header, local dev, or a direct-to-origin call) resolves to USD —
+    # the safe default for the entire non-India world, so a non-Indian visitor
+    # is never shown INR. The "only one currency" clause makes this inert for
+    # single-currency bots, so it applies universally with no per-bot config.
+    _is_india_visitor = (visitor_country or "").strip().upper() == "IN"
+    if _is_india_visitor:
+        _visitor_region_line = "The visitor is located in India."
+        _currency_rule = "Show ONLY the Indian Rupee (INR, ₹) price."
+    else:
+        _visitor_region_line = "The visitor is located in a country outside India."
+        _currency_rule = "Show ONLY the US Dollar (USD, $) price."
+    currency_directive = f"""═══════════════════════════════════════════════════════
+PRICING & CURRENCY
+═══════════════════════════════════════════════════════
+{_visitor_region_line}
+When the REFERENCE INFORMATION lists prices in more than one currency:
+- {_currency_rule}
+- Do NOT mention the other currency or its amount unless the visitor explicitly asks to see it.
+If pricing is available in only one currency, present it exactly as written — never convert, recalculate, or invent an amount."""
 
     hybrid_system_prompt = f"""You are the AI assistant for **{display_name}**. You represent {display_name} and speak on its behalf.
 
@@ -4217,6 +4551,8 @@ is the single most damaging thing you can do for trust. When in doubt,
 engage warmly and invite the real question — never refuse.
 
 ═══════════════════════════════════════════════════════
+
+{currency_directive}
 
 TODAY'S DATE: {today_iso}
 - Use this as the source of truth for anything time-sensitive (events, deadlines, "upcoming", "latest", "this year", expiry dates, business hours).
@@ -4285,7 +4621,7 @@ RULES:
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
 10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text — e.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses — bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs — internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.
-11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{custom_prompt_section}{tone_section}{company_section}{services_section}
+11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{custom_prompt_section}{tone_section}{company_section}{services_section}{smart_links_section}
 {handoff_section}
 {meeting_section}
 {media_cards_section}
@@ -4769,7 +5105,48 @@ def _strip_trailing_question(text: str) -> str:
     return cleaned or text.rstrip()
 
 
-def _next_dimension_cta(bant_config: dict | None, bant_state: dict | None) -> dict | None:
+def _last_bot_message(history) -> str:
+    """Text of the most recent bot/assistant/operator turn (or "")."""
+    for message in reversed(history or []):
+        if _msg_role(message) in ("bot", "assistant", "operator"):
+            return _msg_content(message)
+    return ""
+
+
+def _rotated_probe(
+    bant_config: dict | None,
+    dimension: str | None,
+    base_prompt: str | None,
+    session_id: str | None,
+    question: str | None,
+    history: list | None,
+) -> str:
+    """Pick a non-repeating wording for a dimension's probe question.
+
+    Deterministic per (session, message) so a re-asked dimension advances to a
+    fresh variant instead of showing the same sentence again; excludes whatever
+    the previous bot turn said so it never repeats back-to-back. Falls back to
+    ``base_prompt`` for custom/unknown prompts — see ``pick_probe_variant``.
+
+    With no per-turn context (``session_id`` and ``question`` both absent) the
+    stable default is returned, so callers that don't thread rotation context
+    stay deterministic.
+    """
+    if not (session_id or question):
+        return base_prompt or ""
+    framework = (bant_config or {}).get("framework", "bant") if isinstance(bant_config, dict) else "bant"
+    seed = int(hashlib.sha256(f"{session_id or ''}|{question or ''}".encode()).hexdigest()[:8], 16)
+    return pick_probe_variant(framework, dimension, base_prompt, seed=seed, avoid_text=_last_bot_message(history))
+
+
+def _next_dimension_cta(
+    bant_config: dict | None,
+    bant_state: dict | None,
+    *,
+    session_id: str | None = None,
+    question: str | None = None,
+    history: list | None = None,
+) -> dict | None:
     """Deterministic quick-reply CTA for the next unassessed, CTA-enabled
     dimension. Used as the DEFERRED follow-up carried by the qualified-lead
     card: when the visitor picks "Continue with AI" the widget surfaces this as
@@ -4797,11 +5174,19 @@ def _next_dimension_cta(bant_config: dict | None, bant_state: dict | None) -> di
             # Chips only when the bot opted this dimension into quick-replies;
             # otherwise the probe is a plain question the visitor free-types.
             options = [o["label"] for o in opts] if dim_cfg.get("cta_enabled", False) else []
-            return {"dimension": dim, "prompt": prompt, "options": options}
+            rotated = _rotated_probe(bant_config, dim, prompt, session_id, question, history)
+            return {"dimension": dim, "prompt": rotated, "options": options}
     return None
 
 
-def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, dict | None, str | None]:
+def _strip_cta_marker(
+    text: str,
+    bant_config: dict | None = None,
+    *,
+    session_id: str | None = None,
+    question: str | None = None,
+    history: list | None = None,
+) -> tuple[str, dict | None, str | None]:
     """Strip [CTA:dimension] (+ optional [CTA_Q:question]) markers from the
     visible response.
 
@@ -4836,8 +5221,12 @@ def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, 
     if not dim_config.get("cta_enabled", False):
         return clean_text, None, contextual_q
 
-    # Prefer the LLM-written contextual question; static prompt is the safety net.
-    cta_prompt = contextual_q or dim_config.get("cta_prompt", "")
+    # Prefer the LLM-written contextual question; a rotated variant of the static
+    # prompt is the safety net (so repeated fallbacks don't read as one canned
+    # question — see ``pick_probe_variant``).
+    cta_prompt = contextual_q or _rotated_probe(
+        bant_config, dimension, dim_config.get("cta_prompt", ""), session_id, question, history
+    )
     options = [o["label"] for o in dim_config.get("options", [])]
 
     return (
@@ -4998,6 +5387,7 @@ def rag_pipeline(
     device: str = None,
     bot_id: int = None,
     cta_dimension: str | None = None,
+    visitor_country: str | None = None,
 ):
     """
     Orchestrate the RAG flow with Chat Memory.
@@ -5086,6 +5476,20 @@ def rag_pipeline(
             if _deferred_q is not None:
                 question = _deferred_q
 
+            # ── Affirmative reply to a handoff offer (B9) ────────────────
+            # "Want me to connect you with the team?" → "sure"/"yes"/"ok". The
+            # ack terms in the intent router would otherwise swallow "sure"/"ok"
+            # into a generic "glad that helped" reply, and the gate would refuse
+            # "yes". Detect the affirmation in context here (only pay for the
+            # history read when the message actually looks affirmative) and route
+            # it into the handoff path: skip the intent router, force
+            # ``suggest_handoff``, and let generation render the connect flow.
+            _affirmed_handoff = False
+            if _is_affirmative_reply(question):
+                _affirmed_handoff = _last_bot_offered_handoff(
+                    get_chat_history(session, session_id, client_id=cid, limit=3, bot_id=bid)
+                )
+
             # ── Deterministic intent router ──────────────────────────────
             # Greetings ("hi"), acks ("thanks"), and identity questions
             # ("are you AI?", "what's your name?") get a deterministic
@@ -5094,7 +5498,7 @@ def rag_pipeline(
             # the boilerplate refusal — broken first impression for the
             # visitor). Returns None for everything else, which falls
             # through to the normal RAG pipeline below.
-            _intent = route_intent(question, _company_name)
+            _intent = None if _affirmed_handoff else route_intent(question, _company_name)
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -5166,7 +5570,7 @@ def rag_pipeline(
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
-            if _cache_key:
+            if _cache_key and not _affirmed_handoff:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
                     # Detect handoff intent even on cache hit
@@ -5213,7 +5617,18 @@ def rag_pipeline(
             chat_session = session.query(ChatSession).filter(*_cs_filters).first()
             current_bant = _build_bant_state(chat_session)
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-            visitor_name = resolve_visitor_name(session, session_id, bid, cid, question, history)
+            # ``question`` may have been rebound above to the visitor's DEFERRED
+            # original question (they declined the name ask, or changed topic).
+            # Never extract a name from that deferred text: a short topic query
+            # like "clean libraries" would be misread as a bare-reply name,
+            # because the name ask is still the most recent bot turn in history.
+            # Trust the name the flow already resolved; only fall back to
+            # extraction from the visitor's ACTUAL message when nothing was
+            # deferred this turn.
+            if _deferred_q is not None:
+                visitor_name = _flow_name
+            else:
+                visitor_name = _flow_name or resolve_visitor_name(session, session_id, bid, cid, question, history)
 
             # ── CAG-lite: skip retrieval for small knowledge bases ──────────
             _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
@@ -5221,7 +5636,7 @@ def rag_pipeline(
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
             # Detect handoff intent (run alongside retrieval steps)
-            suggest_handoff = detect_handoff_intent(question)
+            suggest_handoff = detect_handoff_intent(question) or _affirmed_handoff
 
             if _use_cag_lite:
                 logger.info(f"CAG-lite mode: injecting all {_total_chunks} chunks (bot_id={bid})")
@@ -5281,7 +5696,23 @@ def rag_pipeline(
             # always fails, which used to refuse the answer AND drop the BANT
             # signal. Let it flow to generation (acknowledge + next probe); the
             # deterministic CTA scoring runs afterwards.
-            if not _is_relevant and not cta_dimension:
+            #
+            # Same reasoning for a free-typed answer to the bot's own question:
+            # "what's your role?" → "I'm the manager" has no KB match, so the
+            # gate would refuse it and lose the thread. Let it reach generation.
+            _answering_probe = not _is_relevant and not cta_dimension and _is_answer_to_bot_question(question, history)
+            if _answering_probe:
+                _safety_net_metric(
+                    "gate_relaxed_answer_to_probe",
+                    path="nonstream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
+            # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
+            # connect offer reaches generation, where ``suggest_handoff`` renders
+            # the handoff (B9).
+            if not _is_relevant and not cta_dimension and not _answering_probe and not _affirmed_handoff:
                 # Distinguish "on-scope but no info" from "actually off-topic":
                 # ─ on-scope (e.g. "is the CEO on linkedin?", "what time zone
                 #   are you in?"): use the no-info pivot, which acknowledges
@@ -5337,7 +5768,7 @@ def rag_pipeline(
             # on — refuse before invoking the LLM. This closes the "free
             # ChatGPT" loophole where the model would otherwise be told to
             # "craft a helpful natural answer" from general knowledge.
-            if not final_results and not cta_dimension:
+            if not final_results and not cta_dimension and not _answering_probe and not _affirmed_handoff:
                 # Same on-scope check — empty retrieval on an on-scope
                 # question gets the graceful pivot instead of the refusal.
                 # (A qualification-chip answer skips this: it needs no KB
@@ -5443,10 +5874,12 @@ def rag_pipeline(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
+                answer_links=getattr(bot, "answer_links", None) if bot else None,
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
+                visitor_country=visitor_country,
             )
 
             # temperature=0.3: low enough that "what services do you offer"
@@ -5494,7 +5927,9 @@ def rag_pipeline(
                 answer = _off_topic_refusal(_company_name)
 
             # Strip CTA marker before saving
-            answer, _cta, _cta_q = _strip_cta_marker(answer, bant_config)
+            answer, _cta, _cta_q = _strip_cta_marker(
+                answer, bant_config, session_id=session_id, question=question, history=history
+            )
 
             # Answer-only turn (qualified-lead card showing): strip any trailing
             # question the model appended despite the instruction, so the card is
@@ -5753,7 +6188,9 @@ def rag_pipeline(
                     # Deferred BANT probe: surfaced by the widget when the visitor
                     # picks "Continue with AI". None when all dimensions are
                     # assessed — then Continue with AI simply resumes the chat.
-                    "follow_up": _next_dimension_cta(bant_config, current_bant),
+                    "follow_up": _next_dimension_cta(
+                        bant_config, current_bant, session_id=session_id, question=question, history=history
+                    ),
                 }
                 _mark_card_shown(chat_session, "team_connect")
 
@@ -5849,6 +6286,7 @@ async def rag_pipeline_stream(
     device: str = None,
     bot_id: int = None,
     cta_dimension: str | None = None,
+    visitor_country: str | None = None,
 ):
     """
     Streaming version of the Hybrid RAG flow.
@@ -5960,11 +6398,21 @@ async def rag_pipeline_stream(
             if _deferred_q is not None:
                 question = _deferred_q
 
+            # ── Affirmative reply to a handoff offer (B9, streaming) ─────────
+            # Mirror of the non-stream path: "sure"/"yes"/"ok" after "want me to
+            # connect you with the team?" routes into the handoff flow instead of
+            # the intent router's generic ack or the gate's refusal.
+            _affirmed_handoff = False
+            if _is_affirmative_reply(question):
+                _affirmed_handoff = _last_bot_offered_handoff(
+                    get_chat_history(session, session_id, client_id=cid, limit=3, bot_id=bid)
+                )
+
             # ── Deterministic intent router (streaming path) ─────────────────
             # Mirrors the non-stream path: greetings/acks/identity questions
             # short-circuit before retrieval so visitors don't hit the relevance
             # gate's boilerplate refusal as a first impression.
-            _intent = route_intent(question, _company_name)
+            _intent = None if _affirmed_handoff else route_intent(question, _company_name)
             if _intent is not None:
                 _safety_net_metric(
                     "intent_router_short_circuit",
@@ -6030,7 +6478,7 @@ async def rag_pipeline_stream(
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
-            if _cache_key:
+            if _cache_key and not _affirmed_handoff:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
                     # Run handoff detection even on cache hit so the widget can
@@ -6085,7 +6533,18 @@ async def rag_pipeline_stream(
             chat_session = session.query(ChatSession).filter(*_cs_filters_stream).first()
             current_bant = _build_bant_state(chat_session)
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-            visitor_name = resolve_visitor_name(session, session_id, bid, cid, question, history)
+            # ``question`` may have been rebound above to the visitor's DEFERRED
+            # original question (they declined the name ask, or changed topic).
+            # Never extract a name from that deferred text: a short topic query
+            # like "clean libraries" would be misread as a bare-reply name,
+            # because the name ask is still the most recent bot turn in history.
+            # Trust the name the flow already resolved; only fall back to
+            # extraction from the visitor's ACTUAL message when nothing was
+            # deferred this turn.
+            if _deferred_q is not None:
+                visitor_name = _flow_name
+            else:
+                visitor_name = _flow_name or resolve_visitor_name(session, session_id, bid, cid, question, history)
 
             # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
             # The two DB helpers below run inside ``asyncio.to_thread`` so they MUST
@@ -6114,7 +6573,7 @@ async def rag_pipeline_stream(
                 logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
                 final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
                 search_query = question
-                suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
+                suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question) or _affirmed_handoff
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
                 search_query, query_embedding = await _resolve_search_query_and_embedding(
@@ -6122,10 +6581,10 @@ async def rag_pipeline_stream(
                 )
 
                 try:
-                    suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0)
+                    suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0) or _affirmed_handoff
                 except TimeoutError:
                     # LLM timed out — fall back to keyword signal.
-                    suggest_handoff = detect_handoff_intent_keywords(question)
+                    suggest_handoff = detect_handoff_intent_keywords(question) or _affirmed_handoff
                     logger.warning(
                         "Handoff LLM timed out for session %s, keyword fallback=%s",
                         session_id,
@@ -6189,9 +6648,22 @@ async def rag_pipeline_stream(
             _is_relevant, _gate_score = await asyncio.to_thread(
                 check_relevance, question, final_results, bid, cid, _bot_threshold
             )
-            # Qualification-chip answer → bypass the off-topic gate; see the
-            # non-streaming path for the full rationale.
-            if not _is_relevant and not cta_dimension:
+            # Qualification-chip answer, or a free-typed answer to the bot's own
+            # question → bypass the off-topic gate; see the non-streaming path
+            # for the full rationale.
+            _answering_probe = not _is_relevant and not cta_dimension and _is_answer_to_bot_question(question, history)
+            if _answering_probe:
+                _safety_net_metric(
+                    "gate_relaxed_answer_to_probe",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
+            # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
+            # connect offer reaches generation, where ``suggest_handoff`` renders
+            # the handoff (B9).
+            if not _is_relevant and not cta_dimension and not _answering_probe and not _affirmed_handoff:
                 # Mirror of the non-stream path: on-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
                 # instead of the off-topic refusal.
@@ -6235,7 +6707,7 @@ async def rag_pipeline_stream(
 
             # ── Empty-context short-circuit (streaming path) ─────────────────
             # Skipped for qualification-chip answers (they need no KB grounding).
-            if not final_results and not cta_dimension:
+            if not final_results and not cta_dimension and not _answering_probe and not _affirmed_handoff:
                 if _question_looks_on_scope(question, _company_name) or (
                     search_query != question and _question_looks_on_scope(search_query, _company_name)
                 ):
@@ -6328,10 +6800,12 @@ async def rag_pipeline_stream(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
                 services=getattr(bot, "services", None) if bot else None,
                 services_url=getattr(bot, "services_url", None) if bot else None,
+                answer_links=getattr(bot, "answer_links", None) if bot else None,
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
+                visitor_country=visitor_country,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -6437,7 +6911,9 @@ async def rag_pipeline_stream(
             # Strip CTA marker from response before saving. The third return
             # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
             # surface that contextual one-liner if it has to infer the dim.
-            full_answer, cta_data, _cta_q = _strip_cta_marker(full_answer, bant_config)
+            full_answer, cta_data, _cta_q = _strip_cta_marker(
+                full_answer, bant_config, session_id=session_id, question=question, history=history
+            )
 
             # Markdown safety net: if the LLM ended on a follow-up question
             # without a preceding blank line, the renderer glues it onto the
@@ -6741,7 +7217,9 @@ async def rag_pipeline_stream(
                             "meeting_provider": _qualified_popup["meeting_provider"],
                             "live_chat_enabled": live_chat_on,
                             # Deferred BANT probe — see non-streaming path.
-                            "follow_up": _next_dimension_cta(bant_config, current_bant),
+                            "follow_up": _next_dimension_cta(
+                                bant_config, current_bant, session_id=session_id, question=question, history=history
+                            ),
                         }
                         _mark_card_shown(chat_session, "team_connect")
 

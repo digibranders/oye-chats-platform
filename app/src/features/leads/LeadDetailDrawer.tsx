@@ -689,9 +689,11 @@ export function LeadDetailDrawer({
                 </h3>
                 {detail.messages && detail.messages.length > 0 && (
                   <span className="text-[11px] text-[var(--ds-text-subtle)]">
-                    {formatDateTime(
-                      detail.messages[detail.messages.length - 1].created_at ?? detail.last_active_at,
-                    )}
+                    {/* When the conversation took place (session start), NOT the
+                        most recent activity — that lives in the "Last active"
+                        footer below. ``created_at`` is fixed at session creation;
+                        ``last_active_at`` moves on every new message. */}
+                    {formatDateTime(detail.created_at ?? detail.last_active_at)}
                   </span>
                 )}
               </div>

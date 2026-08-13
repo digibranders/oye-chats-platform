@@ -3,7 +3,6 @@ import Launcher from './Launcher';
 import { getChatbotSettings, recordPageVisit, markChatEvent } from '../services/api';
 import { readSessionId, writeSessionId, resolveShareDomain } from '../services/storage-keys';
 import { getController } from '../widget-controller.js';
-import { readWidgetOpen, writeWidgetOpen } from '../services/storage-keys';
 
 // Lazy-loaded — chat window ships in its own chunk, only fetched on first widget open.
 // This is the largest component (~1900 LOC plus react-markdown), so deferring it
@@ -19,22 +18,13 @@ const usePendingMessage = () => {
 const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
 const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
 
-// Read the persisted open state SYNCHRONOUSLY before the first render so a
-// page navigated to from a bot CTA renders the widget already open — no
-// "closed → opening → open" flicker. Resolves from sessionStorage (same-origin,
-// same tab) OR the shared parent-domain cookie (cross-subdomain), so the panel
-// stays open when the visitor hops from the main domain to a subdomain.
-const _readPersistedOpen = () => {
-  try { return readWidgetOpen(); } catch { return false; }
-};
-
 const ChatWidget = () => {
-  const initiallyOpen = _readPersistedOpen();
-  const [isVisible, setIsVisible] = useState(initiallyOpen);
-  // ``'done'`` skips the open animation entirely — the chat renders in its
-  // final open state on the very first paint, eliminating the flicker that
-  // otherwise comes from animating from closed → open after a navigation.
-  const [isAnimating, setIsAnimating] = useState(initiallyOpen ? 'done' : null);
+  // The panel always starts closed on every page load — it opens only when the
+  // visitor taps the launcher. The open/closed state is deliberately not
+  // persisted (the conversation itself still is, via the session id), so a
+  // returning visitor never has the chat pop open on its own.
+  const [isVisible, setIsVisible] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(null);
   const closeTimer = useRef(null);
   const [settings, setSettings] = useState({
     bot_name: 'OyeChats AI',
@@ -168,17 +158,14 @@ const ChatWidget = () => {
     };
   }, [unlockBodyScroll]);
 
-  // Persist the open/closed state so that clicking a link in a bot answer
-  // (which navigates the host page in the same tab) reopens the widget with the
-  // conversation intact. sessionStorage carries it across same-origin
-  // navigations; when the bot enables cross-subdomain sharing, `writeWidgetOpen`
-  // ALSO mirrors it into the shared parent-domain cookie so the panel survives a
-  // hop from the main domain to a subdomain. `shareDomain` comes from bot
-  // settings, so these callbacks re-bind once settings resolve.
-  // An explicit `session_share_domain` (Admin → Channels) always wins; when it's
-  // blank we auto-detect the apex so cross-subdomain continuity works with zero
+  // Cross-subdomain continuity for the CONVERSATION (session id), so a visitor
+  // who hops from the main domain to a subdomain keeps the same chat history.
+  // `shareDomain` comes from bot settings, so callbacks re-bind once settings
+  // resolve. An explicit `session_share_domain` (Admin → Channels) always wins;
+  // when it's blank we auto-detect the apex so continuity works with zero
   // config. Resolves to null only when neither is available (cookies disabled),
-  // keeping the widget localStorage-only in that case.
+  // keeping the widget localStorage-only in that case. The open/closed PANEL
+  // state is deliberately not persisted — the widget always starts closed.
   const shareDomain = resolveShareDomain(settings?.session_share_domain);
 
   const openChat = useCallback(() => {
@@ -188,7 +175,6 @@ const ChatWidget = () => {
     }
     setIsVisible(true);
     lockBodyScroll();
-    writeWidgetOpen(true, { shareDomain });
     // Journey marker — chat_opened. If no session id has been minted
     // yet (visitor is opening the panel for the first time and hasn't
     // typed a message), MINT ONE HERE so the pre-chat journey we've
@@ -217,7 +203,6 @@ const ChatWidget = () => {
 
   const closeChat = useCallback(() => {
     setIsAnimating(false); // triggers close animation
-    writeWidgetOpen(false, { shareDomain });
     // Journey marker — chat_closed. Anchored to the current page so
     // "after-chat destinations" analytics know where the visitor was
     // when they dismissed the panel.
@@ -230,34 +215,7 @@ const ChatWidget = () => {
       closeTimer.current = null;
       unlockBodyScroll();
     }, CLOSE_DURATION);
-  }, [unlockBodyScroll, shareDomain]);
-
-  // On initial mount, if the chat was restored already-open from sessionStorage
-  // (handled synchronously in the useState above for flicker-free first paint),
-  // we still need to fire the mobile body-scroll lock — that side effect can't
-  // run synchronously during render. Runs exactly once.
-  const didRestoreRef = useRef(false);
-  useEffect(() => {
-    if (didRestoreRef.current) return;
-    didRestoreRef.current = true;
-    if (initiallyOpen) {
-      lockBodyScroll();
-    }
-    // ``initiallyOpen`` is captured at module-eval and never changes, so the
-    // dependency array is intentionally empty — no exhaustive-deps lint rule.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Cover the race where the visitor opens the panel before bot settings (and
-  // thus the cross-subdomain share domain) resolve: openChat wrote sessionStorage
-  // only. Once settings arrive, mirror the still-open state into the shared
-  // cookie so the panel carries to a subdomain even then. No-op when closed or
-  // when sharing is off.
-  useEffect(() => {
-    if (isVisible && shareDomain) {
-      writeWidgetOpen(true, { shareDomain });
-    }
-  }, [isVisible, shareDomain]);
+  }, [unlockBodyScroll]);
 
   // Same race for the session id. `openChat` mints and persists the session id
   // the instant the visitor opens the panel — which can happen before bot
