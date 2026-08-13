@@ -3,13 +3,17 @@
 Lives in ``app.core`` rather than next to any one route because the defence had
 already been written three times independently (per-bot analytics, the GSTR
 return in ``superadmin_routes_v2``, and the lead export) — a copy-per-route
-defence is one forgotten route away from being a copy-per-route hole. The GSTR
-export still carries its own inline copy and is tracked separately for
-migration. No FastAPI or ORM imports here, so the worker can use it too.
+defence is one forgotten route away from being a copy-per-route hole. All four
+exports now call in here. No FastAPI or ORM imports here, so the worker can use
+it too.
 
 Prefer :func:`csv_safe_row` over calling :func:`csv_safe` per cell: routing a
 whole row through one funnel is what keeps a column added later safe without
-its author having to know this module exists.
+its author having to know this module exists. The GSTR export is the one place
+that must not — its money columns are pre-formatted strings, and a negative
+figure (``-5.00``) starts with a formula trigger, so the funnel would quote a
+tax amount. Where a row mixes untrusted text with formatted numerics, escape
+the text cells explicitly and say why.
 """
 
 from collections.abc import Iterable
