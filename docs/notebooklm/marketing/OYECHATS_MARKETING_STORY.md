@@ -49,7 +49,7 @@ For a CEO, CMO, or business owner, the value is not "we have an AI chatbot" — 
 
 ## Emotional Journey
 
-The intended emotional arc for a viewer watching a video built from this story:
+The intended emotional arc for someone encountering this story:
 
 1. **Recognition** — "yes, that's what my website does right now: nothing, when someone has a question."
 2. **Relief** — "it reads *my* site, in ten minutes, without a developer."
@@ -116,7 +116,7 @@ The strongest approved messages, preserved close to source wording:
 - **Do not claim USD/multi-currency billing as live.** INR via Razorpay is the sole live rail; USD pricing exists in configuration but is staged behind a flag. **[T2 — root `CLAUDE.md` Tech Stack table]**
 - **Do not depict visitors being asked a rapid-fire sequence of qualifying questions.** Interactive qualification chips ship off by default; the default experience is silent background scoring. **[T2 — Part 7.1]**
 - **Do not invent customer names, logos, testimonials, or case studies.** None exist in any inspected source.
-- **Do not use generic AI-hype language** ("revolutionary," "game-changing," "cutting-edge") — the approved brand tone is plain-spoken and confident, not hype-adjective-stacked. **[T3 — `docs/oyechats-marketing-story.md` Brand Guidelines, "Tone for narration/voiceover"]**
+- **Do not use generic AI-hype language** ("revolutionary," "game-changing," "cutting-edge") — the approved brand tone is plain-spoken and confident, not hype-adjective-stacked. **[T3 — `docs/oyechats-marketing-story.md`]**
 
 ---
 
@@ -130,6 +130,6 @@ Approved supporting one-liner for a closing card or narrator sign-off:
 
 > AI chatbot that qualifies every visitor before your sales reps ever see them — grounded answers, live handoff, and analytics, all from your own website.
 
-**[T3 — both sourced from `docs/oyechats-marketing-story.md` Brand Guidelines section, itself sourced from the live site's title/meta description]**
+**[T3 — both sourced from `docs/oyechats-marketing-story.md`, itself sourced from the live site's title/meta description]**
 
-No new slogans are proposed in this document. If a new closing line is wanted for video-specific pacing, it must be explicitly authored and marked as a **suggestion**, not substituted silently for the approved tagline above.
+No new slogans are proposed in this document. If a new closing line is ever wanted, it must be explicitly authored and marked as a **suggestion**, not substituted silently for the approved tagline above.

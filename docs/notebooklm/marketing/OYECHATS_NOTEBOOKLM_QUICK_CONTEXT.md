@@ -1,6 +1,6 @@
 # OyeChats — NotebookLM Quick Context
 
-*Maximum-density executive overview. Depth and evidence citations live in the other six documents in this folder — this one is a fast-load summary, not a replacement for them. Every line here is traceable to `OYECHATS_SOURCE_OF_TRUTH.md`.*
+*Maximum-density executive overview. Depth and evidence citations live in the other documents in this folder — this one is a fast-load summary, not a replacement for them. Every line here is traceable to `OYECHATS_SOURCE_OF_TRUTH.md`.*
 
 ---
 
@@ -32,22 +32,13 @@
 
 **Brand personality:** Confident, plain-spoken, premium-but-warm, honest over impressive (the product itself is architected to refuse rather than bluff). No hype-adjective language.
 
-**Visual identity — "Voltage Paper" theme:**
-- Dominant field: warm paper/cream neutrals (`#FAFAF7`), near-black ink (`#0A0A0A`).
-- Single accent color: Volt violet `#7C3AED` (never a background wash — a deliberate, restrained highlight only).
-- Fonts: Geist (headings), Inter (body), Geist Mono (code), Fraunces italic (editorial accent only).
-- Logo: one glyph, two forms, both confirmed live in production. The core mark is a rounded "C"-ring/speech-bubble glyph with three dots, single-color (near-black on light, white on dark). As a **standalone icon** — `logo-light.png` / `logo-dark.png` — it's confirmed rendering in the live Admin dashboard sidebar (`https://app.oyechats.com/logo-light.png`). As a **full wordmark** — `oyechats-wordmark.png` / `oyechats-wordmark-light.png` — the same glyph is embedded as the "C" of "chats" in "Oyechats," confirmed live on the marketing homepage (`https://www.oyechats.com/`). Use the icon alone for tight spaces, the full wordmark for hero/title placements. Two other logo concepts (indigo signal-arcs, an orange glyph) were found in the codebase and are confirmed dead/unused — do not use them. A third file, `oyechats-mark.png` (navy bubble), is stale — the local website repo checkout is a couple of commits behind production and still points at it, but production itself no longer serves it.
-
-**Reference video style ("papercraft/origami diorama"):** Everything — UI, devices, speech bubbles, people — rendered as folded, embossed craft paper, shot macro-photography style with shallow depth of field and soft studio lighting. A warm gold glow marks "the important thing" in each shot. **Adaptation rule: re-key that glow to Volt violet (`#7C3AED`/`#A78BFA`) for OyeChats material — everything else about the papercraft medium should be kept.** An angular gold/silver origami robot represents the AI; soft paper-sculpture humans represent people — keep this material contrast, especially in any handoff scene.
-
-**Critical do-not-do rules:**
-- Do not depict the AI replacing the sales/support team.
+**Critical do-not-say rules:**
+- Do not claim the AI replaces the sales/support team.
 - Do not cite any ROI/conversion-rate/revenue number — none exist in source material.
-- Do not depict visitors being rapid-fire interrogated by qualification chips — the default experience is silent background scoring.
+- Do not claim visitors are rapid-fire interrogated by qualification chips — the default experience is silent background scoring.
 - Do not claim USD/multi-currency billing as live — Razorpay/INR is the sole live payment rail.
-- Do not use generic AI-hype language, invented customer names/logos/testimonials, or literal AI clichés (glowing brains, circuit boards, floating binary).
-- Do not use the stale/dead logo variants (navy bubble, indigo signal-arcs, orange glyph).
-- Do not depict the exact dashboard nav labels without verification — two sources disagree on current information architecture (see `OYECHATS_SOURCE_OF_TRUTH.md`); prefer generic, label-light UI framing.
+- Do not use generic AI-hype language or invented customer names/logos/testimonials.
+- Do not state the exact dashboard nav labels as confirmed current fact without verification — two sources disagree on current information architecture (see `OYECHATS_SOURCE_OF_TRUTH.md`).
 
 **Final approved message:**
 > "OyeChats. You only talk to buyers."
