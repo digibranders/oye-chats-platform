@@ -9,6 +9,7 @@
  * `csvField` below.
  */
 import { csvSafe } from '../../lib/csvSafe';
+import { downloadCsv } from '../../lib/downloadCsv';
 
 import { type DateRange, type FeedbackFilter, type FeedbackItem } from './types';
 
@@ -182,11 +183,5 @@ export function buildFeedbackCsv(items: readonly FeedbackItem[]): string {
 
 /** Download the feedback log as a CSV (there is no server export endpoint). */
 export function exportFeedbackCsv(items: readonly FeedbackItem[]): void {
-  const blob = new Blob([buildFeedbackCsv(items)], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = 'feedback.csv';
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadCsv(buildFeedbackCsv(items), 'feedback.csv');
 }

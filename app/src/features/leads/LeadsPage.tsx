@@ -38,6 +38,7 @@ import { useBotContext } from '../../context/BotContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { useSelectedBotPlanSlug } from '../../hooks/useSelectedBotPlanSlug';
 import { useUpgradeModal } from '../../context/UpgradeModalContext';
+import { downloadCsv } from '../../lib/downloadCsv';
 import { exportLeadsCsv, markAllLeadsViewed, markLeadViewed } from '../../services/api';
 import { type Lead } from '../../types/domain';
 import { buildSelectedLeadsCsv } from './leadsCsv';
@@ -91,20 +92,6 @@ function leadComparator(sortBy: SortKey): (a: Lead, b: Lead) => number {
   return (a, b) => leadActivityTime(b) - leadActivityTime(a) || b.score - a.score;
 }
 
-
-/** Trigger a browser download of `content` as a UTF-8 CSV named `filename`. */
-function downloadCsv(content: string, filename: string): void {
-  // Lead with a UTF-8 BOM so Excel opens accented characters correctly.
-  const blob = new Blob(['﻿', content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
 
 /**
  * Canonical B-A-N-T display order. The backend emits a bot's framework
