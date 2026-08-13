@@ -101,11 +101,17 @@ class SeatOverflow:
 def check_seat_overflow(session: Session, client_id: int, target_plan: Plan) -> SeatOverflow | None:
     """Return ``SeatOverflow`` if active operator count exceeds the new plan's seats.
 
-    Returns ``None`` when the customer is already within the new plan's
-    seat allowance. The caller decides whether to refuse the transition
-    or merely warn — this helper is intentionally pure.
+    Returns ``None`` when the target plan grants UNLIMITED (``-1``) seats or
+    the customer is already within the new plan's seat allowance. The caller
+    decides whether to refuse the transition or merely warn — this helper is
+    intentionally pure.
     """
     allowed = int(target_plan.included_operator_seats or 0)
+    # UNLIMITED (-1) → nothing to enforce. Without this, ``active <= allowed``
+    # is false for every possible operator count (including zero), so an
+    # Enterprise customer switching annual→monthly is refused unconditionally.
+    if allowed < 0:
+        return None
     active = int(
         session.scalar(
             select(func.count(Operator.id)).where(

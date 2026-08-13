@@ -1294,6 +1294,21 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
     )
 
 
+def derive_operator_quantity(plan: Plan | None, seat_addon_quantity: int | None) -> int:
+    """Seat-entitlement mirror = included plan seats + authorized add-on seats.
+
+    ``Subscription.operator_quantity`` is the authoritative seat mirror the
+    live-chat gate reads, so it has to stay in the same vocabulary as the
+    column it is derived from: ``included_operator_seats == -1`` means
+    UNLIMITED, and the mirror stays ``-1`` rather than becoming a nonsense
+    finite count (``-1 + 2 == 1``) that reads back as a one-seat cap.
+    """
+    included = int((plan.included_operator_seats if plan else 1) or 1)
+    if included < 0:
+        return -1  # UNLIMITED — paid add-on seats are meaningless on top of it.
+    return included + int(seat_addon_quantity or 0)
+
+
 def update_subscription_quantity(
     session: Session,
     sub: Subscription,
@@ -1490,8 +1505,6 @@ def _handle_seat_addon_event(
         logger.info("Seat add-on event %s for unknown seat sub %s — acknowledged", event_name, seat_sub_id)
         return f"Seat add-on event {event_name} (no local sub)"
 
-    included = int((local.plan.included_operator_seats if local.plan else 1) or 1)
-
     if event_name in ("subscription.activated", "subscription.charged"):
         # Authorization confirmed → promote the pending count to authorized and
         # grant entitlement. ``pending`` is None on a plain renewal charge, in
@@ -1500,7 +1513,7 @@ def _handle_seat_addon_event(
         if pending is not None:
             local.seat_addon_quantity = int(pending)
             local.seat_addon_pending_quantity = None
-        local.operator_quantity = included + int(local.seat_addon_quantity or 0)
+        local.operator_quantity = derive_operator_quantity(local.plan, local.seat_addon_quantity)
         if event_name == "subscription.charged":
             _record_seat_invoice(session, local, payload)
 
@@ -1508,13 +1521,13 @@ def _handle_seat_addon_event(
         # Terminal — the add-on is gone. Drop to the plan's included seats.
         local.seat_addon_quantity = 0
         local.seat_addon_pending_quantity = None
-        local.operator_quantity = included
+        local.operator_quantity = derive_operator_quantity(local.plan, 0)
 
     elif event_name == "subscription.halted":
         # Temporary (repeated payment failure). Suspend entitlement but KEEP the
         # authorized count (M1): a recovery ``charged`` re-derives operator_quantity
         # from it, so we never invoice a seat without restoring its entitlement.
-        local.operator_quantity = included
+        local.operator_quantity = derive_operator_quantity(local.plan, 0)
 
     session.flush()
     return f"Seat add-on event {event_name} handled"
@@ -2707,8 +2720,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
     # authoritative seat-entitlement mirror maintained by the seat webhooks,
     # writing the bare main-plan quantity here would clobber a seat-holder down to
     # 1 until their next seat charge. Re-derive from included + authorized seats.
-    included = int((local.plan.included_operator_seats if local.plan else 1) or 1)
-    local.operator_quantity = included + int(local.seat_addon_quantity or 0)
+    local.operator_quantity = derive_operator_quantity(local.plan, local.seat_addon_quantity)
     # Back to a paid plan → restore any knowledge deactivated by a prior lapse.
     from app.services.knowledge_state_service import reactivate_bot_knowledge
 

@@ -2618,8 +2618,17 @@ def change_seat_count(
         if plan is None:
             raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
 
-        new_total = (sub.operator_quantity or plan.included_operator_seats or 1) + request.delta
         floor = int(plan.included_operator_seats or 1)
+        if floor < 0:
+            # UNLIMITED (-1) included seats: there is no add-on to sell. Falling
+            # through would compute ``extra_seats = new_total - (-1)`` and mint a
+            # real, charged seat mandate for capacity the plan already grants.
+            raise HTTPException(
+                status_code=400,
+                detail="Your plan includes unlimited operator seats — seats cannot be added or removed.",
+            )
+
+        new_total = (sub.operator_quantity or floor) + request.delta
         if new_total < floor:
             raise HTTPException(
                 status_code=400,
