@@ -1432,6 +1432,47 @@ def list_bots(
         return bots_response
 
 
+def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> bool:
+    """Does this client's plan fund another AI agent without a new subscription?
+
+    Consumer of ``limits.bots`` — the plan's **included agent quota**, which is
+    what every plan row has always declared and nothing has ever read.
+
+    Read ``PlanEntitlements.limit_for`` before changing this: ``bots`` is the
+    quota a single subscription includes, NOT an account-wide ceiling. Under the
+    per-bot billing model an account legitimately holds more agents than this
+    number by funding each extra one with its own subscription
+    (``POST /bots/checkout``). So this predicate can only ever *widen* the
+    default rule, never tighten it — see the call site in :func:`create_bot`.
+
+    * Free / Starter / Standard / Professional declare ``bots: 1`` — the
+      caller has already been denied at ≥1 active agent, so this returns False
+      and the existing per-bot-subscription 402 stands. Behaviour is unchanged.
+    * Enterprise declares ``bots: -1`` (UNLIMITED) — this returns True and the
+      agency gets unlimited agents pooled under its single subscription, which
+      is the tier's entire headline differentiator.
+
+    ``within_limit`` handles the ``UNLIMITED`` sentinel, so the -1 comparison is
+    never hand-rolled here.
+
+    Fails CLOSED: any entitlements-resolution error returns False, which falls
+    back to the pre-existing 402 upgrade path rather than granting a free agent.
+    That matches the deny-by-default policy in ``plan_entitlements_service``.
+    """
+    from app.services.plan_entitlements_service import get_entitlements
+
+    try:
+        entitlements = get_entitlements(client_id, session, include_usage=False)
+    except Exception:
+        logger.warning(
+            "bots_limit_gate: entitlements lookup failed for client=%s — falling back to the paid-bot gate",
+            client_id,
+            exc_info=True,
+        )
+        return False
+    return entitlements.within_limit("bots", active_bot_count)
+
+
 @router.post("", status_code=201)
 def create_bot(
     request: CreateBotRequest,
@@ -1450,17 +1491,28 @@ def create_bot(
     """
     _require_bot_management_access(auth)
     with get_session() as session:
-        # ── Per-bot billing gate ──
-        # Free accounts get exactly one bot; every additional bot needs an
-        # active paid subscription somewhere on the account so the per-bot
-        # checkout has a funded counterpart. The decision is centralised
-        # in :func:`plan_entitlements_service.can_client_add_new_bot` so
-        # the frontend's ``/me/entitlements`` view and this route stay in
-        # lockstep.
+        # ── Per-bot billing gate, widened by the plan's agent quota ──
+        # Default rule: an account gets exactly one bot here, and every
+        # additional bot needs its own paid subscription via
+        # ``POST /bots/checkout`` so the new agent has a funded counterpart.
+        # That decision is centralised in
+        # :func:`plan_entitlements_service.can_client_add_new_bot` so the
+        # frontend's ``/me/entitlements`` view and this route stay in lockstep.
+        #
+        # ``_plan_bots_limit_allows`` is the override: a plan whose
+        # ``limits.bots`` quota still covers the account's current agent count
+        # funds this agent already, so it must not be pushed through checkout.
+        # Only Enterprise (``bots: -1``) takes that branch today — the other
+        # four plans declare ``bots: 1`` and behave exactly as before.
+        # Ordering matters: the quota check runs only AFTER the default gate
+        # denies, so it can never block a create the default gate would allow
+        # (a bespoke plan row missing the ``bots`` key resolves to a limit of 0
+        # under ``limit_for``'s conservative default, which would otherwise
+        # refuse that account its very first agent).
         from app.services.plan_entitlements_service import can_client_add_new_bot
 
         decision = can_client_add_new_bot(auth["client_id"], session)
-        if not decision.allowed:
+        if not decision.allowed and not _plan_bots_limit_allows(auth["client_id"], session, decision.active_bot_count):
             # Idempotent onboarding create: a Build Studio double-submit (submit
             # #1 creates the bot, submit #2 arrives after and is now over the
             # free 1-bot cap) would otherwise surface a confusing "needs a paid
