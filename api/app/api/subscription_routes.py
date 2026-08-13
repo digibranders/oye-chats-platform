@@ -94,6 +94,39 @@ def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
     return get_account_subscription(session, client_id)
 
 
+def _pooled_plan_scope_error(plan: Plan) -> HTTPException:
+    """400 for "this plan is an ACCOUNT product, it cannot be bought per agent".
+
+    A plan whose ``limits.bots`` is the ``UNLIMITED`` sentinel sells ONE credit
+    pool shared across unlimited agents. Landed on a bot-scoped subscription its
+    credits are granted and reset into that single bot's ISOLATED ledger
+    (``credit_service.resolve_bot_ledger_bot_id``) while every further agent the
+    tier entitles holds no subscription of its own and drains the shared pool the
+    purchase never funded — one working agent and N silent ones.
+    ``POST /bots/checkout`` refuses the same state on the other door onto it, and
+    ``razorpay_service._handle_subscription_activated`` refuses to persist it at
+    the sink, whichever door a mandate came through.
+
+    The message deliberately does NOT send the customer to "account-level
+    Billing with no agent selected": ``BotContext`` resolves the shell to exactly
+    one agent whenever the account has any, so that view no longer exists for
+    them to reach. Self-service migration of an agency's existing per-agent
+    subscriptions onto a pooled tier is an open product decision, so the only
+    honest next step to offer is support.
+    """
+    return HTTPException(
+        status_code=400,
+        detail={
+            "code": "plan_not_per_agent",
+            "message": (
+                f"The {plan.name} plan includes unlimited AI agents and is billed for your whole "
+                "account, so it can't be bought for a single agent. Contact support and we'll move "
+                f"your account onto {plan.name} — your existing agents keep working."
+            ),
+        },
+    )
+
+
 def _client_owns_bot(session, client_id: int, bot_id: int) -> bool:
     """Does this bot belong to this workspace?"""
     return (
@@ -1830,37 +1863,26 @@ def change_plan(
         # mandate of) a DIFFERENT, pricier bot's subscription.
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
 
-        # An unlimited-agent plan is an ACCOUNT product and must never be
-        # attached to a BOT-SCOPED subscription — the same invariant
-        # ``POST /bots/checkout`` enforces, on the other door onto that state.
-        #
-        # A ``bot_id`` here reaches two branches that do exactly that: Branch 2a
-        # hands the targeted bot-scoped subscription to
+        # Guard 1 of 2 — the IN-PLACE branches (1, 2a, 2b) all act on ``sub``,
+        # so the scope that matters is the RESOLVED subscription's, never the
+        # request parameter's. Branch 2a hands ``sub`` to
         # ``transition_service.execute_paid_upgrade``, which stamps
-        # ``oyechats_bot_id`` into the replacement mandate's notes, and Branch 3
-        # passes the id straight into ``razorpay_service.create_bot_resubscription``.
-        # Either way the plan's monthly credits are granted and reset into that
-        # single bot's isolated ledger (``credit_service.resolve_bot_ledger_bot_id``),
-        # while every further agent the "unlimited agents" promise entitles holds
-        # no subscription of its own and drains the shared client pool — which the
-        # purchase never funded. The agency ends up with one working agent and N
-        # silent ones.
+        # ``oyechats_bot_id`` into the replacement mandate's notes only when
+        # ``sub.bot_id is not None``; Branch 2b queues ``scheduled_plan_id`` on
+        # ``sub``, and the cutover row inherits its scope; Branch 1 writes
+        # ``sub.plan_id`` straight onto it.
         #
-        # The account-level request (``bot_id`` omitted) is deliberately NOT
-        # blocked: it mints against ``bot_id IS NULL``, i.e. the pooled balance
-        # the tier actually sells, and is the correct way to buy it.
-        if request.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(new_plan):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "plan_not_per_agent",
-                    "message": (
-                        f"The {new_plan.name} plan includes unlimited AI agents and is billed for the "
-                        "whole account, not per agent. Switch to it from account-level Billing "
-                        "(with no agent selected) instead."
-                    ),
-                },
-            )
+        # Keying this off ``request.bot_id`` instead (as it briefly did) blocked
+        # the case the resolver exists for: an agent with no subscription of its
+        # own falls back to the ACCOUNT row, where the very same upgrade is
+        # account-scoped and entirely correct. Branch 3 is the one place a
+        # ``request.bot_id`` still creates bot scope on its own — guarded there.
+        if (
+            sub is not None
+            and sub.bot_id is not None
+            and plan_entitlements_service.plan_grants_unlimited_bots(new_plan)
+        ):
+            raise _pooled_plan_scope_error(new_plan)
 
         # Universal precheck — same plan + SAME CYCLE is a no-op UNLESS the
         # current subscription is a trial that hasn't been paid for yet (a
@@ -2192,6 +2214,15 @@ def change_plan(
         # carry its id so activation reattaches the new sub and reactivates its
         # knowledge, keeping the same bot_key/embed. Without a bot_id it is an
         # account-level purchase.
+        #
+        # Guard 2 of 2 — this is the one branch whose scope comes from the
+        # REQUEST rather than from ``sub``: ``create_bot_resubscription`` stamps
+        # ``request.bot_id`` onto the new subscription whatever
+        # ``_resolve_target_subscription`` returned, so the account-row fallback
+        # that makes Guard 1 pass does not make this branch account-scoped.
+        if request.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(new_plan):
+            raise _pooled_plan_scope_error(new_plan)
+
         billing_cycle = request.billing_cycle or (sub.billing_cycle if sub else "monthly")
         from app.services import razorpay_service
 

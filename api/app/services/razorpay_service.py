@@ -2227,6 +2227,61 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # NOT name an existing one.
         mints_new_bot = is_per_bot and resume_bot_id is None
 
+        # ── The sink guard: a POOLED plan may never land on a BOT-SCOPED row ──
+        #
+        # Every route that can attach a plan to a subscription — per-bot
+        # checkout, change-plan revive, resume, the upgrade/downgrade cutovers,
+        # the promotion cron — ends here, at the single INSERT below. Guarding
+        # the mint sites one by one drifts; this is the one place that cannot be
+        # bypassed, including by a per-bot mandate created BEFORE the route
+        # guards shipped and only authorised afterwards.
+        #
+        # The invariant is ``plan_entitlements_service.plan_grants_unlimited_bots``:
+        # such a plan sells ONE pooled credit balance across unlimited agents, so
+        # scoping it to one bot's isolated ledger funds that agent and silently
+        # starves every other one the tier entitles.
+        #
+        # Failure mode — the money is ALREADY taken by the time this webhook
+        # arrives, so the choice is which bad outcome to take:
+        #
+        # * NOT raising. A raise dead-letters and 5xxs (see
+        #   ``webhook_billing_routes``), which asks Razorpay to redeliver — but
+        #   the refusal is deterministic in the notes + plan row, so every retry
+        #   re-fails identically: the whole retry window burns, N duplicate
+        #   dead-letters accumulate, and the outcome is the same as ACKing, only
+        #   noisier. Retries fix transient faults, and this is not one.
+        # * NOT demoting to account scope (``funded_bot_id = None``). Tempting —
+        #   a pooled plan on ``bot_id IS NULL`` is exactly what the customer
+        #   bought — but the sibling sweep below would then cancel the client's
+        #   EXISTING account subscription and irreversibly cancel its mandate at
+        #   Razorpay, destroying a subscription the customer never asked to
+        #   touch. Silently doing that on a webhook is worse than not guarding.
+        # * NOT persisting the row anyway: that is the incoherent state itself.
+        #
+        # So: log at ERROR (→ Sentry) and ACK, exactly like the other
+        # unrecoverable shapes in this handler (missing notes, unparseable
+        # ``oyechats_bot_id``). Nothing is lost silently — the charge still
+        # surfaces, because the ``subscription.charged`` for this mandate finds
+        # no local row and dead-letters into ``failed_webhooks``, and the ERROR
+        # here names the mandate to cancel or re-sell at account level.
+        if mints_new_bot or resume_bot_id is not None:
+            # ``plan_id`` is non-NULL here — the missing-notes return above.
+            candidate_plan = session.get(Plan, plan_id)
+            if candidate_plan is not None and plan_entitlements_service.plan_grants_unlimited_bots(candidate_plan):
+                logger.error(
+                    "REFUSING bot-scoped activation of pooled plan %s (id=%s) on Razorpay subscription %s "
+                    "(client %s, bot %s): this plan grants unlimited agents and sells one POOLED credit "
+                    "balance, so it must be billed with bot_id NULL. The customer HAS been charged — "
+                    "cancel this mandate and re-sell the plan at account level, or move the payment over "
+                    "manually. No local subscription was created.",
+                    candidate_plan.slug,
+                    plan_id,
+                    razorpay_sub_id,
+                    client_id,
+                    "new" if mints_new_bot else resume_bot_id,
+                )
+                return "pooled plan on a bot-scoped activation; subscription NOT created"
+
         # Launch-promo sub: ``starts_in_future`` is True for its whole free
         # window, but the semantics are the OPPOSITE of the resume cutover —
         # the customer owns no prior paid period to carry, and the plan's
@@ -2355,6 +2410,9 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
 
         # The bot this subscription funds: a freshly-minted one (per-bot), the
         # existing bot being resumed or revived, or NULL (account-level).
+        # Non-NULL here has already cleared the pooled-plan sink guard above —
+        # which runs before the sweep and the bot INSERT precisely so refusing
+        # commits nothing.
         funded_bot_id = new_bot.id if new_bot is not None else resume_bot_id
 
         # Close the per-bot downgrade re-auth seam. A per-bot downgrade's grace
