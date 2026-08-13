@@ -553,6 +553,8 @@ def check_and_deduct(
     reference_id: int | None = None,
     bot_id: int | None = None,
     idempotency_key: str | None = None,
+    *,
+    attributed_bot_id: int | None = None,
 ) -> int:
     """Atomically deduct ``amount`` credits, allocating FIFO within one scope.
 
@@ -579,6 +581,16 @@ def check_and_deduct(
     different scopes can never mint the same key — that makes the cross-scope
     unique-index race unreachable; same-scope retries are serialised by the
     advisory lock and caught by the check below.
+
+    ``attributed_bot_id`` answers "which bot SPENT this?" and is REPORTING-ONLY.
+    It is deliberately independent of ``bot_id``, which is the ledger SCOPE key
+    (``None`` = shared client pool) that every balance query keys off. A pooled
+    deduction therefore carries ``bot_id=None`` (so the pool balance stays
+    correct) alongside a concrete ``attributed_bot_id`` (so per-bot reporting
+    still works). It defaults to ``bot_id`` so every bot-scoped deduction stays
+    attributed without the caller doing anything; only pooled callers need to
+    pass it explicitly. Balance maths MUST NEVER read this column — see
+    ``_scope_clause``.
     """
     if amount <= 0:
         return get_balance(session, client_id, bot_id)
@@ -639,6 +651,9 @@ def check_and_deduct(
             CreditLedger(
                 client_id=client_id,
                 bot_id=bot_id,
+                # Reporting-only; never part of the scope/balance maths. Falls
+                # back to the scope so bot-scoped deductions self-attribute.
+                attributed_bot_id=attributed_bot_id if attributed_bot_id is not None else bot_id,
                 delta=-take,
                 reason=reason,
                 reference_id=reference_id,
@@ -672,11 +687,19 @@ def refund(
     reference_id: int,
     note: str | None = None,
     bot_id: int | None = None,
+    *,
+    attributed_bot_id: int | None = None,
 ) -> int:
     """Reverse a previous deduction (e.g., per-page crawl failure).
 
     Writes a positive ``refund`` delta. Does not re-attribute to a grant —
     refunded credits behave like a fresh manual adjustment for FIFO purposes.
+
+    ``attributed_bot_id`` mirrors :func:`check_and_deduct`: this row reverses a
+    specific bot's spend, so it carries the same reporting attribution (and the
+    same ``bot_id`` fallback). Without it a pooled refund would be unattributed
+    while the pooled deduction it reverses is attributed, so any net-spend
+    report would over-count that bot.
     """
     if amount <= 0:
         return get_balance(session, client_id, bot_id)
@@ -685,6 +708,7 @@ def refund(
         CreditLedger(
             client_id=client_id,
             bot_id=bot_id,
+            attributed_bot_id=attributed_bot_id if attributed_bot_id is not None else bot_id,
             delta=int(amount),
             reason="refund",
             reference_id=reference_id,

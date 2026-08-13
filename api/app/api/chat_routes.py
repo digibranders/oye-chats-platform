@@ -449,8 +449,9 @@ def _charge_for_enrichment(bot_id: int | None, action: str, *, idempotency_key: 
                     cost,
                     reason=action,
                     reference_id=bot_id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
                     idempotency_key=idempotency_key,
+                    attributed_bot_id=bot.id,  # attribution — always the real bot
                 )
             except (credit_service.InsufficientCredits, credit_service.KillSwitchActive):
                 return False
@@ -949,7 +950,8 @@ def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
                 cost,
                 reference_id=bot.id,
                 note="ai_chat generation failed",
-                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
+                attributed_bot_id=bot.id,  # attribution — mirrors the deduction it reverses
             )
             db.commit()
         logger.info("Refunded ai_chat credit (generation failed) bot_id=%s cost=%s", bot.id, cost)
@@ -1049,7 +1051,8 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_bo
                     cost,
                     reason="ai_chat",
                     reference_id=bot.id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
+                    attributed_bot_id=bot.id,  # attribution — always the real bot
                 )
                 db.commit()
             except credit_service.InsufficientCredits as exc:
@@ -1192,7 +1195,8 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
                     cost,
                     reason="ai_chat",
                     reference_id=bot.id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
+                    attributed_bot_id=bot.id,  # attribution — always the real bot
                 )
                 db.commit()
             except credit_service.InsufficientCredits as exc:
