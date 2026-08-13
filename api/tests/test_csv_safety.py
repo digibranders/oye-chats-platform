@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.csv_safety import CSV_FORMULA_PREFIXES, csv_safe
+from app.core.csv_safety import CSV_FORMULA_PREFIXES, csv_safe, csv_safe_row
 
 
 @pytest.mark.parametrize(
@@ -80,3 +80,51 @@ def test_csv_safe_does_not_double_escape_an_already_quoted_value() -> None:
     """
     once = csv_safe("=1+1")
     assert csv_safe(once) == once
+
+
+# ── The row funnel ───────────────────────────────────────────────────────────
+#
+# This is where the "a column added later is safe by default" property actually
+# lives. An export test can only assert about the columns it knows to fill in,
+# so it can never prove that claim; these can, because they hand the funnel
+# strings it was never told about.
+
+
+def test_csv_safe_row_escapes_every_string_it_is_given() -> None:
+    """No cell is exempt — including ones no caller anticipated.
+
+    The point of the funnel: it does not know or care which column is which, so
+    a column appended to an export cannot miss the escape by omission.
+    """
+    row = csv_safe_row(["=1+1", "ordinary", "@SUM(1)", "", "\t=1+1"])
+
+    assert row == ["'=1+1", "ordinary", "'@SUM(1)", "", "'\t=1+1"]
+    for cell in row:
+        assert not str(cell).startswith(CSV_FORMULA_PREFIXES)
+
+
+def test_csv_safe_row_leaves_numbers_numeric() -> None:
+    """Ints and floats must survive as numbers, not become text.
+
+    Escaping them would prefix a quote and turn the column into strings in the
+    recipient's sheet, breaking every SUM and sort built on the export — which
+    is why this cannot be a plain ``[csv_safe(v) for v in row]``.
+    """
+    row = csv_safe_row(["Acme", 0, 42, 3.5, None, True])
+
+    assert row == ["Acme", 0, 42, 3.5, None, True]
+    assert [type(cell) for cell in row[1:]] == [int, int, float, type(None), bool]
+
+
+def test_csv_safe_row_preserves_column_order_and_count() -> None:
+    """A row funnel that reordered or dropped a cell would corrupt every export."""
+    values = ["=a", 1, "b", None, "@c"]
+    row = csv_safe_row(values)
+
+    assert len(row) == len(values)
+    assert [str(cell).lstrip("'") for cell in row] == ["=a", "1", "b", "None", "@c"]
+
+
+def test_csv_safe_row_accepts_a_generator() -> None:
+    """Callers build rows lazily; consuming an iterable once must still work."""
+    assert csv_safe_row(f"={n}" for n in range(3)) == ["'=0", "'=1", "'=2"]

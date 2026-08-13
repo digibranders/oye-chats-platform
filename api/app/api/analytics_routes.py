@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
-from app.core.csv_safety import csv_safe
+from app.core.csv_safety import csv_safe_row
 from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
     get_dashboard_stats,
@@ -429,15 +429,18 @@ def get_per_bot_rollup_csv(
             yield flush()
             for row in rows:
                 writer.writerow(
-                    [
-                        # Only the agent name needs escaping — the other three
-                        # columns are integers this service computed, never
-                        # strings a customer supplied.
-                        csv_safe(row["bot_name"]),
-                        row["conversations"],
-                        row["leads"],
-                        row["credits_spent"],
-                    ]
+                    # Only the agent name is customer-supplied today; the other
+                    # three are integers this service computed. Routed through
+                    # the row funnel anyway so that stays true by construction
+                    # rather than by the next author noticing.
+                    csv_safe_row(
+                        [
+                            row["bot_name"],
+                            row["conversations"],
+                            row["leads"],
+                            row["credits_spent"],
+                        ]
+                    )
                 )
                 yield flush()
 

@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { type Lead } from '../../types/domain';
 
 import { buildSelectedLeadsCsv } from './leadsCsv';
+import { EMPTY_PLACEHOLDER, formatDateTime } from './leadModel';
 
 const noTags = () => [] as readonly string[];
 
@@ -151,6 +152,17 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
     expect(row.endsWith('""')).toBe(true);
     expect(row).not.toContain('"-"');
     expect(row).not.toContain('"\'-"');
+  });
+
+  it('tracks the placeholder from leadModel rather than a local copy', () => {
+    /* The regression this guards: a hardcoded '-' here would keep compiling,
+       keep passing the test above, and silently start leaking the glyph the
+       day leadModel switches to a true em-dash. Asserting against the exported
+       constant means that switch either keeps working or fails loudly. */
+    expect(formatDateTime(null)).toBe(EMPTY_PLACEHOLDER);
+
+    const csv = buildSelectedLeadsCsv([lead({})], noTags);
+    expect(csv.split('\r\n')[1]).not.toContain(EMPTY_PLACEHOLDER);
   });
 
   it("escapes an E.164 phone number, and that's intended", () => {

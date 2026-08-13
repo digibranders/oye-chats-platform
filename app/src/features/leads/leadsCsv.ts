@@ -9,7 +9,14 @@
 import { csvSafe } from '../../lib/csvSafe';
 import { type Lead } from '../../types/domain';
 
-import { TIER_META, companyDisplay, formatDateTime, formatLocation, normalizeTier } from './leadModel';
+import {
+  EMPTY_PLACEHOLDER,
+  TIER_META,
+  companyDisplay,
+  formatDateTime,
+  formatLocation,
+  normalizeTier,
+} from './leadModel';
 
 /**
  * Escape one CSV field. Two independent defences, in order:
@@ -28,15 +35,19 @@ function csvField(value: string | number | null | undefined): string {
 }
 
 /**
- * The table's placeholder for a missing value, which must not reach the file.
+ * Drop the table's absence placeholder, which must not reach the file.
  *
  * A CSV says "no value" with an empty cell, not with a glyph meant for a table
- * cell — a CRM importing this would store a literal "-" as the last-active
+ * cell — a CRM importing this would store a literal dash as the last-active
  * date. It also keeps `csvSafe` from quoting the placeholder: a bare `-` is a
  * formula trigger, so an absent timestamp would otherwise export as `'-`.
+ *
+ * Compares against `EMPTY_PLACEHOLDER` rather than a local `'-'` so the two
+ * cannot drift apart: a hardcoded copy here would silently stop matching the
+ * day `leadModel` switches to a true em-dash, and nothing would fail.
  */
 function blankIfPlaceholder(formatted: string): string {
-  return formatted === '-' ? '' : formatted;
+  return formatted === EMPTY_PLACEHOLDER ? '' : formatted;
 }
 
 /**

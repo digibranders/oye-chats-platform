@@ -1,10 +1,18 @@
 """CSV-injection escaping, shared by every export that emits a downloadable file.
 
-Lives in ``app.core`` rather than next to any one route because three exports
-now need it (per-bot analytics, lead export, and whatever comes next), and a
-copy-per-route defence is one refactor away from being a copy-per-route hole.
-No FastAPI or ORM imports here, so the worker can use it too.
+Lives in ``app.core`` rather than next to any one route because the defence had
+already been written three times independently (per-bot analytics, the GSTR
+return in ``superadmin_routes_v2``, and the lead export) — a copy-per-route
+defence is one forgotten route away from being a copy-per-route hole. The GSTR
+export still carries its own inline copy and is tracked separately for
+migration. No FastAPI or ORM imports here, so the worker can use it too.
+
+Prefer :func:`csv_safe_row` over calling :func:`csv_safe` per cell: routing a
+whole row through one funnel is what keeps a column added later safe without
+its author having to know this module exists.
 """
+
+from collections.abc import Iterable
 
 # Leading characters that make a spreadsheet treat a cell as a formula rather
 # than as text. ``=`` and ``@`` start a formula outright; ``+``/``-`` start a
@@ -45,3 +53,21 @@ def csv_safe(value: str | None) -> str:
     """
     text = "" if value is None else str(value)
     return f"'{text}" if text.startswith(CSV_FORMULA_PREFIXES) else text
+
+
+def csv_safe_row(values: Iterable[object]) -> list[object]:
+    """Escape every string in one CSV row; pass everything else through.
+
+    The funnel form of :func:`csv_safe`, and the one exports should use. Wrapping
+    each cell individually at the call site works right up until someone appends
+    a seventeenth column and doesn't know they had to — at which point that
+    column is silently injectable again, and no type checker, linter or existing
+    test says a word. Escaping the row as a unit makes the safe thing the
+    default and the unsafe thing impossible to reach by omission.
+
+    Non-strings are returned untouched rather than stringified: the integers an
+    export computes (counters, scores, message totals) must stay integers so the
+    recipient's spreadsheet keeps them numeric and sortable. That is also why
+    this cannot simply be ``[csv_safe(v) for v in values]``.
+    """
+    return [csv_safe(value) if isinstance(value, str) else value for value in values]

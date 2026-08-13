@@ -12,7 +12,7 @@ from sqlalchemy import desc, func, select, update
 
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
-from app.core.csv_safety import csv_safe
+from app.core.csv_safety import csv_safe_row
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
 from app.services.email_design import esc, h1, p, shell
@@ -316,6 +316,26 @@ def mark_lead_viewed(
         return Response(status_code=204)
 
 
+def _qualification_value(lead: dict, dimension: str) -> str:
+    """Read one BANT dimension out of a lead payload, tolerating other frameworks.
+
+    ``build_lead_response`` emits the dimensions of the bot's *actual*
+    framework, so a bot on MEDDIC / CHAMP / GPCTBA+C&I has no ``need`` key at
+    all — it has ``metrics``, ``economic_buyer``, and so on. Indexing the four
+    BANT names directly raised ``KeyError`` for those bots, and since this
+    handler has no ``except``, every one of those customers got a 500 and could
+    never export their leads.
+
+    This restores the export for them with the file's shape unchanged: the four
+    BANT columns come back empty rather than crashing. Emitting each bot's real
+    dimensions instead would be the better end state, but it changes what the
+    columns *mean* per row and is a product decision, not a bug fix — tracked
+    separately so it doesn't gate unbreaking the endpoint.
+    """
+    entry = (lead.get("bant") or {}).get(dimension) or {}
+    return entry.get("value") or ""
+
+
 @router.get("/export")
 def export_leads_csv(
     bot_id: int | None = Query(None),
@@ -417,29 +437,29 @@ def export_leads_csv(
                 bot=bot_map.get(chat_session.bot_id),
                 include_attribution=attribution_enabled,
             )
-            # Every string below reaches this row from outside the server: the
-            # session id is minted by the widget, contact fields are typed into
-            # the lead form by a visitor, the BANT values are LLM-extracted from
-            # what that visitor said, and location/device are derived from
-            # request headers. All of it is escaped so nothing can open as a
-            # formula in the recipient's spreadsheet — see ``csv_safe``. Score
-            # and message count are integers this service computed, so they are
-            # written through unescaped and stay numeric in the sheet; tier and
-            # the ISO timestamps are server-generated too.
+            # Nearly every string in this row reaches it from outside the
+            # server: the session id is minted by the widget, contact fields are
+            # typed into the lead form by a visitor, the qualification values
+            # are LLM-extracted from what that visitor said, and location/device
+            # are derived from request headers. ``csv_safe_row`` escapes the
+            # whole row as a unit rather than each cell at its call site, so a
+            # column added below is safe without its author having to know that.
+            # Integers (score, message count) pass through untouched and stay
+            # numeric in the recipient's sheet.
             row = [
-                csv_safe(chat_session.id),
-                csv_safe(lead_info.name if lead_info else ""),
-                csv_safe(lead_info.email if lead_info else ""),
-                csv_safe(lead_info.phone if lead_info else ""),
-                csv_safe(lead_info.company if lead_info else ""),
+                chat_session.id,
+                lead_info.name if lead_info else "",
+                lead_info.email if lead_info else "",
+                lead_info.phone if lead_info else "",
+                lead_info.company if lead_info else "",
                 lead["score"],
                 lead["tier"],
-                csv_safe(lead["bant"]["need"]["value"] or ""),
-                csv_safe(lead["bant"]["budget"]["value"] or ""),
-                csv_safe(lead["bant"]["authority"]["value"] or ""),
-                csv_safe(lead["bant"]["timeline"]["value"] or ""),
-                csv_safe(chat_session.location or ""),
-                csv_safe(chat_session.device or ""),
+                _qualification_value(lead, "need"),
+                _qualification_value(lead, "budget"),
+                _qualification_value(lead, "authority"),
+                _qualification_value(lead, "timeline"),
+                chat_session.location or "",
+                chat_session.device or "",
                 msg_count,
                 chat_session.created_at.isoformat() if chat_session.created_at else "",
                 chat_session.last_active_at.isoformat() if chat_session.last_active_at else "",
@@ -457,14 +477,15 @@ def export_leads_csv(
                 # customer's own site with a crafted URL.
                 row.extend(
                     [
-                        csv_safe(utm.get("utm_source", "") or ""),
-                        csv_safe(utm.get("utm_medium", "") or ""),
-                        csv_safe(utm.get("utm_campaign", "") or ""),
-                        csv_safe(source.get("referrer", "") or ""),
-                        csv_safe(source.get("landing_page", "") or ""),
-                        csv_safe(journey_summary),
+                        utm.get("utm_source", "") or "",
+                        utm.get("utm_medium", "") or "",
+                        utm.get("utm_campaign", "") or "",
+                        source.get("referrer", "") or "",
+                        source.get("landing_page", "") or "",
+                        journey_summary,
                     ]
                 )
+            row = csv_safe_row(row)
             writer.writerow(row)
 
         output.seek(0)

@@ -282,11 +282,23 @@ export function formatLocation(raw: string | null | undefined): string {
   return geo || 'Unknown';
 }
 
-/** Format an ISO timestamp as a compact "Jul 21, 3:04 PM"; em-dash on absence. */
+/**
+ * What a table cell shows when there is no value to show.
+ *
+ * Exported because non-table consumers have to recognise it and substitute
+ * their own representation of absence — the CSV export blanks it, since a
+ * spreadsheet says "no value" with an empty cell and a CRM importing a literal
+ * dash would store it as the date. Keep this the single definition: a second
+ * copy compared against a hardcoded '-' silently stops matching the day this
+ * becomes a true em-dash.
+ */
+export const EMPTY_PLACEHOLDER = '-';
+
+/** Format an ISO timestamp as a compact "Jul 21, 3:04 PM"; placeholder on absence. */
 export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return '-';
+  if (!iso) return EMPTY_PLACEHOLDER;
   const parsed = Date.parse(iso);
-  if (!Number.isFinite(parsed)) return '-';
+  if (!Number.isFinite(parsed)) return EMPTY_PLACEHOLDER;
   return new Date(parsed).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',

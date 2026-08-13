@@ -574,11 +574,24 @@ def _export_lead_info(session_id: str = "s1", **overrides):
     return SimpleNamespace(**base)
 
 
-def _call_export(monkeypatch, chat_session, lead_info, *, attribution: bool, msg_count: int = 4):
-    """Drive ``GET /leads/export`` over a mocked session and return the response."""
+def _call_export(
+    monkeypatch,
+    chat_session,
+    lead_info,
+    *,
+    attribution: bool,
+    msg_count: int = 4,
+    bant_config=None,
+):
+    """Drive ``GET /leads/export`` over a mocked session and return the response.
+
+    ``bant_config`` selects the bot's qualification framework — ``None`` gives
+    the BANT preset, ``{"framework": "meddic"}`` a bot whose dimensions are not
+    need/budget/authority/timeline at all.
+    """
     from app.api import lead_routes
 
-    bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=None)
+    bot = SimpleNamespace(id=1, client_id=1, bant_enabled=False, bant_config=bant_config)
     session = MagicMock()
     # execute() order in export_leads_csv, with no bot_id filter:
     #   client_bot_ids → results (session, msg_count) → bots → lead_infos
@@ -600,9 +613,11 @@ class TestExportCsvInjection:
     def test_export_neutralises_every_untrusted_base_column(self, monkeypatch):
         """The load-bearing one: a payload in each column, all of them defused.
 
-        Written as a sweep rather than one test per column so that a *new*
-        column added to the export without the escape fails here — the failure
-        mode this whole change exists to prevent.
+        Scope note, because it is easy to over-read: this pins the columns that
+        exist today. It cannot fail for a column added tomorrow — a new column
+        carries no payload in this fixture, so the sweep never sees it. What
+        makes a future column safe is the ``csv_safe_row`` funnel in the route,
+        and that property is tested where it lives, in ``test_csv_safety.py``.
         """
         chat_session = _make_session_row(
             _INJECTED_SESSION_ID,
@@ -739,8 +754,14 @@ class TestExportCsvInjection:
         assert response.status_code == 200, response.text
 
         header, row = _export_rows(response)
+        # Exact values plus an explicit "no escape quote", rather than a shape
+        # check like `.isdigit()` — a shape check passes for any digit string
+        # and so cannot distinguish the value that is here from the value the
+        # test is meant to defend.
         assert row[header.index("Messages")] == "7"
-        assert row[header.index("Score")].isdigit(), row[header.index("Score")]
+        assert row[header.index("Score")] == "0"
+        for column in ("Messages", "Score"):
+            assert not row[header.index(column)].startswith("'"), column
 
     def test_export_neutralises_a_cr_prefixed_value(self, monkeypatch):
         """The CR case, asserted on the raw body.
@@ -761,6 +782,75 @@ class TestExportCsvInjection:
         # apart nor start with a formula trigger.
         assert '"\'\r=1+1"' in response.text
         assert "\n\r=1+1" not in response.text
+
+
+# ── GET /leads/export — non-BANT qualification frameworks ────────────────────
+
+
+class TestExportAcrossFrameworks:
+    """A bot's framework is whatever ``bant_config["framework"]`` names.
+
+    ``build_lead_response`` emits that framework's real dimensions, so for
+    anything other than BANT there is no ``need`` key to read. The export used
+    to index the four BANT names directly and 500 on every such bot.
+    """
+
+    @pytest.mark.parametrize("framework", ["meddic", "champ", "gpctba_ci"])
+    def test_export_succeeds_for_a_non_bant_bot(self, monkeypatch, framework: str):
+        """Regression: this raised ``KeyError: 'need'`` → unhandled 500.
+
+        Every customer on one of these frameworks was locked out of exporting
+        their leads entirely — not a degraded file, no file at all.
+        """
+        response = _call_export(
+            monkeypatch,
+            _make_session_row("s1"),
+            _export_lead_info(),
+            attribution=False,
+            bant_config={"framework": framework},
+        )
+
+        assert response.status_code == 200, response.text
+
+    def test_export_keeps_its_column_shape_for_a_non_bant_bot(self, monkeypatch):
+        """The four BANT columns come back empty rather than absent.
+
+        Deliberate: one file shape for every account means a customer's saved
+        import mapping keeps working when they switch a bot's framework, and an
+        agency can concatenate exports across bots. Emitting each framework's
+        own dimensions would be more informative but changes what the columns
+        mean per row — a product decision, tracked separately from this fix.
+        """
+        response = _call_export(
+            monkeypatch,
+            _make_session_row("s1"),
+            _export_lead_info(),
+            attribution=False,
+            bant_config={"framework": "meddic"},
+        )
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        for column in ("Need", "Budget", "Authority", "Timeline"):
+            assert row[header.index(column)] == "", column
+        # Everything outside the qualification block is unaffected.
+        assert row[header.index("Email")] == "priya@infosys.com"
+        assert row[header.index("Session ID")] == "s1"
+
+    def test_export_still_fills_the_bant_columns_for_a_bant_bot(self, monkeypatch):
+        """The fix must not blank the columns for the framework that has them."""
+        chat_session = _make_session_row(
+            "s1",
+            bant_need="Critical / blocking",
+            bant_budget="Approved",
+        )
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Need")] == "Critical / blocking"
+        assert row[header.index("Budget")] == "Approved"
 
 
 # ── Manual follow-up (the four gates) ────────────────────────────────────────
