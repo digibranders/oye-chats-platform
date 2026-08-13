@@ -19,6 +19,7 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
+from app.services.reporting_service import get_per_bot_rollup
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +340,41 @@ def get_feedback_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch feedback logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e
+
+
+@router.get("/by-bot")
+def get_per_bot_rollup_endpoint(
+    days: int = Query(30, ge=1, le=365, description="Trailing window of N days"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Per-bot activity rollup for the account: credits, conversations, leads.
+
+    Built for the agency case — many client sites on one account, one shared
+    credit pool — so each bot's spend is read from the ledger's
+    ``attributed_bot_id`` and stays correct even when the deduction came out
+    of the pool. Bots with no activity in the window are omitted.
+    """
+    try:
+        until = datetime.now(UTC)
+        since = until - timedelta(days=days)
+        with get_session() as session:
+            rows = get_per_bot_rollup(session, client_id=auth["client_id"], since=since, until=until)
+
+        return {
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            "rows": rows,
+            "totals": {
+                "credits_spent": sum(row["credits_spent"] for row in rows),
+                "conversations": sum(row["conversations"] for row in rows),
+                "leads": sum(row["leads"] for row in rows),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch per-bot rollup: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load per-bot rollup.") from e
 
 
 # ─── Journeys view ───────────────────────────────────────────────────────────
