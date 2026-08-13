@@ -1631,26 +1631,6 @@ class BotCheckoutVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
-def _plan_grants_unlimited_bots(plan) -> bool:
-    """Is this plan's included agent quota the ``UNLIMITED`` (-1) sentinel?
-
-    Keyed off ``limits.bots`` rather than a slug so every future unlimited-agent
-    plan is covered the moment it is seeded — see :func:`create_bot_checkout`
-    for why such a plan must never be sold per-bot.
-
-    Conservative on bad data: a missing, non-numeric, or otherwise unreadable
-    quota is NOT unlimited, so a hand-provisioned plan row can still be bought
-    per-bot exactly as before. Only the explicit sentinel trips the guard.
-    """
-    from app.services.plan_entitlements_service import UNLIMITED
-
-    limits = plan.limits if isinstance(plan.limits, dict) else {}
-    try:
-        return int(limits.get("bots")) == UNLIMITED
-    except (TypeError, ValueError):
-        return False
-
-
 @router.post("/checkout")
 def create_bot_checkout(
     request: BotCheckoutRequest,
@@ -1671,7 +1651,7 @@ def create_bot_checkout(
     _require_bot_management_access(auth)
     with get_session() as session:
         from app.db.models import Client, Plan
-        from app.services import razorpay_service
+        from app.services import plan_entitlements_service, razorpay_service
 
         plan = session.execute(select(Plan).where(Plan.slug == request.plan_slug)).scalars().first()
         if plan is None:
@@ -1697,7 +1677,7 @@ def create_bot_checkout(
         # ``POST /subscriptions/checkout`` creates the same plan's subscription
         # with ``bot_id = NULL``, i.e. against the shared pool, which is what
         # the tier actually sells.
-        if _plan_grants_unlimited_bots(plan):
+        if plan_entitlements_service.plan_grants_unlimited_bots(plan):
             raise HTTPException(
                 status_code=400,
                 detail=(

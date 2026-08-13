@@ -5,6 +5,7 @@ import {
   buildSubscription,
   formatSeatAllowance,
   getRenewalDisplay,
+  planGrantsUnlimitedAgents,
   promotionAppliesToPlan,
   type PlanView,
 } from './billingModel';
@@ -46,6 +47,33 @@ describe('formatSeatAllowance', () => {
     expect(formatSeatAllowance(1)).toBe('1 operator seat');
     expect(formatSeatAllowance(3)).toBe('3 operator seats');
     expect(formatSeatAllowance(0)).toBe('No operator seats');
+  });
+});
+
+describe('planGrantsUnlimitedAgents', () => {
+  /* The per-agent pickers (Create agent, and Billing while an agent is scoped)
+     filter on this predicate because both per-agent money paths refuse such a
+     plan server-side. It keys off the `-1` sentinel, never a slug. */
+  it('is true for a plan whose bots quota is the unlimited sentinel', () => {
+    const plan = buildPlan(SEEDED_ENTERPRISE);
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(true);
+  });
+
+  it('is false for a finite agent quota', () => {
+    const plan = buildPlan({ id: 3, slug: 'professional', name: 'Professional', limits: { bots: 1 } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
+  });
+
+  /* Conservative on bad data, exactly like the server: a bespoke plan row with
+     no (or a non-numeric) `bots` quota is NOT unlimited and stays selectable. */
+  it('is false for a plan row with no bots quota at all', () => {
+    const plan = buildPlan({ id: 9, slug: 'bespoke-acme', name: 'Acme', limits: { credits: 5000 } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
+  });
+
+  it('is false for a non-numeric bots quota', () => {
+    const plan = buildPlan({ id: 9, slug: 'bespoke-acme', name: 'Acme', limits: { bots: 'unlimited' } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
   });
 });
 

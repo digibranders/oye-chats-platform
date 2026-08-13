@@ -66,6 +66,7 @@ import {
   formatSeatAllowance,
   getRenewalDisplay,
   INVOICE_KIND_LABEL,
+  planGrantsUnlimitedAgents,
   statusTone,
   UNLIMITED_LIMIT,
   type BillingDetailsView,
@@ -384,6 +385,31 @@ export function BillingPage(): ReactElement {
     return subscription && subscription.seats > 0 ? subscription.seats : includedSeats;
   }, [includedSeats, unlimitedSeats, subscription]);
 
+  // Plans offered by THIS view's picker.
+  //
+  // A plan whose `limits.bots` is UNLIMITED is an ACCOUNT product: it sells one
+  // credit pool shared across every agent. While an agent is scoped, every
+  // plan switch here carries that agent's `bot_id` (see `PlanConfirmModal` →
+  // `usePlanCheckout`), which would scope the plan's credits to that single
+  // agent's isolated ledger and leave every further agent it entitles unfunded
+  // - so `POST /subscriptions/change-plan` refuses it (`plan_not_per_agent`).
+  // This filter is the matching UI half, so the option is never offered in the
+  // first place.
+  //
+  // Deliberately NOT pushed down into `PlansPanel`: the same picker serves the
+  // account-level Launch Studio steps (`botId={null}`), where such a plan IS
+  // purchasable and must stay selectable. The customer's CURRENT plan is also
+  // always kept - an account already on that tier must still see its own card
+  // (its CTA is a disabled "Current plan", so it cannot re-enter the refusal).
+  // A plan row without a `bots` quota is not unlimited and stays selectable -
+  // same conservative reading as the server.
+  const currentPlanSlug = plan?.slug ?? 'free';
+  const selectablePlans = useMemo(() => {
+    const all = data?.availablePlans ?? [];
+    if (billingBotId === null) return all;
+    return all.filter((p) => !planGrantsUnlimitedAgents(p) || p.slug === currentPlanSlug);
+  }, [data?.availablePlans, billingBotId, currentPlanSlug]);
+
   const cycleLabel = subscription?.billingCycle === 'annual' ? 'year' : 'month';
   const priceMinor =
     plan && plan.isPaid
@@ -553,14 +579,14 @@ export function BillingPage(): ReactElement {
           )}
 
           {/* Plans - switch surface only: the grid + cycle toggle. */}
-          {activeTab === 'plans' && data.availablePlans.length > 0 && (
+          {activeTab === 'plans' && selectablePlans.length > 0 && (
             <div className="space-y-5">
               {data.promotion && (
-                <PromotionBanner promotion={data.promotion} plans={data.availablePlans} />
+                <PromotionBanner promotion={data.promotion} plans={selectablePlans} />
               )}
               <PlansPanel
-                plans={data.availablePlans}
-                currentSlug={plan?.slug ?? 'free'}
+                plans={selectablePlans}
+                currentSlug={currentPlanSlug}
                 cycle={cycle}
                 onCycleChange={setCycle}
                 onSelect={(candidate) => setConfirmPlan(candidate)}

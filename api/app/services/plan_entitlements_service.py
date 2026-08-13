@@ -917,6 +917,32 @@ def can_client_add_new_bot(client_id: int, db_session: Session) -> AddBotDecisio
     )
 
 
+def plan_grants_unlimited_bots(plan: Plan) -> bool:
+    """Is this plan's included agent quota the :data:`UNLIMITED` (-1) sentinel?
+
+    Such a plan is an ACCOUNT product: its whole promise is one pooled credit
+    balance shared across every agent. It must therefore never be attached to a
+    **bot-scoped** subscription, which routes the plan's credits into that one
+    bot's isolated ledger (``credit_service.resolve_bot_ledger_bot_id``) and
+    leaves every further agent it entitles draining the unfunded shared pool.
+    The two doors onto a bot-scoped subscription — ``POST /bots/checkout`` and
+    ``POST /subscriptions/change-plan`` with a ``bot_id`` — both gate on this
+    predicate, which is why it lives here rather than in either route module.
+
+    Keyed off ``limits.bots`` rather than a slug so every future unlimited-agent
+    plan is covered the moment it is seeded.
+
+    Conservative on bad data: a missing, non-numeric, or otherwise unreadable
+    quota is NOT unlimited, so a hand-provisioned plan row can still be bought
+    per-bot exactly as before. Only the explicit sentinel trips the guard.
+    """
+    limits = plan.limits if isinstance(plan.limits, dict) else {}
+    try:
+        return int(limits.get("bots")) == UNLIMITED
+    except (TypeError, ValueError):
+        return False
+
+
 # ── Usage population ───────────────────────────────────────────────────────
 
 

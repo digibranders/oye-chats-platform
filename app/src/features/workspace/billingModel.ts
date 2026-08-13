@@ -413,6 +413,25 @@ export function formatSeatAllowance(includedSeats: number): string {
   return `${includedSeats} operator seat${includedSeats === 1 ? '' : 's'}`;
 }
 
+/**
+ * Does this plan include UNLIMITED AI agents (`limits.bots === -1`)?
+ *
+ * Such a plan is an ACCOUNT product: it sells one credit pool shared across
+ * every agent. Bought per-agent it would scope those credits to a single
+ * agent's isolated ledger and leave every further agent it entitles unfunded,
+ * so the backend refuses it on both per-agent money paths
+ * (`POST /bots/checkout` and `POST /subscriptions/change-plan` with a
+ * `bot_id`). Every per-agent picker filters on this predicate so the option is
+ * never offered in the first place - mirrors
+ * `plan_entitlements_service.plan_grants_unlimited_bots`.
+ *
+ * Conservative on bad data, exactly like the server: a plan row with no `bots`
+ * quota is NOT unlimited and stays selectable.
+ */
+export function planGrantsUnlimitedAgents(plan: PlanView): boolean {
+  return plan.limits.bots === UNLIMITED_LIMIT;
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '-';
   const date = new Date(iso);

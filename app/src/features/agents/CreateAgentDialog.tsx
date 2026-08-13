@@ -11,10 +11,10 @@ import { type Bot } from '../../types/domain';
 import { Button, Input, cn } from '../../design-system';
 import { requiresSubscription } from '../../utils/apiErrors';
 import {
-  UNLIMITED_LIMIT,
   buildPlan,
   formatCredits,
   formatMoneyMinor,
+  planGrantsUnlimitedAgents,
   type PlanView,
 } from '../workspace/billingModel';
 
@@ -166,7 +166,7 @@ export function CreateAgentDialog({
       // conservative reading as the server.
       const parsed = (Array.isArray(raw) ? raw : [])
         .map((r) => buildPlan(r))
-        .filter((p): p is PlanView => p !== null && p.isPaid && p.limits.bots !== UNLIMITED_LIMIT);
+        .filter((p): p is PlanView => p !== null && p.isPaid && !planGrantsUnlimitedAgents(p));
       setPlans(parsed);
       setSelectedSlug((prev) => prev || (parsed[0]?.slug ?? ''));
     } catch (err) {

@@ -1830,6 +1830,38 @@ def change_plan(
         # mandate of) a DIFFERENT, pricier bot's subscription.
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
 
+        # An unlimited-agent plan is an ACCOUNT product and must never be
+        # attached to a BOT-SCOPED subscription — the same invariant
+        # ``POST /bots/checkout`` enforces, on the other door onto that state.
+        #
+        # A ``bot_id`` here reaches two branches that do exactly that: Branch 2a
+        # hands the targeted bot-scoped subscription to
+        # ``transition_service.execute_paid_upgrade``, which stamps
+        # ``oyechats_bot_id`` into the replacement mandate's notes, and Branch 3
+        # passes the id straight into ``razorpay_service.create_bot_resubscription``.
+        # Either way the plan's monthly credits are granted and reset into that
+        # single bot's isolated ledger (``credit_service.resolve_bot_ledger_bot_id``),
+        # while every further agent the "unlimited agents" promise entitles holds
+        # no subscription of its own and drains the shared client pool — which the
+        # purchase never funded. The agency ends up with one working agent and N
+        # silent ones.
+        #
+        # The account-level request (``bot_id`` omitted) is deliberately NOT
+        # blocked: it mints against ``bot_id IS NULL``, i.e. the pooled balance
+        # the tier actually sells, and is the correct way to buy it.
+        if request.bot_id is not None and plan_entitlements_service.plan_grants_unlimited_bots(new_plan):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "plan_not_per_agent",
+                    "message": (
+                        f"The {new_plan.name} plan includes unlimited AI agents and is billed for the "
+                        "whole account, not per agent. Switch to it from account-level Billing "
+                        "(with no agent selected) instead."
+                    ),
+                },
+            )
+
         # Universal precheck — same plan + SAME CYCLE is a no-op UNLESS the
         # current subscription is a trial that hasn't been paid for yet (a
         # trialing customer picking their own plan is a valid trial→paid
