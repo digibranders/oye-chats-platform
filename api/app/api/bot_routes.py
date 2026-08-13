@@ -1631,6 +1631,26 @@ class BotCheckoutVerifyRequest(BaseModel):
     razorpay_signature: str
 
 
+def _plan_grants_unlimited_bots(plan) -> bool:
+    """Is this plan's included agent quota the ``UNLIMITED`` (-1) sentinel?
+
+    Keyed off ``limits.bots`` rather than a slug so every future unlimited-agent
+    plan is covered the moment it is seeded — see :func:`create_bot_checkout`
+    for why such a plan must never be sold per-bot.
+
+    Conservative on bad data: a missing, non-numeric, or otherwise unreadable
+    quota is NOT unlimited, so a hand-provisioned plan row can still be bought
+    per-bot exactly as before. Only the explicit sentinel trips the guard.
+    """
+    from app.services.plan_entitlements_service import UNLIMITED
+
+    limits = plan.limits if isinstance(plan.limits, dict) else {}
+    try:
+        return int(limits.get("bots")) == UNLIMITED
+    except (TypeError, ValueError):
+        return False
+
+
 @router.post("/checkout")
 def create_bot_checkout(
     request: BotCheckoutRequest,
@@ -1660,6 +1680,30 @@ def create_bot_checkout(
             raise HTTPException(
                 status_code=400,
                 detail="Free plan cannot fund an additional bot. Pick a paid plan.",
+            )
+        # An unlimited-agent plan is incoherent as a PER-BOT subscription and
+        # must be bought at the account level instead.
+        #
+        # This endpoint mints a subscription scoped to the one bot the
+        # activation webhook materialises (``subscription.bot_id`` is stamped
+        # with it), which routes that bot to its own isolated credit ledger
+        # (``credit_service.resolve_bot_ledger_bot_id``). A plan promising
+        # unlimited agents on ONE pooled credit balance therefore self-destructs
+        # here: its monthly credits are granted and reset into a single bot's
+        # isolated ledger, while every further agent the plan entitles carries
+        # no subscription of its own and drains the shared client pool — which
+        # that purchase never funded. The agency ends up with one working agent
+        # and N silent ones.
+        # ``POST /subscriptions/checkout`` creates the same plan's subscription
+        # with ``bot_id = NULL``, i.e. against the shared pool, which is what
+        # the tier actually sells.
+        if _plan_grants_unlimited_bots(plan):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The {plan.name} plan includes unlimited AI agents and is billed for the whole "
+                    "account, not per agent. Subscribe to it from Billing (account checkout) instead."
+                ),
             )
 
         client = session.get(Client, auth["client_id"])
