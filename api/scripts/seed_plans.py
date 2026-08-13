@@ -175,11 +175,11 @@ _PLANS: list[dict] = [
         "name": "Professional",
         "description": "For teams scaling qualified pipeline with deeper frameworks.",
         "credits_per_month": 10000,
-        "monthly_price_cents": 239900,  # ₹2,399
-        "annual_price_cents": 3600000,  # ₹36,000 (₹3,000/mo × 12)
+        "monthly_price_cents": 299900,  # ₹2,999
+        "annual_price_cents": 2818800,  # ₹28,188 (₹2,349/mo × 12)
         "monthly_price_usd_cents": 4599,  # $45.99
         "annual_price_usd_cents": 45588,  # $455.88 ($37.99/mo × 12)
-        "annual_discount_percent": -25,  # ₹36,000 vs ₹28,788 (12 × monthly)
+        "annual_discount_percent": 22,  # ₹28,188 vs ₹35,988 (12 × monthly)
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 3,
         "extra_seat_price_cents": 44900,  # ₹449
