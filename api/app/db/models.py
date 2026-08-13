@@ -1909,6 +1909,23 @@ class CreditLedger(Base):
     # row created before the per-bot rollout, plus any deductions made
     # against legacy-pooled bots after rollout).
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
+    # REPORTING ONLY — deliberately *not* a second scope key. ``bot_id`` above
+    # answers "which ledger does this row live in?"; this answers "which bot
+    # spent it?". The two diverge whenever credits are pooled: a pooled
+    # account's deductions all land in the client pool (``bot_id IS NULL``),
+    # so without this column per-bot spend is simply not recoverable — and it
+    # cannot be backfilled after the fact, which is why the column exists
+    # before the first pooled account does.
+    #
+    # ``reference_id`` is not a substitute: it is a polymorphic audit label
+    # (bot_id / document_id / invoice_id depending on ``reason``), so it cannot
+    # be grouped on without silently mixing id spaces.
+    #
+    # Balance maths MUST keep keying off ``bot_id`` alone (``_scope_clause`` /
+    # ``get_balance`` in credit_service). Summing on this column instead would
+    # re-scope pooled deductions into per-bot ledgers and corrupt both the pool
+    # balance and the per-bot one.
+    attributed_bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
     delta = Column(Integer, nullable=False)
     # The DB column is the native PG ENUM ``credit_reason``. The model MUST
     # declare it as such: with a plain String, a multi-row flush (a deduction
