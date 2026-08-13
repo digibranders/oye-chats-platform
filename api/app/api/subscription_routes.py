@@ -1283,7 +1283,31 @@ def checkout_quote(
                 "source": ctx.source,
             }
 
-        # Domestic paid plan: the live INR rail.
+        # Domestic paid plan: the live INR rail — but only when this tier
+        # actually has an INR Razorpay plan wired for the cycle. Same principle
+        # as the USD branch above, and it applies to every plan, not just newly
+        # seeded ones: ``razorpay_service.create_subscription`` raises
+        # ``ValueError("Plan 'X' has no INR Razorpay plan id configured …
+        # Create the plan in the Razorpay dashboard …")`` on a missing id, and
+        # ``/subscriptions/checkout`` re-raises that verbatim as a 400. Quoting
+        # ``checkout_supported: true`` here therefore walks the buyer from a
+        # price straight into an internal ops instruction. The CTA is better.
+        inr_plan_id = plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
+        if not inr_plan_id:
+            return {
+                "country": country,
+                "currency": currency,
+                "amount_minor": amount_minor,
+                "amount_display": amount_display,
+                "billing_cycle": billing_cycle,
+                "provider": None,
+                "methods": [],
+                "checkout_supported": False,
+                "contact_sales": "developer@oyechats.com",
+                "reason": "inr_plan_unconfigured",
+                "source": ctx.source,
+            }
+
         return {
             "country": country,
             "currency": currency,

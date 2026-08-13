@@ -242,3 +242,54 @@ def test_checkout_quote_supports_priced_usd_tier_with_flag_on(db, monkeypatch):
     assert body["currency"] == "USD"
     assert body["amount_minor"] == 1900
     assert body["checkout_supported"] is True
+
+
+def test_domestic_quote_without_an_inr_plan_id_offers_contact_sales(db, monkeypatch):
+    """The INR branch owes the buyer the same honesty as the USD one.
+
+    ``razorpay_service.create_subscription`` rejects a missing INR plan id with
+    a ValueError that ``/subscriptions/checkout`` renders verbatim as a 400 — an
+    internal "create the plan in the Razorpay dashboard" instruction shown to a
+    customer who just clicked Subscribe on a quoted price. Quote the CTA instead.
+    """
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-no-inr@e.com")
+    plan = _make_plan(db, slug="starter-no-inr", monthly_price_cents=179900)
+    plan.razorpay_plan_id_monthly = None  # tier priced but never wired for monthly
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["currency"] == "INR"
+    assert body["amount_display"] == "₹1,799"  # still quoted — only the CTA changes
+    assert body["checkout_supported"] is False
+    assert body["reason"] == "inr_plan_unconfigured"
+    assert body["contact_sales"] == "developer@oyechats.com"
+    assert body["provider"] is None
+
+
+def test_domestic_quote_is_cycle_specific_about_the_missing_plan_id(db, monkeypatch):
+    """Monthly unwired must not block the annual cycle the tier IS wired for."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-annual-inr@e.com")
+    plan = _make_plan(db, slug="starter-annual-inr", monthly_price_cents=179900)
+    plan.razorpay_plan_id_monthly = None
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=annual")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["checkout_supported"] is True
+    assert body["provider"] == "razorpay"
+    assert body["methods"] == ["card", "upi"]
