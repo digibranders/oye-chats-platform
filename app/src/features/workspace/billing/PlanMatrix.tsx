@@ -1,7 +1,13 @@
 import { type ReactElement } from 'react';
 import { Check, Minus } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
-import { UNLIMITED_LIMIT, formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
+import {
+  UNLIMITED_LIMIT,
+  formatCredits,
+  formatMoneyMinor,
+  maxAnnualSavingPercent,
+  type PlanView,
+} from '../billingModel';
 import type { BillingCycle } from './planMath';
 import {
   planIncludesEmailVerification,
@@ -139,7 +145,7 @@ export function PlanMatrix({
   currentStatus = null,
 }: PlanMatrixProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
-  const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
+  const maxSavingPercent = maxAnnualSavingPercent(plans);
   // A trialing/post-trial current column can convert to paid from its own CTA.
   const trialing = currentStatus === 'trialing' || currentStatus === 'trial_expired';
 
@@ -151,7 +157,11 @@ export function PlanMatrix({
       {/* Monthly / Annual toggle */}
       {!hideToggle && (
         <div className="flex justify-end">
-          <CycleToggle cycle={cycle} maxDiscount={maxDiscount} onCycleChange={onCycleChange} />
+          <CycleToggle
+            cycle={cycle}
+            maxSavingPercent={maxSavingPercent}
+            onCycleChange={onCycleChange}
+          />
         </div>
       )}
 
@@ -236,11 +246,17 @@ export function PlanMatrix({
  *  Compare-plans disclosure so both drive one cycle. */
 export function CycleToggle({
   cycle,
-  maxDiscount,
+  maxSavingPercent,
   onCycleChange,
 }: {
   cycle: BillingCycle;
-  maxDiscount: number;
+  /**
+   * Best annual saving across the plan set, from {@link maxAnnualSavingPercent}
+   * - i.e. derived from the displayed prices, in the displayed currency, and
+   * rounded down. Rendered as "save up to X%" because it is a maximum, not a
+   * discount every plan in the set grants. 0 drops the saving copy entirely.
+   */
+  maxSavingPercent: number;
   onCycleChange: (cycle: BillingCycle) => void;
 }): ReactElement {
   return (
@@ -262,7 +278,11 @@ export function CycleToggle({
               : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
           )}
         >
-          {key === 'monthly' ? 'Monthly' : maxDiscount > 0 ? `Annual · save ${maxDiscount}%` : 'Annual'}
+          {key === 'monthly'
+            ? 'Monthly'
+            : maxSavingPercent > 0
+              ? `Annual · save up to ${maxSavingPercent}%`
+              : 'Annual'}
         </button>
       ))}
     </div>

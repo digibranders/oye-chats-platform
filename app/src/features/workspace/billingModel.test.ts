@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  annualSavingPercent,
   buildPlan,
   buildPromotion,
   buildSubscription,
   formatSeatAllowance,
   getRenewalDisplay,
+  maxAnnualSavingPercent,
   planGrantsUnlimitedAgents,
   promotionAppliesToPlan,
   type PlanView,
@@ -88,6 +90,113 @@ describe('planGrantsUnlimitedAgents', () => {
   it('is false for a finite agent quota stored as a string', () => {
     const plan = buildPlan({ id: 3, slug: 'professional', name: 'Professional', limits: { bots: '1' } });
     expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
+  });
+});
+
+describe('annualSavingPercent / maxAnnualSavingPercent', () => {
+  /* Both price pairs are verbatim from `api/scripts/seed_plans.py`. The same
+     four plans are fed through `buildPlan` twice: once with the INR columns in
+     the price fields and once with the USD ones, which is exactly what the
+     `TODO(multi-currency)` price-source switch will do. One plan set, two
+     rails, and the honest badge is NOT the same number on both. */
+  const SEEDED = [
+    { slug: 'starter', inr: [59900, 574800], usd: [799, 7788], stored: 20 },
+    { slug: 'standard', inr: [119900, 1150800], usd: [1599, 15588], stored: 20 },
+    { slug: 'professional', inr: [299900, 2818800], usd: [4599, 45588], stored: 22 },
+    { slug: 'enterprise', inr: [599900, 5758800], usd: [8999, 86388], stored: 20 },
+  ] as const;
+
+  const planSet = (rail: 'inr' | 'usd'): PlanView[] =>
+    SEEDED.map(
+      (row, index) =>
+        buildPlan({
+          id: index + 2,
+          slug: row.slug,
+          name: row.slug,
+          monthly_price_cents: row[rail][0],
+          annual_price_cents: row[rail][1],
+          annual_discount_percent: row.stored,
+        }) as PlanView,
+    );
+
+  it('derives each seeded plan’s INR saving from its own prices', () => {
+    const [starter, standard, professional, enterprise] = planSet('inr');
+    expect(annualSavingPercent(starter)).toBe(20); // 20.03%
+    expect(annualSavingPercent(standard)).toBe(20); // 20.02%
+    expect(annualSavingPercent(professional)).toBe(21); // 21.67%, stored as 22
+    expect(annualSavingPercent(enterprise)).toBe(20); // 20.00%
+  });
+
+  it('derives a different, lower saving for the same plans on the USD rail', () => {
+    const [starter, standard, professional, enterprise] = planSet('usd');
+    expect(annualSavingPercent(starter)).toBe(18); // 18.77%
+    expect(annualSavingPercent(standard)).toBe(18); // 18.76%
+    expect(annualSavingPercent(professional)).toBe(17); // 17.40%
+    expect(annualSavingPercent(enterprise)).toBe(20); // 20.00%
+  });
+
+  /* The badge number, per rail. These MUST differ: a single stored integer
+     cannot be true of both price pairs, and quoting the INR-derived figure to
+     a USD customer overstated the deal by 4.6 points at checkout. Note the
+     winning plan differs too - Professional on INR, Enterprise on USD - so
+     this is not a fixed offset that a constant could paper over. */
+  it('reports the best saving in whichever currency is being displayed', () => {
+    expect(maxAnnualSavingPercent(planSet('inr'))).toBe(21);
+    expect(maxAnnualSavingPercent(planSet('usd'))).toBe(20);
+  });
+
+  /* The stored column says 22 for Professional; the prices say 21.67%. The
+     badge sits beside a Subscribe button, so it follows the prices. */
+  it('ignores the stored annual_discount_percent when it overstates the prices', () => {
+    const [, , professional] = planSet('inr');
+    expect(professional.annualDiscountPercent).toBe(22);
+    expect(annualSavingPercent(professional)).toBe(21);
+  });
+
+  it('rounds down, never to nearest', () => {
+    // 12 × 100.00 = 1200.00 against 1000.99 → 16.5842%, which rounds to 17.
+    const plan = buildPlan({
+      slug: 'x',
+      name: 'X',
+      monthly_price_cents: 10000,
+      annual_price_cents: 100099,
+    }) as PlanView;
+    expect(annualSavingPercent(plan)).toBe(16);
+  });
+
+  it('is exact for a saving that lands on a whole percent', () => {
+    const plan = buildPlan({
+      slug: 'x',
+      name: 'X',
+      monthly_price_cents: 10000,
+      annual_price_cents: 96000,
+    }) as PlanView;
+    expect(annualSavingPercent(plan)).toBe(20);
+  });
+
+  /* Nothing to quote → 0, so the toggle drops the saving copy rather than
+     rendering "save up to 0%" or a negative. */
+  it('is 0 for plans with no annual saving to advertise', () => {
+    const free = buildPlan({ slug: 'free', name: 'Free' }) as PlanView;
+    const noAnnual = buildPlan({
+      slug: 'monthly-only',
+      name: 'Monthly only',
+      monthly_price_cents: 59900,
+    }) as PlanView;
+    const dearerAnnually = buildPlan({
+      slug: 'inverted',
+      name: 'Inverted',
+      monthly_price_cents: 10000,
+      annual_price_cents: 130000,
+    }) as PlanView;
+    expect(annualSavingPercent(free)).toBe(0);
+    expect(annualSavingPercent(noAnnual)).toBe(0);
+    expect(annualSavingPercent(dearerAnnually)).toBe(0);
+    expect(maxAnnualSavingPercent([free, noAnnual, dearerAnnually])).toBe(0);
+  });
+
+  it('is 0 for an empty plan set', () => {
+    expect(maxAnnualSavingPercent([])).toBe(0);
   });
 });
 

@@ -91,7 +91,19 @@ export interface PlanView {
    * priced it as "Custom" and dead-ended its checkout at a mailto.
    */
   isContactSales: boolean;
-  /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
+  /**
+   * The backend's stored headline annual discount (`annual_discount_percent`),
+   * a single hand-maintained integer per plan.
+   *
+   * NOT the source for any rendered saving badge - use
+   * {@link maxAnnualSavingPercent}, which derives the figure from the very
+   * prices the surface is displaying. The stored integer is a separate value
+   * that can (and does) disagree with the prices: the seeded Professional tier
+   * stores 22 while ₹28,188 against 12 × ₹2,999 is a 21.67% saving, so the
+   * badge read 22% for a discount no plan actually gives. It is also a
+   * single number for a row that carries BOTH an INR and a USD price pair,
+   * which cannot both round to it.
+   */
   annualDiscountPercent: number;
   /** Free-trial length in days; 0 for plans with no trial (Free). */
   trialDays: number;
@@ -462,6 +474,52 @@ export function formatSeatAllowance(includedSeats: number): string {
  */
 export function planGrantsUnlimitedAgents(plan: PlanView): boolean {
   return plan.limits.bots === UNLIMITED_LIMIT;
+}
+
+/**
+ * One plan's annual saving as a whole percent, derived from the two amounts the
+ * plan surfaces actually render: `annualPriceMinor` against twelve months of
+ * `monthlyPriceMinor`.
+ *
+ * Deliberately NOT read from the stored `annualDiscountPercent`. That column is
+ * one integer for a plan row that carries both an INR and a USD price pair, so
+ * it can only ever match one rail; deriving from the displayed minor units
+ * instead keeps the badge true in whichever currency the surface is showing,
+ * including after the `TODO(multi-currency)` price source switches.
+ *
+ * Rounds DOWN. This number sits on a checkout surface next to a "Subscribe"
+ * button, so the failure modes are not symmetric: understating a saving costs
+ * nothing, while overstating one tells a customer they will be charged less
+ * than they will be. 21.67% must read as 21%, never 22%.
+ *
+ * Returns 0 for any plan with no real annual saving to quote - free and
+ * contact-sales tiers (no monthly price), plans with no annual price, and the
+ * defensive case of an annual price at or above twelve monthly ones, which
+ * would otherwise produce a negative "saving".
+ */
+export function annualSavingPercent(plan: PlanView): number {
+  const twelveMonths = plan.monthlyPriceMinor * 12;
+  const annual = plan.annualPriceMinor;
+  if (twelveMonths <= 0 || annual <= 0 || annual >= twelveMonths) return 0;
+  // Multiply before dividing: both operands stay exact integers, so a saving
+  // that is exactly N% divides to exactly N and cannot floor down to N-1.
+  return Math.floor(((twelveMonths - annual) * 100) / twelveMonths);
+}
+
+/**
+ * The BEST annual saving across a plan set, as a whole percent - the number
+ * behind the cycle toggle's "save up to X%".
+ *
+ * "Up to" is load-bearing in the label: this is a maximum across plans, not a
+ * discount every plan grants, and the toggle is rendered next to tiers that
+ * save less than the winner. Any caller phrasing this as a flat "save X%"
+ * promises the best plan's deal on whichever plan the customer is reading.
+ *
+ * Returns 0 when no plan has an annual saving - callers should drop the badge
+ * entirely rather than render "save up to 0%".
+ */
+export function maxAnnualSavingPercent(plans: readonly PlanView[]): number {
+  return plans.reduce((best, plan) => Math.max(best, annualSavingPercent(plan)), 0);
 }
 
 export function formatDate(iso: string | null | undefined): string {
