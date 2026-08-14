@@ -154,35 +154,44 @@ class PlanNotCheckoutable(Exception):
 
 
 class SubscriptionActivationConflict(Exception):
-    """A verified payment could not be materialised: the client already holds an
-    active subscription in the scope this one wants.
+    """The customer has already paid for this plan; the switch just isn't done yet.
 
-    The partial unique indexes ``ix_subscriptions_client_legacy_active`` and
-    ``ix_subscriptions_client_bot_active`` allow exactly one active subscription
-    per (client) / (client, bot). ``_handle_subscription_activated`` normally
-    retires the sibling first, but two mandates authorising at once could both
-    pass that sweep before either committed — and the loser's ``IntegrityError``
-    reached the customer as a raw 500 in the middle of checkout, right after
-    their money had moved (prod client 18).
+    Raised on the two paths that can observe that state:
 
-    Serialising activation on the per-client billing lock closes that race, but
-    the constraint is still one the endpoint can PREDICT, and a predictable
-    constraint must never surface as a 500. So it is caught and re-raised as
-    this, following :class:`PlanNotCheckoutable`: deliberately not a
-    ``RazorpayBillingError`` (those are gateway faults and 502; this is a local
-    state conflict), ``str(exc)`` is the customer-facing sentence, and the
-    operator detail lives in ``ops_detail`` — logged, never returned.
+    * **Mint time** — ``/change-plan`` or ``/checkout`` is called again while the
+      in-flight mandate has already been paid. This is the reported prod
+      sequence, and it is not a double-click: the plan card never updated after
+      payment, so the customer waited (44 seconds, for client 8) and clicked
+      Select again. Handing them a fresh checkout is what charged the month
+      twice.
+    * **Activation time** — a second mandate did get minted and its row collides
+      with ``ix_subscriptions_client_legacy_active`` /
+      ``ix_subscriptions_client_bot_active``. That ``IntegrityError`` reached the
+      customer as a raw 500, mid-checkout, right after their money moved.
 
-    The message leads with the fact that matters to the payer: the money DID
-    arrive. Only the local switch-over is unfinished, and the handler marks the
-    response ``payment_captured`` so the frontend says "we're finishing up"
-    rather than "payment failed".
+    Following :class:`PlanNotCheckoutable`: deliberately not a
+    ``RazorpayBillingError`` (those are gateway faults and 502; this is local
+    state), ``str(exc)`` is the customer-facing sentence, and the operator
+    detail lives in ``ops_detail`` — logged, never returned.
+
+    The message is written for someone who has just paid and been told "no". It
+    leads with the money being safe, and its most important clause is that they
+    must not pay again — because the alternative reading ("payment failed") sends
+    them for a third attempt or to support.
     """
 
-    def __init__(self, *, razorpay_subscription_id: str, client_id: int | None, constraint: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        razorpay_subscription_id: str,
+        client_id: int | None,
+        constraint: str | None = None,
+        plan_name: str | None = None,
+    ) -> None:
         self.razorpay_subscription_id = razorpay_subscription_id
         self.client_id = client_id
         self.constraint = constraint
+        self.plan_name = plan_name
         self.reason = "subscription_activation_conflict"
         if constraint is not None:
             self.ops_detail = (
@@ -194,16 +203,18 @@ class SubscriptionActivationConflict(Exception):
             )
         else:
             # The mint-time half of the same conflict: raised BEFORE any second
-            # mandate exists, which is the cheap place to be right.
+            # mandate exists, which is the cheap place to be right — nothing has
+            # been created that anyone has to refund.
             self.ops_detail = (
                 f"Refused to mint a replacement mandate for client {client_id}: the in-flight checkout "
-                f"{razorpay_subscription_id} is already ACTIVE at Razorpay, so the customer has paid on "
-                "it and its activation has not landed locally yet. Minting now is exactly how one month "
-                "gets charged twice. No action needed unless the activation never arrives."
+                f"{razorpay_subscription_id} has ALREADY been paid at Razorpay and its activation has not "
+                "landed locally yet. Minting now is exactly how one month gets charged twice. No action "
+                "needed unless the activation never arrives."
             )
+        plan_clause = f"Your {plan_name} payment" if plan_name else "Your payment"
         super().__init__(
-            "Your payment went through. We're still finishing the switch to your new plan — "
-            "refresh in a minute, and contact support if it hasn't appeared."
+            f"{plan_clause} went through — we're activating your plan now. "
+            "You don't need to pay again; this usually takes under a minute."
         )
 
 
@@ -743,6 +754,40 @@ def rebuild_upgrade_checkout(
         "theme": {"color": "#6366f1"},
         "billing_plan_id": sub.get("plan_id"),
     }
+
+
+def checkout_already_paid(razorpay_subscription_id: str) -> bool:
+    """Has the customer already paid the mandate this checkout would re-open?
+
+    ``status`` alone cannot answer this, and that is the whole reason this
+    function exists. In the reported prod sequence the ``payment.authorized``
+    webhook arrived BEFORE ``/subscriptions/verify-razorpay-subscription`` read
+    the subscription — and that read still said ``created``. Razorpay's status
+    lags its own money by seconds to minutes, so a mandate can be
+    ``created``-and-paid, which is indistinguishable from ``created``-and-
+    abandoned by state alone. ``paid_count`` is the fact that does not lag: it
+    is 1 the moment a cycle has been charged.
+
+    That distinction is the entire defect. Both prod clients paid, saw no plan
+    change, and clicked Select again while the mandate still read ``created``;
+    treating that as an abandoned checkout is what handed them a second
+    chargeable subscription.
+
+    Raises ``RazorpayBillingError`` if the gateway cannot be read — never guess.
+    Guessing "not paid" here is precisely how the month gets charged twice.
+    """
+    try:
+        entity = _get_razorpay().subscription.fetch(razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception("Could not read in-flight checkout %s: %s", razorpay_subscription_id, exc)
+        raise RazorpayBillingError("Could not reach the payment provider. Please try again in a moment.") from exc
+
+    paid_count = int(entity.get("paid_count") or 0)
+    status = str(entity.get("status") or "").lower()
+    # ``active`` is belt-and-braces: it means authorised AND charged, so
+    # paid_count should already be ≥ 1, but a status that has moved while the
+    # counter has not must not read as unpaid.
+    return paid_count > 0 or status in ("active", "completed")
 
 
 def cancel_superseded_checkout(razorpay_subscription_id: str) -> str:

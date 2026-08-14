@@ -1,12 +1,18 @@
 """One in-flight FIRST mandate per client, across every route that mints one.
 
 Razorpay cannot swap a UPI mandate's plan in place, so every "buy a plan" path
-mints a fresh authorizable subscription. If the customer retries — double-click,
-second tab, a re-opened modal, a checkout that took a few seconds to leave
-``created`` — and the retry mints ANOTHER one, both can be authorised and both
-charge a full cycle. That is not a display bug: prod client 18 authorised
-``sub_TPaGNnEfFML4Lr`` and ``sub_TPaHBPNyYV3tfe`` for the same month and paid
-₹11,998 for one ₹5,999 subscription.
+mints a fresh authorizable subscription. If the customer retries and the retry
+mints ANOTHER one, both can be authorised and both charge a full cycle. Prod
+client 18 authorised ``sub_TPaGNnEfFML4Lr`` and ``sub_TPaHBPNyYV3tfe`` for the
+same month and paid ₹11,998 for one ₹5,999 subscription; client 8 did the same
+with two Professional mandates 44 seconds apart.
+
+Note the 44 seconds. This is not a double-click, and a frontend submit latch
+does not reach it. The customer paid on the Launch Studio welcome screen, the
+plan card did not change, they waited for feedback that never came, and clicked
+Select again — the single most reasonable thing to do. Any fix that only
+tightens the button misses it entirely; the retry is legitimate and the server
+has to be the one that says "you already bought this".
 
 The idempotency mechanism already existed — ``clients.pending_checkout_*``,
 written by ``POST /subscriptions/checkout`` — but ``/subscriptions/change-plan``
@@ -14,19 +20,22 @@ Branch 3 mints exactly the same kind of first mandate (trial→paid, Free→paid
 revive-in-place) and never consulted it. This module is that one mechanism,
 extracted so both routes share it rather than growing a second, competing one.
 
-Two rules, and the difference between them is the whole point:
+Three rules, and the differences between them are the whole point:
 
-* **Same key → reuse.** The key is (plan, cycle, confirmed country, bot scope):
-  everything that changes WHICH mandate a customer would end up authorising.
-  A retry under the same key gets the SAME gateway subscription id back, so the
-  frontend re-opens the same Razorpay handle.
-* **Different key → supersede.** A genuinely different purchase needs a new
-  mandate, but the old one is still authorizable at Razorpay, indefinitely. It
-  is cancelled at the gateway in the same operation, before the replacement is
-  minted, so it can never charge. The one exception is a pending mandate the
-  customer has ALREADY paid: nothing may cancel that from a checkout path, so
-  the new mint is refused instead — minting beside a charged mandate is the
-  original defect, one race later.
+* **Already paid → refuse.** Checked first, on ``paid_count``, because Razorpay's
+  status lags its own money: the mandate both prod customers had already paid
+  still read ``created``, which is indistinguishable from an abandoned checkout
+  by state alone. Re-opening a payment sheet here is the defect. The refusal is
+  a ``SubscriptionActivationConflict`` whose customer-facing sentence leads with
+  the payment having worked and says not to pay again.
+* **Same key, unpaid → reuse.** The key is (plan, cycle, confirmed country, bot
+  scope): everything that changes WHICH mandate a customer would end up
+  authorising. A retry under the same key gets the SAME gateway subscription id
+  back, so the frontend re-opens the same Razorpay handle.
+* **Different key, unpaid → supersede.** A genuinely different purchase needs a
+  new mandate, but the old one is still authorizable at Razorpay, indefinitely.
+  It is cancelled at the gateway in the same operation, before the replacement
+  is minted, so it can never charge.
 
 Durability and concurrency are deliberately not this module's invention:
 
@@ -145,7 +154,37 @@ def reuse_or_supersede(
     if not pending_id:
         return None
 
-    if _matches(client_row, plan_id=plan.id, billing_cycle=billing_cycle, country=country, bot_id=bot_id):
+    matches = _matches(client_row, plan_id=plan.id, billing_cycle=billing_cycle, country=country, bot_id=bot_id)
+
+    # FIRST, before deciding anything else: has the customer already PAID this
+    # mandate? This is the reported prod sequence, and it is not a double-click —
+    # the plan card never updated after payment, so the customer waited (44
+    # seconds, for client 8) and clicked Select again.
+    #
+    # Every branch below would get that case wrong, because Razorpay's status
+    # lags its own money: the mandate still reads ``created``, so
+    # ``rebuild_upgrade_checkout`` calls it authorizable and hands back a payment
+    # sheet for a plan that is already bought. ``paid_count`` is the only
+    # question whose answer separates "abandoned checkout, re-open it" from
+    # "paid checkout, stop", and it costs one gateway read on a retry. Worth it:
+    # the alternative is charging the month twice.
+    if razorpay_service.checkout_already_paid(pending_id):
+        logger.info(
+            "Client %s re-submitted a plan while in-flight checkout %s is already PAID — "
+            "refusing to open another payment sheet",
+            client.id,
+            pending_id,
+        )
+        raise razorpay_service.SubscriptionActivationConflict(
+            razorpay_subscription_id=pending_id,
+            client_id=client.id,
+            # Name the plan only when this request IS the one they paid for.
+            # On a different-plan retry the pending mandate bought something
+            # else, and "Your Professional payment went through" would be false.
+            plan_name=getattr(plan, "name", None) if matches else None,
+        )
+
+    if matches:
         reused = razorpay_service.rebuild_upgrade_checkout(pending_id, client, plan, billing_cycle)
         if reused is not None:
             reused.setdefault("provider", "razorpay")
@@ -177,20 +216,15 @@ def reuse_or_supersede(
 
     # Both roads lead here — the pending mandate cannot serve this request,
     # either because it describes a different purchase or because it is no
-    # longer authorizable — and both need the SAME question answered before
-    # anything is minted: is it dead, or has the customer already PAID it?
-    # ``rebuild_upgrade_checkout`` answers None to both, which is why the check
-    # cannot live in the branch above.
+    # longer authorizable — so it must be retired before a replacement is minted.
     status = razorpay_service.cancel_superseded_checkout(pending_id)
     if status == "active":
-        # The customer authorised and PAID the pending mandate in the window
-        # between the two requests, and its activation has not landed locally
-        # yet — so none of the "you already have a subscription" guards can see
-        # it. Nothing was cancelled (only the activation sweep may retire a live
+        # Defence in depth: the paid check above already refuses this, but it
+        # reads ``paid_count`` and this reads ``status``, and the two can move
+        # apart for a moment. Whichever notices first, the answer is the same —
+        # nothing was cancelled (only the activation sweep may retire a live
         # mandate), so minting now would leave two CHARGED subscriptions for one
-        # month: the original defect, one race later. Refuse instead; once the
-        # activation lands, /change-plan routes this customer through the real
-        # upgrade/downgrade branches.
+        # month.
         raise razorpay_service.SubscriptionActivationConflict(
             razorpay_subscription_id=pending_id,
             client_id=client.id,

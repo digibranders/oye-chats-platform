@@ -88,6 +88,15 @@ def _mint_payload(sub_id="sub_idem_1"):
     return {"subscription_id": sub_id, "key_id": "rzp_test", "provider": "razorpay"}
 
 
+@pytest.fixture(autouse=True)
+def _pending_mandate_is_unpaid():
+    """Default every test here to an UNPAID in-flight mandate — the reuse path
+    now asks the gateway ``checkout_already_paid`` first, and the PAID case is
+    covered in test_change_plan_checkout_idempotency."""
+    with patch.object(rzp, "checkout_already_paid", return_value=False):
+        yield
+
+
 # ── Sequential re-checkout reuses the in-flight subscription ─────────────────
 
 

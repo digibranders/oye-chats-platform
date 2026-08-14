@@ -27,7 +27,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -92,6 +92,24 @@ def _mk(db, monkeypatch, **client_kw):
 
 def _mint(sub_id="sub_cpidem_1"):
     return {"subscription_id": sub_id, "key_id": "rzp_test", "provider": "razorpay"}
+
+
+# Captured before the autouse fixture below can stub it out, so the two unit
+# tests of the predicate itself exercise the real implementation.
+_real_checkout_already_paid = rzp.checkout_already_paid
+
+
+@pytest.fixture(autouse=True)
+def _pending_mandate_is_unpaid():
+    """Default every test here to an UNPAID in-flight mandate.
+
+    ``reuse_or_supersede`` asks the gateway ``checkout_already_paid`` before it
+    decides anything, so without this every test with a marker would reach for
+    the network. The PAID case is the actual prod defect and gets its own tests,
+    which override this with an inner patch.
+    """
+    with patch.object(rzp, "checkout_already_paid", return_value=False):
+        yield
 
 
 # ── The defect: a retry minted a second chargeable mandate ───────────────────
@@ -398,6 +416,148 @@ def test_dead_pending_mandate_is_re_minted(db, monkeypatch):
     cancel.assert_called_once_with("sub_cpidem_dead")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_cpidem_fresh"
+
+
+# ── The reported prod sequence: paid, no UI change, human retry ──────────────
+
+
+def test_a_paid_mandate_still_reading_created_is_never_re_opened(db, monkeypatch):
+    """THE reported defect, end to end.
+
+    The customer picked Enterprise on the Launch Studio welcome screen and paid.
+    The plan card did not update (the activation had not landed, and
+    ``verify-razorpay-subscription`` had logged "in non-billable state 'created'
+    — deferring local upsert"). Forty-four seconds later they clicked Select
+    again, on the SAME plan.
+
+    Razorpay still reported ``created`` at that moment, so every state-based
+    check calls the mandate authorizable and hands back a payment sheet.
+    ``paid_count`` is what says otherwise. Nothing may be minted, and nothing
+    may be re-opened.
+    """
+    api, client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    plan = _plan(db, slug="std-cpidem-enterprise")
+    pending_checkout_service.record(
+        client,
+        subscription_id="sub_TPaGNnEfFML4Lr",
+        plan_id=plan.id,
+        billing_cycle="monthly",
+        country="IN",
+    )
+    db.flush()
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "create_bot_resubscription") as bot_mint,
+        patch.object(rzp, "rebuild_upgrade_checkout") as rebuild,
+        patch.object(rzp, "cancel_superseded_checkout") as cancel,
+        # status still 'created', but paid_count == 1
+        patch.object(rzp, "checkout_already_paid", return_value=True),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+
+    # No second mandate, and no second payment sheet for one already paid.
+    assert not mint.called
+    assert not bot_mint.called
+    assert not rebuild.called
+    assert not cancel.called
+    assert res.status_code == 409, res.text
+
+    detail = res.json()["detail"]
+    # What the payer reads must not sound like a failed payment — their next
+    # move on "payment failed" is a THIRD attempt or a support ticket.
+    assert detail["payment_captured"] is True
+    assert detail["message"] == (
+        f"Your {plan.name} payment went through — we're activating your plan now. "
+        "You don't need to pay again; this usually takes under a minute."
+    )
+    assert detail["reason"] == "subscription_activation_conflict"
+    # Operator detail never reaches the browser.
+    assert "sub_TPaGNnEfFML4Lr" not in res.text
+    assert "paid_count" not in res.text
+
+    db.refresh(client)
+    # The marker survives — the activation still has to consume it.
+    assert client.pending_checkout_subscription_id == "sub_TPaGNnEfFML4Lr"
+
+
+def test_a_different_plan_retry_after_payment_does_not_name_the_wrong_plan(db, monkeypatch):
+    """The customer paid for one plan and is now asking for another. The refusal
+    is the same, but claiming "Your Professional payment went through" when they
+    paid for Enterprise would be a lie."""
+    api, client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    paid_plan = _plan(db, slug="std-cpidem-paidfor")
+    other_plan = _plan(db, slug="std-cpidem-other", monthly=94900)
+    pending_checkout_service.record(
+        client,
+        subscription_id="sub_cpidem_paidfor",
+        plan_id=paid_plan.id,
+        billing_cycle="monthly",
+        country="IN",
+    )
+    db.flush()
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "checkout_already_paid", return_value=True),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": other_plan.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert not mint.called
+    message = res.json()["detail"]["message"]
+    assert message.startswith("Your payment went through")
+    assert other_plan.name not in message
+
+
+def test_the_paid_check_runs_before_the_first_mint_is_ever_recorded(db, monkeypatch):
+    """A FIRST purchase has no marker, so no gateway read happens — the paid
+    check must not add a round-trip to the common path."""
+    api, _client = _mk(db, monkeypatch)
+    plan = _plan(db, slug="std-cpidem-firstbuy")
+    with (
+        patch.object(rzp, "create_subscription", return_value=_mint("sub_cpidem_first")) as mint,
+        patch.object(rzp, "checkout_already_paid") as paid,
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+    assert res.status_code == 200, res.text
+    assert mint.call_count == 1
+    assert not paid.called
+
+
+def test_checkout_already_paid_trusts_paid_count_over_status():
+    """Razorpay's status lags its own money: the mandate both prod customers had
+    paid still read ``created``. ``paid_count`` is the fact that does not lag."""
+
+    def _fetch(entity):
+        rzp_client = MagicMock()
+        rzp_client.subscription.fetch.return_value = entity
+        return patch.object(rzp, "_get_razorpay", return_value=rzp_client)
+
+    with _fetch({"status": "created", "paid_count": 1}):
+        assert _real_checkout_already_paid("sub_x") is True
+    with _fetch({"status": "created", "paid_count": 0}):
+        assert _real_checkout_already_paid("sub_x") is False
+    with _fetch({"status": "authenticated", "paid_count": 0}):
+        assert _real_checkout_already_paid("sub_x") is False
+    # status moved but the counter has not — must not read as unpaid.
+    with _fetch({"status": "active", "paid_count": 0}):
+        assert _real_checkout_already_paid("sub_x") is True
+
+
+def test_checkout_already_paid_never_guesses_when_the_gateway_is_unreadable():
+    """Guessing "not paid" is exactly how the month gets charged twice."""
+    rzp_client = MagicMock()
+    rzp_client.subscription.fetch.side_effect = TimeoutError("boom")
+    with (
+        patch.object(rzp, "_get_razorpay", return_value=rzp_client),
+        pytest.raises(rzp.RazorpayBillingError),
+    ):
+        _real_checkout_already_paid("sub_unknown")
 
 
 # ── The gateway-side supersede helper ────────────────────────────────────────
