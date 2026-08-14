@@ -1722,8 +1722,6 @@ def _dead_letter_pooled_scope_refusal(
     Best-effort, exactly like the webhook route's helper: a failure to record
     must never turn an ACK into a 5xx that burns the provider's retry window.
     """
-    from app.db.session import get_session
-
     context = {
         "razorpay_subscription_id": razorpay_sub_id,
         "razorpay_payment_id": payment_id,
@@ -1733,7 +1731,46 @@ def _dead_letter_pooled_scope_refusal(
         "plan_slug": plan_slug,
         "bot_id": str(bot_id) if bot_id is not None else None,
     }
-    dedup_key = f"{_POOLED_SCOPE_DEAD_LETTER_PREFIX}{razorpay_sub_id}"
+    _dead_letter_synthetic(
+        dedup_key=f"{_POOLED_SCOPE_DEAD_LETTER_PREFIX}{razorpay_sub_id}",
+        event_type="subscription.activated",
+        context=context,
+        body={"subscription": sub_entity},
+        error=(
+            "MANUAL RECONCILIATION REQUIRED (replay will not help — this row has no signed "
+            f"body). Razorpay subscription {razorpay_sub_id} authorised plan {plan_slug!r} "
+            f"(id={plan_id}) at BOT scope (bot={bot_id}) for client {client_id}, payment "
+            f"{payment_id}. That plan grants unlimited agents and sells ONE pooled credit "
+            "balance, so it must be billed with bot_id NULL — no local subscription was "
+            "created and no credits were granted. The customer HAS been charged: cancel "
+            "this mandate and re-sell at account level, or re-scope it, then re-run "
+            "reconciliation (the idempotency key was released, so the event can be "
+            "reprocessed)."
+        ),
+    )
+
+
+def _dead_letter_synthetic(
+    *,
+    dedup_key: str,
+    event_type: str,
+    context: dict[str, Any],
+    body: dict[str, Any],
+    error: str,
+) -> None:
+    """Write one ``failed_webhooks`` row for an ACKed event that needs a human.
+
+    Shared by every handler that decides an event can never succeed on retry but
+    still moved (or may have moved) money. ``dedup_key`` is a synthetic event id
+    — ``<kind>:<subject>`` — so however many doors hit the same refusal, ops sees
+    ONE open task rather than an accumulating pile.
+
+    Runs in its OWN session so the row survives whatever the caller's transaction
+    does, and swallows its own failures: a dead-letter write must never turn an
+    ACK into a 5xx that burns the provider's retry window.
+    """
+    from app.db.session import get_session
+
     try:
         with get_session() as session:
             already = (
@@ -1753,10 +1790,13 @@ def _dead_letter_pooled_scope_refusal(
                 FailedWebhook(
                     provider="razorpay",
                     event_id=dedup_key,
-                    event_type="subscription.activated",
-                    raw_payload=json.dumps({"context": context, "subscription": sub_entity}, default=str).encode(
-                        "utf-8"
-                    ),
+                    event_type=event_type,
+                    raw_payload=json.dumps({"context": context, **body}, default=str).encode("utf-8"),
+                    # NULL on purpose: this row is synthesised from the parsed
+                    # entity, not captured from a signed request body, so the
+                    # superadmin replay button cannot re-verify it and will
+                    # refuse. That is honest — see the callers for the real
+                    # recovery path.
                     signature=None,
                     headers=context,
                     # Explicit rather than leaning on the column default: this row
@@ -1764,28 +1804,16 @@ def _dead_letter_pooled_scope_refusal(
                     # ``status == "pending"`` so a row an admin has already
                     # triaged to ``ignored`` does not suppress a fresh report.
                     status="pending",
-                    error=(
-                        "MANUAL RECONCILIATION REQUIRED (replay will not help — this row has no signed "
-                        f"body). Razorpay subscription {razorpay_sub_id} authorised plan {plan_slug!r} "
-                        f"(id={plan_id}) at BOT scope (bot={bot_id}) for client {client_id}, payment "
-                        f"{payment_id}. That plan grants unlimited agents and sells ONE pooled credit "
-                        "balance, so it must be billed with bot_id NULL — no local subscription was "
-                        "created and no credits were granted. The customer HAS been charged: cancel "
-                        "this mandate and re-sell at account level, or re-scope it, then re-run "
-                        "reconciliation (the idempotency key was released, so the event can be "
-                        "reprocessed)."
-                    ),
+                    error=error,
                 )
             )
             session.commit()
     except Exception:
         logger.critical(
-            "Failed to dead-letter pooled-plan scope refusal for Razorpay subscription %s "
-            "(client %s, plan %s, bot %s) — the charge is now recorded ONLY in the ERROR log above",
-            razorpay_sub_id,
-            client_id,
-            plan_id,
-            bot_id,
+            "Failed to dead-letter %s (%s) — the event is now recorded ONLY in the ERROR log above: %s",
+            dedup_key,
+            event_type,
+            context,
             exc_info=True,
         )
 
@@ -3730,12 +3758,89 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     return f"Subscription {sub_entity.get('id')} pending"
 
 
+def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
+    """Is this payment a subscription cycle charge — decidable with no gateway call?
+
+    Razorpay raises an Invoice for every subscription charge and stamps its id on
+    the payment; our top-ups are bare Orders created by ``create_topup_order``
+    and never carry one. So ``invoice_id`` (or an explicit ``subscription_id``)
+    is proof this is not a top-up, available from the webhook body alone.
+
+    That matters because the classification used to happen only AFTER an
+    ``order.fetch`` that fails for subscription orders — turning every single
+    subscription payment into a 500 on the webhook endpoint.
+    """
+    if not pay_entity:
+        return False
+    return bool(pay_entity.get("invoice_id") or pay_entity.get("subscription_id"))
+
+
+def _is_permanent_gateway_failure(exc: BaseException) -> bool:
+    """Will retrying this Razorpay read EVER succeed?
+
+    The SDK maps HTTP 4xx to ``BadRequestError`` — a malformed or unknown id,
+    which no redelivery can fix. ``ServerError``/``GatewayError``, timeouts and
+    transport faults are the opposite: they say nothing about the resource, only
+    about this attempt, and must keep forcing a retry.
+
+    Fails CLOSED (returns False, i.e. "transient") if the SDK's error classes
+    can't be imported, so an unexpected environment retries rather than acking a
+    payment it never classified.
+    """
+    try:
+        from razorpay.errors import BadRequestError
+    except Exception:  # pragma: no cover — razorpay is a hard dependency
+        return False
+    return isinstance(exc, BadRequestError)
+
+
+def _dead_letter_unclassifiable_payment(
+    pay_entity: dict[str, Any] | None, order_id: str | None, exc: BaseException
+) -> None:
+    """Record an ACKed payment whose order could not be read, for manual review."""
+    payment_id = (pay_entity or {}).get("id")
+    context = {
+        "razorpay_payment_id": payment_id,
+        "razorpay_order_id": order_id,
+        "amount": (pay_entity or {}).get("amount"),
+        "currency": (pay_entity or {}).get("currency"),
+        "error": repr(exc),
+    }
+    _dead_letter_synthetic(
+        dedup_key=f"unclassifiable-payment:{payment_id or order_id}",
+        event_type="payment.captured",
+        context=context,
+        body={"payment": pay_entity or {}},
+        error=(
+            "MANUAL REVIEW REQUIRED (replay will not help — this row has no signed body, and the "
+            f"order fetch fails permanently). Razorpay payment {payment_id} references order "
+            f"{order_id}, which cannot be fetched with these keys ({exc!r}), so we could not tell "
+            "whether it was a credits top-up. The event was ACKed rather than 5xx-looped, because "
+            "no retry can change a 4xx. Check the payment in the Razorpay dashboard: if it WAS a "
+            "top-up, grant the credits manually and record the invoice."
+        ),
+    )
+
+
 def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     """Top-up payment captured — grant top-up credits and record the invoice.
 
-    Subscription-cycle payments are handled by ``subscription.charged``; we
-    detect a top-up by ``notes.purpose == 'topup'`` on the order. Anything
-    else here (e.g., a one-off invoice payment) we ignore for now.
+    Also the ``order.paid`` handler. Subscription-cycle payments are handled by
+    ``subscription.charged``; we detect a top-up by ``notes.purpose == 'topup'``
+    on the order. Anything else here (e.g., a one-off invoice payment) we ignore.
+
+    Classification runs in cheapest-first order, and getting that order right is
+    the difference between an ACK and a webhook outage:
+
+    1. notes already on the payment / order entity in the payload;
+    2. ``_is_subscription_payment`` — an ``invoice_id`` proves it is a cycle
+       charge, no gateway call needed;
+    3. an order entity present in the payload with empty notes is authoritative;
+    4. only then, fetch the order.
+
+    Step 2 used to be missing, so a subscription payment fell through to the
+    fetch, the fetch failed, and the whole webhook 500ed — on every subscription
+    payment, for every customer.
     """
     pay_entity = _extract_payment_entity(payload)
     order_entity = _extract_order_entity(payload)
@@ -3744,6 +3849,22 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         notes = pay_entity.get("notes") or {}
     if not notes and order_entity:
         notes = order_entity.get("notes") or {}
+
+    # Classify BEFORE reaching for the gateway. A subscription cycle payment is
+    # not a top-up and never can be, and its order is not fetchable with these
+    # keys — so the fetch below failed, raised ``RazorpayTransientError``, and
+    # 500ed the webhook endpoint on EVERY subscription payment. Razorpay retries
+    # failed webhooks hard and disables endpoints that keep failing, so that
+    # storm could have taken billing webhooks down for every customer.
+    if not notes and _is_subscription_payment(pay_entity):
+        return "payment ignored (subscription cycle payment, not a topup)"
+
+    # Same idea one step further out: when the ORDER entity is already in the
+    # payload (the ``order.paid`` shape), its notes are authoritative. Empty
+    # notes there mean "not a top-up" — not "unknown" — and re-fetching the same
+    # order could only return the same answer.
+    if not notes and order_entity is not None:
+        return "payment ignored (order carries no topup notes)"
 
     # A ``payment.captured`` webhook carries only the PAYMENT entity, but top-up
     # metadata lives on the ORDER's notes. When the order entity isn't in the
@@ -3755,6 +3876,21 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
             fetched_order = _get_razorpay().order.fetch(order_id_for_notes)
             notes = (fetched_order or {}).get("notes") or {}
         except Exception as exc:
+            if _is_permanent_gateway_failure(exc):
+                # A 4xx means this order id will never resolve for these keys, so
+                # no retry can change the answer and 5xx-ing would only burn
+                # Razorpay's whole retry window against a wall. ACK — but leave a
+                # durable, actionable record, because we are acking a payment we
+                # could not classify.
+                logger.error(
+                    "order.fetch for %s failed permanently (%s) — acking payment %s unclassified; "
+                    "recorded in failed_webhooks for manual review",
+                    order_id_for_notes,
+                    exc,
+                    (pay_entity or {}).get("id"),
+                )
+                _dead_letter_unclassifiable_payment(pay_entity, order_id_for_notes, exc)
+                return "payment ignored (order not retrievable; recorded for manual review)"
             # Finding C: we do NOT know whether this was a top-up. Swallowing here
             # acked the event and burned the dedup row, permanently losing a paid
             # top-up. Raise so the event dead-letters and Razorpay retries; the
