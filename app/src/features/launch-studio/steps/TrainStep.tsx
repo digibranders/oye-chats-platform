@@ -5,12 +5,13 @@ import {
   Upload,
   Loader2,
   FileCheck2,
-  Sparkles,
   FileText,
   Link as LinkIcon,
   CheckCircle2,
   AlertTriangle,
+  Lock,
   Plus,
+  Search,
   X,
   ChevronDown,
 } from 'lucide-react';
@@ -27,13 +28,15 @@ import {
 import { useBotContext } from '../../../context/BotContext';
 import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
+import { useEntitlements } from '../../../hooks/useEntitlements';
+import { useUpgradeModal } from '../../../context/UpgradeModalContext';
+import { CrawlPageTree, canonicalCrawlUrls } from '../../agents/knowledge/CrawlPageTree';
+import { totalWebsitePages } from '../../agents/knowledge/knowledge-utils';
 import { StepShell } from '../StepShell';
 import { PagesDrawer } from '../PagesDrawer';
-import { resolveWebsitePrefill } from './websitePrefill';
+import { resolveWebsitePrefill } from '../../../lib/websitePrefill';
 import type { StepProps } from '../steps.config';
 import type { KnowledgeSource, SourcePage, CrawlDiscovery } from '../../../types/domain';
-
-type CrawlOrder = 'shallow' | 'discovered';
 
 function isUrl(name: string): boolean {
   return name.startsWith('http://') || name.startsWith('https://');
@@ -41,17 +44,47 @@ function isUrl(name: string): boolean {
 function normalizeUrl(value: string): string {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
-function pathDepth(url: string): number {
-  try {
-    return new URL(url).pathname.split('/').filter(Boolean).length;
-  } catch {
-    return 99;
-  }
+
+/**
+ * The most pages a single crawl may train on, given what the plan still allows.
+ *
+ * Two independent ceilings apply and the tighter one wins:
+ *  - `planPagesLeft` — what is left of the workspace's `page_scraping`
+ *    allowance (`Infinity` on an unlimited plan).
+ *  - `result.plan_max` — the server's own per-crawl ceiling for this plan,
+ *    returned by `/crawl/discover`. `-1` (paid tiers) means "no per-crawl cap;
+ *    spend is governed by credits", so it is NOT a constraint.
+ *
+ * This is not cosmetic: `POST /crawl` rejects `max_pages > plan_max` outright
+ * with a 400, and silently truncates an over-long `ordered_urls` to the plan
+ * ceiling. Capping here is what stops a customer ticking 47 pages on a 20-page
+ * plan and discovering the shortfall only after the credits are spent.
+ */
+function crawlPageCap(result: CrawlDiscovery, planPagesLeft: number): number {
+  const perCrawl =
+    typeof result.plan_max === 'number' && result.plan_max > 0 ? result.plan_max : Infinity;
+  return Math.min(planPagesLeft, perCrawl);
 }
-function sliceForCrawl(urls: string[], order: CrawlOrder, count: number): string[] {
-  const ordered = order === 'shallow' ? [...urls].sort((a, b) => pathDepth(a) - pathDepth(b)) : urls;
-  return ordered.slice(0, count);
+
+/**
+ * The page set to pre-tick after a scan: every discovered page, trimmed to what
+ * the plan allows and — when the balance cannot cover the whole site — to what
+ * the credits actually buy.
+ *
+ * Trimming happens in DISCOVERY order (see `canonicalCrawlUrls`), which puts the
+ * seed URL first and follows the site's own sitemap priority, so a part-funded
+ * crawl keeps the pages that matter rather than an alphabetical prefix.
+ */
+function seedSelection(result: CrawlDiscovery, planPagesLeft: number): string[] {
+  const canonical = canonicalCrawlUrls(result.urls ?? []);
+  const affordable =
+    result.exceeds_balance && typeof result.max_affordable_pages === 'number'
+      ? Math.max(result.max_affordable_pages, 0)
+      : Infinity;
+  const cap = Math.min(crawlPageCap(result, planPagesLeft), affordable);
+  return Number.isFinite(cap) ? canonical.slice(0, cap) : canonical;
 }
+
 function toPath(url: string): string {
   try {
     return new URL(url).pathname || url;
@@ -72,8 +105,15 @@ function pageLabel(source: KnowledgeSource): string {
 /**
  * Step 3 - Setup & Train (Combined Connect Website + Knowledge).
  *
- * Merges website URL entry, discovery estimation, crawl execution, live progress,
- * and knowledge review into one unified state-driven step.
+ * Merges website URL entry, an explicit site scan, per-page selection, crawl
+ * execution, live progress, and knowledge review into one state-driven step.
+ *
+ * The flow is: URL → **Scan website** → pick pages in `CrawlPageTree` →
+ * **Train your chatbot** → live progress. Scanning is a deliberate, named
+ * action rather than something Continue does silently, and the tree IS the
+ * review — which is why there is no separate "ready to train?" confirmation.
+ * The page picker is the same component the Knowledge tab uses
+ * (`CrawlPageTree` / `AddKnowledgePanel`), so both surfaces behave identically.
  *
  * The URL field prefills from the agent's website, falling back to the account
  * website captured at signup - see `resolveWebsitePrefill`.
@@ -81,6 +121,8 @@ function pageLabel(source: KnowledgeSource): string {
 export function TrainStep(props: StepProps) {
   const { selectedBot } = useBotContext();
   const { crawl, startCrawl } = useCrawl();
+  const { limitFor, withinLimit, remaining } = useEntitlements();
+  const { openUpgradeModal } = useUpgradeModal();
 
   // Connect / Input states
   const [url, setUrl] = useState(() => resolveWebsitePrefill(selectedBot?.website, null));
@@ -92,8 +134,9 @@ export function TrainStep(props: StepProps) {
   const [uploadingDocs, setUploadingDocs] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [estimate, setEstimate] = useState<CrawlDiscovery | null>(null);
-  const [crawlCount, setCrawlCount] = useState(0);
-  const [crawlOrder, setCrawlOrder] = useState<CrawlOrder>('shallow');
+  // Pages the user has ticked in the tree. Sent as `ordered_urls` so exactly
+  // these are fetched and billed.
+  const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +151,7 @@ export function TrainStep(props: StepProps) {
   const [showAddSite, setShowAddSite] = useState(false);
   const [siteUrl, setSiteUrl] = useState('');
   const [siteEstimate, setSiteEstimate] = useState<CrawlDiscovery | null>(null);
+  const [siteSelectedUrls, setSiteSelectedUrls] = useState<string[]>([]);
   const [siteBusy, setSiteBusy] = useState(false);
 
   const crawlRunning = crawl.status === 'running' || crawl.status === 'cancelling';
@@ -147,6 +191,41 @@ export function TrainStep(props: StepProps) {
   const exceeds = Boolean(estimate?.exceeds_balance);
   const affordable = estimate?.max_affordable_pages ?? 0;
   const noBalance = exceeds && affordable === 0;
+
+  // Discovery returned an explicit, selectable page list. When it didn't
+  // (sitemap-less site) the crawl falls back to following links and there is
+  // nothing to tick - so no tree, and the estimate stays site-wide.
+  const hasPageList = (estimate?.urls?.length ?? 0) > 0;
+  const selectedCount = selectedUrls.length;
+  // What this crawl will actually fetch and bill: the ticked pages when the
+  // user has a list, otherwise whatever the link-follow finds.
+  const chargeablePages = hasPageList ? selectedCount : (estimate?.total_found ?? 0);
+  const estimatedCost = chargeablePages * costPerPage;
+  // Selected beyond what the balance covers. The backend trains as many as the
+  // credits allow, in order, so this warns rather than blocks - unlike
+  // `noBalance`, where nothing can be trained at all.
+  const overAffordable = hasPageList && !noBalance && selectedCount > affordable;
+
+  // ── Plan page allowance ──────────────────────────────────────────
+  // `page_scraping` is not populated server-side as usage, so "used" is derived
+  // from this agent's already-crawled page counts - the same derivation the
+  // Knowledge tab uses (`KnowledgePage` → `AddKnowledgePanel.pagesLocked`).
+  const pagesUsed = totalWebsitePages(sources ?? []);
+  const pagesLimit = limitFor('page_scraping');
+  const pagesLocked = !withinLimit('page_scraping', pagesUsed);
+  const planPagesLeft = remaining('page_scraping', pagesUsed);
+  const pageCap = estimate ? crawlPageCap(estimate, planPagesLeft) : planPagesLeft;
+  const overPlanCap = hasPageList && Number.isFinite(pageCap) && selectedCount > pageCap;
+
+  // Same derivations for the "add another site" sub-flow in the review state,
+  // so both entry points price and cap a crawl identically.
+  const siteHasPageList = (siteEstimate?.urls?.length ?? 0) > 0;
+  const siteSelectedCount = siteSelectedUrls.length;
+  const siteChargeablePages = siteHasPageList ? siteSelectedCount : (siteEstimate?.total_found ?? 0);
+  const siteCost = siteChargeablePages * (siteEstimate?.cost_per_page ?? 1);
+  const siteCap = siteEstimate ? crawlPageCap(siteEstimate, planPagesLeft) : planPagesLeft;
+  const siteOverPlanCap =
+    siteHasPageList && Number.isFinite(siteCap) && siteSelectedCount > siteCap;
 
   const fetchSources = useCallback(async (): Promise<KnowledgeSource[]> => {
     if (!selectedBot) return [];
@@ -221,14 +300,17 @@ export function TrainStep(props: StepProps) {
     return sameSite && (inSession || trained);
   };
 
-  const handleDiscover = async () => {
+  /**
+   * Scan the site: ask the backend which pages exist so the user can choose
+   * among them. A named, explicit action - it costs nothing and charges
+   * nothing, so it is safe to press, unlike the Train CTA it precedes.
+   */
+  const handleScan = async () => {
     const trimmed = url.trim();
-    if (!trimmed && (uploadedCount > 0 || (sources?.length ?? 0) > 0)) {
-      props.onContinue();
-      return;
-    }
     if (!trimmed || !selectedBot) return;
 
+    // Already trained on this exact site: nothing to scan or re-buy - drop
+    // straight into the knowledge review.
     if (alreadyCrawled(normalizeUrl(trimmed))) {
       await fetchSources();
       return;
@@ -236,22 +318,37 @@ export function TrainStep(props: StepProps) {
 
     setDiscovering(true);
     setError(null);
+    setEstimate(null);
+    setSelectedUrls([]);
     try {
       const result = await discoverCrawlUrls(normalizeUrl(trimmed), selectedBot.id);
       setEstimate(result);
-      setCrawlCount(
-        result.exceeds_balance ? (result.max_affordable_pages ?? 0) : (result.total_found ?? 0),
-      );
-    } catch {
+      setSelectedUrls(seedSelection(result, planPagesLeft));
+    } catch (err) {
+      // Scanning is best-effort - the crawl can still follow links from the
+      // homepage. Fall back to a zero-count estimate and say so.
       setEstimate({ total_found: 0, capped: false });
-      setCrawlCount(0);
+      setSelectedUrls([]);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "We couldn't list the pages, but you can still train on this site.",
+      );
     } finally {
       setDiscovering(false);
     }
   };
 
-  const handleConfirmCrawl = async () => {
+  /**
+   * The commitment point: this is the click that spends credits. Trains on
+   * exactly the ticked pages and lands the user on the live progress view.
+   */
+  const handleStartCrawl = async () => {
     if (!selectedBot || !estimate) return;
+    if (hasPageList && selectedCount === 0) {
+      setError('Select at least one page to train on.');
+      return;
+    }
     const site = normalizeUrl(url.trim());
     setStarting(true);
     setError(null);
@@ -263,20 +360,37 @@ export function TrainStep(props: StepProps) {
           botId: selectedBot.id,
           botName: selectedBot.name,
         };
-        if (estimate.total_found > 0) opts.discoveredTotal = estimate.total_found;
-        if (estimate.exceeds_balance && estimate.urls?.length && crawlCount > 0) {
-          opts.orderedUrls = sliceForCrawl(estimate.urls, crawlOrder, crawlCount);
-          opts.maxPages = crawlCount;
+        if (hasPageList) {
+          // Crawl exactly the ticked pages, in discovery order. `discoveredTotal`
+          // sizes the progress bar and the credit pre-flight to the SELECTION,
+          // not the whole site - otherwise a user who deselects pages watches a
+          // progress bar counting up to a total that will never arrive.
+          opts.orderedUrls = selectedUrls;
+          opts.discoveredTotal = selectedCount;
+          opts.maxPages = selectedCount;
+        } else if (estimate.total_found > 0) {
+          opts.discoveredTotal = estimate.total_found;
         }
         await startCrawl(opts);
         void recordActivationEvent('crawl_started', { botId: selectedBot.id });
       }
-      setEstimate(null); // Move to progress/training view
+      // Clearing the estimate drops through to the live progress view.
+      setEstimate(null);
+      setSelectedUrls([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start. Please try again.");
     } finally {
       setStarting(false);
     }
+  };
+
+  /** Footer CTA. Trains when a scan is on screen; otherwise advances the step. */
+  const handlePrimary = () => {
+    if (estimate) {
+      void handleStartCrawl();
+      return;
+    }
+    props.onContinue();
   };
 
   const handleDiscoverSite = async () => {
@@ -286,8 +400,10 @@ export function TrainStep(props: StepProps) {
     try {
       const res = await discoverCrawlUrls(normalizeUrl(siteUrl.trim()), selectedBot.id);
       setSiteEstimate(res);
+      setSiteSelectedUrls(seedSelection(res, planPagesLeft));
     } catch {
       setSiteEstimate({ total_found: 0, capped: false });
+      setSiteSelectedUrls([]);
     } finally {
       setSiteBusy(false);
     }
@@ -300,11 +416,18 @@ export function TrainStep(props: StepProps) {
     try {
       const site = normalizeUrl(siteUrl.trim());
       const opts: StartCrawlOptions = { url: site, botId: selectedBot.id, botName: selectedBot.name };
-      if (siteEstimate.total_found > 0) opts.discoveredTotal = siteEstimate.total_found;
+      if (siteHasPageList) {
+        opts.orderedUrls = siteSelectedUrls;
+        opts.discoveredTotal = siteSelectedUrls.length;
+        opts.maxPages = siteSelectedUrls.length;
+      } else if (siteEstimate.total_found > 0) {
+        opts.discoveredTotal = siteEstimate.total_found;
+      }
       await startCrawl(opts);
       setShowAddSite(false);
       setSiteUrl('');
       setSiteEstimate(null);
+      setSiteSelectedUrls([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start training. Please try again.");
     } finally {
@@ -315,105 +438,9 @@ export function TrainStep(props: StepProps) {
   const reviewReady = (sources?.length ?? 0) > 0;
   const inTraining = crawlRunning || (crawl.status !== 'idle' && !reviewReady);
 
-  // ── 1. Estimate / Discovery Confirm Sub-view ──────────────────────
-  if (estimate) {
-    const pages = estimate.total_found;
-    const chosen = exceeds && affordable > 0 ? crawlCount : pages;
-    const cost = (chosen || pages || 0) * costPerPage;
-
-    return (
-      <StepShell
-        title="Ready to train?"
-        description="Here's what we'll learn from your website."
-        onBack={() => setEstimate(null)}
-        onContinue={handleConfirmCrawl}
-        isFirst={props.isFirst}
-        isLast={props.isLast}
-        canContinue={!starting && !noBalance}
-        continueLabel={
-          starting
-            ? 'Starting…'
-            : pages > 0
-              ? `Train ${(chosen || pages).toLocaleString()} page${(chosen || pages) === 1 ? '' : 's'}`
-              : 'Start training'
-        }
-      >
-        <div className="space-y-4">
-          <Card className="p-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
-                <Sparkles size={19} />
-              </div>
-              <div>
-                <p className="text-[15px] font-semibold text-[var(--ds-text)]">
-                  {pages > 0
-                    ? `${pages.toLocaleString()}${estimate.capped ? '+' : ''} page${pages === 1 ? '' : 's'} found`
-                    : 'Ready to train your AI'}
-                </p>
-                <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
-                  {pages > 0
-                    ? `About ${cost.toLocaleString()} credit${cost === 1 ? '' : 's'} · ${costPerPage} per page`
-                    : "No sitemap found - we'll follow links from your homepage."}
-                </p>
-              </div>
-            </div>
-
-            {exceeds && affordable > 0 && estimate.urls?.length ? (
-              <div className="mt-4 rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
-                <p className="text-[12px] text-[var(--ds-text)]">
-                  This site needs {(estimate.credits_required_full ?? 0).toLocaleString()} credits, but
-                  you have {(estimate.balance ?? 0).toLocaleString()}. Choose how many pages to train:
-                </p>
-                <div className="mt-3 flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={1}
-                    max={affordable}
-                    value={crawlCount}
-                    onChange={(e) => setCrawlCount(Number(e.target.value))}
-                    className="flex-1 accent-[var(--ds-accent)]"
-                    aria-label="Pages to train"
-                  />
-                  <span className="w-24 text-right text-[12px] font-medium text-[var(--ds-text)]">
-                    {crawlCount} × {costPerPage} = {(crawlCount * costPerPage).toLocaleString()}
-                  </span>
-                </div>
-                <div className="mt-3 flex gap-4 text-[12px] text-[var(--ds-text-muted)]">
-                  {(['shallow', 'discovered'] as const).map((order) => (
-                    <label key={order} className="flex items-center gap-1.5">
-                      <input
-                        type="radio"
-                        checked={crawlOrder === order}
-                        onChange={() => setCrawlOrder(order)}
-                        className="accent-[var(--ds-accent)]"
-                      />
-                      {order === 'shallow' ? 'Top pages first' : 'Site order'}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {noBalance && (
-              <div className="mt-4 rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
-                <p className="text-[12px] text-[var(--ds-text)]">
-                  You need credits to train on this site. Top up to continue.
-                </p>
-                <Link to="/workspace/billing" className="mt-2 inline-block">
-                  <Button variant="outline" size="sm">
-                    Top up credits
-                  </Button>
-                </Link>
-              </div>
-            )}
-          </Card>
-          {error && <p className="text-[12px] text-[var(--ds-danger)]">{error}</p>}
-        </div>
-      </StepShell>
-    );
-  }
-
-  // ── 2. Live Training Progress Sub-view ────────────────────────────
+  // ── 1. Live Training Progress Sub-view ────────────────────────────
+  // `crawl.discoveredTotal` is the SELECTED page count (set in
+  // `handleStartCrawl`), so "3 of 6 pages" tracks what the user chose to buy.
   if (inTraining && !reviewReady) {
     const pages = crawl.urls;
     const done = crawl.pagesCrawled;
@@ -495,7 +522,7 @@ export function TrainStep(props: StepProps) {
     );
   }
 
-  // ── 3. Knowledge Review Sub-view (Trained) ────────────────────────
+  // ── 2. Knowledge Review Sub-view (Trained) ────────────────────────
   if (reviewReady) {
     const list = sources ?? [];
     return (
@@ -627,6 +654,7 @@ export function TrainStep(props: StepProps) {
                       setShowAddSite(false);
                       setSiteUrl('');
                       setSiteEstimate(null);
+                      setSiteSelectedUrls([]);
                     }}
                     aria-label="Cancel"
                     className="text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)]"
@@ -644,6 +672,7 @@ export function TrainStep(props: StepProps) {
                     onChange={(e) => {
                       setSiteUrl(e.target.value);
                       setSiteEstimate(null);
+                      setSiteSelectedUrls([]);
                     }}
                     placeholder="docs.yoursite.com"
                     className="pl-9"
@@ -651,15 +680,52 @@ export function TrainStep(props: StepProps) {
                   />
                 </div>
                 {siteEstimate ? (
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[12px] text-[var(--ds-text-subtle)]">
-                      {siteEstimate.total_found > 0
-                        ? `${siteEstimate.total_found.toLocaleString()}${siteEstimate.capped ? '+' : ''} pages · ~${(siteEstimate.total_found * (siteEstimate.cost_per_page ?? 1)).toLocaleString()} credits`
-                        : "We'll follow links from the homepage."}
-                    </p>
-                    <Button size="sm" onClick={handleAddSite} disabled={siteBusy}>
-                      {siteBusy ? 'Starting…' : 'Train'}
-                    </Button>
+                  <div className="space-y-3">
+                    {siteHasPageList && (
+                      <CrawlPageTree
+                        urls={siteEstimate.urls ?? []}
+                        selected={siteSelectedUrls}
+                        onSelectionChange={setSiteSelectedUrls}
+                        disabled={siteBusy}
+                      />
+                    )}
+                    {siteOverPlanCap && (
+                      <p className="text-[12px] text-[var(--ds-warning)]">
+                        Your plan covers {siteCap.toLocaleString()} more page
+                        {siteCap === 1 ? '' : 's'}. Deselect{' '}
+                        {(siteSelectedCount - siteCap).toLocaleString()} to continue.
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[12px] text-[var(--ds-text-subtle)]">
+                        {siteHasPageList ? (
+                          <>
+                            <span className="font-medium text-[var(--ds-text)]">
+                              {siteSelectedCount.toLocaleString()}
+                            </span>{' '}
+                            of {siteEstimate.total_found.toLocaleString()} pages ·{' '}
+                            <span className="font-medium text-[var(--ds-text)]">
+                              {siteCost.toLocaleString()} credits
+                            </span>
+                          </>
+                        ) : siteEstimate.total_found > 0 ? (
+                          `${siteEstimate.total_found.toLocaleString()}${siteEstimate.capped ? '+' : ''} pages · ~${siteCost.toLocaleString()} credits`
+                        ) : (
+                          "We'll follow links from the homepage."
+                        )}
+                      </p>
+                      <Button
+                        size="sm"
+                        onClick={handleAddSite}
+                        disabled={
+                          siteBusy ||
+                          siteOverPlanCap ||
+                          (siteHasPageList && siteSelectedCount === 0)
+                        }
+                      >
+                        {siteBusy ? 'Starting…' : 'Train'}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <Button
@@ -668,7 +734,13 @@ export function TrainStep(props: StepProps) {
                     onClick={handleDiscoverSite}
                     disabled={siteBusy || !siteUrl.trim()}
                   >
-                    {siteBusy ? 'Checking…' : 'Check pages'}
+                    {siteBusy ? (
+                      'Scanning…'
+                    ) : (
+                      <>
+                        <Search size={14} /> Scan website
+                      </>
+                    )}
                   </Button>
                 )}
               </Card>
@@ -731,43 +803,201 @@ export function TrainStep(props: StepProps) {
     );
   }
 
-  // ── 4. Initial Connect Website Input Sub-view ─────────────────────
-  const canContinue =
-    (url.trim().length > 0 || uploadedCount > 0) && !discovering && !uploadingDocs;
+  // ── 3. Scan & Select Sub-view (the step's entry point) ────────────
+  // One screen: enter a URL, scan it, tick the pages, commit. The tree is the
+  // review, so there is no separate confirmation screen between here and the
+  // crawl - which makes the footer CTA the moment credits are spent, and the
+  // cost sits directly above it.
+  const hasDocuments = uploadedCount > 0 || (sources?.length ?? 0) > 0;
+  const canScan = Boolean(url.trim()) && !discovering && !starting && !pagesLocked;
+  const canContinue = estimate
+    ? !starting &&
+      !noBalance &&
+      !overPlanCap &&
+      (!hasPageList || selectedCount > 0)
+    : hasDocuments && !uploadingDocs && !discovering;
 
   return (
     <StepShell
       title="Connect & Train Website"
       description="Point us at your website or upload documents to train your AI chatbot."
       onBack={props.onBack}
-      onContinue={handleDiscover}
+      onContinue={handlePrimary}
       isFirst={props.isFirst}
       isLast={props.isLast}
       canContinue={canContinue}
-      continueLabel={discovering ? 'Analyzing…' : undefined}
+      continueLabel={
+        estimate ? (starting ? 'Starting…' : 'Train your chatbot') : undefined
+      }
     >
       <div className="space-y-4">
-        <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]">
-            Website address
-          </span>
-          <div className="relative">
-            <Globe
-              size={16}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ds-text-subtle)]"
-            />
-            <Input
-              value={url}
-              onChange={(event) => {
-                urlEdited.current = true;
-                setUrl(event.target.value);
-              }}
-              placeholder="yourcompany.com"
-              className="pl-9"
-              autoFocus
-            />
-          </div>
-        </label>
+        {pagesLocked ? (
+          <Card className="flex flex-col items-center gap-3 px-6 py-8 text-center">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--ds-accent-soft)] text-[var(--ds-accent-text)]">
+              <Globe size={18} aria-hidden="true" />
+            </span>
+            <div className="max-w-sm space-y-1">
+              <p className="text-[14px] font-semibold text-[var(--ds-text)]">Page limit reached</p>
+              <p className="text-[13px] text-[var(--ds-text-muted)]">
+                You&apos;ve used all {pagesLimit.toLocaleString()} website pages included on your
+                plan. Upgrade to train more pages, or upload documents below.
+              </p>
+            </div>
+            <Button
+              onClick={() =>
+                openUpgradeModal({
+                  title: 'Page limit reached',
+                  description:
+                    "You've used all the website pages included on your plan. Upgrade to train more pages.",
+                })
+              }
+            >
+              <Lock size={13} aria-hidden="true" />
+              Upgrade plan
+            </Button>
+          </Card>
+        ) : (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]">
+                Website address
+              </span>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Globe
+                    size={16}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ds-text-subtle)]"
+                  />
+                  <Input
+                    value={url}
+                    onChange={(event) => {
+                      urlEdited.current = true;
+                      setUrl(event.target.value);
+                      // A new address invalidates the pages found for the old one.
+                      setEstimate(null);
+                      setSelectedUrls([]);
+                    }}
+                    placeholder="yourcompany.com"
+                    className="pl-9"
+                    autoFocus
+                  />
+                </div>
+                <Button variant="outline" onClick={handleScan} disabled={!canScan}>
+                  {discovering ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Scanning…
+                    </>
+                  ) : (
+                    <>
+                      <Search size={16} /> Scan website
+                    </>
+                  )}
+                </Button>
+              </div>
+              {!estimate && !discovering && (
+                <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
+                  Scan to see every page we found and pick the ones to train on. Scanning is free.
+                </p>
+              )}
+            </label>
+
+            {/* Scan results: what we found, then which pages to train on. */}
+            {estimate && !discovering && (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-sunken)] px-4 py-3 text-[13px] text-[var(--ds-text-muted)]">
+                  {estimate.total_found > 0 ? (
+                    <>
+                      Found{' '}
+                      <span className="font-semibold text-[var(--ds-text)]">
+                        {estimate.total_found.toLocaleString()}
+                        {estimate.capped ? '+' : ''} page
+                        {estimate.total_found === 1 ? '' : 's'}
+                      </span>
+                      {hasPageList ? '. Choose which to train on below.' : '.'}
+                    </>
+                  ) : (
+                    <>
+                      No sitemap found - we&apos;ll follow links from your homepage to learn what we
+                      can.
+                    </>
+                  )}
+                </div>
+
+                {hasPageList && (
+                  <CrawlPageTree
+                    urls={estimate.urls ?? []}
+                    selected={selectedUrls}
+                    onSelectionChange={setSelectedUrls}
+                    disabled={starting}
+                  />
+                )}
+
+                {overPlanCap && (
+                  <div className="rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
+                    <p className="text-[12px] text-[var(--ds-text)]">
+                      Your plan covers {pageCap.toLocaleString()} more page
+                      {pageCap === 1 ? '' : 's'}, but {selectedCount.toLocaleString()} are selected.
+                      Deselect {(selectedCount - pageCap).toLocaleString()} to continue, or upgrade
+                      for more.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() =>
+                        openUpgradeModal({
+                          title: 'Page limit reached',
+                          description:
+                            "You've selected more pages than your plan allows. Upgrade to train them all.",
+                        })
+                      }
+                    >
+                      <Lock size={13} aria-hidden="true" />
+                      Upgrade plan
+                    </Button>
+                  </div>
+                )}
+
+                {overAffordable && !overPlanCap && (
+                  <p className="text-[12px] text-[var(--ds-warning)]">
+                    You&apos;ve selected more pages than your credits cover (about{' '}
+                    {affordable.toLocaleString()} affordable). We&apos;ll train as many as your
+                    balance allows, in order.
+                  </p>
+                )}
+
+                {noBalance && (
+                  <div className="rounded-xl border border-[var(--ds-warning)]/30 bg-[var(--ds-warning-soft)] p-4">
+                    <p className="text-[12px] text-[var(--ds-text)]">
+                      You need credits to train on this site. Top up to continue.
+                    </p>
+                    <Link to="/workspace/billing" className="mt-2 inline-block">
+                      <Button variant="outline" size="sm">
+                        Top up credits
+                      </Button>
+                    </Link>
+                  </div>
+                )}
+
+                {/* The price of the CTA below, always reflecting the selection. */}
+                <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div>
+                    <p className="text-[13px] font-semibold text-[var(--ds-text)]">
+                      {hasPageList
+                        ? `${selectedCount.toLocaleString()} of ${estimate.total_found.toLocaleString()} page${estimate.total_found === 1 ? '' : 's'} selected`
+                        : 'Training on your website'}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-[var(--ds-text-subtle)]">
+                      {chargeablePages > 0
+                        ? `About ${estimatedCost.toLocaleString()} credit${estimatedCost === 1 ? '' : 's'} · ${costPerPage} per page`
+                        : `${costPerPage} credit${costPerPage === 1 ? '' : 's'} per page we learn`}
+                    </p>
+                  </div>
+                </Card>
+              </div>
+            )}
+          </>
+        )}
 
         <div className="flex items-center gap-3 text-[12px] text-[var(--ds-text-subtle)]">
           <span className="h-px flex-1 bg-[var(--ds-border)]" />

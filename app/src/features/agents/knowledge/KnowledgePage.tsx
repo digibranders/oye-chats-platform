@@ -641,6 +641,7 @@ export function KnowledgePage(): ReactElement {
           <AddKnowledgePanel
             agentId={agentId}
             agentName={agent?.name ?? 'your chatbot'}
+            agentWebsite={agent?.website ?? null}
             existingSources={sources ?? []}
             onChanged={refresh}
             isEmpty={stats.total === 0}

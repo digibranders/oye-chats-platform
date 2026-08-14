@@ -57,6 +57,7 @@ from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR
+from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.middleware import (
     TimeoutMiddleware,
@@ -528,6 +529,10 @@ def _gather_health() -> tuple[dict, bool, bool]:
             "fallback_count_1h": _fallback_count_1h(),
         },
         "pool": pool_stats,
+        # Chat concurrency gate (backpressure) — in-flight vs the configured
+        # ceiling, plus how many requests have queued/been shed. Observability
+        # signal, not an outage signal — excluded from fully_ok.
+        "chat_gate": chat_gate.stats(),
         # Configuration signal, not an outage signal — excluded from fully_ok.
         "billing": (_cached_billing_readiness() if db_ok else {"invoicing_active": False, "reason": "db unreachable"}),
         "version": "1.0.0",

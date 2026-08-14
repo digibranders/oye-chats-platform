@@ -1,0 +1,517 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["oyechats", "load-test", "k6"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "OyeChats Load Test",
+  "uid": "oyechats-loadtest",
+  "version": 1,
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "title": "API (k6)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 1,
+      "title": "API — Request rate (req/s)",
+      "description": "k6 total HTTP requests per second. Metric: k6_http_reqs_total (counter from k6 prometheus remote-write).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(k6_http_reqs_total[1m]))",
+          "legendFormat": "requests/s"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "API — Error rate",
+      "description": "Share of failed HTTP requests. Metric: k6_http_req_failed_rate (k6 Rate metric, 0..1). Multiply by 100 for percent.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.01 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(k6_http_req_failed_rate)",
+          "legendFormat": "failed ratio"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 3,
+      "title": "API — Latency p50 / p95 / p99 (ms)",
+      "description": "k6 http_req_duration trend stats. Requires K6_PROMETHEUS_RW_TREND_STATS to include p(50),p(95),p(99). Metrics: k6_http_req_duration_p50 / _p95 / _p99.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(k6_http_req_duration_p50)", "legendFormat": "p50" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(k6_http_req_duration_p95)", "legendFormat": "p95" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(k6_http_req_duration_p99)", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 4,
+      "title": "API — Virtual users / active requests",
+      "description": "k6_vus = active virtual users (proxy for concurrency / active in-flight requests). k6_http_reqs_total rate shown for reference.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(k6_vus)", "legendFormat": "active VUs" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 101,
+      "title": "Custom k6 metrics (chat journey)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "Chat — Time to first byte (ms)",
+      "description": "Custom k6 Trend `chat_time_to_first_byte`: how long until the SSE stream starts. Metrics: chat_time_to_first_byte_p95 / _p99 / _avg.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(chat_time_to_first_byte_avg)", "legendFormat": "avg" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(chat_time_to_first_byte_p95)", "legendFormat": "p95" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(chat_time_to_first_byte_p99)", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Chat — Total stream duration (ms)",
+      "description": "Custom k6 Trend `chat_total_stream_ms`: full time to stream the RAG answer. Metrics: chat_total_stream_ms_p95 / _p99 / _avg.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(chat_total_stream_ms_avg)", "legendFormat": "avg" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(chat_total_stream_ms_p95)", "legendFormat": "p95" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(chat_total_stream_ms_p99)", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Chat — Journey error ratio",
+      "description": "Custom k6 Rate `journey_errors` (share of multi-step chat journeys that failed, 0..1). Metric: journey_errors_rate (k6 Rate → `_rate` suffix in prometheus remote-write). Any sustained non-zero value is the load test surfacing real failures.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "drawStyle": "bars", "fillOpacity": 40 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.01 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(journey_errors_rate)", "legendFormat": "journey error ratio" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 102,
+      "title": "PostgreSQL 16 (postgres_exporter)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Postgres — Total active connections (app DB pool ceiling = 15)",
+      "description": "Total backend connections vs the SQLAlchemy pool ceiling. This app's real bottleneck is the connection pool (~15), NOT Postgres max_connections. The red threshold at 15 marks where the pool saturates and requests start queuing.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 12 },
+              { "color": "red", "value": 15 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(pg_stat_activity_count)",
+          "legendFormat": "total connections"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "vector(15)",
+          "legendFormat": "app DB pool ceiling (15)"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Postgres — Connections by state",
+      "description": "pg_stat_activity_count broken down by state (active / idle / idle in transaction). Rising 'idle in transaction' during load means connections held but not working — a pool-exhaustion smell.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(pg_stat_activity_count) by (state)",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Postgres — Database size",
+      "description": "pg_database_size_bytes for the oyechats DB. Watch for runaway growth during ingestion-heavy tests (pgvector embeddings).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 43 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "pg_database_size_bytes",
+          "legendFormat": "{{datname}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Postgres — Cache hit ratio",
+      "description": "blks_hit / (blks_hit + blks_read). Should sit near 1.0. A drop under load means the working set no longer fits in shared_buffers / page cache — expect disk I/O and latency.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 43 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(pg_stat_database_blks_hit[5m])) / (sum(rate(pg_stat_database_blks_hit[5m])) + sum(rate(pg_stat_database_blks_read[5m])))",
+          "legendFormat": "cache hit ratio"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Postgres — Deadlocks (per second)",
+      "description": "rate(pg_stat_database_deadlocks). Should be flat zero. Any deadlocks under load point to lock contention in the app's transactions.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 43 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 40 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.001 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(pg_stat_database_deadlocks[1m]))",
+          "legendFormat": "deadlocks/s"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Postgres — Tuples fetched / returned (per second)",
+      "description": "rate(pg_stat_database_tup_fetched) and rate(pg_stat_database_tup_returned). A high returned:fetched ratio implies sequential scans reading far more rows than the query needs — a missing-index signal under load.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 51 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(pg_stat_database_tup_fetched[1m]))", "legendFormat": "fetched/s" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(pg_stat_database_tup_returned[1m]))", "legendFormat": "returned/s" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "title": "Redis / ARQ (redis_exporter)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 14,
+      "title": "Redis — Connected / blocked clients",
+      "description": "redis_connected_clients and redis_blocked_clients. Blocked clients climbing means consumers (ARQ workers) are waiting on blocking pops — a backlog signal.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 60 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_connected_clients", "legendFormat": "connected" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_blocked_clients", "legendFormat": "blocked" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 15,
+      "title": "Redis — Commands per second",
+      "description": "rate(redis_commands_processed_total). Overall Redis throughput during the test.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 60 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(redis_commands_processed_total[1m]))", "legendFormat": "commands/s" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 16,
+      "title": "Redis — Used memory",
+      "description": "redis_memory_used_bytes vs redis_memory_max_bytes (0 = no limit). Watch that the ARQ queue + cache don't push Redis toward its maxmemory eviction policy under sustained load.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 68 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "redis_memory_used_bytes", "legendFormat": "used" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "ARQ — Queue depth (arq:queue:oyechats)",
+      "description": "Length of the ARQ job list. Metric: redis_key_size{key=\"arq:queue:oyechats\"} — requires REDIS_EXPORTER_CHECK_KEYS to include this key (set in docker-compose.yml). If the exporter cannot report list length, sample it manually with: redis-cli LLEN arq:queue:oyechats. A rising queue means background BANT/MEDDIC + PDF jobs are being enqueued faster than the worker drains them.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 68 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 20 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 100 }, { "color": "red", "value": 1000 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "redis_key_size{key=\"arq:queue:oyechats\"}",
+          "legendFormat": "queue depth"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 104,
+      "title": "Host (node_exporter) — 2 vCPU box",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 76 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 18,
+      "title": "Host — CPU utilization (%)",
+      "description": "100 - idle. The staging API box is 2 vCPU, so sustained >80% here means CPU is the ceiling, not the DB pool. Compare against the connection panel to attribute latency.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 77 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 90 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)",
+          "legendFormat": "{{instance}} cpu %"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 19,
+      "title": "Host — Load average (2 vCPU)",
+      "description": "node_load1 / 5 / 15. On a 2 vCPU box, load1 above 2.0 (red threshold) means the run queue exceeds cores and requests are waiting for CPU.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 77 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 5 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1.5 }, { "color": "red", "value": 2 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "node_load1", "legendFormat": "load1" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "node_load5", "legendFormat": "load5" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "node_load15", "legendFormat": "load15" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 20,
+      "title": "Host — Memory used / available",
+      "description": "MemTotal - MemAvailable (used) and MemAvailable. If available trends toward zero the OOM killer becomes a risk for gunicorn/ARQ.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 85 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "used" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "node_memory_MemAvailable_bytes", "legendFormat": "available" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "Host — Swap used",
+      "description": "SwapTotal - SwapFree. Any sustained swap-in under load kills latency; on a small staging box this should stay near zero.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 85 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes", "legendFormat": "swap used" }
+      ]
+    }
+  ]
+}

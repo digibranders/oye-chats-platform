@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# Prometheus scrape config — OyeChats load-test observability (STAGING)
+# ---------------------------------------------------------------------------
+# Targets use the docker-compose service names as hostnames, which resolve on
+# the compose network. The exporters themselves are pointed at the STAGING
+# Postgres / Redis via their own env (see docker-compose.yml + .env).
+# ---------------------------------------------------------------------------
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: staging
+    stack: oyechats-loadtest
+
+scrape_configs:
+  # Prometheus scraping itself.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Host metrics: CPU / memory / load / swap (node_exporter).
+  # NOTE: the staging API box is 2 vCPU — read CPU/load panels against that.
+  - job_name: node
+    static_configs:
+      - targets: ["node_exporter:9100"]
+
+  # PostgreSQL 16 metrics via postgres_exporter (points at STAGING db).
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres_exporter:9187"]
+
+  # Redis metrics (ARQ broker + cache) via redis_exporter (points at STAGING redis).
+  - job_name: redis
+    static_configs:
+      - targets: ["redis_exporter:9121"]
+
+  # -------------------------------------------------------------------------
+  # k6 metrics — PULL mode (optional).
+  # If you run k6 with the Prometheus remote-WRITE output (recommended, below),
+  # you do NOT need this scrape job — k6 pushes into Prometheus and there is no
+  # k6 HTTP endpoint to scrape. Leave this commented unless you deliberately
+  # expose a k6 /metrics endpoint via a sidecar.
+  #
+  # - job_name: k6
+  #   static_configs:
+  #     - targets: ["k6:6565"]
+  # -------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# k6 → Prometheus remote-WRITE (recommended path for k6 metrics)
+# ---------------------------------------------------------------------------
+# This Prometheus is started with `--web.enable-remote-write-receiver`
+# (see docker-compose.yml), which exposes a receiver at:
+#
+#     http://<prometheus-host>:9090/api/v1/write
+#
+# Run k6 against staging and stream metrics in with:
+#
+#     K6_PROMETHEUS_RW_SERVER_URL="http://<prometheus-host>:9090/api/v1/write" \
+#     K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99),avg,max" \
+#     k6 run --out experimental-prometheus-rw load-tests/<script>.js
+#
+# Env vars k6 reads:
+#   K6_PROMETHEUS_RW_SERVER_URL   remote-write endpoint (required)
+#   K6_PROMETHEUS_RW_TREND_STATS  which trend stats to emit (enables p50/p95/p99)
+#   K6_PROMETHEUS_RW_PUSH_INTERVAL  optional, default 5s
+#
+# From INSIDE the compose network use "http://prometheus:9090/api/v1/write";
+# from the host or another box use the box's reachable IP/DNS on port 9090.
+#
+# k6 emits metrics prefixed `k6_` — e.g. k6_http_reqs, k6_http_req_duration,
+# k6_http_req_failed, k6_vus — plus this project's custom Trend/Counter metrics
+# (chat_time_to_first_byte, chat_total_stream_ms, journey_errors). The Grafana
+# dashboard queries those names directly.
+# ---------------------------------------------------------------------------

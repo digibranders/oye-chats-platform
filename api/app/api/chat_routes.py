@@ -23,6 +23,7 @@ from app.api.auth import (
     get_current_client_or_operator,
     impersonation_writable,
 )
+from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
@@ -1290,34 +1291,59 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     logger.info("visitor_country header | bot_id=%s | cf_ipcountry=%s", bot.id, visitor_country)
     logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
+    # ── Backpressure: bound concurrent generations below the DB pool ──
+    # A global gate caps in-flight chat generations under the connection pool so
+    # a traffic spike can never exhaust it (the measured collapse mode). Excess
+    # requests wait briefly then get a fast 503 (Retry-After) instead of a 30s
+    # QueuePool hang. Acquired here — after the cheap subscription/credit gates so
+    # their early-returns never hold a slot — and released in the generator's
+    # finally below (covers success, error, and client disconnect). If the gate
+    # sheds this request we refund the credit just deducted, so a rejected chat is
+    # never charged.
+    _slot = chat_gate.slot()
+    try:
+        await _slot.__aenter__()
+    except HTTPException:
+        if not is_preview and cost:
+            _refund_ai_chat_credit(bot, cost)
+        raise
+
     async def _stream_with_refund():
         """Proxy the RAG stream and, once it finishes, refund the credit if the
         terminal FINAL_METADATA frame flagged a failed generation (both LLMs
         exhausted / mid-stream error). A client disconnect before that frame
         cancels this generator and skips the refund — correct, since we never
-        confirmed a failed reply and must never over-refund a delivered one."""
+        confirmed a failed reply and must never over-refund a delivered one.
+
+        Always releases the concurrency slot on exit (success, error, or the
+        GeneratorExit raised on client disconnect), so a shed/cancelled stream
+        can never leak a slot and starve the gate."""
         generation_failed = False
-        async for chunk in rag_pipeline_stream(
-            bot,
-            body.question,
-            session_id=session_id,
-            location=location,
-            device=formatted_device,
-            bot_id=bot.id,
-            cta_dimension=body.cta_dimension,
-            visitor_country=visitor_country,
-        ):
-            if isinstance(chunk, str):
-                flag = _final_metadata_failure_flag(chunk)
-                if flag is not None:
-                    # Last genuine terminal frame wins; the real one is emitted
-                    # last, so it overrides any earlier (even forged) frame.
-                    generation_failed = flag
-            yield chunk
-        # Never refund a preview (nothing was charged); otherwise refund a
-        # confirmed failed generation.
-        if generation_failed and not is_preview:
-            _refund_ai_chat_credit(bot, cost)
+        try:
+            async for chunk in rag_pipeline_stream(
+                bot,
+                body.question,
+                session_id=session_id,
+                location=location,
+                device=formatted_device,
+                bot_id=bot.id,
+                cta_dimension=body.cta_dimension,
+                visitor_country=visitor_country,
+            ):
+                if isinstance(chunk, str):
+                    flag = _final_metadata_failure_flag(chunk)
+                    if flag is not None:
+                        # Last genuine terminal frame wins; the real one is emitted
+                        # last, so it overrides any earlier (even forged) frame.
+                        generation_failed = flag
+                yield chunk
+            # Never refund a preview (nothing was charged); otherwise refund a
+            # confirmed failed generation.
+            if generation_failed and not is_preview:
+                _refund_ai_chat_credit(bot, cost)
+        finally:
+            # Release the concurrency slot no matter how the stream ends.
+            await _slot.__aexit__(None, None, None)
 
     return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 

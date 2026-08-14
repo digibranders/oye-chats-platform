@@ -6862,6 +6862,27 @@ async def rag_pipeline_stream(
             # for DB persistence + CTA payload extraction; this is purely a
             # display-side safeguard.
             cta_sanitizer = _StreamCtaSanitizer()
+            # ── Release the pooled DB connection for the duration of LLM
+            # generation (connection-lifetime fix) ──────────────────────────
+            # The streaming loop below performs ZERO database work, but the open
+            # read transaction accumulated during phase-1 (session/bot/history
+            # reads + any visitor-name capture) would otherwise pin one of the
+            # 15 pooled connections idle-in-transaction for the WHOLE multi-second
+            # generation. A load test measured this as the concurrency knee: at
+            # ~15 concurrent streams the pool is exhausted and further requests
+            # QueuePool-timeout. Committing here ends that transaction and returns
+            # the connection to the pool (persisting any pending phase-1 write,
+            # e.g. the captured name — never rolled back on the happy path), so a
+            # generation in flight no longer holds a connection. The
+            # post-generation persistence below transparently re-acquires a
+            # connection on next use; ``bot``/``chat_session`` are expired by the
+            # commit and reload on access. Guarded so a transient commit failure
+            # degrades to a normal generation rather than aborting the reply — the
+            # visitor question was already committed durably earlier.
+            try:
+                session.commit()
+            except Exception:  # noqa: BLE001 — best-effort connection release
+                session.rollback()
             try:
                 async for chunk in generate_response_stream(
                     prompt,
