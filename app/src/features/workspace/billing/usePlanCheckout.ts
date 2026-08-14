@@ -17,7 +17,7 @@
  * customer has already been charged and the activation webhook reconciles, so
  * we reassure instead of alarming.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { formatTrialDate } from '../../../utils/trial';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
 import { useCurrency } from '../../../context/CurrencyContext';
@@ -118,6 +118,21 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
+  /**
+   * Re-entrancy latch for `submit`, mirroring `submitting` exactly - set beside
+   * every `setSubmitting(true)`, cleared in the same `finally`.
+   *
+   * `submitting` disables both CTAs, but a disabled button is not a guard: two
+   * clicks dispatched before React flushes the state update both reach the
+   * handler, and each one mints a Razorpay subscription server-side. A ref is
+   * readable synchronously, so the second call sees the first immediately.
+   *
+   * Deliberately NOT cleared by `reset()`. `reset` runs on drawer open, which
+   * can happen while a request is still in flight (close the drawer mid-charge,
+   * reopen); clearing the latch there would reopen the exact window this closes.
+   * The `finally` blocks are the only correct release points.
+   */
+  const inFlight = useRef(false);
 
   const reset = useCallback(() => {
     setError('');
@@ -127,6 +142,8 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
 
   const submit = useCallback(
     async (plan: PlanView, billingCycle: BillingCycle, actionKind: string = 'auto'): Promise<void> => {
+      // One attempt at a time - a second click must not open a second checkout.
+      if (inFlight.current) return;
       // Stale gate state must never outlive the attempt that produced it.
       setEmailVerificationRequired(false);
       // Free plan: with an active sub, schedule a cancellation at period end;
@@ -135,6 +152,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         if (hasActiveSubscription) {
           setError('');
           setNotice('');
+          inFlight.current = true;
           setSubmitting(true);
           try {
             await changePlan(plan.id, billingCycle, botId);
@@ -143,6 +161,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Could not downgrade.');
           } finally {
+            inFlight.current = false;
             setSubmitting(false);
           }
           return;
@@ -164,6 +183,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       if (takeTrialPath) {
         setError('');
         setNotice('');
+        inFlight.current = true;
         setSubmitting(true);
         try {
           await startTrial(plan.slug);
@@ -172,12 +192,14 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         } catch (err: unknown) {
           setError(err instanceof Error ? err.message : 'Could not start your free trial.');
         } finally {
+          inFlight.current = false;
           setSubmitting(false);
         }
         return;
       }
 
       setError('');
+      inFlight.current = true;
       setSubmitting(true);
       try {
         // Routing:
@@ -418,6 +440,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         }
         setError(err instanceof Error ? err.message : 'Could not start checkout.');
       } finally {
+        inFlight.current = false;
         setSubmitting(false);
       }
     },
