@@ -1,0 +1,579 @@
+<title>OyeChats — Scalability & Capacity Report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#eef1f4; --paper:#ffffff; --panel:#f7f9fb; --panel-2:#f0f3f6;
+    --ink:#131820; --ink-soft:#39434f; --muted:#69737f; --faint:#98a2ae;
+    --line:#dee3e9; --line-strong:#c9d0d8;
+    --accent:#0c7684; --accent-ink:#0a5b66; --accent-bg:#dff0f2;
+    --safe:#2b8f56; --safe-bg:#e2f2e8;
+    --warn:#a9760a; --warn-bg:#f6ecd6;
+    --crit:#c33d31; --crit-bg:#f8e2df;
+    --shadow:0 1px 2px rgba(19,24,32,.04),0 6px 20px rgba(19,24,32,.05);
+    --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  :root:not([data-theme="light"]){ }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0a0e13; --paper:#10151c; --panel:#141a22; --panel-2:#182029;
+      --ink:#e7ebf0; --ink-soft:#bcc5d0; --muted:#8792a0; --faint:#5f6b78;
+      --line:#232c37; --line-strong:#313c48;
+      --accent:#2ec6d4; --accent-ink:#7fe0e9; --accent-bg:#0f2e34;
+      --safe:#48c07d; --safe-bg:#123024;
+      --warn:#e0a838; --warn-bg:#33290f;
+      --crit:#ec6a5c; --crit-bg:#37201d;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0a0e13; --paper:#10151c; --panel:#141a22; --panel-2:#182029;
+    --ink:#e7ebf0; --ink-soft:#bcc5d0; --muted:#8792a0; --faint:#5f6b78;
+    --line:#232c37; --line-strong:#313c48;
+    --accent:#2ec6d4; --accent-ink:#7fe0e9; --accent-bg:#0f2e34;
+    --safe:#48c07d; --safe-bg:#123024;
+    --warn:#e0a838; --warn-bg:#33290f;
+    --crit:#ec6a5c; --crit-bg:#37201d;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 28px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:var(--font-sans);font-size:16px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:clamp(20px,4vw,56px) clamp(16px,4vw,40px) 96px}
+  .mono{font-family:var(--font-mono)}
+  .tnum{font-variant-numeric:tabular-nums}
+  h1,h2,h3{text-wrap:balance;line-height:1.15;margin:0}
+  a{color:var(--accent-ink);text-underline-offset:2px}
+  section{margin-top:clamp(40px,6vw,72px)}
+
+  /* ── Eyebrow / labels ── */
+  .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted)}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;
+    padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .sec-num{font-family:var(--font-mono);font-size:13px;color:var(--accent);
+    font-weight:600}
+  .sec-head h2{font-size:clamp(20px,3vw,26px);font-weight:650;letter-spacing:-.01em}
+
+  /* ── Masthead ── */
+  .masthead{border:1px solid var(--line);background:
+    linear-gradient(180deg,var(--paper),var(--panel));border-radius:16px;
+    padding:clamp(24px,4vw,40px);box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .masthead::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:26px 26px;opacity:.28;
+    mask-image:radial-gradient(120% 90% at 90% 0%,#000,transparent 70%);
+    -webkit-mask-image:radial-gradient(120% 90% at 90% 0%,#000,transparent 70%)}
+  .masthead>*{position:relative}
+  .mast-top{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center}
+  h1{font-size:clamp(30px,6vw,50px);font-weight:700;letter-spacing:-.025em;margin:14px 0 6px}
+  h1 .sub{color:var(--muted);font-weight:400}
+  .lede{font-size:clamp(16px,2.2vw,18px);color:var(--ink-soft);max-width:64ch;margin-top:8px}
+  .verdict{display:inline-flex;align-items:center;gap:9px;padding:8px 15px;border-radius:999px;
+    font-family:var(--font-mono);font-size:13px;font-weight:600;letter-spacing:.02em;
+    background:var(--warn-bg);color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
+  .verdict .dot{width:9px;height:9px;border-radius:50%;background:var(--warn);
+    box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 22%,transparent)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:22px;padding-top:20px;
+    border-top:1px solid var(--line);font-family:var(--font-mono);font-size:12.5px;color:var(--muted)}
+  .meta b{color:var(--ink-soft);font-weight:600}
+
+  /* ── Provenance chips ── */
+  .chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);
+    font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;
+    padding:2px 7px;border-radius:5px;border:1px solid transparent;white-space:nowrap;vertical-align:middle}
+  .chip.m{color:var(--safe);background:var(--safe-bg);border-color:color-mix(in srgb,var(--safe) 28%,transparent)}
+  .chip.c{color:var(--accent);background:var(--accent-bg);border-color:color-mix(in srgb,var(--accent) 28%,transparent)}
+  .chip.e{color:var(--muted);background:var(--panel-2);border-color:var(--line-strong)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:13.5px;color:var(--muted)}
+  .legend .row{display:flex;align-items:center;gap:8px}
+
+  /* ── Stat tiles ── */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:14px;margin-top:24px}
+  .tile{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px 18px 16px;
+    box-shadow:var(--shadow);display:flex;flex-direction:column;gap:6px}
+  .tile .k{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .tile .v{font-size:clamp(24px,3.4vw,30px);font-weight:700;letter-spacing:-.02em;line-height:1;
+    font-variant-numeric:tabular-nums}
+  .tile .v small{font-size:15px;font-weight:600;color:var(--muted);letter-spacing:0}
+  .tile .n{font-size:12.5px;color:var(--muted)}
+  .tile.hot .v{color:var(--crit)}
+  .tile.accent .v{color:var(--accent-ink)}
+
+  /* ── Cards / prose ── */
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;
+    padding:clamp(18px,3vw,26px);box-shadow:var(--shadow)}
+  p{margin:0 0 14px}p:last-child{margin-bottom:0}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .callout{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;
+    padding:14px 18px;margin-top:18px}
+  .callout.crit{border-left-color:var(--crit)}
+  .callout .lbl{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:5px}
+  code{font-family:var(--font-mono);font-size:.86em;background:var(--panel-2);border:1px solid var(--line);
+    padding:1px 5px;border-radius:5px;color:var(--ink-soft);white-space:nowrap}
+
+  /* ── Tables ── */
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{padding:11px 15px;text-align:left;border-bottom:1px solid var(--line)}
+  thead th{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;background:var(--panel);position:sticky;top:0}
+  tbody tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:var(--panel)}
+  .verdict-cell{font-family:var(--font-mono);font-size:12px;font-weight:600}
+  .v-safe{color:var(--safe)} .v-warn{color:var(--warn)} .v-crit{color:var(--crit)}
+
+  /* severity stripe */
+  .sev{font-family:var(--font-mono);font-weight:700;font-size:12px;padding:2px 8px;border-radius:5px;display:inline-block}
+  .P0{color:#fff;background:var(--crit)} .P1{color:var(--crit);background:var(--crit-bg)}
+  .P2{color:var(--warn);background:var(--warn-bg)} .P3{color:var(--muted);background:var(--panel-2)}
+
+  /* ── Capacity zone band ── */
+  .zones{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .zone{padding:16px 16px 18px;position:relative}
+  .zone .z-range{font-family:var(--font-mono);font-size:22px;font-weight:700;letter-spacing:-.02em}
+  .zone .z-name{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin-top:2px}
+  .zone .z-desc{font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.45}
+  .z-safe{background:var(--safe-bg)} .z-safe .z-range,.z-safe .z-name{color:var(--safe)}
+  .z-warn{background:var(--warn-bg)} .z-warn .z-range,.z-warn .z-name{color:var(--warn)}
+  .z-sat{background:var(--crit-bg)} .z-sat .z-range,.z-sat .z-name{color:var(--crit)}
+  .z-brk{background:var(--crit);} .z-brk .z-range,.z-brk .z-name{color:#fff} .z-brk .z-desc{color:rgba(255,255,255,.85)}
+  @media(max-width:640px){.zones{grid-template-columns:repeat(2,1fr)}}
+
+  /* ── Chart ── */
+  .chart-card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:clamp(16px,3vw,24px);box-shadow:var(--shadow)}
+  .chart-title{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .chart-title h3{font-size:15px;font-weight:650}
+  .chart-legend{display:flex;gap:16px;font-family:var(--font-mono);font-size:11.5px;color:var(--muted);flex-wrap:wrap}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+  .ax{font-family:var(--font-mono);font-size:11px;fill:var(--muted)}
+  .axlbl{font-family:var(--font-mono);font-size:11px;fill:var(--faint);letter-spacing:.05em}
+
+  /* ── Recommendations ── */
+  .steps{display:flex;flex-direction:column;gap:12px;counter-reset:s}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;
+    background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+  .step .idx{counter-increment:s;font-family:var(--font-mono);font-weight:700;font-size:14px;color:var(--accent);
+    width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--accent);border-radius:8px;background:var(--accent-bg)}
+  .step .idx::before{content:counter(s,decimal-leading-zero)}
+  .step h3{font-size:15px;font-weight:640;margin-bottom:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .step p{font-size:13.5px;color:var(--ink-soft);margin:0}
+  .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;
+    padding:2px 7px;border-radius:5px;background:var(--panel-2);color:var(--muted);border:1px solid var(--line-strong)}
+  .tag.p1{color:var(--crit);background:var(--crit-bg);border-color:transparent}
+  .tag.p2{color:var(--warn);background:var(--warn-bg);border-color:transparent}
+
+  footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:12.5px;color:var(--muted);line-height:1.6}
+  .footgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px}
+  footer b{color:var(--ink-soft)}
+
+  @media(prefers-reduced-motion:no-preference){
+    .draw{stroke-dasharray:var(--len);stroke-dashoffset:var(--len);animation:draw 1.4s .2s ease-out forwards}
+    @keyframes draw{to{stroke-dashoffset:0}}
+    .rise{transform:scaleY(0);transform-origin:bottom;animation:rise .7s cubic-bezier(.2,.8,.2,1) forwards}
+    @keyframes rise{to{transform:scaleY(1)}}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- ══ MASTHEAD ══ -->
+  <header class="masthead">
+    <div class="mast-top">
+      <span class="eyebrow">Capacity &amp; Scalability Report</span>
+      <span class="verdict"><span class="dot"></span>READY WITH CONDITIONS</span>
+    </div>
+    <h1>OyeChats <span class="sub">/ backend capacity</span></h1>
+    <p class="lede">A RAG chatbot SaaS running on a single 2-vCPU droplet. It is healthy and
+      idle at today's traffic — but its concurrency ceiling is a <b>15-connection database pool</b>,
+      confirmed by a controlled load test, and its two hottest queries lack indexes. Neither
+      bites yet; both must be fixed before real traffic or data growth.</p>
+    <div class="meta">
+      <span><b>Date</b> 2026-08-14</span>
+      <span><b>Commit</b> <span class="mono">07e5fc5</span></span>
+      <span><b>Method</b> static audit · live prod read-only · k6 mock-LLM knee test</span>
+      <span><b>Scope</b> api/ · app/ · production infra</span>
+    </div>
+  </header>
+
+  <!-- ══ EXECUTIVE READOUT ══ -->
+  <section id="summary" style="margin-top:34px">
+    <div class="legend" style="margin-bottom:18px">
+      <span class="eyebrow" style="letter-spacing:.1em">Provenance of every figure</span>
+      <span class="row"><span class="chip m">Measured</span> observed on prod / in the test</span>
+      <span class="row"><span class="chip c">Config-derived</span> read from config &amp; code</span>
+      <span class="row"><span class="chip e">Estimated</span> reasoned projection</span>
+    </div>
+
+    <div class="tiles">
+      <div class="tile hot">
+        <span class="k">Concurrent AI chats</span>
+        <span class="v tnum">~15</span>
+        <span class="n">the knee — DB-pool bound <span class="chip m">Measured</span></span>
+      </div>
+      <div class="tile">
+        <span class="k">Current prod load</span>
+        <span class="v tnum">~0.1<small> req/s</small></span>
+        <span class="n">&lt;1% of ceiling · peak 385/hr <span class="chip m">Measured</span></span>
+      </div>
+      <div class="tile accent">
+        <span class="k">Index speedup available</span>
+        <span class="v tnum">588<small>×</small></span>
+        <span class="n">hot query @1.1M rows <span class="chip m">Measured</span></span>
+      </div>
+      <div class="tile">
+        <span class="k">Production host</span>
+        <span class="v tnum">2<small> vCPU</small></span>
+        <span class="n">4 GB · single instance <span class="chip m">Measured</span></span>
+      </div>
+      <div class="tile">
+        <span class="k">API DB pool</span>
+        <span class="v tnum">15</span>
+        <span class="n">pool 5 + overflow 10 <span class="chip c">Config</span></span>
+      </div>
+      <div class="tile">
+        <span class="k">Prod stability</span>
+        <span class="v tnum">0</span>
+        <span class="n">5xx in 24h · 48d uptime <span class="chip m">Measured</span></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 1. VERDICT ══ -->
+  <section id="verdict">
+    <div class="sec-head"><span class="sec-num">01</span><h2>The bottom line</h2></div>
+    <div class="card">
+      <p><b>Is OyeChats scalable enough for production traffic today? Yes — with conditions.</b>
+      The engineering is careful: Redis-backed rate limiting, strong webhook idempotency, bounded
+      conversation history, an HNSW vector index, and event-loop offloading of the heavy RAG work
+      are all already in place. At current load the box sits at <b>load average 0.08</b> with
+      <b>zero 5xx in 24h</b> and <b>zero restarts in 48 days</b> — it is using well under 1% of its
+      own ceiling.</p>
+      <p>But the architecture is <b>single-everything on one shared droplet</b>, pinned to one worker
+      by design, with two ceilings that bite well before "big" traffic: a <b>structural concurrency
+      limit of ~15 simultaneous AI chats</b> (the DB pool, held for the whole LLM generation), and a
+      <b>latent data-growth limit</b> — the two hottest queries sequentially scan tables that grow
+      forever. Both are cheap to fix and neither is a problem today.</p>
+      <div class="callout">
+        <div class="lbl">Verdict</div>
+        <b>READY WITH CONDITIONS</b> — ready for continued organic growth; <b>not</b> ready for a
+        traffic surge, a single high-volume customer, or a second instance until the P1 items land.
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 2. ARCHITECTURE ══ -->
+  <section id="architecture">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Architecture at a glance</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <span class="eyebrow">Topology</span>
+        <p style="margin-top:10px">One DigitalOcean droplet — <b>2 vCPU / 4 GB</b> — runs the API, PostgreSQL 16 +
+        pgvector, Redis, the ARQ worker, and nginx <b>all co-resident</b>. FastAPI + SQLAlchemy 2.0
+        with a <b>synchronous</b> engine; React admin SPA + an embeddable widget.
+        <span class="chip m">Measured</span></p>
+      </div>
+      <div class="card">
+        <span class="eyebrow">The master constraint</span>
+        <p style="margin-top:10px">The API runs <b>one gunicorn worker on purpose</b>: the live-chat WebSocket
+        manager holds socket state in-process, so multi-worker would split visitor/operator pairs.
+        Everything about capacity flows from this single-worker, single-pool shape.
+        <span class="chip c">Config-derived</span></p>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:16px">
+      <div class="lbl">Doc drift caught</div>
+      <code>DEPLOYMENT.md</code> still states "1 vCPU / 2 GB". The live droplet is <b>2 vCPU / 4 GB</b> —
+      it was upsized. The DB is only <b>22 MB</b> today (527 doc chunks, 63 sessions): an early-stage
+      dataset, so all row-scaling risk is projection, not current pain.
+    </div>
+  </section>
+
+  <!-- ══ 3. THE MEASURED KNEE ══ -->
+  <section id="knee">
+    <div class="sec-head"><span class="sec-num">03</span><h2>The measured chat-concurrency knee</h2></div>
+    <p style="color:var(--ink-soft);max-width:66ch;margin-bottom:22px">
+      A controlled k6 test drove concurrent chat conversations through the real RAG pipeline against
+      an isolated stack with a <b>mock LLM</b> (no external spend) and the <b>production pool config</b>.
+      Postgres connections track concurrency, then plateau hard at the pool ceiling — and latency
+      cliffs there. This is application capacity, independent of any LLM provider.</p>
+
+    <div class="chart-card">
+      <div class="chart-title">
+        <h3>Concurrency → DB connections held &amp; tail latency</h3>
+        <div class="chart-legend">
+          <span><span class="swatch" style="background:var(--accent)"></span>PG connections</span>
+          <span><span class="swatch" style="background:var(--crit)"></span>p99 turn latency</span>
+          <span><span class="swatch" style="background:var(--muted);height:2px;width:14px;border-radius:0"></span>pool ceiling = 15</span>
+        </div>
+      </div>
+      <!-- chart: x = concurrency (log-ish categorical), left y = connections (0-20), latency callouts -->
+      <svg viewBox="0 0 720 300" role="img" aria-label="Chart: Postgres connections rise with concurrency and plateau at 16 (the 15-connection pool +1), while p99 latency jumps from 2.6s at 10 concurrent to 31.6s at 15.">
+        <!-- gridlines -->
+        <g stroke="var(--line)" stroke-width="1">
+          <line x1="56" y1="30" x2="690" y2="30"/>
+          <line x1="56" y1="90" x2="690" y2="90"/>
+          <line x1="56" y1="150" x2="690" y2="150"/>
+          <line x1="56" y1="210" x2="690" y2="210"/>
+          <line x1="56" y1="240" x2="690" y2="240"/>
+        </g>
+        <!-- y axis labels (connections) -->
+        <g class="ax" text-anchor="end">
+          <text x="48" y="34">20</text>
+          <text x="48" y="94">15</text>
+          <text x="48" y="154">10</text>
+          <text x="48" y="214">5</text>
+          <text x="48" y="244">0</text>
+        </g>
+        <text class="axlbl" x="18" y="140" transform="rotate(-90 18 140)" text-anchor="middle">PG CONNECTIONS</text>
+        <!-- pool ceiling line at 15 -> y=90 -->
+        <line x1="56" y1="90" x2="690" y2="90" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <!-- bars: conc 1,5,10,15,20,30,50,100 ; conns 5,11,14,16,16,16,16,16 (max 20 -> scale 12px/unit, y0=240) -->
+        <!-- x slots -->
+        <g>
+          <!-- helper: y=240-conns*10.5 ; bar width 44 -->
+          <!-- 1 ->5 -->
+          <rect class="rise" style="animation-delay:.05s" x="70"  y="187.5" width="44" height="52.5" rx="3" fill="var(--accent)" opacity=".85"/>
+          <rect class="rise" style="animation-delay:.10s" x="146" y="124.5" width="44" height="115.5" rx="3" fill="var(--accent)" opacity=".85"/>
+          <rect class="rise" style="animation-delay:.15s" x="222" y="93"    width="44" height="147" rx="3" fill="var(--accent)" opacity=".85"/>
+          <!-- 15 -> 16 conns = pool full, mark crit -->
+          <rect class="rise" style="animation-delay:.20s" x="298" y="72"    width="44" height="168" rx="3" fill="var(--crit)"/>
+          <rect class="rise" style="animation-delay:.25s" x="374" y="72"    width="44" height="168" rx="3" fill="var(--crit)" opacity=".82"/>
+          <rect class="rise" style="animation-delay:.30s" x="450" y="72"    width="44" height="168" rx="3" fill="var(--crit)" opacity=".82"/>
+          <rect class="rise" style="animation-delay:.35s" x="526" y="72"    width="44" height="168" rx="3" fill="var(--crit)" opacity=".82"/>
+          <rect class="rise" style="animation-delay:.40s" x="602" y="72"    width="44" height="168" rx="3" fill="var(--crit)" opacity=".82"/>
+        </g>
+        <!-- x labels -->
+        <g class="ax" text-anchor="middle">
+          <text x="92"  y="258">1</text>
+          <text x="168" y="258">5</text>
+          <text x="244" y="258">10</text>
+          <text x="320" y="258">15</text>
+          <text x="396" y="258">20</text>
+          <text x="472" y="258">30</text>
+          <text x="548" y="258">50</text>
+          <text x="624" y="258">100</text>
+        </g>
+        <text class="axlbl" x="373" y="286" text-anchor="middle">CONCURRENT CHATS</text>
+        <!-- latency callouts -->
+        <g font-family="var(--font-mono)" font-size="11" font-weight="700">
+          <text x="244" y="84" fill="var(--safe)" text-anchor="middle">2.6s</text>
+          <rect x="286" y="40" width="70" height="22" rx="5" fill="var(--crit)"/>
+          <text x="321" y="55" fill="#fff" text-anchor="middle">p99 31.6s</text>
+          <text x="321" y="34" fill="var(--crit)" text-anchor="middle" font-size="10">▼ CLIFF</text>
+        </g>
+      </svg>
+      <p style="font-size:12.5px;color:var(--muted);margin-top:14px;font-family:var(--font-mono)">
+        16 connections = pool_size 5 + max_overflow 10 (+1 sampler). Beyond 15, requests wait 30s then fail.
+      </p>
+    </div>
+
+    <div class="twrap" style="margin-top:18px">
+      <table>
+        <thead><tr>
+          <th class="num">Concurrency</th><th class="num">Iters / 40s</th>
+          <th class="num">Max PG conns</th><th class="num">p99 turn</th><th>Verdict</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="num">9</td><td class="num">5</td><td class="num">2.47s</td><td class="verdict-cell v-safe">healthy</td></tr>
+          <tr><td class="num">5</td><td class="num">47</td><td class="num">11</td><td class="num">2.53s</td><td class="verdict-cell v-safe">healthy</td></tr>
+          <tr><td class="num">10</td><td class="num">97</td><td class="num">14</td><td class="num">2.63s</td><td class="verdict-cell v-safe">peak throughput</td></tr>
+          <tr><td class="num">15</td><td class="num">45</td><td class="num">16</td><td class="num">31.6s</td><td class="verdict-cell v-crit">KNEE — latency cliff</td></tr>
+          <tr><td class="num">20</td><td class="num">—</td><td class="num">16</td><td class="num">timeout</td><td class="verdict-cell v-crit">collapse</td></tr>
+          <tr><td class="num">30</td><td class="num">—</td><td class="num">16</td><td class="num">timeout</td><td class="verdict-cell v-crit">collapse</td></tr>
+          <tr><td class="num">50</td><td class="num">—</td><td class="num">16</td><td class="num">timeout</td><td class="verdict-cell v-crit">collapse</td></tr>
+          <tr><td class="num">100</td><td class="num">—</td><td class="num">16</td><td class="num">timeout</td><td class="verdict-cell v-crit">collapse</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout crit">
+      <div class="lbl">Saturation evidence — Measured</div>
+      At concurrency ≥ 20 the API logged <b>261 ×</b> <code>QueuePool limit of size 5 overflow 10 reached, connection timed out</code>.
+      The exhaustion even starved an unrelated background job (<code>Webhook retry poll failed: QueuePool… timed out</code>)
+      — a real cascading failure through the shared pool. The system does <b>not</b> degrade gracefully; it collapses.
+    </div>
+  </section>
+
+  <!-- ══ 4. CAPACITY MODEL ══ -->
+  <section id="capacity">
+    <div class="sec-head"><span class="sec-num">04</span><h2>Capacity model — application (mock LLM)</h2></div>
+    <div class="zones">
+      <div class="zone z-safe">
+        <div class="z-range">≤ 10</div><div class="z-name">Safe</div>
+        <div class="z-desc">p99 ≤ 2.6s, 0 errors, pool ≤ 14/15, throughput scales.</div>
+      </div>
+      <div class="zone z-warn">
+        <div class="z-range">11–14</div><div class="z-name">Warning</div>
+        <div class="z-desc">Pool nearly full, latency starting to rise.</div>
+      </div>
+      <div class="zone z-sat">
+        <div class="z-range">15</div><div class="z-name">Saturation</div>
+        <div class="z-desc">Pool full (16 conns); p99 → 31.6s (the pool_timeout).</div>
+      </div>
+      <div class="zone z-brk">
+        <div class="z-range">≥ 20</div><div class="z-name">Breaking</div>
+        <div class="z-desc">QueuePool timeouts, throughput collapse, background jobs starved.</div>
+      </div>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-top:14px">
+      The web tier (non-chat) is <b>not</b> the limiter — it sustained <b>41 req/s at p95 7.9 ms</b> with
+      zero errors. <span class="chip e">Estimated</span> The ~15-chat ceiling is a <b>config knob, not
+      hardware</b>: it is the pool held across the ~2.4s generation, and the box has CPU/RAM headroom.
+      Freeing the connection during streaming moves the ceiling to a large multiple of 15.
+    </p>
+  </section>
+
+  <!-- ══ 5. DATABASE AT SCALE ══ -->
+  <section id="database">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Database at scale — the missing indexes</h2></div>
+    <p style="color:var(--ink-soft);max-width:66ch;margin-bottom:20px">
+      Confirmed on the live production DB via <code>EXPLAIN</code> and re-measured on a seeded 1.1M-row
+      copy: the two hottest queries <b>sequentially scan</b> tables that grow forever. Free at today's 63
+      rows; a linear-growth landmine. Adding the indexes is a trivial, safe migration.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr>
+          <th>Hot query</th><th class="num">Rows</th><th class="num">Before (no index)</th>
+          <th class="num">After (indexed)</th><th class="num">Speedup</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>Chat history <span class="mono" style="font-size:12px">session_id → LIMIT 5</span></td>
+            <td class="num">1.1 M</td><td class="num v-crit">20.59 ms</td><td class="num v-safe">0.035 ms</td><td class="num"><b>588×</b></td></tr>
+          <tr><td>Chat history — same</td>
+            <td class="num">100 K</td><td class="num v-crit">4.32 ms</td><td class="num v-safe">0.030 ms</td><td class="num"><b>144×</b></td></tr>
+          <tr><td>Bot sessions <span class="mono" style="font-size:12px">bot_id → LIMIT 500</span></td>
+            <td class="num">66 K</td><td class="num v-warn">5.83 ms</td><td class="num v-safe">0.569 ms</td><td class="num"><b>10×</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-top:14px">
+      <span class="chip m">Measured</span> The unindexed history read runs on <b>every chat turn</b> and
+      degrades linearly (4.3 ms → 20.6 ms as rows grew 100K → 1.1M); the indexed version stays flat at
+      ~0.03 ms at any size. At 10M rows the seq scan would be ~200 ms <b>per turn</b>.
+    </p>
+  </section>
+
+  <!-- ══ 6. RISK MATRIX ══ -->
+  <section id="risks">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Bottleneck risk matrix</h2></div>
+    <div class="twrap">
+      <table style="min-width:640px">
+        <thead><tr><th>Sev</th><th>Finding</th><th>Impact</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td><span class="sev P1">P1</span></td>
+            <td><code>chat_messages.session_id</code> unindexed → seq scan every chat turn</td>
+            <td>Linear latency growth; dominates DB CPU at scale</td>
+            <td><span class="chip m">Measured</span> EXPLAIN on prod</td></tr>
+          <tr><td><span class="sev P1">P1</span></td>
+            <td><code>chat_sessions.bot_id</code>/<code>created_at</code> unindexed → seq scan + filesort</td>
+            <td>Every dashboard load slows as data grows</td>
+            <td><span class="chip m">Measured</span> EXPLAIN on prod</td></tr>
+          <tr><td><span class="sev P1">P1</span></td>
+            <td>DB connection pinned for the whole LLM generation</td>
+            <td>Caps concurrent AI chats at ~15 regardless of CPU</td>
+            <td><span class="chip m">Measured</span> knee test</td></tr>
+          <tr><td><span class="sev P1">P1</span></td>
+            <td>No global concurrency limit / backpressure</td>
+            <td>Spike → collapse &amp; cascading failure, not graceful degradation</td>
+            <td><span class="chip m">Measured</span> 261 QueuePool errors</td></tr>
+          <tr><td><span class="sev P1">P1</span></td>
+            <td>In-memory WebSocket state + local-disk uploads</td>
+            <td>Hard-blocks running a 2nd API instance (no horizontal scale)</td>
+            <td><span class="chip c">Config-derived</span></td></tr>
+          <tr><td><span class="sev P2">P2</span></td>
+            <td>Single Redis; single ARQ worker, one queue</td>
+            <td>SPOF; long crawls (~27 min) starve webhook/email/push jobs</td>
+            <td><span class="chip c">Config-derived</span></td></tr>
+          <tr><td><span class="sev P2">P2</span></td>
+            <td>No LLM concurrency cap; retries × provider fallback</td>
+            <td>Retry storm against a throttled provider during an incident</td>
+            <td><span class="chip c">Config-derived</span></td></tr>
+          <tr><td><span class="sev P2">P2</span></td>
+            <td>Auth = DB lookup per request (indexed, but a query every call)</td>
+            <td>Per-request DB multiplier; no client/operator caching</td>
+            <td><span class="chip c">Config-derived</span></td></tr>
+          <tr><td><span class="sev P3">P3</span></td>
+            <td>Postgres at stock defaults; <code>pg_stat_statements</code> absent; no embedding fallback</td>
+            <td>No live slow-query telemetry; untuned for 4 GB; Gemini-only embeddings</td>
+            <td><span class="chip m">Measured</span> live settings</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══ 7. RECOMMENDATIONS ══ -->
+  <section id="fixes">
+    <div class="sec-head"><span class="sec-num">07</span><h2>Recommended fixes, by impact</h2></div>
+    <div class="steps">
+      <div class="step"><span class="idx"></span><div>
+        <h3>Add the two hot-path indexes <span class="tag p1">P1 · trivial</span></h3>
+        <p><code>chat_messages(session_id, created_at)</code> and <code>chat_sessions(bot_id, created_at)</code>.
+        A measured 144–588× on the hottest queries; cheap now at 22 MB. <code>CREATE INDEX CONCURRENTLY</code>.</p>
+      </div></div>
+      <div class="step"><span class="idx"></span><div>
+        <h3>Stop pinning a DB connection across LLM generation <span class="tag p1">P1</span></h3>
+        <p>Make the chat-stream DB path async (or offload every sync call) and shorten the session's
+        lifetime. This lifts the concurrency ceiling off the 15-connection pool — the single biggest lever.</p>
+      </div></div>
+      <div class="step"><span class="idx"></span><div>
+        <h3>Add global concurrency &amp; backpressure <span class="tag p1">P1</span></h3>
+        <p>Cap the AnyIO threadpool to the pool size (or enlarge the pool) and add an in-flight ceiling so a
+        spike sheds load gracefully instead of exhausting the pool and starving background jobs.</p>
+      </div></div>
+      <div class="step"><span class="idx"></span><div>
+        <h3>Remove horizontal-scaling blockers <span class="tag p1">P1</span></h3>
+        <p>Move the WebSocket <code>ConnectionManager</code> to a Redis pub/sub backplane and route uploads
+        to R2/S3 instead of local disk — prerequisites for ever running a 2nd instance.</p>
+      </div></div>
+      <div class="step"><span class="idx"></span><div>
+        <h3>Harden the AI &amp; ops path <span class="tag p2">P2</span></h3>
+        <p>LLM concurrency semaphore + per-bot spend ceiling + circuit breaker; a separate high-priority ARQ
+        queue; cache auth lookups; install <code>pg_stat_statements</code> and tune Postgres for 4 GB.</p>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ══ 8. READINESS ══ -->
+  <section id="readiness">
+    <div class="sec-head"><span class="sec-num">08</span><h2>Production readiness</h2></div>
+    <div class="card">
+      <p><span class="verdict" style="margin-bottom:10px"><span class="dot"></span>READY WITH CONDITIONS</span></p>
+      <p><b>Evidence for "ready":</b> live, stable, zero 5xx in 24h, zero restarts in 48 days, load average
+      0.08, correct indexes on the vector/full-text hot path, strong idempotency and rate limiting, bounded
+      history — running comfortably at &gt;99% headroom.</p>
+      <p><b>The conditions:</b> single-worker / single-instance / single-DB / single-Redis by design, with
+      documented horizontal-scaling blockers, a <b>~15 concurrent-AI-chat</b> ceiling, and two missing
+      hot-path indexes that turn data growth into latency. Ready for continued organic growth; <b>not</b>
+      ready for a surge, a high-volume customer, or a second instance until the P1 items land.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="footgrid">
+      <div><b>Methodology.</b> Repository-wide static analysis of <code>app/</code> and <code>api/</code>;
+        read-only inspection of the live production droplet (hardware, Postgres, Redis, nginx logs); and a
+        controlled k6 load test against an isolated local stack with a mock LLM/embeddings server.</div>
+      <div><b>Honesty of numbers.</b> Every figure is labelled <span class="chip m">Measured</span>
+        <span class="chip c">Config-derived</span> or <span class="chip e">Estimated</span>. The knee test
+        ran on a local Apple-silicon box with the production pool config — the <b>knee location (15)</b> and
+        <b>index speedups</b> transfer directly; absolute latency/throughput are an upper bound on the droplet.</div>
+      <div><b>Safety.</b> No load was generated against production; production access was strictly read-only;
+        no real LLM spend (mock-LLM by default). Full test system and raw results live under
+        <code>load-tests/</code>.</div>
+    </div>
+    <p style="margin-top:22px;color:var(--faint)">OyeChats capacity report · 2026-08-14 · commit 07e5fc5 · generated from the static audit and the measured k6 knee test.</p>
+  </footer>
+
+</div>

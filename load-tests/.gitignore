@@ -1,0 +1,7 @@
+# Runtime state + raw per-run artifacts (keep curated RESULTS_*.md only)
+.run/
+results/knee_*/
+results/saturation_*/
+results/dbscale_*.txt
+__pycache__/
+*.pyc

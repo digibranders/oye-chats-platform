@@ -1,0 +1,21 @@
+# ---------------------------------------------------------------------------
+# Grafana datasource provisioning — auto-adds the Prometheus datasource.
+# Loaded automatically at Grafana startup from
+#   /etc/grafana/provisioning/datasources/
+# ---------------------------------------------------------------------------
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # Stable uid so the provisioned dashboard JSON can reference this datasource.
+    uid: prometheus
+    access: proxy
+    # Resolves to the Prometheus container on the compose network.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      # Match the Prometheus scrape_interval so range queries align.
+      timeInterval: 15s
