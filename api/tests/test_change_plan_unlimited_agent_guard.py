@@ -145,6 +145,14 @@ def gateway(monkeypatch):
     of the plan-scope guard, exactly like the per-bot checkout sibling.
     """
     session = MagicMock()
+    # Branch 3 reads the client row to consult the in-flight-checkout marker
+    # (``pending_checkout_service``). A bare MagicMock attribute is TRUTHY, so
+    # the route would believe a mandate is pending and reach for the gateway to
+    # supersede it. Hand it a client with nothing in flight — this file is a
+    # pure test of the plan-scope guard.
+    session.get.side_effect = lambda model, *a, **k: (
+        SimpleNamespace(pending_checkout_subscription_id=None) if model is Client else MagicMock()
+    )
     monkeypatch.setattr(subscription_routes, "get_session", lambda: _session_ctx(session))
     monkeypatch.setattr(subscription_routes, "lock_client_for_billing", lambda *a, **k: None)
     monkeypatch.setattr(subscription_routes, "_require_precharge_gates", lambda *a, **k: "IN")

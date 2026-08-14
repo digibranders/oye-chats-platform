@@ -1718,66 +1718,40 @@ def create_checkout(
         if request.billing_country:
             _persist_confirmed_country(session, client, confirmed_country)
 
-        from app.services import discount_service, razorpay_service
+        from app.services import discount_service, pending_checkout_service, razorpay_service
 
         # Finding H1, first-checkout edition: a sequential re-submit (double
         # click, second tab, re-opened modal) must reuse the in-flight
         # authorizable subscription, not mint a sibling mandate. Placed BEFORE
         # the promo/discount work so a reuse never burns a second promo slot.
-        # Gateway state decides staleness: rebuild_upgrade_checkout returns the
-        # payload only while the pending sub is still authorizable.
+        # Gateway state decides staleness, and a request under a DIFFERENT key
+        # (plan / cycle / rail) cancels the superseded mandate before minting —
+        # see pending_checkout_service.
         client_row = session.get(Client, client.id)
-        if (
-            client_row is not None
-            and client_row.pending_checkout_subscription_id
-            and client_row.pending_checkout_plan_id == plan.id
-            and (client_row.pending_checkout_cycle or "monthly") == request.billing_cycle
-            # Country is part of the key: the pending sub was minted on one
-            # rail, and reusing it after a (legitimately unlocked) country
-            # change would hand a stored-US account an INR checkout — the
-            # quote/charge divergence Wave 1.2 exists to kill.
-            and (client_row.pending_checkout_country or "IN") == confirmed_country
-        ):
-            try:
-                reused = razorpay_service.rebuild_upgrade_checkout(
-                    client_row.pending_checkout_subscription_id, client, plan, request.billing_cycle
-                )
-            except razorpay_service.RazorpayBillingError as exc:
-                # Never guess: a fetch failure is not evidence the pending sub
-                # is dead, and minting a sibling against a live authorizable
-                # one is the exact H1 hazard. Mirror /resume's doctrine.
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            if reused is not None:
-                reused.setdefault("provider", "razorpay")
-                logger.info(
-                    "Reusing pending first-checkout %s for client %s (plan %s)",
-                    client_row.pending_checkout_subscription_id,
-                    client.id,
-                    plan.id,
-                )
-                # Best-effort card-tokenisation hint, same as the fresh mint.
-                try:
-                    reused_customer_id = razorpay_customer_service.ensure_customer(
-                        session, session.get(Client, client.id)
-                    )
-                    if reused_customer_id:
-                        reused["customer_id"] = reused_customer_id
-                except razorpay_customer_service.RazorpayCustomerError:
-                    logger.warning("checkout reuse: could not ensure Razorpay customer for client %s", client.id)
-                session.commit()
-                return reused
-            # Dead at the gateway — clear and fall through to a fresh mint.
-            logger.info(
-                "Pending first-checkout %s for client %s is dead; re-minting",
-                client_row.pending_checkout_subscription_id,
-                client.id,
+        try:
+            reused = pending_checkout_service.reuse_or_supersede(
+                session,
+                client_row=client_row,
+                client=client,
+                plan=plan,
+                billing_cycle=request.billing_cycle,
+                country=confirmed_country,
             )
-            client_row.pending_checkout_subscription_id = None
-            client_row.pending_checkout_plan_id = None
-            client_row.pending_checkout_cycle = None
-            client_row.pending_checkout_country = None
-            client_row.pending_checkout_at = None
-            session.flush()
+        except razorpay_service.RazorpayBillingError as exc:
+            # Never guess: a fetch failure is not evidence the pending sub is
+            # dead, and minting a sibling against a live authorizable one is the
+            # exact H1 hazard. Mirror /resume's doctrine.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if reused is not None:
+            # Best-effort card-tokenisation hint, same as the fresh mint.
+            try:
+                reused_customer_id = razorpay_customer_service.ensure_customer(session, session.get(Client, client.id))
+                if reused_customer_id:
+                    reused["customer_id"] = reused_customer_id
+            except razorpay_customer_service.RazorpayCustomerError:
+                logger.warning("checkout reuse: could not ensure Razorpay customer for client %s", client.id)
+            session.commit()
+            return reused
 
         # Only resolve/apply the referral discount on a provider that can realise
         # it (N4). Today only Razorpay is live; gating here means that if the
@@ -1868,11 +1842,13 @@ def create_checkout(
         # Record the in-flight checkout for the H1 reuse above. Cleared by the
         # activation webhook once the customer authorises.
         if client_row is not None:
-            client_row.pending_checkout_subscription_id = result.get("subscription_id")
-            client_row.pending_checkout_plan_id = plan.id
-            client_row.pending_checkout_cycle = request.billing_cycle
-            client_row.pending_checkout_country = confirmed_country
-            client_row.pending_checkout_at = datetime.now(UTC)
+            pending_checkout_service.record(
+                client_row,
+                subscription_id=result.get("subscription_id"),
+                plan_id=plan.id,
+                billing_cycle=request.billing_cycle,
+                country=confirmed_country,
+            )
         session.commit()
         if isinstance(result, dict) and customer_id:
             # Checkout needs this to tokenise a card (customer_id + save=1).
@@ -2301,13 +2277,46 @@ def change_plan(
             )
 
         billing_cycle = request.billing_cycle or (sub.billing_cycle if sub else "monthly")
-        from app.services import razorpay_service
+        from app.services import pending_checkout_service, razorpay_service
 
         # Same pre-charge gates as /checkout (Wave 1.3): this branch mints a
         # REAL authorizable mandate, so it must refuse — for a missing buyer
         # identity or an untrusted/foreign country — BEFORE subscription.create,
-        # not discover the gap at invoice time.
-        _require_precharge_gates(client, http_request)
+        # not discover the gap at invoice time. The resolved country is also
+        # half of the in-flight-checkout reuse key below.
+        confirmed_country = _require_precharge_gates(client, http_request)
+
+        # This branch mints the SAME kind of first mandate /checkout does, so it
+        # shares /checkout's idempotency marker (``clients.pending_checkout_*``).
+        # Without it a retry here minted a SECOND authorizable subscription and
+        # the customer paid two full cycles for one month — prod client 18,
+        # sub_TPaGNnEfFML4Lr + sub_TPaHBPNyYV3tfe, ₹11,998 for one ₹5,999 plan.
+        # Serialised by the ``lock_client_for_billing`` taken at the top of this
+        # route, so a concurrent retry reads the committed marker rather than
+        # racing past a read-then-write check.
+        client_row = session.get(Client, client.id)
+        try:
+            reused = pending_checkout_service.reuse_or_supersede(
+                session,
+                client_row=client_row,
+                client=client,
+                plan=new_plan,
+                billing_cycle=billing_cycle,
+                country=confirmed_country,
+                bot_id=route_bot_id,
+            )
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if reused is not None:
+            session.commit()
+            reused.setdefault("status", "checkout_required")
+            logger.info(
+                "Client %s re-opened the in-flight checkout for plan %s (%s) instead of minting a second mandate",
+                client.id,
+                new_plan.slug,
+                billing_cycle,
+            )
+            return reused
 
         try:
             if route_bot_id is not None:
@@ -2321,6 +2330,15 @@ def change_plan(
         except razorpay_service.RazorpayBillingError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        if client_row is not None:
+            pending_checkout_service.record(
+                client_row,
+                subscription_id=result.get("subscription_id"),
+                plan_id=new_plan.id,
+                billing_cycle=billing_cycle,
+                country=confirmed_country,
+                bot_id=route_bot_id,
+            )
         session.commit()
         logger.info(
             "Client %s requires Razorpay subscription auth for plan %s (%s)",

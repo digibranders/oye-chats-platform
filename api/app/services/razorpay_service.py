@@ -661,6 +661,55 @@ def rebuild_upgrade_checkout(
     }
 
 
+def cancel_superseded_checkout(razorpay_subscription_id: str) -> str:
+    """Kill an in-flight checkout that a DIFFERENT new mandate is replacing.
+
+    The counterpart to :func:`rebuild_upgrade_checkout`: that one is for a retry
+    the marker can serve, this one for a retry it cannot (different plan, cycle,
+    rail or bot scope). Minting the replacement while the superseded mandate is
+    still authorizable is the exact double-charge shape that hit prod client 18
+    — both mandates authorised, both charged one cycle, ₹11,998 for one month.
+
+    Two states matter:
+
+    * ``created`` / ``authenticated`` / ``pending`` — the checkout is still
+      payable (or authorised but not yet charged), so it is cancelled here and
+      can never bill.
+    * anything else — ``active`` means the customer already authorised AND paid
+      it. Cancelling that from a checkout path would silently kill a live,
+      charged subscription behind the customer's back; the activation handler's
+      sibling sweep owns that transition. We leave it alone and only report.
+
+    Raises ``RazorpayBillingError`` if the gateway can't be read or the cancel
+    fails, so the caller refuses rather than minting a sibling against a mandate
+    whose state it never confirmed (same doctrine as ``rebuild_upgrade_checkout``).
+
+    Returns the gateway status observed, for logging.
+    """
+    try:
+        sub = _get_razorpay().subscription.fetch(razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception("Could not read superseded checkout %s: %s", razorpay_subscription_id, exc)
+        raise RazorpayBillingError("Could not reach the payment provider. Please try again in a moment.") from exc
+
+    status = str(sub.get("status") or "").lower()
+    if status not in _AUTHORIZABLE_SUB_STATES:
+        logger.info(
+            "Superseded checkout %s is '%s' — nothing to cancel (only the activation path may retire it)",
+            razorpay_subscription_id,
+            status,
+        )
+        return status
+
+    cancel_subscription_by_id(razorpay_subscription_id, at_period_end=False)
+    logger.info(
+        "Cancelled superseded in-flight checkout %s (was '%s') before minting its replacement",
+        razorpay_subscription_id,
+        status,
+    )
+    return status
+
+
 def resolve_discounted_plan(
     session: Session,
     base_plan: Plan,
@@ -1057,15 +1106,18 @@ def cancel_seat_addon_by_id(seat_addon_subscription_id: str) -> None:
         raise RazorpayBillingError("Could not cancel the seat add-on with Razorpay.") from exc
 
 
-def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
-    """Yield every operator-seat add-on subscription known to Razorpay.
+def iter_gateway_subscriptions(
+    *, page_size: int = 100, max_pages: int = 50, caller: str = "iter_gateway_subscriptions"
+) -> Iterator[dict[str, Any]]:
+    """Yield every subscription Razorpay knows about, newest page first.
 
-    Pages through the Razorpay subscriptions list and filters to add-on rows —
-    identified by ``notes.purpose == "seat_addon"`` and, defensively, the
-    Extra-Seat ``plan_id``. Used by the reconciliation sweep to find add-ons
-    whose local owner is gone. ``max_pages`` bounds the scan; if it is hit the
-    shortfall is logged loudly so a silently-partial sweep can't masquerade as
-    a clean one.
+    The gateway — not our DB — is the only complete view: a mandate minted
+    seconds ago, or one whose activation webhook never landed, exists there and
+    nowhere else. That is exactly the state a duplicate is in while it is still
+    dangerous, so every reconciliation sweep starts here.
+
+    ``max_pages`` bounds the scan; hitting the cap is logged loudly (naming the
+    caller) so a silently-partial sweep can't masquerade as a clean one.
     """
     rzp = _get_razorpay()
     skip = 0
@@ -1074,27 +1126,40 @@ def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) 
         items = resp.get("items", []) if isinstance(resp, dict) else []
         if not items:
             return
-        for item in items:
-            item_notes = item.get("notes") or {}
-            if (item_notes.get("purpose") or "").lower() != "seat_addon":
-                continue
-            item_plan_id = item.get("plan_id")
-            # Both rails (F3): the USD seat plan is just as much a seat add-on
-            # as the INR one — filtering to the INR id alone hid every USD seat
-            # mandate from orphan reconciliation, leaving an orphaned $5/seat
-            # debit with no sweep coverage.
-            seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
-            if item_plan_id and seat_plan_ids and item_plan_id not in seat_plan_ids:
-                continue
-            yield item
+        yield from items
         if len(items) < page_size:
             return
         skip += page_size
     logger.error(
-        "iter_seat_addon_subscriptions hit the max_pages=%d cap — some subscriptions were "
-        "NOT scanned for orphan reconciliation. Increase the cap or investigate volume.",
+        "%s hit the max_pages=%d cap — some subscriptions were NOT scanned. Increase the cap or investigate volume.",
+        caller,
         max_pages,
     )
+
+
+def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
+    """Yield every operator-seat add-on subscription known to Razorpay.
+
+    Pages through the Razorpay subscriptions list and filters to add-on rows —
+    identified by ``notes.purpose == "seat_addon"`` and, defensively, the
+    Extra-Seat ``plan_id``. Used by the reconciliation sweep to find add-ons
+    whose local owner is gone.
+    """
+    for item in iter_gateway_subscriptions(
+        page_size=page_size, max_pages=max_pages, caller="iter_seat_addon_subscriptions"
+    ):
+        item_notes = item.get("notes") or {}
+        if (item_notes.get("purpose") or "").lower() != "seat_addon":
+            continue
+        item_plan_id = item.get("plan_id")
+        # Both rails (F3): the USD seat plan is just as much a seat add-on
+        # as the INR one — filtering to the INR id alone hid every USD seat
+        # mandate from orphan reconciliation, leaving an orphaned $5/seat
+        # debit with no sweep coverage.
+        seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
+        if item_plan_id and seat_plan_ids and item_plan_id not in seat_plan_ids:
+            continue
+        yield item
 
 
 def create_per_bot_subscription(
@@ -2718,13 +2783,13 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
         # The first-checkout H1 marker points at an in-flight authorizable sub;
         # this activation consumes it, so clear it (a stale marker would make a
-        # later /checkout try to reuse an already-activated subscription).
+        # later /checkout or /change-plan try to reuse — or worse, CANCEL as
+        # superseded — an already-activated subscription).
         client_row = session.get(Client, client_id)
         if client_row is not None and client_row.pending_checkout_subscription_id == razorpay_sub_id:
-            client_row.pending_checkout_subscription_id = None
-            client_row.pending_checkout_plan_id = None
-            client_row.pending_checkout_cycle = None
-            client_row.pending_checkout_at = None
+            from app.services import pending_checkout_service
+
+            pending_checkout_service.clear(client_row)
 
         if funded_bot_id is not None:
             # Bot-scoped activation (per-bot new bot, resume, or revive-in-place).
