@@ -36,10 +36,10 @@ import { AgentCard } from '../../design-system/components/AgentCard';
 import { ActivityTimeline, type ActivityItem } from '../../design-system/components/ActivityTimeline';
 import { DataTable, type Column } from '../../design-system/components/DataTable';
 import { QuickAction } from '../../design-system/components/QuickAction';
-import { useWorkspace } from '../../context/WorkspaceContext';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import type { Bot, TopQuestion } from '../../types/domain';
 import {
+  firstName,
   formatRelativeTime,
   formatToday,
   greeting,
@@ -49,6 +49,8 @@ import {
 } from './home-data';
 import { useHomeData } from './useHomeData';
 import { useBotContext } from '../../context/BotContext';
+import { getAuthItem } from '../../utils/authStorage';
+import { getImpersonationProfile } from '../../utils/impersonation';
 
 // ── Small presentation helpers ───────────────────────────────────────────────
 
@@ -305,10 +307,20 @@ export function HomePage(): ReactElement {
   // aggregate that this page has historically shown.
   const { selectedBot } = useBotContext();
   const { data, loading, error, reload } = useHomeData(selectedBot?.id ?? null);
-  const { currentWorkspaceName } = useWorkspace();
 
   const now = new Date();
-  const workspaceLabel = currentWorkspaceName ? `, ${currentWorkspaceName}` : '';
+  // A first-person salutation with a wave addresses the HUMAN, not the company.
+  // This used to render `currentWorkspaceName` (i.e. `company_name`), greeting
+  // "Gaurav" as "Good afternoon, Fynix 👋".
+  //
+  // Fallback chain: impersonated account's name → `admin_name` (written at
+  // login/register/OAuth; there is no in-app rename, so it cannot go stale) →
+  // no name at all. It deliberately never falls back to the workspace name.
+  // The impersonation profile comes first so a super-admin in a support session
+  // sees the account holder's name rather than their own.
+  const personName = getImpersonationProfile()?.name ?? getAuthItem('admin_name');
+  const greetingName = firstName(personName);
+  const nameLabel = greetingName ? `, ${greetingName}` : '';
   const headerActions = (
     <div className="hidden items-center gap-2 sm:flex">
       <QuickAction icon={BarChart3} label="Analytics" to="/analytics" />
@@ -321,7 +333,7 @@ export function HomePage(): ReactElement {
       title={
         <>
           {greeting(now)}
-          {workspaceLabel}
+          {nameLabel}
           <span
             className="ml-2 inline-block origin-[70%_70%] hover:animate-wave"
             role="img"

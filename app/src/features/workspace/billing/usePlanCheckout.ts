@@ -69,6 +69,13 @@ export interface PlanCheckoutResult {
   submitting: boolean;
   error: string;
   notice: string;
+  /**
+   * True when the server refused with `email_verification_required` (403). The
+   * host surfaces `error` with a link to `/verify-email` instead of a dead end,
+   * and stops offering the button that just failed - retrying it produces the
+   * identical 403.
+   */
+  emailVerificationRequired: boolean;
   /** Run the checkout money-path for `plan` at `billingCycle`. */
   submit: (plan: PlanView, billingCycle: BillingCycle, actionKind?: string) => Promise<void>;
   /** Clear transient error/notice state (call on drawer open). */
@@ -110,14 +117,18 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
 
   const reset = useCallback(() => {
     setError('');
     setNotice('');
+    setEmailVerificationRequired(false);
   }, []);
 
   const submit = useCallback(
     async (plan: PlanView, billingCycle: BillingCycle, actionKind: string = 'auto'): Promise<void> => {
+      // Stale gate state must never outlive the attempt that produced it.
+      setEmailVerificationRequired(false);
       // Free plan: with an active sub, schedule a cancellation at period end;
       // without one there is nothing to do.
       if (plan.slug === 'free') {
@@ -292,6 +303,25 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
             ?.detail ?? (err as { detail?: unknown })?.detail;
 
+        // The account hasn't proved it owns its email yet, so the server
+        // refuses to take money (`require_verified_email` /
+        // `require_verified_email_for_workspace` - both send this exact
+        // detail, keyed on `error`). Recoverable in seconds, but only if the
+        // UI says where to go: the host pairs this flag with a link to
+        // `/verify-email` rather than leaving a dead button under a red
+        // message.
+        if (
+          detail &&
+          typeof detail === 'object' &&
+          (detail as { error?: string }).error === 'email_verification_required'
+        ) {
+          setEmailVerificationRequired(true);
+          setError(
+            (detail as { message?: string }).message ||
+              'Please verify your email to continue.',
+          );
+          return;
+        }
         if (
           detail &&
           typeof detail === 'object' &&
@@ -406,5 +436,5 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     ],
   );
 
-  return { submitting, error, notice, submit, reset };
+  return { submitting, error, notice, emailVerificationRequired, submit, reset };
 }

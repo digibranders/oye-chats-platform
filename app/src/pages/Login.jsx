@@ -92,10 +92,16 @@ export default function Login() {
         );
         sessionStorage.setItem('login_toast', '1');
 
-        // Email verification is no longer a hard wall for organic logins.
-        // An unverified client proceeds to their normal destination and is
-        // nudged by the dismissible VerifyEmailBanner instead; verification
-        // stays enforced server-side on billing/invite mutations.
+        // Email verification is not a hard wall for organic logins. An
+        // unverified client proceeds to their normal destination and is nudged
+        // by the dismissible VerifyEmailBanner instead; verification stays
+        // enforced server-side on billing/invite mutations.
+        //
+        // That banner is mounted in `shell/AppShell.tsx`, beside PastDueBanner.
+        // Named here on purpose: the Admin 2.0 rebuild stopped mounting it and
+        // this comment kept asserting a nudge that no longer existed, so an
+        // unverified signup saw nothing until checkout 403'd. If you move or
+        // drop the banner, fix this comment in the same change.
         if (affiliateToken) {
           // Affiliate token always wins over the default landing target.
           navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
@@ -148,10 +154,10 @@ export default function Login() {
   };
 
   if (getAuthItem('admin_token')) {
-    // Verification is no longer a hard wall - an already-authenticated but
-    // unverified client falls through to their normal destination and gets
-    // nudged by the VerifyEmailBanner rather than being trapped on
-    // /verify-email. Verification stays enforced server-side on
+    // Verification is not a hard wall - an already-authenticated but unverified
+    // client falls through to their normal destination and gets nudged by the
+    // VerifyEmailBanner (mounted in `shell/AppShell.tsx`) rather than being
+    // trapped on /verify-email. Verification stays enforced server-side on
     // billing/invite mutations.
     const isOperator = localStorage.getItem('auth_type') === 'operator';
     // Deep-link ``next`` wins over defaults - invite airlock, push-notification

@@ -9,6 +9,7 @@ import { InstallAppBanner } from './InstallAppBanner';
 import { PushPermissionNudge } from './PushPermissionNudge';
 import { PastDueBanner } from '../features/workspace/billing/PastDueBanner';
 import { DowngradeReauthBanner } from '../features/workspace/billing/DowngradeReauthBanner';
+import VerifyEmailBanner from '../components/VerifyEmailBanner';
 import { cn } from '../design-system';
 
 const MOBILE_BREAKPOINT = 768;
@@ -94,6 +95,11 @@ export function AppShell() {
             needs this warning is the one who never opens the Billing page. */}
         <PastDueBanner />
         <DowngradeReauthBanner />
+        {/* Same reasoning, for email verification. Mounted in the shell so the
+            nudge appears once, on every authenticated route - and NOT on
+            `/verify-email` itself or any public auth page, which render
+            outside this layout. Renders null for verified accounts. */}
+        <VerifyEmailBanner />
         <main className="flex-1 px-4 pt-3 pb-6 md:px-6 md:pt-4 md:pb-8">
           <Outlet />
         </main>
