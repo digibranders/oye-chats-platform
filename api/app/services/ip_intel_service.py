@@ -190,7 +190,14 @@ def is_usable_company_name(name: str | None) -> bool:
 
 
 def fetch_ip_intel(ip_address: str) -> dict | None:
-    """Fetch company/ASN/threat data for an IP. Returns None on any failure."""
+    """Fetch company/ASN/threat data for an IP. Returns None on any failure.
+
+    PRIVACY — the only caller is ``chat_routes._resolve_and_update_location``,
+    which runs on the background pool; read the note on that function before
+    calling this from anywhere else. ``url`` below carries both the visitor's
+    address and the vendor API key, and Sentry's StdlibIntegration records
+    outbound URLs unsanitised into whatever transaction is live.
+    """
     api_key = os.getenv("IPAPI_IS_KEY", "")
     if not api_key:
         return None
@@ -203,11 +210,16 @@ def fetch_ip_intel(ip_address: str) -> dict | None:
         with urllib.request.urlopen(req, timeout=3.0) as response:
             data = json.loads(response.read().decode())
     except Exception as exc:
-        logger.warning(f"ipapi.is lookup failed for {ip_address}: {exc}")
+        # PRIVACY — no ``ip_address`` and no ``url`` in either line. Sentry's
+        # LoggingIntegration promotes every WARNING to a breadcrumb, so an
+        # address interpolated here rode out on the next error the process
+        # reported, and the URL would have taken the vendor key with it.
+        # urllib's exceptions do not repeat the request URL in ``str()``.
+        logger.warning(f"ipapi.is lookup failed: {exc}")
         return None
 
     if "error" in data:
-        logger.warning(f"ipapi.is returned error for {ip_address}: {data.get('error')}")
+        logger.warning(f"ipapi.is returned error: {data.get('error')}")
         return None
 
     # ipapi.is nests ``company`` and ``asn`` as OBJECTS, not strings:

@@ -12,6 +12,7 @@ import base64
 import contextlib
 import json
 import logging
+import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -35,6 +36,58 @@ BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
 _SUPPORT_LINK = link(esc(SUPPORT_EMAIL), f"mailto:{SUPPORT_EMAIL}")
 
 
+def redact_email(to_email: str) -> str:
+    """``gaurav@example.com`` → ``g***@example.com``.
+
+    The one address redactor for everything that emits a recipient: this module,
+    ``worker.tasks``' two send tasks, and ``offline_message_routes``. Local part
+    cut to its first character, domain kept. The domain is the diagnostic —
+    "every @outlook.com send is bouncing" is a real finding and a fully masked
+    address cannot express it — and it is not personal data on its own. Anything
+    without an ``@`` collapses to ``***``, because a value that is not an address
+    is a value we cannot vouch for.
+
+    Public because a recipient here is often a *visitor's* address (the chat
+    follow-up in ``lead_routes``, the offline-message reply), which is personal
+    data under GDPR and under India's DPDP Act, where this product's basis is
+    consent-only — and because Sentry's LoggingIntegration turns every log
+    record that carries one into a breadcrumb or an event. There should be no
+    second copy of this rule.
+    """
+    local, _, domain = to_email.partition("@")
+    return f"{local[:1]}***@{domain}" if local and domain else "***"
+
+
+# Same shape as ``core.langfuse_client._EMAIL_RE``, deliberately duplicated
+# rather than imported: that module is the Langfuse client and pulling it in
+# here would make every email send depend on the tracing stack for a regex.
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+
+def _email_failure_tags(tags: dict) -> dict[str, str]:
+    """Build the ``email.*`` Sentry tags for :func:`_capture_email_failure`.
+
+    PRIVACY — every address in a tag value goes through :func:`redact_email`
+    before it leaves the process. Callers pass the recipient verbatim (as
+    ``to=`` or ``email=``), and for the visitor-facing senders — the chat
+    follow-up in ``lead_routes``, the offline-message notification — that
+    recipient is a *visitor's* address, personal data under GDPR and under
+    India's DPDP Act, where this product's basis is consent-only. Most of these
+    call sites already redacted the same value for their local log; the Sentry
+    path was simply missed.
+
+    Redaction rather than dropping (the usual call, see ``core.visitor_privacy``
+    and d041a7a) because ``g***@example.com`` is not a constant: the domain
+    survives, which is the whole reason to tag a send failure with a recipient
+    at all. Applied as a substitution over the value rather than per key, so it
+    also catches the ``reason`` tag — Brevo's error bodies quote the offending
+    address back at us — and so a caller inventing a new key cannot reopen this.
+    """
+    return {
+        f"email.{key}": _EMAIL_RE.sub(lambda m: redact_email(m.group(0)), str(value)) for key, value in tags.items()
+    }
+
+
 def _capture_email_failure(exc: Exception, **tags) -> None:
     """Capture an email-send failure to Sentry (if configured) with tags.
 
@@ -45,8 +98,8 @@ def _capture_email_failure(exc: Exception, **tags) -> None:
         import sentry_sdk
 
         with sentry_sdk.push_scope() as scope:
-            for key, value in tags.items():
-                scope.set_tag(f"email.{key}", str(value))
+            for key, value in _email_failure_tags(tags).items():
+                scope.set_tag(key, value)
             sentry_sdk.capture_exception(exc)
 
 
@@ -96,7 +149,11 @@ def _send_brevo_email(
 ) -> bool:
     """Send an email via Brevo transactional API using raw HTML. Returns True on success."""
     if not EMAIL_ENABLED:
-        logger.warning("Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s subject=%s", to_email, subject)
+        logger.warning(
+            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s subject=%s",
+            redact_email(to_email),
+            subject,
+        )
         return False
 
     email_payload: dict = {
@@ -120,11 +177,11 @@ def _send_brevo_email(
     )
     try:
         with urlopen(req, timeout=10) as resp:
-            logger.info(f"Email sent to {to_email} | subject={subject} | status={resp.status}")
+            logger.info(f"Email sent to {redact_email(to_email)} | subject={subject} | status={resp.status}")
             return True
     except Exception as e:
         reason = _extract_brevo_error(e)
-        logger.warning("Brevo email failed | to=%s subject=%s reason=%s", to_email, subject, reason)
+        logger.warning("Brevo email failed | to=%s subject=%s reason=%s", redact_email(to_email), subject, reason)
         _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
         return False
 
@@ -144,7 +201,9 @@ def _send_brevo_template(
     """
     if not EMAIL_ENABLED:
         logger.warning(
-            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s", to_email, template_id
+            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s",
+            redact_email(to_email),
+            template_id,
         )
         return False
 
@@ -161,11 +220,15 @@ def _send_brevo_template(
     )
     try:
         with urlopen(req, timeout=10) as resp:
-            logger.info(f"Template email sent to {to_email} | template_id={template_id} | status={resp.status}")
+            logger.info(
+                f"Template email sent to {redact_email(to_email)} | template_id={template_id} | status={resp.status}"
+            )
             return True
     except Exception as e:
         reason = _extract_brevo_error(e)
-        logger.warning("Brevo template email failed | to=%s template_id=%s reason=%s", to_email, template_id, reason)
+        logger.warning(
+            "Brevo template email failed | to=%s template_id=%s reason=%s", redact_email(to_email), template_id, reason
+        )
         _capture_email_failure(e, kind="template", to=to_email, template_id=template_id, reason=reason)
         return False
 
@@ -836,7 +899,7 @@ def send_trial_welcome_email(to_email: str, *, name: str | None, trial_end, cred
             ),
         )
     except Exception as exc:
-        logger.warning("trial_welcome_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("trial_welcome_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="trial_welcome", email=to_email)
 
 
@@ -867,7 +930,7 @@ def send_trial_halfway_email(to_email: str, *, name: str | None, days_remaining:
             ),
         )
     except Exception as exc:
-        logger.warning("trial_halfway_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("trial_halfway_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="trial_halfway", email=to_email)
 
 
@@ -910,7 +973,7 @@ def send_trial_days_left_email(to_email: str, *, name: str | None, days_remainin
             ),
         )
     except Exception as exc:
-        logger.warning("trial_days_left_email_failed for %s (days=%s): %s", _redact(to_email), days_remaining, exc)
+        logger.warning("trial_days_left_email_failed for %s (days=%s): %s", redact_email(to_email), days_remaining, exc)
         _capture_email_failure(exc, event="trial_days_left", email=to_email, days_remaining=days_remaining)
 
 
@@ -944,7 +1007,7 @@ def send_promo_precharge_reminder_email(
             shell(subject=subject, preheader=f"Your first charge is on {charge_date}.", inner=inner),
         )
     except Exception as exc:
-        logger.warning("promo_precharge_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("promo_precharge_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="promo_precharge", email=to_email)
 
 
@@ -977,7 +1040,7 @@ def send_trial_ended_email(to_email: str, *, name: str | None, plan_name: str, d
             ),
         )
     except Exception as exc:
-        logger.warning("trial_ended_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("trial_ended_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="trial_ended", email=to_email)
 
 
@@ -1005,7 +1068,7 @@ def send_trial_data_deleted_email(to_email: str, *, name: str | None) -> None:
             ),
         )
     except Exception as exc:
-        logger.warning("trial_data_deleted_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("trial_data_deleted_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="trial_data_deleted", email=to_email)
 
 
@@ -1043,7 +1106,7 @@ def send_downgrade_reauth_email(
             ),
         )
     except Exception as exc:
-        logger.warning("downgrade_reauth_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("downgrade_reauth_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
 
 
@@ -1082,7 +1145,7 @@ def send_seat_reauth_email(to_email: str, *, name: str | None, seat_count: int, 
             ),
         )
     except Exception as exc:
-        logger.warning("seat_reauth_email_failed for %s: %s", _redact(to_email), exc)
+        logger.warning("seat_reauth_email_failed for %s: %s", redact_email(to_email), exc)
         _capture_email_failure(exc, event="seat_reauth", email=to_email)
 
 
@@ -1152,11 +1215,6 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
     )
 
 
-def _redact(to_email: str) -> str:
-    local, _, domain = to_email.partition("@")
-    return f"{local[:1]}***@{domain}" if local and domain else "***"
-
-
 # ── Dunning (failed recurring payment) ───────────────────────────────────────
 #
 # Razorpay sends its own subscription notifications and hosts the card-update
@@ -1211,7 +1269,7 @@ def _send_dunning(to_email: str, subject: str, preheader: str, inner: str, *, ev
             shell(subject=subject, preheader=preheader, inner=inner),
         )
     except Exception as exc:
-        logger.warning("%s_email_failed for %s: %s", event, _redact(to_email), exc)
+        logger.warning("%s_email_failed for %s: %s", event, redact_email(to_email), exc)
         _capture_email_failure(exc, event=event, email=to_email, **tags)
         return False
     return True

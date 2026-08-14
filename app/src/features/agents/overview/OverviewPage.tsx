@@ -249,11 +249,11 @@ export function OverviewPage(): ReactElement {
       <Card className="p-6">
         <EmptyState
           icon={AlertCircle}
-          title={error ? 'We couldn’t load this agent' : 'Agent not found'}
+          title={error ? 'We couldn’t load this chatbot' : 'Chatbot not found'}
           description={
             error
-              ? 'Something went wrong loading this agent. Please refresh the page.'
-              : 'This agent doesn’t exist or you don’t have access to it.'
+              ? 'Something went wrong loading this chatbot. Please refresh the page.'
+              : 'This chatbot doesn’t exist or you don’t have access to it.'
           }
         />
       </Card>

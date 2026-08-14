@@ -612,7 +612,7 @@ export function LiveChatPanel({ operator, botId }: LiveChatPanelProps): ReactEle
           title={unavailable ? 'Live chat isn’t available for you yet' : 'Go online to start taking chats'}
           description={
             unavailable
-              ? 'Assign yourself as an operator below to start receiving real-time conversations from visitors on this agent.'
+              ? 'Assign yourself as an operator below to start receiving real-time conversations from visitors on this chatbot.'
               : 'Flip your availability to online and waiting visitors, your active conversations, and qualified AI Chatbot chats will appear here in real time.'
           }
           action={

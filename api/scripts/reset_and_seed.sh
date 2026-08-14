@@ -12,9 +12,16 @@
 #      alembic version stamp) and re-create the `vector`/`citext` extensions.
 #      (alembic's env.py does not create the pgvector extension, and the initial
 #      migration needs it, so we create it here before migrating.)
-#   3. `alembic upgrade head` — rebuilds the schema and seeds the billing
-#      baseline (plans: free/starter/standard/enterprise + pricing_config).
-#   4. Seed an idempotent super-admin account (skip with --no-superadmin).
+#   3. `alembic upgrade head` — rebuilds the SCHEMA ONLY. Migrations seed no
+#      plan rows (see b6c86b4c8434), so data-only migrations that target a plan
+#      — e.g. f1a2b3c4d5e6, which deactivates Enterprise — match zero rows here
+#      and the seed below inserts the rows fresh.
+#   4. Seed the plan matrix + pricing config, then an idempotent super-admin
+#      account (skip the last with --no-superadmin). Every tier is LISTED; the
+#      seed sets `is_active` only on rows it creates and never on rows it
+#      updates, so a deliberate deactivation survives a re-run. Paid tiers are
+#      listed but not self-serve until step 5 attaches ids that can charge them
+#      — until then their checkout degrades to contact-sales.
 #
 # After it finishes the DB is empty of customer accounts, so you can sign up a
 # fresh account through the dashboard and walk the onboarding flow end-to-end.
@@ -113,9 +120,14 @@ fi
 
 echo ""
 echo "==> Done. Database reset and seeded."
-echo "    Next: set Razorpay plan IDs for this environment, e.g."
+echo "    Every paid tier is LISTED but not yet SELF-SERVE — a plan with no Razorpay"
+echo "    plan id cannot complete a checkout, so it quotes contact-sales instead."
+echo "    Next: attach this environment's Razorpay plan IDs (that opens self-serve"
+echo "    checkout), e.g."
 echo "      uv run python scripts/set_razorpay_plan_ids.py --apply \\"
 echo "        --starter-monthly <id> --starter-annual <id> \\"
 echo "        --standard-monthly <id> --standard-annual <id> \\"
 echo "        --professional-monthly <id> --professional-annual <id>"
+echo "    The ready-made command carrying this environment's real ids (both rails,"
+echo "    including Enterprise) is in docs/billing/razorpay-plan-ids.md."
 echo "    Then sign up a fresh account in the dashboard to test onboarding."

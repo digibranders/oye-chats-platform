@@ -93,6 +93,37 @@ async def intl_payments_disabled_handler(request: Request, exc):
     )
 
 
+async def plan_not_checkoutable_handler(request: Request, exc):
+    """Map ``PlanNotCheckoutable`` (no gateway plan id for the resolved rail) to
+    the same contact-sales 409 ``/subscriptions/checkout/quote`` returns for the
+    same plan.
+
+    A tier with no Razorpay plan id stays LISTED and degrades to contact-sales
+    rather than disappearing from the pricing catalog, so the quote and the
+    charge have to agree: before this, the quote answered
+    ``inr_plan_unconfigured`` with a sales address while ``POST /checkout`` 400'd
+    with the raw operator instruction ("Create the plan in the Razorpay dashboard
+    …") as the customer-facing message. ``exc.reason`` carries the quote's own
+    code, so the frontend branches on one vocabulary across both surfaces.
+
+    Logged at WARNING, matching ``intl_payments_disabled_handler``: it is a
+    policy refusal, not a bug — but a real buyer reached a tier this environment
+    cannot charge, which is a wiring gap someone has to close. The operator
+    instruction itself is logged once, at ERROR, by the service layer.
+    """
+    logger.warning("Checkout refused — plan not wired for the gateway: %s", exc)
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": {
+                "reason": getattr(exc, "reason", "inr_plan_unconfigured"),
+                "message": str(exc),
+                "contact_sales": "developer@oyechats.com",
+            }
+        },
+    )
+
+
 async def generic_exception_handler(request: Request, exc: Exception):
     """Catch-all handler for unhandled exceptions. Tags Sentry events with request context."""
     logger.error(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}", exc_info=True)

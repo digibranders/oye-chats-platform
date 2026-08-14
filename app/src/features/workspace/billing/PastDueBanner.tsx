@@ -82,7 +82,7 @@ export function PastDueBanner(): ReactElement | null {
       <AlertTriangle size={16} aria-hidden="true" className="shrink-0 text-[var(--ds-danger)]" />
       <p className="min-w-0 flex-1 text-[13px] text-[var(--ds-text)]">
         <span className="font-medium">We couldn’t collect your {plan}payment.</span>{' '}
-        Your AI agents stop responding to visitors {deadlinePhrase(state.days_left)}.
+        Your AI chatbots stop responding to visitors {deadlinePhrase(state.days_left)}.
       </p>
       {canRecover ? (
         <Button

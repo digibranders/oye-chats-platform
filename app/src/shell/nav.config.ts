@@ -28,7 +28,7 @@ export const PRIMARY_NAV: NavItem[] = [
   { to: '/inbox', label: 'Support', icon: Inbox, hint: 'Live chat and messages', allowOperator: true },
   { to: '/leads', label: 'Leads', icon: Users, hint: 'Captured leads and qualification', allowOperator: true },
   { to: '/journey', label: 'Journey', icon: JourneyIcon, hint: 'Visitor journey flow' },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across agents' },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, hint: 'Performance across chatbots' },
   { to: '/workspace', label: 'Workspace', icon: Building2, hint: 'Members, billing and usage' },
 ];
 

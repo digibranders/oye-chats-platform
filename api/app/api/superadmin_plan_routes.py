@@ -15,12 +15,12 @@ from sqlalchemy import func, select
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
 from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
-from app.core.pricing import display_price
+from app.core.pricing import display_price, emandate_warning
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import plan_entitlements_service
 from app.services.plan_entitlements_service import UNLIMITED
-from app.services.plan_service import get_pricing_content, set_pricing_content
+from app.services.plan_service import get_pricing_content, plan_checkout_is_wired, set_pricing_content
 
 logger = logging.getLogger(__name__)
 
@@ -249,42 +249,15 @@ def _reject_seat_price_drift(data: dict) -> None:
         )
 
 
-# RBI Digital Payments — E-mandate Framework, 2026 (notified 21 Apr 2026):
-# a recurring debit above this amount requires Additional Factor of
-# Authentication on EVERY charge, so the renewal stops being silent and the
-# customer must re-authenticate each cycle. The Rs 1,00,000 ceiling applies
-# only to insurance, mutual funds and credit card bills — SaaS does not
-# qualify. Expressed in paise to match the price columns.
-EMANDATE_AFA_CEILING_MINOR = 1_500_000
-
-
-def emandate_warning(amount_minor: int | None, currency: str | None) -> str | None:
-    """Warn when a per-charge amount would forfeit AFA-exempt auto-debit.
-
-    Deliberately a WARNING, not a hard block: pricing above the ceiling is a
-    legitimate business decision (an enterprise tier may accept per-renewal
-    re-authentication, or bill by invoice instead of by mandate). The failure
-    this prevents is crossing the line *unknowingly* — Professional annual sits
-    at Rs 13,428, only 10.5% below it.
-
-    Non-INR is out of scope: the threshold is a rupee figure and cannot be
-    compared against a USD amount. The 2026 framework does cover cross-border,
-    so the FX-converted test lands with the USD rail once Razorpay confirms how
-    the ceiling applies to foreign-issued cards.
-    """
-    if (currency or "INR").upper() != "INR":
-        return None
-    if int(amount_minor or 0) <= EMANDATE_AFA_CEILING_MINOR:
-        return None
-    return (
-        f"₹{int(amount_minor) / 100:,.0f} per charge exceeds the RBI e-mandate AFA-exempt "
-        f"ceiling of ₹15,000. Auto-debit will require the customer to authenticate every "
-        f"renewal. Consider monthly billing or invoice-based collection for this tier."
-    )
-
-
 def _emandate_warnings(plan: Plan) -> list[str]:
-    """Every amount this plan can debit in one transaction."""
+    """Every amount this plan can debit in one transaction.
+
+    The check itself is :func:`app.core.pricing.emandate_warning` — shared with
+    ``scripts/seed_plans.py``, which is the path every real price change has
+    actually taken and which used to run no check at all (that is how both
+    annual tiers crossed the ceiling unnoticed). Both writers now warn off the
+    same constant, so neither can be re-priced past the ceiling silently.
+    """
     return [
         w
         for w in (
@@ -293,6 +266,53 @@ def _emandate_warnings(plan: Plan) -> list[str]:
         )
         if w
     ]
+
+
+def _checkout_wiring_warning(plan: Plan) -> str | None:
+    """Warn when a LISTED paid tier has no INR gateway ids to charge against.
+
+    Deliberately a warning and not a block, for the same reason
+    :func:`emandate_warning` is: a listed tier with no plan id is a legitimate,
+    supported state — it is how a contact-sales tier is published — and the
+    platform degrades cleanly into it (the quote answers
+    ``inr_plan_unconfigured`` with a sales address, and the charge path refuses
+    in the same shape rather than 500ing).
+
+    What it prevents is reaching that state UNKNOWINGLY. Nothing else on these
+    routes mentions gateway wiring: ``CreatePlanRequest.is_active`` defaults to
+    ``True`` with every ``razorpay_plan_id_*`` defaulting to ``None``, so the
+    single most likely way to create a plan is to publish one no visitor can
+    buy — and the super admin would have had no signal at all.
+
+    Free tiers are exempt; there is nothing to charge.
+    """
+    if plan_checkout_is_wired(
+        is_free=not plan.monthly_price_cents and not plan.annual_price_cents,
+        razorpay_plan_id_monthly=plan.razorpay_plan_id_monthly,
+        razorpay_plan_id_annual=plan.razorpay_plan_id_annual,
+    ):
+        return None
+    if not plan.is_active:
+        # Not listed, so no visitor can reach the dead checkout. Nothing to say.
+        return None
+    missing = [
+        label
+        for label, value in (("monthly", plan.razorpay_plan_id_monthly), ("annual", plan.razorpay_plan_id_annual))
+        if not value
+    ]
+    return (
+        f"Plan '{plan.name}' is listed but has no INR Razorpay plan id for {' and '.join(missing)} billing. "
+        "It will appear on the pricing page and quote Contact sales instead of a checkout button. "
+        "Set the id(s) to open self-serve checkout."
+    )
+
+
+def _plan_warnings(plan: Plan) -> list[str]:
+    """Every non-blocking advisory the plan-CRUD routes return to the operator.
+
+    One list so the two routes cannot drift on which checks they run.
+    """
+    return _emandate_warnings(plan) + [w for w in (_checkout_wiring_warning(plan),) if w]
 
 
 @router.post("/plans")
@@ -361,7 +381,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
         return {
             "message": f"Plan '{plan.name}' created successfully.",
             "plan_id": plan.id,
-            "warnings": _emandate_warnings(plan),
+            "warnings": _plan_warnings(plan),
         }
 
 
@@ -491,13 +511,18 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         return {
             "message": f"Plan '{plan.name}' updated successfully.",
-            "warnings": _emandate_warnings(plan),
+            "warnings": _plan_warnings(plan),
         }
 
 
 @router.delete("/plans/{plan_id}")
 def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
-    """Soft-delete a plan (set is_active=False). Cannot delete plans with active subscriptions."""
+    """Soft-delete a plan (set is_active=False). Cannot delete plans with active subscriptions.
+
+    The deactivation sticks across a reseed: ``scripts/seed_plans.py`` writes
+    ``is_active`` only on rows it INSERTS, never on rows it updates, so a plan
+    soft-deleted here is not resurrected the next time the catalogue is seeded.
+    """
     _require_write(superadmin)
     with get_session() as session:
         plan = session.execute(select(Plan).where(Plan.id == plan_id)).scalars().first()

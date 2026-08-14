@@ -1,14 +1,20 @@
 /**
- * Pure, framework-free helpers for the feedback log. Bucketing and sorting are
- * a 1:1 port of the legacy `pages/Feedback.jsx:18-77`, now typed and
- * unit-testable in isolation from any component.
+ * Pure, framework-free helpers for the feedback log — ported from the legacy
+ * `pages/Feedback.jsx:18-77`, now typed and unit-testable in isolation from any
+ * component.
  *
- * The CSV export deliberately is *not* a 1:1 port any more: the legacy version
- * had no defence against spreadsheet formula injection, and stripped commas
- * out of the data instead of relying on the quoting it already applied. See
- * `csvField` below.
+ * Two of them deliberately are *not* 1:1 ports any more, both because the
+ * legacy behaviour was wrong rather than merely dated:
+ *
+ * - `buildTrend` took its fourteen buckets off the wrong end of a newest-first
+ *   list, so the chart plotted the oldest fortnight in reverse and omitted the
+ *   current week.
+ * - The CSV export had no defence against spreadsheet formula injection, and
+ *   stripped commas out of the data instead of relying on the quoting it
+ *   already applied. The escape now lives in the shared `csvField`
+ *   (`lib/csvSafe.ts`), alongside the one the lead export uses.
  */
-import { csvSafe } from '../../lib/csvSafe';
+import { csvField } from '../../lib/csvSafe';
 import { downloadCsv } from '../../lib/downloadCsv';
 
 import { type DateRange, type FeedbackFilter, type FeedbackItem } from './types';
@@ -64,29 +70,61 @@ export interface FeedbackTrendPoint {
   total: number;
 }
 
+/** Days plotted on the trend chart, at most — a fortnight reads well at its width. */
+const TREND_DAYS = 14;
+
 /**
- * Daily positive-rate trend, bucketed by calendar day and capped to the most
- * recent 14 buckets (matches the legacy `buildTrendData`). `days` scopes the
- * source set the same way the date-filter segmented control does (0 = all).
+ * Daily positive-rate trend, bucketed by calendar day, ordered oldest-first and
+ * capped to the most recent 14 buckets. `days` scopes the source set the same
+ * way the date-filter segmented control does (0 = all).
+ *
+ * Buckets are sorted by their own timestamp rather than left in the order the
+ * items arrived, which is the whole correctness argument here. The list this is
+ * called with comes straight off `/analytics/feedback`, and that endpoint sorts
+ * newest-first — so an insertion-ordered `Map` yields newest-first buckets, and
+ * taking the *last* 14 of those keeps the fourteen OLDEST days. That was the
+ * shipped behaviour: the chart plotted weeks-old history, in reverse, under a
+ * heading that says "trend", and dropped the current week entirely. Nothing
+ * about the rendered line looks wrong, so nobody would have caught it by
+ * looking. Sorting explicitly also decouples this from the endpoint's `ORDER
+ * BY`, which no one editing that route would think to check.
+ *
+ * Oldest-first is what the consumer needs: Recharts plots the array
+ * left-to-right along a categorical axis, so index order *is* the time axis.
+ *
+ * Two points can therefore share a `date` label when the window spans a year
+ * boundary — two distinct "Jul 21"s, a year apart. That is the honest rendering:
+ * they are different days, and collapsing them into one averaged point is the
+ * bug this keys around.
  */
 export function buildTrend(items: readonly FeedbackItem[], days: number): FeedbackTrendPoint[] {
   const cutoff = days ? new Date(Date.now() - days * DAY_MS) : null;
   const filtered = cutoff ? items.filter((item) => new Date(item.created_at) >= cutoff) : items;
 
-  const buckets = new Map<string, { date: string; positive: number; total: number }>();
+  const buckets = new Map<string, { date: string; at: number; positive: number; total: number }>();
   for (const item of filtered) {
-    const date = new Date(item.created_at).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    });
-    const bucket = buckets.get(date) ?? { date, positive: 0, total: 0 };
+    const ratedAt = new Date(item.created_at);
+    const at = ratedAt.getTime();
+    // Key on the absolute day, label with the short form. They cannot be the
+    // same string: the label carries no year, so keying on it merges this
+    // Jul 21 with last year's into a single averaged point — reachable from the
+    // "All" range on any workspace older than a year, and worse than it looks,
+    // because the merged bucket inherits the OLDER timestamp below and can then
+    // be dropped from the "most recent 14" entirely.
+    const key = `${ratedAt.getFullYear()}-${ratedAt.getMonth()}-${ratedAt.getDate()}`;
+    const date = ratedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const bucket = buckets.get(key) ?? { date, at, positive: 0, total: 0 };
+    // Earliest instant in the day, so the sort key is the same whichever order
+    // that day's ratings happen to arrive in.
+    bucket.at = Math.min(bucket.at, at);
     bucket.total += 1;
     if (item.feedback === 1) bucket.positive += 1;
-    buckets.set(date, bucket);
+    buckets.set(key, bucket);
   }
 
   return Array.from(buckets.values())
-    .slice(-14)
+    .sort((a, b) => a.at - b.at)
+    .slice(-TREND_DAYS)
     .map((bucket) => ({
       date: bucket.date,
       rate: bucket.total > 0 ? Math.round((bucket.positive / bucket.total) * 100) : 0,
@@ -137,28 +175,18 @@ export function normalizeQuestionKey(question: string): string {
 }
 
 /**
- * Escape one CSV field. Two independent defences, in order:
- *
- * 1. `csvSafe` stops a value from opening as a formula in the recipient's
- *    spreadsheet. Question and Answer are raw chat content — whatever a
- *    website visitor typed, verbatim — so this file is attacker-influenced by
- *    construction. Every cell goes through the same funnel, so a column added
- *    later is safe without its author having to know that.
- * 2. RFC-4180 quoting keeps commas, quotes and newlines from breaking the
- *    record apart. It does nothing for defence 1: Excel evaluates `"=1+1"`
- *    exactly as it evaluates `=1+1`.
- *
- * Note what is *not* here: the previous implementation deleted every comma
- * from the data (`.replace(/,/g, '')`) before quoting it. Quoting is what
- * makes a comma safe — stripping it silently corrupted every answer that
- * contained one, and left `user` quote-unescaped besides.
- */
-function csvField(value: string): string {
-  return `"${csvSafe(value).replace(/"/g, '""')}"`;
-}
-
-/**
  * Build the feedback CSV. Columns: `Date,User,Type,Question,Answer`.
+ *
+ * Every cell goes through the shared `csvField` funnel. Question and Answer are
+ * raw chat content — whatever a website visitor typed, verbatim — so this file
+ * is attacker-influenced by construction, and routing the whole row through one
+ * escape is what keeps a column added later safe without its author having to
+ * know that.
+ *
+ * Note what the funnel deliberately does *not* do: the previous implementation
+ * deleted every comma from the data (`.replace(/,/g, '')`) before quoting it.
+ * Quoting is what makes a comma safe — stripping it silently corrupted every
+ * answer that contained one, and left `user` quote-unescaped besides.
  *
  * Separated from the download so the file's contents can be tested without a
  * DOM — the same split `leadsCsv.ts` uses, and for the same reason: this is

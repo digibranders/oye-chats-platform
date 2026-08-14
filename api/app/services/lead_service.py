@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import UTC, datetime
 
+from app.core.visitor_privacy import format_visitor_location, redact_visitor_metadata
 from app.db.models import Bot, ChatSession, LeadInfo
 from app.services.qualification_service import calculate_composite_score, framework_dimension_keys
 from app.services.qualification_service import get_framework_config as _get_framework_config
@@ -326,7 +327,12 @@ def build_lead_response(
         "bant": bant_breakdown,
         "behavioral": behavioral_block,
         "contact": contact,
-        "location": session.location or "Unknown",
+        # Redacted here, at the serialisation boundary, rather than left to the
+        # dashboard: this payload is the leads list AND the lead drawer, so the
+        # unredacted form would otherwise reach every browser devtools network
+        # tab and every curl against the API. The frontend's ``formatLocation``
+        # is idempotent, so its own pass over this value is a no-op.
+        "location": format_visitor_location(session.location),
         "device": session.device or "Unknown",
         "chats": message_count,
         "created_at": _isoformat_or_none(session.created_at),
@@ -336,7 +342,10 @@ def build_lead_response(
     }
 
     if include_visitor_intelligence:
-        payload["visitor_metadata"] = getattr(session, "visitor_metadata", None)
+        # The plan gate decides whether the customer sees the enrichment at all;
+        # it does not entitle them to the visitor's raw IP, which rides along
+        # inside the blob as ``ip_intel.resolved_for_ip`` — our own dedup marker.
+        payload["visitor_metadata"] = redact_visitor_metadata(getattr(session, "visitor_metadata", None))
 
     if not include_intelligence:
         # Free plan: the conversation surface only. Deleting (not nulling)

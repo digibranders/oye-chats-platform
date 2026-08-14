@@ -12,7 +12,6 @@ export interface UseEntitlementsResult {
   /** Re-fetch entitlements now - call after an action that changes the plan. */
   refresh: () => Promise<void>;
   isFree: boolean;
-  isEnterprise: boolean;
   planSlug: string;
   planName: string;
   /** True when the named feature flag is enabled. String flags (`integrations`)
@@ -85,7 +84,6 @@ export function useEntitlements(): UseEntitlementsResult {
       error,
       refresh,
       isFree: entitlements.is_free || entitlements.plan_slug === 'free',
-      isEnterprise: entitlements.is_enterprise || entitlements.plan_slug === 'enterprise',
       planSlug: entitlements.plan_slug,
       planName: entitlements.plan_name,
       hasFeature,

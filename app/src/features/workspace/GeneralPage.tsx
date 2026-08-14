@@ -247,7 +247,7 @@ export function GeneralPage(): ReactElement {
           <section aria-labelledby="workspace-identity-heading" className="space-y-4">
             <SectionHeader
               title={<span id="workspace-identity-heading">Workspace</span>}
-              description="The account these agents, conversations, and billing belong to."
+              description="The account these chatbots, conversations, and billing belong to."
               actions={
                 !isEditing ? (
                   <Button variant="outline" size="sm" onClick={handleStartEdit}>
@@ -268,7 +268,7 @@ export function GeneralPage(): ReactElement {
                         {currentWorkspaceName ?? user.company_name ?? user.name ?? 'Your workspace'}
                       </p>
                       <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
-                        {agentCount} agent{agentCount === 1 ? '' : 's'} in this workspace
+                        {agentCount} chatbot{agentCount === 1 ? '' : 's'} in this workspace
                       </p>
                     </div>
                     {currentRole && (
@@ -363,7 +363,7 @@ export function GeneralPage(): ReactElement {
           <section aria-labelledby="defaults-heading" className="space-y-4">
             <SectionHeader
               title={<span id="defaults-heading">Agent defaults</span>}
-              description="Workspace-wide defaults that new agents start from. Each agent can override these."
+              description="Workspace-wide defaults that new chatbots start from. Each chatbot can override these."
             />
 
             {/* Business hours default configuration */}

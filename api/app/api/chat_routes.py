@@ -27,6 +27,7 @@ from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
+from app.core.visitor_privacy import format_visitor_location
 from app.db.models import Bot, ChatSession
 from app.db.repository import (
     create_or_update_lead_info,
@@ -492,6 +493,19 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
     ``company_name`` feature switch is on, and only after 10 credits are
     successfully reserved — otherwise it is skipped silently. The free
     geolocation below always runs regardless of plan.
+
+    PRIVACY — THIS MUST STAY OFF THE REQUEST PATH, and not only for latency.
+    Every vendor call in here (and in ``ip_intel_service.fetch_ip_intel``) puts
+    the visitor's address in the URL — ``https://ipwho.is/<addr>``,
+    ``https://ipapi.co/<addr>/json/``, ``?q=<addr>&key=<vendor key>``. Sentry's
+    StdlibIntegration patches ``http.client`` and records outbound URLs with
+    ``parse_url(real_url, sanitize=False)``: full path, full query, no
+    redaction, as the span name and as ``span.data["url"]``. A span is only
+    emitted into a live transaction, and ``submit_background`` forks a fresh
+    scope per task (``core.thread_pool``) precisely so one can never be
+    inherited here — which is what keeps the address and the vendor key out of
+    Sentry today. Call any of this inline from a route and both ship on a
+    tenth of all traffic, because ``traces_sample_rate=0.1``.
     """
     try:
         # Validate IP format to prevent SSRF via crafted X-Forwarded-For values.
@@ -601,6 +615,15 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
 
         location = None
 
+        # PRIVACY — the vendor-failure logs below key on ``session_id``, never on
+        # ``ip_address``. Sentry's LoggingIntegration turns every WARNING record
+        # into a breadcrumb, so an address interpolated here rode out attached to
+        # the next error this process reported. ``session_id`` is the join key to
+        # everything else anyway — including the stored address, for an operator
+        # with DB access — so the line lost nothing worth having. The two
+        # requests themselves carry the address in their URL; see the PRIVACY
+        # paragraph in this function's docstring.
+
         # Primary: ipwho.is (10k/month free, HTTPS, no key, no per-second cap).
         try:
             req = urllib.request.Request(
@@ -617,9 +640,9 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                     elif country:
                         location = f"{country} | {ip_address}"
                 else:
-                    logger.warning(f"ipwho.is returned failure for {ip_address}: {data.get('message')}")
+                    logger.warning(f"ipwho.is returned failure | session={session_id} | {data.get('message')}")
         except Exception as e1:
-            logger.warning(f"ipwho.is failed for {ip_address}: {e1}")
+            logger.warning(f"ipwho.is failed | session={session_id} | {e1}")
 
         # Fallback: ipapi.co (~30k/month free, HTTPS, no key).
         if not location:
@@ -638,9 +661,9 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                         elif country:
                             location = f"{country} | {ip_address}"
                     else:
-                        logger.warning(f"ipapi.co returned error for {ip_address}: {data2.get('reason')}")
+                        logger.warning(f"ipapi.co returned error | session={session_id} | {data2.get('reason')}")
             except Exception as e2:
-                logger.warning(f"ipapi.co also failed for {ip_address}: {e2}")
+                logger.warning(f"ipapi.co also failed | session={session_id} | {e2}")
 
         if not location:
             return
@@ -669,18 +692,31 @@ def _resolve_and_update_location(session_id: str, ip_address: str, bot_id: int |
                     if _is_resolver_owned_location(current):
                         chat_session.location = location
                         session.commit()
-                        logger.info(f"Background geolocation resolved | session={session_id} | location={location}")
+                        # PRIVACY — the stored value is "<City>, <Country> | <IP>";
+                        # the log gets the geography only. This is the one site in
+                        # this function where redaction beats dropping the field:
+                        # ``format_visitor_location`` leaves a real city behind
+                        # rather than the constant it would return for the
+                        # pre-resolution "IP: <addr>" stamp, so the line still says
+                        # what the vendor resolved. See ``core.visitor_privacy``.
+                        logger.info(
+                            f"Background geolocation resolved | session={session_id} | "
+                            f"location={format_visitor_location(location)}"
+                        )
                     else:
                         logger.info(
                             f"Background geolocation: leaving a non-resolver location alone | "
-                            f"session={session_id} | current={current!r}"
+                            f"session={session_id} | current={format_visitor_location(current)!r}"
                         )
                     return
             time.sleep(0.5)
 
         logger.warning(f"Background geolocation: session row never appeared | session={session_id}")
     except Exception as e:
-        logger.warning(f"Background geolocation failed for session {session_id}: {e}")
+        # PRIVACY — ``e`` only. The vendor URLs above carry the visitor's address
+        # in their path, and urllib's exceptions do not repeat the URL in
+        # ``str()``; nothing else in this function may put one in a log record.
+        logger.warning(f"Background geolocation failed | session={session_id} | {e}")
 
 
 def _enrich_lead_in_background(session_id: str, email: str | None, bot_id: int | None = None):

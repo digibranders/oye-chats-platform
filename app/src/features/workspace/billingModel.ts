@@ -84,14 +84,28 @@ export interface PlanView {
    * when provisioning a per-contract plan (`enterprise-acme` and friends).
    *
    * Deliberately NOT keyed off `slug === 'enterprise'`. The seeded `enterprise`
-   * tier is a real, priced rung of the public ladder (₹4,799/mo · 13,000 pooled
-   * credits · unlimited agents), sold through the same Razorpay checkout as
-   * every other plan - the backend says as much in
+   * tier is a real, priced rung of the public ladder - ₹5,999/mo (or ₹57,588/yr,
+   * which is ₹4,799 per month; quoting that figure as the monthly price is the
+   * usual mix-up) for 10,000 pooled credits and unlimited agents - sold through
+   * the same Razorpay checkout as every other plan. Figures are the seeded ones
+   * in `api/scripts/seed_plans.py`; the backend says as much in
    * `plan_entitlements_service.py::_SEEDED_PLAN_SLUGS`. Matching on the slug
    * priced it as "Custom" and dead-ended its checkout at a mailto.
    */
   isContactSales: boolean;
-  /** Headline annual discount (e.g. 20 → "–20%"). 0 when the plan has no annual saving. */
+  /**
+   * The backend's stored headline annual discount (`annual_discount_percent`),
+   * a single hand-maintained integer per plan.
+   *
+   * NOT the source for any rendered saving badge - use
+   * {@link maxAnnualSavingPercent}, which derives the figure from the very
+   * prices the surface is displaying. The stored integer is a separate value
+   * that can (and does) disagree with the prices: the seeded Professional tier
+   * stores 22 while ₹28,188 against 12 × ₹2,999 is a 21.67% saving, so the
+   * badge read 22% for a discount no plan actually gives. It is also a
+   * single number for a row that carries BOTH an INR and a USD price pair,
+   * which cannot both round to it.
+   */
   annualDiscountPercent: number;
   /** Free-trial length in days; 0 for plans with no trial (Free). */
   trialDays: number;
@@ -182,13 +196,39 @@ export interface BillingDetailsView {
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
-/** Coerce a raw `limits` object to a flat number map (`-1` = unlimited passes through). */
+/**
+ * Coerce a raw `limits` object to a flat number map (`-1` = unlimited passes through).
+ *
+ * Numeric STRINGS count. `Plan.limits` is JSONB with no schema behind it, and a
+ * super-admin editing the Plans page (or seeding a bespoke tier by hand) can
+ * store `{"bots": "-1"}` just as easily as `{"bots": -1}`. The backend reads
+ * that quota through `int(...)`, which accepts both — so dropping the string
+ * here made the client and the server disagree about the same plan row: the
+ * picker kept offering an unlimited-agents tier that `POST /bots/checkout`
+ * then refused, and the customer's only feedback was a dead-end error after
+ * they had chosen it. Matching `toNumber`'s existing string handling is what
+ * keeps the two ends reading one value the same way.
+ *
+ * Anything that is not a finite number after coercion is still DROPPED rather
+ * than defaulted to 0: an absent key reads as "this plan declares no such
+ * quota", which every consumer already treats conservatively, whereas a 0
+ * would read as a real quota of zero.
+ */
 function toNumberMap(raw: unknown): Record<string, number> {
   const record = asRecord(raw);
   if (!record) return {};
   const out: Record<string, number> = {};
   for (const [key, value] of Object.entries(record)) {
-    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value;
+      continue;
+    }
+    // `Number('')` and `Number('   ')` are 0, so an empty string would land as
+    // a hard quota of zero without this guard.
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) out[key] = parsed;
+    }
   }
   return out;
 }
@@ -430,10 +470,70 @@ export function formatSeatAllowance(includedSeats: number): string {
  * Mirrors `plan_entitlements_service.plan_grants_unlimited_bots`.
  *
  * Conservative on bad data, exactly like the server: a plan row with no `bots`
- * quota is NOT unlimited and stays selectable.
+ * quota — or one that cannot be read as a number at all — is NOT unlimited and
+ * stays selectable. A quota stored as the STRING `"-1"` does count, because
+ * `int("-1")` is what the server reads it as; `toNumberMap` normalises it.
  */
 export function planGrantsUnlimitedAgents(plan: PlanView): boolean {
   return plan.limits.bots === UNLIMITED_LIMIT;
+}
+
+/**
+ * One plan's annual saving as a whole percent, derived from the two amounts the
+ * plan surfaces actually render: `annualPriceMinor` against twelve months of
+ * `monthlyPriceMinor`.
+ *
+ * Deliberately NOT read from the stored `annualDiscountPercent`. That column is
+ * one integer for a plan row that carries both an INR and a USD price pair, so
+ * it can only ever match one rail; deriving from the displayed minor units
+ * instead keeps the badge true in whichever currency the surface is showing,
+ * including after the `TODO(multi-currency)` price source switches.
+ *
+ * Rounds DOWN. This number sits on a checkout surface next to a "Subscribe"
+ * button, so the failure modes are not symmetric: understating a saving costs
+ * nothing, while overstating one tells a customer they will be charged less
+ * than they will be. 21.67% must read as 21%, never 22%.
+ *
+ * Returns 0 for any plan with no real annual saving to quote - free and
+ * contact-sales tiers (no monthly price), plans with no annual price, and the
+ * defensive case of an annual price at or above twelve monthly ones, which
+ * would otherwise produce a negative "saving".
+ */
+export function annualSavingPercent(plan: PlanView): number {
+  const twelveMonths = plan.monthlyPriceMinor * 12;
+  const annual = plan.annualPriceMinor;
+  if (twelveMonths <= 0 || annual <= 0 || annual >= twelveMonths) return 0;
+  // Multiply before dividing: both operands stay exact integers, so a saving
+  // that is exactly N% divides to exactly N and cannot floor down to N-1.
+  return Math.floor(((twelveMonths - annual) * 100) / twelveMonths);
+}
+
+/**
+ * The BEST annual saving across a plan set, as a whole percent - the number
+ * behind the cycle toggle's "save up to X%".
+ *
+ * "Up to" is load-bearing in the label: this is a maximum across plans, not a
+ * discount every plan grants, and the toggle is rendered next to tiers that
+ * save less than the winner. Any caller phrasing this as a flat "save X%"
+ * promises the best plan's deal on whichever plan the customer is reading.
+ *
+ * Contact-sales tiers are EXCLUDED. `GET /subscriptions/plans` returns every
+ * active plan, including bespoke tiers a super-admin provisioned for one
+ * account, and those carry real `monthly_price_cents` / `annual_price_cents`
+ * even though every plan surface prices them as "Custom". Reducing over them
+ * let a bespoke tier's 35% internal annual saving set the public toggle to
+ * "Annual · save up to 35%" beside a card quoting no price at all. "Up to"
+ * keeps that literally true, but the rate is unattainable on anything the
+ * reader can actually buy, which is the one thing the badge is claiming.
+ *
+ * Returns 0 when no plan has an annual saving - callers should drop the badge
+ * entirely rather than render "save up to 0%".
+ */
+export function maxAnnualSavingPercent(plans: readonly PlanView[]): number {
+  return plans.reduce(
+    (best, plan) => (plan.isContactSales ? best : Math.max(best, annualSavingPercent(plan))),
+    0,
+  );
 }
 
 export function formatDate(iso: string | null | undefined): string {

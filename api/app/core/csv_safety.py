@@ -3,13 +3,17 @@
 Lives in ``app.core`` rather than next to any one route because the defence had
 already been written three times independently (per-bot analytics, the GSTR
 return in ``superadmin_routes_v2``, and the lead export) — a copy-per-route
-defence is one forgotten route away from being a copy-per-route hole. The GSTR
-export still carries its own inline copy and is tracked separately for
-migration. No FastAPI or ORM imports here, so the worker can use it too.
+defence is one forgotten route away from being a copy-per-route hole. All four
+exports now call in here. No FastAPI or ORM imports here, so the worker can use
+it too.
 
 Prefer :func:`csv_safe_row` over calling :func:`csv_safe` per cell: routing a
 whole row through one funnel is what keeps a column added later safe without
-its author having to know this module exists.
+its author having to know this module exists. The GSTR export is the one place
+that must not — its money columns are pre-formatted strings, and a negative
+figure (``-5.00``) starts with a formula trigger, so the funnel would quote a
+tax amount. Where a row mixes untrusted text with formatted numerics, escape
+the text cells explicitly and say why.
 """
 
 from collections.abc import Iterable
@@ -65,9 +69,20 @@ def csv_safe_row(values: Iterable[object]) -> list[object]:
     test says a word. Escaping the row as a unit makes the safe thing the
     default and the unsafe thing impossible to reach by omission.
 
-    Non-strings are returned untouched rather than stringified: the integers an
+    Numbers are returned untouched rather than stringified: the integers an
     export computes (counters, scores, message totals) must stay integers so the
     recipient's spreadsheet keeps them numeric and sortable. That is also why
     this cannot simply be ``[csv_safe(v) for v in values]``.
+
+    ``None`` is the exception to that passthrough, and goes through
+    :func:`csv_safe` to become ``""`` — the same answer that function gives it
+    alone. The two used to disagree (``csv_safe(None) == ""`` but
+    ``csv_safe_row([None]) == [None]``) and were output-identical only because
+    ``csv.writer`` happens to render ``None`` as an empty field. That is a
+    property of today's consumer, not of this function: the first caller to
+    build a row for anything else — an xlsx sheet, a JSON preview, a `join` —
+    would get a literal ``"None"`` in a cell, from a helper whose whole purpose
+    is that callers do not have to think about cells. Unlike an integer, a
+    ``None`` has no numeric meaning worth preserving in a spreadsheet.
     """
-    return [csv_safe(value) if isinstance(value, str) else value for value in values]
+    return [csv_safe(value) if isinstance(value, str) or value is None else value for value in values]

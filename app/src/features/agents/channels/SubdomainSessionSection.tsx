@@ -249,7 +249,7 @@ export function SubdomainSessionSection({
           <code className="rounded bg-[var(--ds-bg-surface)] px-1 py-0.5 font-mono text-[11px]">
             academy.{normalizedDomain || websiteDomain || 'example.com'}
           </code>
-          , add the same embed snippet (with this agent’s key) to that subdomain too. It is the copyable code
+          , add the same embed snippet (with this chatbot’s key) to that subdomain too. It is the copyable code
           up in the install steps above.
         </p>
       </div>

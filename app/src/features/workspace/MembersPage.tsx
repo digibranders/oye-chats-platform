@@ -443,7 +443,7 @@ export function MembersPage(): ReactElement {
     setSelfBusy(true);
     try {
       await addSelfAsOperator(selectedBotId);
-      notify({ tone: 'success', message: 'You’re now taking live chats on this agent.' });
+      notify({ tone: 'success', message: 'You’re now taking live chats on this chatbot.' });
       reload();
     } catch (error) {
       notify({ tone: 'error', message: toMessage(error, 'Failed to add you to the roster.') });
@@ -635,7 +635,7 @@ export function MembersPage(): ReactElement {
       {/* Seats used on the selected agent against the plan's per-bot operator limit. */}
       {phase.status === 'ready' && selectedBotId && (
         <div className="max-w-xs">
-          <QuotaMeter label="Seats on this agent" used={seatsUsed} limit={seatLimit} />
+          <QuotaMeter label="Seats on this chatbot" used={seatsUsed} limit={seatLimit} />
         </div>
       )}
 
@@ -688,7 +688,7 @@ export function MembersPage(): ReactElement {
                     </p>
                     <p className="mt-0.5 text-[13px] text-[var(--ds-text-muted)]">
                       Join the roster to take waiting conversations on{' '}
-                      {selectedBot?.name ?? 'this agent'} directly.
+                      {selectedBot?.name ?? 'this chatbot'} directly.
                     </p>
                   </div>
                   <Button variant="outline" onClick={handleSelfJoin} disabled={selfBusy}>
@@ -929,8 +929,8 @@ export function MembersPage(): ReactElement {
               {!selectedBotId ? (
                 <EmptyState
                   icon={UserRound}
-                  title="Pick an agent to see its team"
-                  description="Members are attached to a specific agent. Choose one from the switcher to view and manage its roster."
+                  title="Pick a chatbot to see its team"
+                  description="Members are attached to a specific chatbot. Choose one from the switcher to view and manage its roster."
                 />
               ) : (
                 <DataTable
@@ -942,7 +942,7 @@ export function MembersPage(): ReactElement {
                     <EmptyState
                       className="border-0 py-6"
                       icon={UserRound}
-                      title={`No operators on ${selectedBot?.name ?? 'this agent'} yet`}
+                      title={`No operators on ${selectedBot?.name ?? 'this chatbot'} yet`}
                       description="Invite an operator to help answer conversations."
                       action={
                         canInvite ? (

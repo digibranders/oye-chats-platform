@@ -84,7 +84,7 @@ export function MessagesSection({ draft, onChange }: MessagesSectionProps): Reac
         />
         <Field
           label="Display name"
-          hint="Shown in the widget header - also your agent's name across the dashboard."
+          hint="Shown in the widget header - also your chatbot's name across the dashboard."
           value={draft.displayName}
           maxLength={FIELD_LIMITS.displayName}
           placeholder="e.g. Acme Assistant"

@@ -22,6 +22,7 @@ from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
 from app.config import APP_URL, IMPERSONATION_ENABLED
+from app.core.csv_safety import csv_safe
 from app.db.models import (
     AuditLog,
     Bot,
@@ -1969,14 +1970,13 @@ def gstr_export_csv(
             return ""
         return f"{minor / 100:.2f}"
 
-    def _safe(value: str | None) -> str:
-        # Neutralise CSV formula injection — buyer_name is customer-controlled
-        # and the guaranteed consumer opens this in Excel, which executes a
-        # leading =, +, -, @ (or control char) even inside a quoted cell.
-        text = str(value or "")
-        if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
-            return "'" + text
-        return text
+    # ``csv_safe`` is applied cell by cell, deliberately NOT through
+    # ``csv_safe_row``. The row funnel would also reach the money columns, and
+    # every one of them is a string produced by ``_r`` — a negative figure
+    # renders as ``-5.00``, whose leading ``-`` is a formula trigger, so the
+    # funnel would quote a tax amount and hand the CA a text cell where the
+    # return needs a number. Only the six identity columns below carry
+    # customer-controlled text; the rest are server-formatted.
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -2012,12 +2012,12 @@ def gstr_export_csv(
         writer.writerow(
             [
                 row["section"],
-                _safe(row["invoice_number"]),
+                csv_safe(row["invoice_number"]),
                 row["invoice_date"] or "",
-                _safe(row["buyer_name"]),
-                _safe(row["buyer_gstin"]),
-                _safe(row["place_of_supply"]),
-                _safe(row["hsn_sac"]),
+                csv_safe(row["buyer_name"]),
+                csv_safe(row["buyer_gstin"]),
+                csv_safe(row["place_of_supply"]),
+                csv_safe(row["hsn_sac"]),
                 f"{(row['rate_bps'] or 0) / 100:.2f}",
                 _r(row["gross_minor"]),
                 _r(row["taxable_minor"]),
@@ -2030,7 +2030,7 @@ def gstr_export_csv(
                 _r(row["doc_taxable_minor"]),
                 _r(row["doc_total_tax_minor"]),
                 f"{row['fx_rate_micros'] / 1_000_000:.4f}" if row["fx_rate_micros"] else "",
-                _safe(row["against_invoice"]),
+                csv_safe(row["against_invoice"]),
                 row["against_invoice_date"] or "",
             ]
         )

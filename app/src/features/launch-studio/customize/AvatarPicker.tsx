@@ -35,7 +35,7 @@ export function AvatarPreview({
     return (
       <img
         src={botLogo}
-        alt="Agent avatar"
+        alt="Chatbot avatar"
         className="rounded-full border border-[var(--ds-border)] object-cover"
         style={dimension}
       />

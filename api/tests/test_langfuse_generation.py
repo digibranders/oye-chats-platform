@@ -79,33 +79,33 @@ def test_generation_records_when_enabled(monkeypatch):
 
 class TestRedactPii:
     def test_redacts_email(self):
-        assert lc._redact_pii("contact me at jane.doe@example.com please") == "contact me at [REDACTED_EMAIL] please"
+        assert lc.redact_pii("contact me at jane.doe@example.com please") == "contact me at [REDACTED_EMAIL] please"
 
     def test_redacts_international_phone_with_plus(self):
-        assert lc._redact_pii("call +1 415-555-0100 now") == "call [REDACTED_PHONE] now"
+        assert lc.redact_pii("call +1 415-555-0100 now") == "call [REDACTED_PHONE] now"
 
     def test_redacts_phone_with_parens(self):
-        assert lc._redact_pii("call (415) 555-0100 now") == "call [REDACTED_PHONE] now"
+        assert lc.redact_pii("call (415) 555-0100 now") == "call [REDACTED_PHONE] now"
 
     def test_does_not_redact_iso_dates(self):
         """The whole point of requiring +/parens: a bare digit-dash phone
         pattern would otherwise collide with ISO dates like the AR-27
         DATE ANALYSIS block's "2026-07-08", corrupting dates in every trace."""
         text = "TODAY'S DATE: 2026-07-08. Event on 2025-03-15 already passed."
-        assert lc._redact_pii(text) == text
+        assert lc.redact_pii(text) == text
 
     def test_does_not_redact_prices_or_short_numbers(self):
-        assert lc._redact_pii("Our plan costs $49 per month, 5 seats included") == (
+        assert lc.redact_pii("Our plan costs $49 per month, 5 seats included") == (
             "Our plan costs $49 per month, 5 seats included"
         )
 
     def test_handles_none_and_empty_string(self):
-        assert lc._redact_pii(None) is None
-        assert lc._redact_pii("") == ""
+        assert lc.redact_pii(None) is None
+        assert lc.redact_pii("") == ""
 
     def test_never_raises_on_redaction_error(self, monkeypatch):
         monkeypatch.setattr(lc, "_EMAIL_RE", None)  # .sub() on None blows up
-        assert lc._redact_pii("still returns original text") == "still returns original text"
+        assert lc.redact_pii("still returns original text") == "still returns original text"
 
 
 def test_generation_prompt_is_redacted_before_being_sent_as_input(monkeypatch):

@@ -102,7 +102,7 @@ export function LeadEnrichmentSection({
             Lead enrichment
           </span>
         }
-        description="Extra detail added to the leads your agent captures. Both are off by default. Email verification spends credits on every captured address; company lookup spends them only when it identifies a company."
+        description="Extra detail added to the leads your chatbot captures. Both are off by default. Email verification spends credits on every captured address; company lookup spends them only when it identifies a company."
       />
 
       <Card className="divide-y divide-[var(--ds-border)] p-0">

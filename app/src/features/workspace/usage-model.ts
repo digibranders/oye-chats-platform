@@ -310,7 +310,7 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     botCredits.push(
       poolCredit(botPool, {
         botId: toNumber(botRecord.bot_id) || null,
-        name: toStringOrNull(botRecord.bot_name) ?? 'Agent',
+        name: toStringOrNull(botRecord.bot_name) ?? 'Chatbot',
         botKey: toStringOrNull(botRecord.bot_key),
         planName: toStringOrNull(botRecord.plan_name),
         planLimits: parsePlanLimits(botRecord.limits),
@@ -328,7 +328,7 @@ export function parseCreditBalance(raw: unknown): CreditBalance {
     botCredits.length > 0 && accountPoolBotCount > 0
       ? poolCredit(accountPoolRaw, {
           botId: null,
-          name: 'Free & legacy agents',
+          name: 'Free & legacy chatbots',
           botKey: null,
           planName: null,
         })

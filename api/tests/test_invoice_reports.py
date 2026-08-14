@@ -448,3 +448,48 @@ def test_csv_export_neutralizes_formula_injection(db, enabled, monkeypatch):
     assert ",=HYPERLINK" not in body
     assert '"=HYPERLINK' not in body
     assert body.startswith("﻿")  # UTF-8 BOM for Excel
+
+
+def test_csv_export_leaves_absent_identity_columns_and_money_alone(db, enabled, monkeypatch):
+    """The escape must blank an absent name/GSTIN and never touch a figure.
+
+    This is the boundary the shared ``csv_safe`` had to preserve when it
+    replaced this route's inline copy: the old helper collapsed its argument
+    with ``str(value or "")``, so anything falsy became ``""``. Every column it
+    guards is ``str | None`` (``Client.legal_name`` / ``name`` / ``gstin`` and
+    two ``String`` columns on the invoice), which is why the swap is safe — but
+    a ``None`` reaching the file as the literal ``None``, or a rupee figure
+    picking up a leading apostrophe, would put a wrong number on a tax return.
+    """
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as HttpClient
+
+    from app.api import superadmin_routes_v2
+    from app.api.auth import get_superadmin
+
+    @contextmanager
+    def _ctx(session):
+        yield session
+
+    _seller(db)
+    # No legal_name and no GSTIN: buyer_name falls back to Client.name and
+    # buyer_gstin resolves to None. hsn_sac is likewise absent on this row.
+    inv = _finalized(db, "rep-blank@test.example", gstin=None, state="27")
+
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: SimpleNamespace(
+        id=None, name="A", is_superadmin=True, superadmin_role="owner"
+    )
+    body = HttpClient(app).get(f"/superadmin/billing/gstr-export?month={THIS_MONTH}").text
+
+    assert inv.invoice_number in body
+    # Absence is an empty cell, never the string "None" (and never "'None").
+    assert "None" not in body
+    # Money columns stay bare numerics the CA can total.
+    assert "1524.58" in body and "274.42" in body
+    assert "'1524.58" not in body and "'274.42" not in body

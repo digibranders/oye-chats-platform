@@ -63,7 +63,7 @@ export function VerifyStep(props: StepProps) {
   return (
     <StepShell
       title="Confirm it's live"
-      description="We'll check that your agent is installed and answering on your site."
+      description="We'll check that your chatbot is installed and answering on your site."
       onBack={props.onBack}
       onContinue={props.onContinue}
       isFirst={props.isFirst}
@@ -78,7 +78,7 @@ export function VerifyStep(props: StepProps) {
               <CheckCircle2 size={24} />
             </div>
             <div>
-              <p className="text-[15px] font-semibold text-[var(--ds-text)]">Your agent is live!</p>
+              <p className="text-[15px] font-semibold text-[var(--ds-text)]">Your chatbot is live!</p>
               <p className="mt-1 text-[13px] text-[var(--ds-text-muted)]">
                 It's installed and ready to answer visitors.
               </p>

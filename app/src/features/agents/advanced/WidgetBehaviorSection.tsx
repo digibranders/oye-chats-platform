@@ -27,7 +27,7 @@ export function WidgetBehaviorSection({
             Widget behaviour
           </span>
         }
-        description="Turn individual widget features on or off for this agent."
+        description="Turn individual widget features on or off for this chatbot."
       />
 
       <Card className="divide-y divide-[var(--ds-border)]">

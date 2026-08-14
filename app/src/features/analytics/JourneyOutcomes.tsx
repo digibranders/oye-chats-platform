@@ -146,8 +146,8 @@ export function JourneyOutcomes({ botId }: JourneyOutcomesProps): ReactElement {
       <PanelShell>
         <EmptyState
           icon={Compass}
-          title="Pick an agent to see outcomes"
-          description="Journey outcomes are always per-agent. Use the agent switcher above to focus this view."
+          title="Pick a chatbot to see outcomes"
+          description="Journey outcomes are always per-chatbot. Use the chatbot switcher above to focus this view."
         />
       </PanelShell>
     );

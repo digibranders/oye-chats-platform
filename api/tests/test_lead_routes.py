@@ -558,7 +558,12 @@ _INJECTED_NEED = "=1+1"
 _INJECTED_BUDGET = "+1+1"
 _INJECTED_AUTHORITY = "-1+1"
 _INJECTED_TIMELINE = "@1+1"
-_INJECTED_LOCATION = "=cmd|' /C calc'!A0"
+# Pipe-free, unlike its siblings: the Location column is redacted by
+# ``visitor_privacy.redact_visitor_ip`` before it is escaped, and that redaction
+# cuts at the first "|" — a payload containing one would arrive here truncated
+# and this sweep would be asserting against the redactor instead of the escape.
+# The redaction is covered on its own in ``TestExportVisitorIpRedaction`` below.
+_INJECTED_LOCATION = "=cmd$' /C calc'!A0"
 _INJECTED_DEVICE = "\t=1+1"
 
 
@@ -782,6 +787,99 @@ class TestExportCsvInjection:
         # apart nor start with a formula trigger.
         assert '"\'\r=1+1"' in response.text
         assert "\n\r=1+1" not in response.text
+
+
+# ── GET /leads/export — visitor IP redaction ─────────────────────────────────
+#
+# ``ChatSession.location`` is stored as "<City>, <Country> | <IP>". This route
+# used to write that column verbatim, so the one export that emits EVERY lead in
+# a workspace also emitted every visitor's IP address — into a file that gets
+# mailed around and imported into a CRM. A visitor IP is personal data under
+# GDPR and under India's DPDP Act, where this product's basis is consent-only.
+#
+# The dashboard beside it had been stripping the IP the whole time, which is the
+# shape of the bug: two copies of one rule, only one of them correct. Both now
+# call ``core.visitor_privacy``; these tests pin the file, and
+# ``tests/core/test_visitor_privacy.py`` pins the rule.
+
+_EXPORT_IPV4 = "103.21.244.12"
+_EXPORT_IPV6 = "2401:4900:88b1:7265:cdd1:3f28:b37:8f91"
+
+
+class TestExportVisitorIpRedaction:
+    @pytest.mark.parametrize(
+        ("stored", "address", "expected_cell"),
+        [
+            (f"Mumbai, India | {_EXPORT_IPV4}", _EXPORT_IPV4, "Mumbai, India"),
+            (f"Mumbai, India | {_EXPORT_IPV6}", _EXPORT_IPV6, "Mumbai, India"),
+            # No city from the vendor — the country still has to survive.
+            (f"India | {_EXPORT_IPV4}", _EXPORT_IPV4, "India"),
+        ],
+    )
+    def test_a_resolved_location_exports_its_geography_without_the_address(
+        self, monkeypatch, stored, address, expected_cell
+    ):
+        """The headline: the customer keeps the city, the visitor keeps their IP."""
+        chat_session = _make_session_row("s1", location=stored, device="iPhone")
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Location")] == expected_cell
+        # Not just absent from its own column — absent from the whole file, so a
+        # future column that reaches for the raw value fails here too.
+        assert address not in response.text
+
+    def test_the_pre_resolution_stamp_exports_as_an_empty_cell(self, monkeypatch):
+        """``"IP: 1.2.3.4"`` is all address and no geography.
+
+        Every session wears this shape until the background geo lookup lands,
+        and keeps it forever if both vendors fail — so this is not a rare path.
+        There is nothing to report, and a file reports nothing with a blank.
+        """
+        chat_session = _make_session_row("s1", location=f"IP: {_EXPORT_IPV4}", device="iPhone")
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Location")] == ""
+        assert _EXPORT_IPV4 not in response.text
+
+    def test_a_location_with_no_ip_component_still_round_trips(self, monkeypatch):
+        """Redaction must not cost a customer a real place name.
+
+        ``_is_resolver_owned_location`` leaves manually-set values alone, so a
+        bare place name can live in this column permanently.
+        """
+        chat_session = _make_session_row("s1", location="Mumbai, India", device="iPhone")
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Location")] == "Mumbai, India"
+
+    @pytest.mark.parametrize("stored", [None, "", "   "])
+    def test_an_absent_location_stays_an_empty_cell(self, monkeypatch, stored):
+        """Guards d72fee4, which chose the empty cell over the word "Unknown".
+
+        Both downloads had to agree on how they spell a missing value: a CRM
+        importing the literal "Unknown" creates a country by that name. Routing
+        this column through a formatter whose display answer IS "Unknown" is
+        exactly how that regression would come back, so it is pinned here —
+        including for the whitespace-only value the old ``or ""`` would have
+        passed through as a stray blank.
+        """
+        chat_session = _make_session_row("s1", location=stored, device="iPhone")
+
+        response = _call_export(monkeypatch, chat_session, _export_lead_info(), attribution=False)
+        assert response.status_code == 200, response.text
+
+        header, row = _export_rows(response)
+        assert row[header.index("Location")] == ""
+        assert "Unknown" not in response.text
 
 
 # ── GET /leads/export — non-BANT qualification frameworks ────────────────────

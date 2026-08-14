@@ -71,7 +71,7 @@ describe('the report table', () => {
       within(table)
         .getAllByRole('columnheader')
         .map((cell) => cell.textContent?.trim()),
-    ).toEqual(['Agent', 'Conversations', 'Leads', 'Credits used']);
+    ).toEqual(['Chatbot', 'Conversations', 'Leads', 'Credits used']);
 
     // Each agent name is the row's HEADER, not just another cell - that is
     // what makes a screen reader announce "Acme Support, Leads, 21".
@@ -101,7 +101,7 @@ describe('the report table', () => {
     const foot = table.querySelector('tfoot');
     expect(foot).not.toBeNull();
     const totals = within(foot as HTMLElement).getByRole('row');
-    expect(totals.textContent).toContain('All agents');
+    expect(totals.textContent).toContain('All chatbots');
     // Server-supplied totals, rendered verbatim - never re-summed client-side,
     // or the page and the CSV could quote different numbers.
     expect(totals.textContent).toContain('155');
@@ -111,7 +111,7 @@ describe('the report table', () => {
     // The totals must not also appear as a body row (an agent genuinely named
     // "All agents" is the only thing that should ever match in <tbody>).
     const body = table.querySelector('tbody') as HTMLElement;
-    expect(within(body).queryByRole('rowheader', { name: 'All agents' })).toBeNull();
+    expect(within(body).queryByRole('rowheader', { name: 'All chatbots' })).toBeNull();
   });
 });
 

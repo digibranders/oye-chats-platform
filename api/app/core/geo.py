@@ -19,9 +19,13 @@ Header precedence (first non-empty wins):
 
 If none are present (local dev, direct origin hit), we return ``None`` and
 let the caller decide on a default. We deliberately do NOT default to ``IN``
-or ``US`` here — the billing path treats *unknown* as *non-Indian* (USD
-display) by design; surfacing the ambiguity at the call site keeps that
-explicit.
+or ``US`` here: the callers disagree, and each is right for its own reason.
+The billing path treats *unknown* as *domestic* — ``/subscriptions/geo``,
+the checkout quote and the charge gate all route an unresolved buyer through
+``charge_currency``, which answers INR, because nothing 409s an unconfirmed
+country and displaying USD against a rupee debit was a live money bug.
+Surfacing the ambiguity at the call site is what lets a non-billing caller
+choose differently.
 """
 
 from __future__ import annotations

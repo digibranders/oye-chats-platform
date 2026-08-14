@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { type Lead } from '../../types/domain';
 
 import { buildSelectedLeadsCsv } from './leadsCsv';
-import { EMPTY_PLACEHOLDER, formatDateTime } from './leadModel';
+import { EMPTY_PLACEHOLDER, UNKNOWN_LOCATION, formatDateTime, formatLocation } from './leadModel';
 
 const noTags = () => [] as readonly string[];
 
@@ -163,6 +163,31 @@ describe('buildSelectedLeadsCsv — CSV injection', () => {
 
     const csv = buildSelectedLeadsCsv([lead({})], noTags);
     expect(csv.split('\r\n')[1]).not.toContain(EMPTY_PLACEHOLDER);
+  });
+
+  it('exports an unresolved Location as an empty cell, matching the server export', () => {
+    /* `GET /leads/export` writes `chat_session.location or ""` — an empty
+       cell. This path went through `formatLocation`, whose "Unknown" is a word
+       chosen for a table. A customer merging the two downloads got one blank
+       Location and one country literally named Unknown, and a CRM import
+       created it. */
+    expect(formatLocation(null)).toBe(UNKNOWN_LOCATION);
+
+    const csv = buildSelectedLeadsCsv([lead({})], noTags);
+
+    expect(csv.split('\r\n')[1]).not.toContain(UNKNOWN_LOCATION);
+    // Location sits between Score and Tags; both neighbours stay intact.
+    expect(cells(csv, 1).slice(6, 9)).toEqual(['"10"', '""', '""']);
+  });
+
+  it('keeps a resolved location and still drops the IP the raw value carries', () => {
+    /* Only the placeholder is blanked — a real place must survive, and the
+       visitor IP the backend stores after the `|` must not. */
+    const csv = buildSelectedLeadsCsv([{ ...lead({}), location: 'Pune | 49.36.1.2' } as Lead], noTags);
+    const row = csv.split('\r\n')[1];
+
+    expect(cells(csv, 1)[7]).toBe('"Pune"');
+    expect(row).not.toContain('49.36.1.2');
   });
 
   it("escapes an E.164 phone number, and that's intended", () => {

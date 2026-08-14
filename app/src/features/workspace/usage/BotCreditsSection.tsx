@@ -115,10 +115,10 @@ export function BotCreditsSection({ pools, onTopup }: BotCreditsSectionProps): R
   if (pools.length === 0) return null;
 
   return (
-    <section aria-label="Credits by agent" className="space-y-4">
+    <section aria-label="Credits by chatbot" className="space-y-4">
       <SectionHeader
-        title="Credits by agent"
-        description="Each agent on its own plan keeps an isolated balance. Top up just the one that needs it."
+        title="Credits by chatbot"
+        description="Each chatbot on its own plan keeps an isolated balance. Top up just the one that needs it."
       />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {pools.map((pool) => (

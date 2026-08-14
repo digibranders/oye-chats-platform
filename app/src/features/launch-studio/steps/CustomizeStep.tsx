@@ -133,7 +133,7 @@ export function CustomizeStep(props: StepProps) {
   return (
     <StepShell
       title="Make it yours"
-      description="Choose your agent's colours and avatar - watch it update on the right."
+      description="Choose your chatbot's colours and avatar - watch it update on the right."
       onBack={props.onBack}
       onContinue={handleContinue}
       isFirst={props.isFirst}

@@ -44,6 +44,51 @@ def get_active_plans(session: Session) -> list[Plan]:
     return list(session.execute(stmt).scalars().all())
 
 
+def plan_checkout_is_wired(
+    *,
+    is_free: bool,
+    razorpay_plan_id_monthly: str | None,
+    razorpay_plan_id_annual: str | None,
+) -> bool:
+    """Whether this environment can complete a SELF-SERVE checkout for a tier.
+
+    A free tier is trivially wired — there is nothing to charge. A paid tier is
+    wired only when it carries BOTH INR gateway plan ids for the mode this
+    environment's keys point at, because ``razorpay_service.create_subscription``
+    cannot mint a mandate for a cycle whose id is missing. The USD rail is
+    deliberately out of scope: it is gated behind ``INTL_PAYMENTS_ENABLED`` and
+    refuses on its own, so a missing USD id must not describe a working INR tier
+    as unwired.
+
+    **This is NOT an activation predicate, and must never be written to
+    ``plans.is_active``.** "Cannot be self-serve checked out" and "must not be
+    shown" are different statements, and conflating them deletes the
+    contact-sales tier: an agency tier needs no gateway plan id to be *listed*,
+    and ``GET /public/pricing-catalog`` — the feed oyechats.com/pricing renders —
+    is built from :func:`get_active_plans`. Deactivating also makes the graceful
+    path unreachable, because ``/subscriptions/checkout/quote`` and
+    ``/subscriptions/checkout`` both reject an inactive plan before they get to
+    it.
+
+    An unwired-but-listed tier degrades instead of disappearing:
+
+    * ``GET /subscriptions/checkout/quote`` answers ``checkout_supported:
+      false`` with ``reason: "inr_plan_unconfigured"`` and a contact-sales
+      address.
+    * ``POST /subscriptions/checkout`` refuses in the same shape — the charge
+      path raises ``razorpay_service.PlanNotCheckoutable``, which the app-level
+      handler maps to the matching 409.
+
+    What this predicate IS for: telling an operator which tiers the environment
+    in front of them can take money for. ``scripts/seed_plans.py`` and
+    ``scripts/set_razorpay_plan_ids.py`` print it, and the super-admin plan
+    routes warn on it (create/update return it under ``warnings``).
+    """
+    if is_free:
+        return True
+    return bool(razorpay_plan_id_monthly and razorpay_plan_id_annual)
+
+
 _PRICING_CONTENT_KEYS: dict[str, str] = {
     "faq": "pricing_faq",
     "feature_matrix": "pricing_feature_matrix",

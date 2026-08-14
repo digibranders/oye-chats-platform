@@ -172,7 +172,7 @@ export function DeployStep(props: StepProps) {
   return (
     <StepShell
       title={`Add OyeChats to ${platform.name}`}
-      description="Follow these steps to put your agent live."
+      description="Follow these steps to put your chatbot live."
       onBack={props.onBack}
       onContinue={() => {
         void recordActivationEvent('snippet_copied', { botId: selectedBot?.id ?? null });

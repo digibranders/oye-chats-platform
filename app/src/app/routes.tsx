@@ -107,7 +107,7 @@ export const router = createBrowserRouter([
                       { index: true, element: <AgentsPage /> },
                       {
                         path: ':agentId',
-                        handle: { crumb: 'Agent' },
+                        handle: { crumb: 'Chatbot' },
                         element: <AgentLayout />,
                         children: [
                           { index: true, element: <Navigate to="overview" replace /> },

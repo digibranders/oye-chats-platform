@@ -96,7 +96,12 @@ export function TopupModal({
   botId = null,
   botName = null,
 }: TopupModalProps): ReactElement | null {
-  const { isInr } = useCurrency();
+  // `isInr` decides which of the two figures on a pack is shown, so it is a
+  // price input, not a cosmetic one. Held back behind `currencyLoading`: until
+  // /geo settles the context is only reporting its safe default (the charge
+  // currency), and rendering ₹1,000 to a buyer who is about to be shown $13
+  // is a price that changes under them mid-decision.
+  const { isInr, loading: currencyLoading } = useCurrency();
   const [packs, setPacks] = useState<TopupPack[]>([]);
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [submittingPack, setSubmittingPack] = useState<number | null>(null);
@@ -272,10 +277,13 @@ export function TopupModal({
         </div>
       )}
 
-      {loadingPacks ? (
+      {loadingPacks || currencyLoading ? (
         <div className="flex items-center justify-center gap-2 py-12 text-[13px] text-[var(--ds-text-muted)]">
           <Loader2 size={18} className="animate-spin" />
-          Loading packs…
+          {/* Neutral wording: this spinner covers BOTH waits (the pack list and
+              the currency to price it in), so it must not claim to be fetching
+              packs that may already have arrived. */}
+          Loading…
         </div>
       ) : packs.length === 0 ? (
         <p className="py-12 text-center text-[13px] text-[var(--ds-text-muted)]">

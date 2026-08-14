@@ -114,7 +114,7 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : 'Could not load this agent’s configuration.');
+        setLoadError(err instanceof Error ? err.message : 'Could not load this chatbot’s configuration.');
       });
     return () => {
       cancelled = true;
@@ -171,11 +171,11 @@ export function BotConfigSection({ variant }: BotConfigSectionProps): ReactEleme
     return (
       <EmptyState
         icon={AlertCircle}
-        title={agentError ? 'Couldn’t load this agent' : 'Agent not found'}
+        title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
         description={
           agentError
-            ? 'We hit a problem loading your agents. Refresh to try again.'
-            : 'This agent doesn’t exist or you don’t have access to it.'
+            ? 'We hit a problem loading your chatbots. Refresh to try again.'
+            : 'This chatbot doesn’t exist or you don’t have access to it.'
         }
       />
     );

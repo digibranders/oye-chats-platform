@@ -75,7 +75,7 @@ export function BrandingSection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title="Avatar"
-          description="The face of your agent - a photo, a glowing orb, or a friendly mascot."
+          description="The face of your chatbot - a photo, a glowing orb, or a friendly mascot."
         />
         <AvatarPicker
           avatarType={draft.avatarType}

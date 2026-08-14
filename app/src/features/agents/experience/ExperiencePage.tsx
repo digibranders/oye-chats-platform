@@ -104,7 +104,7 @@ export function ExperiencePage(): ReactElement {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : 'Could not load this agent’s settings.');
+        setLoadError(err instanceof Error ? err.message : 'Could not load this chatbot’s settings.');
       });
     return () => {
       cancelled = true;
@@ -202,11 +202,11 @@ export function ExperiencePage(): ReactElement {
       ) : botId === null ? (
         <EmptyState
           icon={Eye}
-          title={agentError ? 'Couldn’t load this agent' : 'Agent not found'}
+          title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
           description={
             agentError
-              ? 'We hit a problem loading your agents. Refresh to try again.'
-              : 'This agent doesn’t exist or you don’t have access to it.'
+              ? 'We hit a problem loading your chatbots. Refresh to try again.'
+              : 'This chatbot doesn’t exist or you don’t have access to it.'
           }
         />
       ) : loadError && !draft ? (
@@ -345,7 +345,7 @@ export function ExperiencePage(): ReactElement {
               </div>
               <ExperiencePreview
                 draft={draft}
-                agentName={draft.displayName.trim() || agent?.name || 'Your agent'}
+                agentName={draft.displayName.trim() || agent?.name || 'Your chatbot'}
               />
             </div>
           </aside>

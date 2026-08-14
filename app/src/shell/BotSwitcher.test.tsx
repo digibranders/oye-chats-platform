@@ -45,7 +45,7 @@ function renderSwitcher(path: string) {
 }
 
 function openSwitcher(): void {
-  fireEvent.click(screen.getByRole('button', { name: /Switch agent$/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Switch chatbot$/ }));
 }
 
 function pathname(): string {
@@ -114,7 +114,7 @@ describe('keeping the persisted scope and the URL in agreement', () => {
     renderSwitcher('/agents/2/overview');
 
     expect(botState.selectBot).toHaveBeenCalledWith(globex);
-    expect(screen.getByRole('button', { name: /Switch agent$/ })).toHaveAccessibleName(
+    expect(screen.getByRole('button', { name: /Switch chatbot$/ })).toHaveAccessibleName(
       /Globex Sales/,
     );
   });
@@ -123,7 +123,7 @@ describe('keeping the persisted scope and the URL in agreement', () => {
     renderSwitcher('/agents/999/overview');
 
     expect(botState.selectBot).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: /Switch agent$/ })).toHaveAccessibleName(
+    expect(screen.getByRole('button', { name: /Switch chatbot$/ })).toHaveAccessibleName(
       /Acme Support/,
     );
   });
@@ -155,7 +155,7 @@ describe('filtering a long agent list', () => {
     renderSwitcher('/agents/1/overview');
     openSwitcher();
 
-    expect(screen.getByRole('searchbox', { name: 'Filter agents' })).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Filter chatbots' })).toBeInTheDocument();
     expect(screen.getAllByRole('menuitem')).toHaveLength(8);
   });
 
@@ -181,7 +181,7 @@ describe('filtering a long agent list', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'nothing here' } });
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
-    expect(screen.getByRole('status')).toHaveTextContent('No agents match');
+    expect(screen.getByRole('status')).toHaveTextContent('No chatbots match');
   });
 
   it('forgets the query once the popover closes', () => {

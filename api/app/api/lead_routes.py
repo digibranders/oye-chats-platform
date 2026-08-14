@@ -13,6 +13,7 @@ from sqlalchemy import desc, func, select, update
 from app.api.auth import get_current_client_or_operator
 from app.config import API_BASE_URL
 from app.core.csv_safety import csv_safe_row
+from app.core.visitor_privacy import redact_visitor_ip
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
 from app.services.email_design import esc, h1, p, shell
@@ -446,6 +447,16 @@ def export_leads_csv(
             # column added below is safe without its author having to know that.
             # Integers (score, message count) pass through untouched and stay
             # numeric in the recipient's sheet.
+            #
+            # Absence is an EMPTY CELL, never a word. ``build_lead_response``
+            # answers "Unknown" for a missing location/device because that
+            # reads well in the dashboard table, but a file says "no value"
+            # with an empty cell — a CRM importing "Unknown" creates a country
+            # by that name. The client-side "Export selected" download
+            # (``app/src/features/leads/leadsCsv.ts``) blanks the same
+            # placeholder so a customer merging the two files never sees one
+            # lead described two ways. Hence ``or ""`` on the Location column
+            # below rather than ``format_visitor_location``.
             row = [
                 chat_session.id,
                 lead_info.name if lead_info else "",
@@ -458,7 +469,12 @@ def export_leads_csv(
                 _qualification_value(lead, "budget"),
                 _qualification_value(lead, "authority"),
                 _qualification_value(lead, "timeline"),
-                chat_session.location or "",
+                # This column is the reason ``core.visitor_privacy`` exists.
+                # It used to be ``chat_session.location or ""`` — the stored
+                # string, IP and all, for every lead in the workspace, in a file
+                # that then gets mailed around and loaded into a CRM. The
+                # dashboard beside it had been stripping the IP the whole time.
+                redact_visitor_ip(chat_session.location) or "",
                 chat_session.device or "",
                 msg_count,
                 chat_session.created_at.isoformat() if chat_session.created_at else "",
@@ -706,7 +722,14 @@ def send_manual_follow_up(
                 html_body=html_body,
             )
         except Exception as e:
-            logger.error(f"Failed to send follow up to {lead_info.email}: {e}")
+            # PRIVACY — ``session_id``, never the address. This is a visitor's
+            # email (the lead captured in the chat), personal data under GDPR and
+            # under India's DPDP Act, where this product's basis is consent-only.
+            # ``logger.error`` is not a log line here: Sentry's LoggingIntegration
+            # promotes ERROR records to full events, so the address was the
+            # event's own message — the one field no scrubber gets to see. The
+            # session is the join key to the lead row for anyone with DB access.
+            logger.error(f"Failed to send follow up | session={session_id} | {e}")
             raise HTTPException(status_code=500, detail="Failed to send email") from e
 
         lead_info.last_followup_sent_at = datetime.now(UTC)

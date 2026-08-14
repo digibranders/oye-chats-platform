@@ -1343,7 +1343,7 @@ function DataRetentionBanner({
             Your data is scheduled for deletion on {formatDate(purgeAt)}.
           </p>
           <p className="mt-0.5 text-[var(--ds-text-muted)]">
-            Your subscription has lapsed. Choose a plan before this date to keep your agents, knowledge, and
+            Your subscription has lapsed. Choose a plan before this date to keep your chatbots, knowledge, and
             conversations - after it, they’re permanently removed.
           </p>
         </div>

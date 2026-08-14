@@ -148,7 +148,7 @@ export type EntitlementUsage = Partial<Record<LimitKey, number>>;
  * Verified field-by-field against the backend: `plan_slug` / `plan_name` /
  * `subscription_status` / `limits` / `features` / `usage` come from
  * `PlanEntitlements.to_json_dict()` (`plan_entitlements_service.py`);
- * `is_free` / `is_enterprise` / `topup_allowed` are appended by the route
+ * `is_free` / `topup_allowed` are the only fields appended by the route
  * handler (`auth_routes.py::get_my_entitlements`). `client_id` is present
  * via `dataclasses.asdict` but is an internal identifier, not a UI field.
  */
@@ -161,7 +161,6 @@ export interface Entitlements {
   features: EntitlementFeatures;
   usage: EntitlementUsage;
   is_free: boolean;
-  is_enterprise: boolean;
   topup_allowed: boolean;
 }
 

@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react';
 import { SectionHeader } from '../../../design-system';
-import type { PlanView, PromotionView } from '../billingModel';
+import { maxAnnualSavingPercent, type PlanView, type PromotionView } from '../billingModel';
 import type { BillingCycle } from './planMath';
 import { CycleToggle } from './PlanMatrix';
 import { PlanCards } from './PlanCards';
@@ -42,14 +42,20 @@ export function PlansPanel({
   allowSelectCurrent = false,
 }: PlansPanelProps): ReactElement {
   const [compareOpen, setCompareOpen] = useState(false);
-  const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
+  const maxSavingPercent = maxAnnualSavingPercent(plans);
 
   return (
     <section aria-label="Plans" className="space-y-5">
       <SectionHeader
         title="Compare & switch plans"
         description="The essentials at a glance. Switch or upgrade in a couple of clicks."
-        actions={<CycleToggle cycle={cycle} maxDiscount={maxDiscount} onCycleChange={onCycleChange} />}
+        actions={
+          <CycleToggle
+            cycle={cycle}
+            maxSavingPercent={maxSavingPercent}
+            onCycleChange={onCycleChange}
+          />
+        }
       />
 
       <PlanCards

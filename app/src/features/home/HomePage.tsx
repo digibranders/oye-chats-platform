@@ -122,7 +122,7 @@ function buildHealthInsight(data: HomeData): {
     return {
       icon: Radio,
       tone: 'info',
-      title: `${readyToDeploy} agent${readyToDeploy === 1 ? ' is' : 's are'} ready to go live`,
+      title: `${readyToDeploy} chatbot${readyToDeploy === 1 ? ' is' : 's are'} ready to go live`,
       body: 'Add the widget to your website to start capturing real conversations.',
     };
   }
@@ -130,7 +130,7 @@ function buildHealthInsight(data: HomeData): {
     return {
       icon: Sparkles,
       tone: 'accent',
-      title: 'Your agents are ready',
+      title: 'Your chatbots are ready',
       body: 'Share a test link or add the widget to your site to see your first conversations.',
     };
   }
@@ -138,7 +138,7 @@ function buildHealthInsight(data: HomeData): {
     icon: CheckCircle2,
     tone: 'success',
     title: 'Everything looks healthy',
-    body: 'Your agents are live and answering questions. Keep an eye on the metrics below.',
+    body: 'Your chatbots are live and answering questions. Keep an eye on the metrics below.',
   };
 }
 
@@ -312,7 +312,7 @@ export function HomePage(): ReactElement {
   const headerActions = (
     <div className="hidden items-center gap-2 sm:flex">
       <QuickAction icon={BarChart3} label="Analytics" to="/analytics" />
-      <QuickAction icon={Plus} label="New agent" to="/agents" />
+      <QuickAction icon={Plus} label="New chatbot" to="/agents" />
     </div>
   );
 
@@ -388,9 +388,9 @@ function HomeContent({
       <div className="grid gap-8 lg:grid-cols-3">
         {/* Main column - agents + what people ask */}
         <div className="space-y-8 lg:col-span-2">
-          <section aria-label="Your agents" className="space-y-4">
+          <section aria-label="Your chatbots" className="space-y-4">
             <SectionHeader
-              title="Your agents"
+              title="Your chatbots"
               description="Health and activity across every AI chatbot in this workspace."
               actions={
                 <Link
@@ -421,7 +421,7 @@ function HomeContent({
           <section aria-label="Most asked questions" className="space-y-4">
             <SectionHeader
               title="What visitors ask most"
-              description="The questions your agents hear the most, across all conversations."
+              description="The questions your chatbots hear the most, across all conversations."
             />
             <DataTable
               columns={TOP_QUESTION_COLUMNS}

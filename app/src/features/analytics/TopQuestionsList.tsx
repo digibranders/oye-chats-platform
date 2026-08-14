@@ -18,7 +18,7 @@ export function TopQuestionsList({ questions }: TopQuestionsListProps): ReactEle
       <EmptyState
         icon={MessageSquare}
         title="No questions yet"
-        description="Once visitors start chatting with your agents, their most common questions will surface here."
+        description="Once visitors start chatting with your chatbots, their most common questions will surface here."
       />
     );
   }

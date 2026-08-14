@@ -37,9 +37,9 @@ export interface LaunchStep {
  */
 export const LAUNCH_STEPS: LaunchStep[] = [
   { key: 'welcome',  path: 'welcome',  label: 'Welcome',        hint: 'Get started & pick a plan', icon: PartyPopper   },
-  { key: 'create',   path: 'create',   label: 'Create Agent',   hint: 'Name your AI Chatbot',     icon: Bot           },
+  { key: 'create',   path: 'create',   label: 'Create Chatbot', hint: 'Name your AI Chatbot',     icon: Bot           },
   { key: 'train',    path: 'train',    label: 'Setup & Train',  hint: 'Connect website & teach AI',icon: BookOpenCheck  },
-  { key: 'test',     path: 'test',     label: 'Test Agent',     hint: 'Try it yourself',          icon: MessagesSquare},
+  { key: 'test',     path: 'test',     label: 'Test Chatbot',   hint: 'Try it yourself',          icon: MessagesSquare},
   { key: 'customize',path: 'customize',label: 'Customize Widget',hint: 'Make it yours',           icon: Palette       },
   { key: 'deploy',   path: 'deploy',   label: 'Deploy',         hint: 'Add it to your site',     icon: Rocket        },
   { key: 'verify',   path: 'verify',   label: 'Verification',   hint: "Confirm it's live",       icon: BadgeCheck    },

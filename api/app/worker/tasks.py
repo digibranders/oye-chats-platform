@@ -1088,9 +1088,14 @@ async def task_send_email(
     """Send a raw HTML email via Brevo. Returns True on success."""
     import asyncio
 
-    from app.services.email_service import _send_brevo_email
+    from app.services.email_service import _send_brevo_email, redact_email
 
-    logger.info("task_send_email: to=%s, subject=%s", to_email, subject[:50])
+    # PRIVACY — the recipient can be a visitor (the chat follow-up in
+    # lead_routes, the offline-message reply), and Sentry's LoggingIntegration
+    # turns this INFO record into a breadcrumb on the next event the worker
+    # reports. The domain survives, which is what makes a delivery problem
+    # diagnosable; see ``email_service.redact_email``.
+    logger.info("task_send_email: to=%s, subject=%s", redact_email(to_email), subject[:50])
 
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
@@ -1123,9 +1128,10 @@ async def task_send_template_email(
     """Send a Brevo template email. Returns True on success."""
     import asyncio
 
-    from app.services.email_service import _send_brevo_template
+    from app.services.email_service import _send_brevo_template, redact_email
 
-    logger.info("task_send_template_email: to=%s, template=%d", to_email, template_id)
+    # PRIVACY — see ``task_send_email`` above.
+    logger.info("task_send_template_email: to=%s, template=%d", redact_email(to_email), template_id)
 
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(

@@ -89,6 +89,7 @@ def _init_sentry_for_worker() -> None:
     Production-only, same as the API — see ``app.config.sentry_enabled``.
     """
     from app.config import APP_ENV, SENTRY_DSN, SENTRY_ENABLED
+    from app.core.sentry_scrub import scrub_event
 
     if not SENTRY_ENABLED:
         reason = f"APP_ENV={APP_ENV}, production only" if SENTRY_DSN else "no DSN configured"
@@ -105,6 +106,15 @@ def _init_sentry_for_worker() -> None:
         # Errors + light tracing only — profiling and logs stay off on the free
         # plan. See the matching note in app/main.py.
         traces_sample_rate=0.1,
+        # PRIVACY — the same scrubber the API installs. The worker serves no
+        # HTTP request of its own, so it has no headers to strip today; it is
+        # wired anyway so there is ONE place to audit what leaves for Sentry
+        # rather than two that have to be kept in step, and so an ASGI-shaped
+        # request block arriving here later (an inbound webhook replayed into a
+        # task, a future HTTP entry point) is covered on arrival rather than
+        # after someone notices. See ``app.core.sentry_scrub``.
+        before_send=scrub_event,
+        before_send_transaction=scrub_event,
     )
     sentry_sdk.set_tag("service", "worker")
     logger.info(f"Sentry error tracking enabled in worker | env={APP_ENV}")

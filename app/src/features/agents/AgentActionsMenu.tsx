@@ -222,7 +222,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
             onClick={closeMenu}
           >
             <ArrowRight size={15} className="text-[var(--ds-text-subtle)]" aria-hidden="true" />
-            Open agent
+            Open chatbot
           </Link>
 
           {demoUrl && (
@@ -255,7 +255,7 @@ export function AgentActionsMenu({ bot, onChanged }: AgentActionsMenuProps): Rea
           {renaming ? (
             <div className="px-3 py-2">
               <label htmlFor={`rename-${bot.id}`} className="sr-only">
-                Rename agent
+                Rename chatbot
               </label>
               <input
                 id={`rename-${bot.id}`}

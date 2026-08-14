@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  annualSavingPercent,
   buildPlan,
   buildPromotion,
   buildSubscription,
   formatSeatAllowance,
   getRenewalDisplay,
+  maxAnnualSavingPercent,
   planGrantsUnlimitedAgents,
   promotionAppliesToPlan,
   type PlanView,
@@ -15,9 +17,9 @@ const SEEDED_ENTERPRISE = {
   id: 5,
   slug: 'enterprise',
   name: 'Enterprise',
-  credits_per_month: 13000,
-  monthly_price_cents: 479900,
-  annual_price_cents: 4606800,
+  credits_per_month: 10000,
+  monthly_price_cents: 599900,
+  annual_price_cents: 5758800,
   included_operator_seats: -1,
   sort_order: 5,
   features: {
@@ -75,6 +77,194 @@ describe('planGrantsUnlimitedAgents', () => {
     const plan = buildPlan({ id: 9, slug: 'bespoke-acme', name: 'Acme', limits: { bots: 'unlimited' } });
     expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
   });
+
+  /* `limits` is JSONB with nothing enforcing its value types, and the server
+     reads the quota through `int(...)` — which accepts `"-1"`. Dropping the
+     string here made the picker offer a plan `POST /bots/checkout` then
+     refused, so the customer chose it and hit a dead end. */
+  it('is true for the unlimited sentinel stored as a string', () => {
+    const plan = buildPlan({ id: 5, slug: 'enterprise', name: 'Enterprise', limits: { bots: '-1' } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(true);
+  });
+
+  it('is false for a finite agent quota stored as a string', () => {
+    const plan = buildPlan({ id: 3, slug: 'professional', name: 'Professional', limits: { bots: '1' } });
+    expect(plan && planGrantsUnlimitedAgents(plan)).toBe(false);
+  });
+});
+
+describe('annualSavingPercent / maxAnnualSavingPercent', () => {
+  /* Both price pairs are verbatim from `api/scripts/seed_plans.py`. The same
+     four plans are fed through `buildPlan` twice: once with the INR columns in
+     the price fields and once with the USD ones, which is exactly what the
+     `TODO(multi-currency)` price-source switch will do. One plan set, two
+     rails, and the honest badge is NOT the same number on both. */
+  const SEEDED = [
+    { slug: 'starter', inr: [59900, 574800], usd: [799, 7788], stored: 20 },
+    { slug: 'standard', inr: [119900, 1150800], usd: [1599, 15588], stored: 20 },
+    { slug: 'professional', inr: [299900, 2818800], usd: [4599, 45588], stored: 22 },
+    { slug: 'enterprise', inr: [599900, 5758800], usd: [8999, 86388], stored: 20 },
+  ] as const;
+
+  const planSet = (rail: 'inr' | 'usd'): PlanView[] =>
+    SEEDED.map(
+      (row, index) =>
+        buildPlan({
+          id: index + 2,
+          slug: row.slug,
+          name: row.slug,
+          monthly_price_cents: row[rail][0],
+          annual_price_cents: row[rail][1],
+          annual_discount_percent: row.stored,
+        }) as PlanView,
+    );
+
+  it('derives each seeded plan’s INR saving from its own prices', () => {
+    const [starter, standard, professional, enterprise] = planSet('inr');
+    expect(annualSavingPercent(starter)).toBe(20); // 20.03%
+    expect(annualSavingPercent(standard)).toBe(20); // 20.02%
+    expect(annualSavingPercent(professional)).toBe(21); // 21.67%, stored as 22
+    expect(annualSavingPercent(enterprise)).toBe(20); // 20.00%
+  });
+
+  it('derives a different, lower saving for the same plans on the USD rail', () => {
+    const [starter, standard, professional, enterprise] = planSet('usd');
+    expect(annualSavingPercent(starter)).toBe(18); // 18.77%
+    expect(annualSavingPercent(standard)).toBe(18); // 18.76%
+    expect(annualSavingPercent(professional)).toBe(17); // 17.40%
+    expect(annualSavingPercent(enterprise)).toBe(20); // 20.00%
+  });
+
+  /* The badge number, per rail. These MUST differ: a single stored integer
+     cannot be true of both price pairs, and quoting the INR-derived figure to
+     a USD customer overstated the deal by 4.6 points at checkout. Note the
+     winning plan differs too - Professional on INR, Enterprise on USD - so
+     this is not a fixed offset that a constant could paper over. */
+  it('reports the best saving in whichever currency is being displayed', () => {
+    expect(maxAnnualSavingPercent(planSet('inr'))).toBe(21);
+    expect(maxAnnualSavingPercent(planSet('usd'))).toBe(20);
+  });
+
+  /* The stored column says 22 for Professional; the prices say 21.67%. The
+     badge sits beside a Subscribe button, so it follows the prices. */
+  it('ignores the stored annual_discount_percent when it overstates the prices', () => {
+    const [, , professional] = planSet('inr');
+    expect(professional.annualDiscountPercent).toBe(22);
+    expect(annualSavingPercent(professional)).toBe(21);
+  });
+
+  it('rounds down, never to nearest', () => {
+    // 12 × 100.00 = 1200.00 against 1000.99 → 16.5842%, which rounds to 17.
+    const plan = buildPlan({
+      slug: 'x',
+      name: 'X',
+      monthly_price_cents: 10000,
+      annual_price_cents: 100099,
+    }) as PlanView;
+    expect(annualSavingPercent(plan)).toBe(16);
+  });
+
+  it('is exact for a saving that lands on a whole percent', () => {
+    const plan = buildPlan({
+      slug: 'x',
+      name: 'X',
+      monthly_price_cents: 10000,
+      annual_price_cents: 96000,
+    }) as PlanView;
+    expect(annualSavingPercent(plan)).toBe(20);
+  });
+
+  /* Nothing to quote → 0, so the toggle drops the saving copy rather than
+     rendering "save up to 0%" or a negative. */
+  it('is 0 for plans with no annual saving to advertise', () => {
+    const free = buildPlan({ slug: 'free', name: 'Free' }) as PlanView;
+    const noAnnual = buildPlan({
+      slug: 'monthly-only',
+      name: 'Monthly only',
+      monthly_price_cents: 59900,
+    }) as PlanView;
+    const dearerAnnually = buildPlan({
+      slug: 'inverted',
+      name: 'Inverted',
+      monthly_price_cents: 10000,
+      annual_price_cents: 130000,
+    }) as PlanView;
+    expect(annualSavingPercent(free)).toBe(0);
+    expect(annualSavingPercent(noAnnual)).toBe(0);
+    expect(annualSavingPercent(dearerAnnually)).toBe(0);
+    expect(maxAnnualSavingPercent([free, noAnnual, dearerAnnually])).toBe(0);
+  });
+
+  it('is 0 for an empty plan set', () => {
+    expect(maxAnnualSavingPercent([])).toBe(0);
+  });
+
+  /* `GET /subscriptions/plans` returns every ACTIVE plan, and a bespoke tier a
+     super-admin provisioned for one account carries real prices while every
+     plan surface renders it as "Custom". Its discount must not set the public
+     toggle's rate: "up to" would stay literally true, but the number would be
+     unattainable on anything the reader can buy. */
+  it('never quotes a contact-sales tier’s discount on the public toggle', () => {
+    const purchasable = buildPlan({
+      id: 3,
+      slug: 'standard',
+      name: 'Standard',
+      monthly_price_cents: 119900,
+      annual_price_cents: 1150800, // 20.02%
+    }) as PlanView;
+    const bespoke = buildPlan({
+      id: 9,
+      slug: 'bespoke-acme',
+      name: 'Acme',
+      monthly_price_cents: 1000000,
+      annual_price_cents: 7800000, // 35% - and priced "Custom" on every surface
+      features: { contact_sales: true },
+    }) as PlanView;
+
+    expect(bespoke.isContactSales).toBe(true);
+    expect(annualSavingPercent(bespoke)).toBe(35);
+    expect(maxAnnualSavingPercent([purchasable, bespoke])).toBe(20);
+  });
+
+  /* The `enterprise` feature flag is the other way a plan becomes contact-sales
+     (`buildPlan`), and the SEEDED Enterprise tier carries neither flag - it is
+     priced and checks out like any other plan, so its 20% still counts. */
+  it('still counts the seeded, priced Enterprise tier', () => {
+    const [, , , enterprise] = planSet('inr');
+    expect(enterprise.isContactSales).toBe(false);
+    expect(maxAnnualSavingPercent([enterprise])).toBe(20);
+  });
+
+  it('is 0 when the only plan with a saving is contact-sales', () => {
+    const bespoke = buildPlan({
+      slug: 'bespoke',
+      name: 'Bespoke',
+      monthly_price_cents: 1000000,
+      annual_price_cents: 7800000,
+      features: { enterprise: true },
+    }) as PlanView;
+    expect(maxAnnualSavingPercent([bespoke])).toBe(0);
+  });
+});
+
+describe('buildPlan limits coercion', () => {
+  it('keeps a numeric-string quota as a number, so consumers never compare a string', () => {
+    const plan = buildPlan({ slug: 'x', name: 'X', limits: { bots: '-1', max_crawl_pages: ' 250 ' } });
+    expect(plan?.limits.bots).toBe(-1);
+    expect(plan?.limits.max_crawl_pages).toBe(250);
+  });
+
+  /* Unreadable values are dropped, not defaulted to 0: an absent key reads as
+     "this plan declares no such quota", which consumers already treat
+     conservatively, while a 0 would read as a real quota of zero. */
+  it('drops values that cannot be read as a finite number', () => {
+    const plan = buildPlan({
+      slug: 'x',
+      name: 'X',
+      limits: { bots: 'unlimited', operators: '', credits: null, seats: true, docs: [1] },
+    });
+    expect(plan?.limits).toEqual({});
+  });
 });
 
 describe('buildPlan', () => {
@@ -85,15 +275,15 @@ describe('buildPlan', () => {
 
   /* `isContactSales` means "bespoke tier, priced on request" - NOT "the slug
      says enterprise". The seeded Enterprise row is a real, priced, self-serve
-     rung of the ladder (₹4,799/mo), so keying off the slug rendered it as
+     rung of the ladder (₹5,999/mo), so keying off the slug rendered it as
      "Custom" and dead-ended its checkout at a mailto. Only the feature flags
      decide. */
   it('does not mark the seeded Enterprise tier as contact-sales - it is priced and self-serve', () => {
     const plan = buildPlan(SEEDED_ENTERPRISE);
     expect(plan?.isContactSales).toBe(false);
     expect(plan?.isPaid).toBe(true);
-    expect(plan?.monthlyPriceMinor).toBe(479900);
-    expect(plan?.annualPriceMinor).toBe(4606800);
+    expect(plan?.monthlyPriceMinor).toBe(599900);
+    expect(plan?.annualPriceMinor).toBe(5758800);
   });
 
   it('marks any plan carrying contact_sales as contact-sales, whatever its slug', () => {

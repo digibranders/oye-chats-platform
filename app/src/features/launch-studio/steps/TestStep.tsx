@@ -43,7 +43,7 @@ export function TestStep(props: StepProps) {
   return (
     <StepShell
       title="Try it yourself"
-      description="Ask your agent anything - it answers from what it just learned. Watch the preview on the right."
+      description="Ask your chatbot anything - it answers from what it just learned. Watch the preview on the right."
       onBack={props.onBack}
       onContinue={props.onContinue}
       isFirst={props.isFirst}

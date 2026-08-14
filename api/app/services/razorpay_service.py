@@ -115,6 +115,44 @@ class IntlPaymentsDisabled(Exception):
     """
 
 
+class PlanNotCheckoutable(Exception):
+    """A gateway mandate was requested for a tier this environment cannot charge.
+
+    Raised when the plan carries no Razorpay plan id for the resolved rail and
+    cycle. A tier in that state is deliberately still LISTED — a contact-sales
+    tier needs no gateway plan id to appear on the pricing page — so the refusal
+    has to happen at the charge, and it has to say the same thing the quote
+    already says.
+
+    Deliberately NOT a ``ValueError`` and NOT a ``RazorpayBillingError``,
+    exactly like :class:`IntlPaymentsDisabled` and for the same reason: the
+    ``except ValueError -> 400 str(exc)`` handlers on the money routes would
+    hand the buyer ``ops_detail`` verbatim ("Create the plan in the Razorpay
+    dashboard and set the id from super admin"), and the ``RazorpayBillingError``
+    handlers would call a policy refusal a gateway fault and 502. It propagates
+    to the app-level handler in ``app/core/middleware.py``, which maps it to the
+    409 contact-sales contract ``/subscriptions/checkout/quote`` renders for the
+    same plan — so the quote and the checkout button agree.
+
+    ``str(exc)`` is the customer-facing sentence; the operator instruction lives
+    in ``ops_detail`` and is logged, never returned.
+    """
+
+    def __init__(self, *, plan_name: str, billing_cycle: str, currency: str) -> None:
+        self.plan_name = plan_name
+        self.billing_cycle = billing_cycle
+        self.currency = currency
+        # Mirrors the quote's ``reason`` codes so both surfaces speak one
+        # vocabulary: a missing INR id is inr_plan_unconfigured, a missing USD
+        # id is the same intl_usd_pending the USD branch of the quote returns.
+        self.reason = "inr_plan_unconfigured" if currency == "INR" else "intl_usd_pending"
+        self.ops_detail = (
+            f"Plan '{plan_name}' has no {currency} Razorpay plan id configured for {billing_cycle} billing. "
+            "Create the plan in the Razorpay dashboard and set the id from super admin."
+        )
+        super().__init__(f"{plan_name} is not available for self-serve checkout. Please contact sales.")
+
+
 class RazorpayBillingError(Exception):
     """Base class for Razorpay-specific billing errors."""
 
@@ -460,10 +498,13 @@ def create_subscription(
         )
         razorpay_plan_id = RAZORPAY_TEST_PLAN_ID
     elif not razorpay_plan_id:
-        raise ValueError(
-            f"Plan '{plan.name}' has no {currency} Razorpay plan id configured for {billing_cycle} billing. "
-            "Create the plan in the Razorpay dashboard and set the id from super admin."
-        )
+        # An unwired tier is listed on purpose (plan_service.plan_checkout_is_wired)
+        # and quoted as contact-sales; this is the charge-path half of that
+        # contract. The ops instruction is logged, not returned — see
+        # PlanNotCheckoutable.
+        refusal = PlanNotCheckoutable(plan_name=plan.name, billing_cycle=billing_cycle, currency=currency)
+        logger.error("checkout refused for client %s: %s", client.id, refusal.ops_detail)
+        raise refusal
 
     # Auto-resolve the customer's standing referral discount when the caller
     # didn't pass one explicitly. Centralising it here is what guarantees the

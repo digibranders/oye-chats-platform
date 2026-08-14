@@ -6,33 +6,18 @@
  * the one path where a dropped field leaves the product for good — it needs
  * tests of its own.
  */
-import { csvSafe } from '../../lib/csvSafe';
+import { csvField } from '../../lib/csvSafe';
 import { type Lead } from '../../types/domain';
 
 import {
   EMPTY_PLACEHOLDER,
   TIER_META,
+  UNKNOWN_LOCATION,
   companyDisplay,
   formatDateTime,
   formatLocation,
   normalizeTier,
 } from './leadModel';
-
-/**
- * Escape one CSV field. Two independent defences, in order:
- *
- * 1. `csvSafe` stops a visitor-typed value from opening as a formula in the
- *    recipient's spreadsheet. Every cell goes through it — the columns are
- *    almost entirely visitor-supplied, and routing them all through one funnel
- *    means a column added later is safe without anyone remembering to be.
- * 2. RFC-4180 quoting keeps commas, quotes and newlines from breaking the
- *    record apart. It does nothing for defence 1: Excel evaluates `"=1+1"`
- *    exactly as it evaluates `=1+1`.
- */
-function csvField(value: string | number | null | undefined): string {
-  const raw = value === null || value === undefined ? '' : String(value);
-  return `"${csvSafe(raw).replace(/"/g, '""')}"`;
-}
 
 /**
  * Drop the table's absence placeholder, which must not reach the file.
@@ -48,6 +33,24 @@ function csvField(value: string | number | null | undefined): string {
  */
 function blankIfPlaceholder(formatted: string): string {
   return formatted === EMPTY_PLACEHOLDER ? '' : formatted;
+}
+
+/**
+ * The same rule for the Location column's own placeholder.
+ *
+ * `formatLocation` answers the word "Unknown" when a session has no resolved
+ * geography — right for a table cell, wrong for a file. The server export
+ * (`GET /leads/export`) writes an empty cell for exactly that case, so the two
+ * downloads disagreed about the same lead: a customer merging them saw one row
+ * with a blank Location and one with a country named Unknown, and a CRM import
+ * created that country. An empty cell is what a spreadsheet means by "no
+ * value", so the server's answer is the one both paths now give.
+ *
+ * A real place is never lost to this: `UNKNOWN_LOCATION` is only ever produced
+ * by `formatLocation` itself, never carried through from stored geography.
+ */
+function blankIfUnknownLocation(formatted: string): string {
+  return formatted === UNKNOWN_LOCATION ? '' : formatted;
 }
 
 /**
@@ -84,7 +87,7 @@ export function buildSelectedLeadsCsv(
       csvField(lead.contact?.company),
       csvField(tier.label),
       csvField(lead.score),
-      csvField(formatLocation(lead.location)),
+      csvField(blankIfUnknownLocation(formatLocation(lead.location))),
       csvField(tagsFor(lead.session_id).join('; ')),
       csvField(blankIfPlaceholder(formatDateTime(lead.last_active_at))),
     ].join(',');

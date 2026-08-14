@@ -12,9 +12,33 @@ Razorpay plan IDs are intentionally NOT set here — they differ per environment
 so no plan ID is hardcoded in the repo. The extra-seat add-on plan is likewise
 env-config (``RAZORPAY_SEAT_PLAN_ID``), not a plan row.
 
+``is_active`` is set on INSERT and NEVER on UPDATE. This file is the catalogue —
+prices, entitlements, ordering — not the listing lifecycle, and the two writes
+answer different questions:
+
+* A row this run creates has no history to respect, so it is listed. Under the
+  current policy that is right even with no gateway plan id: an unwired paid
+  tier stays on the pricing page and degrades to contact-sales rather than
+  vanishing from ``GET /public/pricing-catalog`` (see
+  ``plan_service.plan_checkout_is_wired``).
+* A row that already exists may have been deactivated ON PURPOSE — by migration
+  ``f1a2b3c4d5e6``, by super-admin soft-delete, or by the plan editor. The seed
+  cannot tell a deliberate deactivation from a stale one, so it does not touch
+  the column at all. The blanket ``plan.is_active = True`` this replaces is
+  exactly what silently undid that migration on every ``reset_and_seed.sh`` run.
+
+What the seed DOES report is which tiers this environment can actually charge
+for, so a fresh database tells you what is missing without turning that into a
+listing decision.
+
 Idempotent: each plan is matched by ``slug`` and updated in place; a new row is
 inserted if the slug is missing. Unknown slugs (custom tiers added by a super
 admin) are left untouched.
+
+Every INR amount in the matrix is checked against the RBI e-mandate AFA ceiling
+(``core.pricing.emandate_warning``, shared with the super-admin plan editor) in
+BOTH modes. A breach is printed loudly and blocks nothing — see
+``_print_emandate_warnings``.
 
 Usage:
     cd platform/api
@@ -32,8 +56,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlalchemy import select
 
+from app.core.pricing import EMANDATE_AFA_CEILING_MINOR, emandate_warning
 from app.db.models import Plan
 from app.db.session import get_session
+from app.services.plan_service import plan_checkout_is_wired
 
 # ── Canonical matrix — single source of truth ──────────────────────────────
 # INR paise for *_cents; US cents for *_usd_cents. -1 in limits means unlimited.
@@ -218,11 +244,11 @@ _PLANS: list[dict] = [
         "name": "Enterprise",
         "description": "For agencies running many client sites from one account.",
         "credits_per_month": 10000,
-        "monthly_price_cents": 279900,  # ₹2,799
-        "annual_price_cents": 2686800,  # ₹26,868 (₹2,239/mo × 12)
+        "monthly_price_cents": 599900,  # ₹5,999
+        "annual_price_cents": 5758800,  # ₹57,588 (₹4,799/mo × 12)
         "monthly_price_usd_cents": 8999,  # $89.99
         "annual_price_usd_cents": 86388,  # $863.88 ($71.99/mo × 12)
-        "annual_discount_percent": 20,  # ₹26,868 vs ₹33,588 (12 × monthly)
+        "annual_discount_percent": 20,  # ₹57,588 vs ₹71,988 (12 × monthly)
         "trial_days": 0,
         "included_operator_seats": -1,
         "extra_seat_price_cents": 0,
@@ -230,7 +256,13 @@ _PLANS: list[dict] = [
         "is_default": False,
         "sort_order": 5,
         "limits": {
-            "credits": 13000,
+            # Mirrors ``credits_per_month`` — every other rung does the same, and
+            # this copy is what ``/subscriptions/plans`` and the public pricing
+            # catalog serialize as ``limits.credits``. Enterprise sells pooling
+            # (unlimited agents/seats/domains on ONE pool), not a bigger
+            # allowance, so the pooled figure stays at Professional's 10,000 and
+            # heavy accounts top up.
+            "credits": 10000,
             # Unlimited bots is the whole point of this tier. Credits still
             # meter real cost (5 per page, 1 per 250 words), so uncapped
             # ingestion is self-limiting — no separate knowledge cap needed.
@@ -283,34 +315,122 @@ _SCALAR_FIELDS = (
 )
 
 
+def _would_be_wired(data: dict, plan: Plan | None) -> bool:
+    """Whether the row this run leaves behind can take a self-serve checkout.
+
+    Gateway plan ids live on the existing row — this script never writes them —
+    so a brand-new paid row is by definition not yet wired. It becomes
+    checkoutable when ``set_razorpay_plan_ids.py`` attaches this environment's
+    ids. Reported only: it does NOT decide ``is_active``.
+    """
+    return plan_checkout_is_wired(
+        is_free=not data["monthly_price_cents"] and not data["annual_price_cents"],
+        razorpay_plan_id_monthly=getattr(plan, "razorpay_plan_id_monthly", None),
+        razorpay_plan_id_annual=getattr(plan, "razorpay_plan_id_annual", None),
+    )
+
+
+def _emandate_warnings(data: dict) -> list[str]:
+    """Warnings for every amount this catalogue entry can debit in one charge.
+
+    ``run`` writes ``currency="INR"`` on every row it touches, so the paise
+    ceiling always applies and the currency is passed as a literal rather than
+    read back off a row that may not exist yet.
+
+    Labelled by slug and cycle because the amounts are printed together at the
+    end of the run: "professional annual" says which price to move, where a
+    bare rupee figure would not.
+    """
+    return [
+        f"{data['slug']} {cycle}: {warning}"
+        for cycle, warning in (
+            ("monthly", emandate_warning(data["monthly_price_cents"], "INR")),
+            ("annual", emandate_warning(data["annual_price_cents"], "INR")),
+        )
+        if warning
+    ]
+
+
+def _print_emandate_warnings(warnings: list[str]) -> None:
+    """Report ceiling breaches loudly, and do nothing else.
+
+    Explicitly NOT a failure: the exit code stays 0 and the seed still writes.
+    Pricing above the ceiling is a deliberate business decision (both annual
+    tiers are already there), and a seed that refused to run because of one
+    would be unusable — the whole catalogue would be hostage to a pricing
+    argument. The value is that the NEXT price change gets flagged before it
+    ships, so this is sized to be unmissable in a wall of seed output instead.
+    """
+    if not warnings:
+        return
+    plural = "" if len(warnings) == 1 else "s"
+    ceiling = EMANDATE_AFA_CEILING_MINOR / 100
+    print("\n" + "!" * 100)
+    print(f"RBI E-MANDATE CEILING — {len(warnings)} plan-cycle{plural} above ₹{ceiling:,.0f} in a single charge:\n")
+    for warning in warnings:
+        print(f"  {warning}")
+    print(
+        "\nNot a blocker: the seed still ran and exits 0. What it costs is silent renewal — "
+        "each of those\ncharges needs the customer to complete Additional Factor of Authentication, "
+        "every cycle. Price\nbelow the ceiling, bill those tiers monthly, or invoice them instead."
+    )
+    print("!" * 100)
+
+
 def run(*, apply: bool) -> int:
     with get_session() as session:
         existing = {p.slug: p for p in session.scalars(select(Plan)).all()}
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}\n")
+        contact_sales_only: list[str] = []
+        # Collected in BOTH modes. A dry-run exists so someone can see what a
+        # change would do before committing it; a ceiling warning that only
+        # appeared under --apply would arrive after the price was already
+        # written, which is exactly the moment it stops being actionable.
+        ceiling_warnings: list[str] = []
         for data in _PLANS:
             slug = data["slug"]
             plan = existing.get(slug)
             verb = "update" if plan else "insert"
             price = data["monthly_price_cents"] / 100
-            print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits")
+            wired = _would_be_wired(data, plan)
+            if not wired:
+                contact_sales_only.append(slug)
+            state = "self-serve" if wired else "CONTACT SALES — no Razorpay plan id"
+            print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
+            ceiling_warnings.extend(_emandate_warnings(data))
 
             if not apply:
                 continue
 
             if plan is None:
+                # is_active ONLY here. A row this run creates has no deliberate
+                # deactivation to override; an existing one may, so the update
+                # below leaves the column alone. See the module docstring.
                 plan = Plan(slug=slug, currency="INR", pricing_model="per_operator", is_active=True)
                 session.add(plan)
             plan.currency = "INR"
-            plan.is_active = True
             for field in _SCALAR_FIELDS:
                 setattr(plan, field, data[field])
+
+        if contact_sales_only:
+            print(
+                f"\nNot self-serve in this environment: {', '.join(contact_sales_only)}. "
+                "A tier without both INR Razorpay\nplan ids stays LISTED — the quote answers "
+                "'inr_plan_unconfigured' with a contact-sales address and\ncheckout refuses in the "
+                "same shape — but nobody can buy it without leaving the site. Attach this\n"
+                "environment's ids with scripts/set_razorpay_plan_ids.py --apply to open self-serve "
+                "checkout."
+            )
 
         if apply:
             session.commit()
             print("\nCommitted.")
         else:
             print("\nDry-run — re-run with --apply to commit.")
+
+        # Last, so it is the block still on screen when the run ends.
+        _print_emandate_warnings(ceiling_warnings)
     return 0
 
 

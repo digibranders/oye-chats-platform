@@ -188,11 +188,11 @@ export function WebsiteInstall({ botKey, botId }: WebsiteInstallProps) {
               href={demoUrl}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="See your agent live (opens in a new tab)"
+              aria-label="See your chatbot live (opens in a new tab)"
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-3.5 py-2 text-[13px] font-medium text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--ds-ring)]"
             >
               <ExternalLink size={14} aria-hidden="true" />
-              See your agent live
+              See your chatbot live
             </a>
             <button
               type="button"

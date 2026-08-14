@@ -93,7 +93,7 @@ function PlanLimitsSection({ pool }: { pool?: PoolCredit | null }): ReactElement
       <section aria-label="Plan limits" className="space-y-4">
         <SectionHeader
           title="Plan limits"
-          description={`The ceilings on ${pool.name}'s plan, alongside what this agent has used.`}
+          description={`The ceilings on ${pool.name}'s plan, alongside what this chatbot has used.`}
         />
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           {showMembers && (
@@ -289,10 +289,10 @@ function CreditCostItem({
                 // they were about to start spending from.
                 aria-label={`Open ${
                   row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
-                } for ${agentName ?? 'this agent'} to configure this`}
+                } for ${agentName ?? 'this chatbot'} to configure this`}
                 title={`Open ${
                   row.linkTab === 'knowledge' ? 'Knowledge' : 'Advanced settings'
-                } for ${agentName ?? 'this agent'}`}
+                } for ${agentName ?? 'this chatbot'}`}
                 className="shrink-0 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-accent-text)] focus-visible:text-[var(--ds-accent-text)] focus-visible:outline-none"
               >
                 <ArrowUpRight size={14} aria-hidden="true" />
@@ -612,7 +612,7 @@ export function UsagePage(): ReactElement {
           ) : (
             <AgentCreditHero
               pool={aggregatePool(phase.balance)}
-              agentName="All agents"
+              agentName="All chatbots"
               onTopup={handleTopup}
             />
           )}

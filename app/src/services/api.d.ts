@@ -393,7 +393,11 @@ export function getInvoices(botId?: number | null): Promise<Array<Record<string,
 export function getBillingDetails(): Promise<Record<string, unknown>>;
 export function updateBillingDetails(patch: Record<string, unknown>): Promise<Record<string, unknown>>;
 
-/** Subscription geo/currency profile: `{ country, display_currency, display_rate, checkout_available }`. */
+/**
+ * Subscription geo/currency profile: `{ country, display_currency, display_rate, checkout_available, … }`.
+ * `display_currency` tracks the charge path: `"INR"` for India and for an unresolved country
+ * (an unconfirmed buyer is domestic), `"USD"` only for a stored/detected non-IN country.
+ */
 export function getBillingGeo(overrideCountry?: string): Promise<Record<string, unknown>>;
 /** First-time checkout for a plan → provider payload (Razorpay `subscription_id`, `key_id`, …). */
 export function createCheckoutSession(

@@ -49,7 +49,7 @@ Grounded in the actual implementation on branch `steve`.
 | 3.4 | Client already has an active **paid** sub | `create_checkout` 409s (mandate-backed guard) → promo not applicable | ✅ |
 | 3.5 | Free→paid upgrade routes correctly | Promo-eligible selection forced through checkout, not change-plan | ✅ fixed (Task #13) |
 | 3.6 | Promo user also enters a **referral code** in the confirm modal | Promo suppresses the recurring discount (`discount_bps=0`), but the referral conversion still records. Interaction/UX not fully traced. | ⚠️ verify no double-benefit / confusing UI |
-| 3.7 | Free plan / enterprise plan selected | Rejected (free) / excluded (`isEnterprise`) | ✅ |
+| 3.7 | Free plan / Enterprise plan selected | Free is rejected. The seeded **Enterprise** tier is **no longer excluded** — since `1da4fff` it is a priced ladder rung that takes the promo like any other paid plan, matching `promotion_service._plan_eligible` (which scopes by `eligible_plan_ids` alone). Only a bespoke per-contract plan is excluded, via `plan.isContactSales` (the `contact_sales` / `enterprise` feature flags) in `promotionAppliesToPlan`. The old `isEnterprise` slug match no longer exists. | ✅ |
 
 ## 4. Currency & billing cycle
 

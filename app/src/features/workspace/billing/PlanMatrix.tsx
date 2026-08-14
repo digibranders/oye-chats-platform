@@ -1,7 +1,13 @@
 import { type ReactElement } from 'react';
 import { Check, Minus } from 'lucide-react';
 import { Button, StatusBadge, cn } from '../../../design-system';
-import { UNLIMITED_LIMIT, formatCredits, formatMoneyMinor, type PlanView } from '../billingModel';
+import {
+  UNLIMITED_LIMIT,
+  formatCredits,
+  formatMoneyMinor,
+  maxAnnualSavingPercent,
+  type PlanView,
+} from '../billingModel';
 import type { BillingCycle } from './planMath';
 import {
   planIncludesEmailVerification,
@@ -34,6 +40,46 @@ function historyText(value: number | undefined): string {
 // so the matrix stays correct as plans change - nothing here is hardcoded per
 // tier. Rows are grouped; group headers render once as a spanning row.
 const FEATURE_ROWS: readonly FeatureRow[] = [
+  {
+    group: 'Usage',
+    // Leads the table: the agent is the unit of the product - credits, seats
+    // and crawl pages all meter something an agent does - and this is the only
+    // row on which the top tier differs from every other, which is the whole
+    // reason that tier exists. Below the fold it would have been invisible on
+    // the one surface built for comparing tiers.
+    //
+    // "included" is load-bearing, not filler. `limits.bots` is a per-
+    // SUBSCRIPTION quota, not an account ceiling: `bot_routes.create_bot`
+    // denies the second agent and then re-allows it through
+    // `_plan_bots_limit_allows` only while the plan's quota still covers the
+    // count, and every agent past that is sold its own subscription via
+    // `POST /bots/checkout`. A bare "AI agents / 1" would therefore advertise a
+    // hard cap of one agent that the server does not enforce.
+    //
+    // But "included" alone only carries that caveat for a reader who already
+    // knows there is something to be caveated, and this row LEADS the table,
+    // which maximises the misread. The concrete failure is an under-sell, and
+    // it hits the exact customer this catalogue's top tier was written for: an
+    // agency needing three agents reads `1 / 1 / 1 / 1 / Unlimited`, concludes
+    // that more than one agent requires Enterprise, and either overpays for it
+    // or leaves - when three Standard subscriptions cost roughly half of one
+    // Enterprise and are a path the server fully supports. So the label states
+    // the extension outright rather than implying it.
+    //
+    // The over-sell direction stays clean: "1" on Free is honest (one agent is
+    // what a free account is granted, and the extension is a purchase), and
+    // "Unlimited" on Enterprise is honest for the account-scoped subscription
+    // Launch Studio mints. Both qualifiers sit in the LABEL so the cells stay
+    // bare values, like every other row - the matrix has no footnote mechanism
+    // and one row does not justify inventing one.
+    label: 'AI chatbots included (add more anytime)',
+    kind: 'text',
+    // Same `limitText` the crawl-pages row uses, so the `-1` UNLIMITED sentinel
+    // renders as "Unlimited" rather than as a count of minus one, and a plan
+    // row carrying no `bots` quota at all renders "-" instead of claiming a
+    // number the backend would read as zero.
+    value: (p) => limitText(p.limits.bots),
+  },
   { group: 'Usage', label: 'Credits / month', kind: 'text', value: (p) => formatCredits(p.creditsPerMonth) },
   {
     group: 'Usage',
@@ -139,7 +185,7 @@ export function PlanMatrix({
   currentStatus = null,
 }: PlanMatrixProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
-  const maxDiscount = Math.max(0, ...plans.map((p) => p.annualDiscountPercent));
+  const maxSavingPercent = maxAnnualSavingPercent(plans);
   // A trialing/post-trial current column can convert to paid from its own CTA.
   const trialing = currentStatus === 'trialing' || currentStatus === 'trial_expired';
 
@@ -151,7 +197,11 @@ export function PlanMatrix({
       {/* Monthly / Annual toggle */}
       {!hideToggle && (
         <div className="flex justify-end">
-          <CycleToggle cycle={cycle} maxDiscount={maxDiscount} onCycleChange={onCycleChange} />
+          <CycleToggle
+            cycle={cycle}
+            maxSavingPercent={maxSavingPercent}
+            onCycleChange={onCycleChange}
+          />
         </div>
       )}
 
@@ -236,11 +286,17 @@ export function PlanMatrix({
  *  Compare-plans disclosure so both drive one cycle. */
 export function CycleToggle({
   cycle,
-  maxDiscount,
+  maxSavingPercent,
   onCycleChange,
 }: {
   cycle: BillingCycle;
-  maxDiscount: number;
+  /**
+   * Best annual saving across the plan set, from {@link maxAnnualSavingPercent}
+   * - i.e. derived from the displayed prices, in the displayed currency, and
+   * rounded down. Rendered as "save up to X%" because it is a maximum, not a
+   * discount every plan in the set grants. 0 drops the saving copy entirely.
+   */
+  maxSavingPercent: number;
   onCycleChange: (cycle: BillingCycle) => void;
 }): ReactElement {
   return (
@@ -262,7 +318,11 @@ export function CycleToggle({
               : 'text-[var(--ds-text-muted)] hover:text-[var(--ds-text)]',
           )}
         >
-          {key === 'monthly' ? 'Monthly' : maxDiscount > 0 ? `Annual · save ${maxDiscount}%` : 'Annual'}
+          {key === 'monthly'
+            ? 'Monthly'
+            : maxSavingPercent > 0
+              ? `Annual · save up to ${maxSavingPercent}%`
+              : 'Annual'}
         </button>
       ))}
     </div>

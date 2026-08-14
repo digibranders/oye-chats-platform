@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from app.db.models import Client, Plan
@@ -32,6 +32,16 @@ pytestmark = pytest.mark.skipif(
 @contextmanager
 def _session_cm(session):
     yield session
+
+
+def _bare_request() -> Request:
+    """A header-less GET Request, for calling the charge gate directly.
+
+    The gate reads geo only through ``subscription_routes.resolve_country``,
+    which these tests monkeypatch — this just satisfies its signature with a
+    real object instead of ``None``.
+    """
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
 
 
 def _make_client(db, *, email: str) -> Client:
@@ -121,6 +131,81 @@ def test_geo_prefers_stored_billing_country_over_ip(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert res.json()["country"] == "IN"
     assert res.json()["display_currency"] == "INR"
+
+
+def test_geo_unresolved_country_reports_the_currency_the_charge_path_uses(db, monkeypatch):
+    """No stored country and no resolvable IP → /geo must report INR.
+
+    This is the ONE case where /geo's answer is unguarded: a *detected* foreign
+    country 409s at ``_resolve_confirmed_billing_country_or_409``, and a stored
+    non-IN one 409s too, but an unresolved country is waved through as domestic
+    and charged in rupees. /geo used to map it to USD, so the top-up modal
+    rendered $13/$50/$125 while Razorpay debited ₹1,000/₹4,000/₹10,000.
+
+    Asserted against what the top-up gate actually confirms for the same client
+    rather than a transcribed "INR", so the two cannot drift apart again.
+    """
+    from app.api import subscription_routes
+    from app.core.pricing import charge_currency
+
+    client = _make_client(db, email="geo-unresolved@e.com")
+    assert client.billing_country is None
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: None)
+
+    api = _api(db, client)
+    res = api.get("/subscriptions/geo")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["country"] is None
+    assert body["country_source"] is None
+
+    # The country the INR-only top-up rail would actually charge this client on.
+    charged_country = subscription_routes._resolve_confirmed_billing_country_or_409(
+        request_country=None,
+        client=client,
+        http_request=_bare_request(),
+        allow_usd=False,
+    )
+    assert body["display_currency"] == charge_currency(charged_country) == "INR"
+
+
+def test_geo_keeps_usd_display_for_a_detected_foreign_country(db, monkeypatch):
+    """The detected-country divergence is intentional and must survive the fix.
+
+    IP geo is display-grade: it shows USD even though the charge path would
+    confirm IN, and is safe only because the frontend never echoes it back as
+    ``billing_country`` and the gate 409s ``billing_country_required`` when a
+    foreign IP is the only signal. Pins ``country_source`` so a future
+    "unify display with charge" change can't silently downgrade that signal.
+    """
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="geo-detected-foreign@e.com")
+    assert client.billing_country is None
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    res = api.get("/subscriptions/geo")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["country"] == "US"
+    assert body["country_source"] == "detected"
+    assert body["display_currency"] == "USD"
+
+    # ...and the gate that stops it becoming an INR debit.
+    with pytest.raises(HTTPException) as exc:
+        subscription_routes._resolve_confirmed_billing_country_or_409(
+            request_country=None,
+            client=client,
+            http_request=_bare_request(),
+            allow_usd=False,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "billing_country_required"
 
 
 # ── Task 2: /checkout/quote currency routing ──────────────────────────────────
@@ -242,3 +327,54 @@ def test_checkout_quote_supports_priced_usd_tier_with_flag_on(db, monkeypatch):
     assert body["currency"] == "USD"
     assert body["amount_minor"] == 1900
     assert body["checkout_supported"] is True
+
+
+def test_domestic_quote_without_an_inr_plan_id_offers_contact_sales(db, monkeypatch):
+    """The INR branch owes the buyer the same honesty as the USD one.
+
+    ``razorpay_service.create_subscription`` rejects a missing INR plan id with
+    a ValueError that ``/subscriptions/checkout`` renders verbatim as a 400 — an
+    internal "create the plan in the Razorpay dashboard" instruction shown to a
+    customer who just clicked Subscribe on a quoted price. Quote the CTA instead.
+    """
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-no-inr@e.com")
+    plan = _make_plan(db, slug="starter-no-inr", monthly_price_cents=179900)
+    plan.razorpay_plan_id_monthly = None  # tier priced but never wired for monthly
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["currency"] == "INR"
+    assert body["amount_display"] == "₹1,799"  # still quoted — only the CTA changes
+    assert body["checkout_supported"] is False
+    assert body["reason"] == "inr_plan_unconfigured"
+    assert body["contact_sales"] == "developer@oyechats.com"
+    assert body["provider"] is None
+
+
+def test_domestic_quote_is_cycle_specific_about_the_missing_plan_id(db, monkeypatch):
+    """Monthly unwired must not block the annual cycle the tier IS wired for."""
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-annual-inr@e.com")
+    plan = _make_plan(db, slug="starter-annual-inr", monthly_price_cents=179900)
+    plan.razorpay_plan_id_monthly = None
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=annual")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["checkout_supported"] is True
+    assert body["provider"] == "razorpay"
+    assert body["methods"] == ["card", "upi"]

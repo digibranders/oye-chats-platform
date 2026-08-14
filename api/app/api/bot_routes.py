@@ -596,7 +596,14 @@ def _find_bot_by_website(session, client_id: int, website: str | None) -> Bot | 
 
     Used to make onboarding bot-creation idempotent: a retried/duplicate create
     for the same site (the Build Studio double-submit) returns the bot that was
-    already created instead of tripping the free 1-bot cap with a confusing 402.
+    already created, instead of either tripping the free 1-bot cap with a
+    confusing 402 or — on any path the cap allows — silently writing a second
+    row for the same website.
+
+    Matching is on the normalized apex host, not the stored string, so the
+    ``https://`` the frontend prepends and a bare host entered by hand resolve
+    to the same site. That is also why no database constraint can stand in for
+    this check.
     """
     if not website:
         return None
@@ -1517,6 +1524,18 @@ def _plan_bots_limit_allows(client_id: int, session, active_bot_count: int) -> b
             exc_info=True,
         )
         return False
+    if "bots" not in entitlements.limits:
+        # A bespoke contract plan that loses its unlimited-agents term degrades
+        # to ``limit_for``'s conservative 0, so this predicate stops widening
+        # and the account is quietly pushed through per-bot checkout with no
+        # other trace. Log it so support can tell "plan data lost a term" apart
+        # from "customer is on the wrong plan" without reading the JSONB by hand.
+        logger.info(
+            "bots_limit_gate: plan '%s' declares no 'bots' quota for client=%s — "
+            "treating it as 0 (no widening); check the plan's limits JSON",
+            entitlements.plan_slug,
+            client_id,
+        )
     return entitlements.within_limit("bots", active_bot_count)
 
 
@@ -1538,13 +1557,51 @@ def create_bot(
     """
     _require_bot_management_access(auth)
     with get_session() as session:
+        # ── Idempotent onboarding create (runs BEFORE the billing gate) ──
+        # A Build Studio double-submit sends the same payload twice: submit #1
+        # creates the agent, submit #2 arrives behind it. If the workspace
+        # already has an agent for the same site, that is a retry, not a second
+        # agent — return the one that exists.
+        #
+        # This deliberately does NOT live inside the 402 branch below. Only the
+        # *denied* path used to reach it, so the two paths the gate ALLOWS —
+        # an account with zero agents (its very first submit, the case this
+        # exists for) and a plan whose quota widens the gate (``bots: -1``) —
+        # created a duplicate row on the retry with nothing to catch it: the
+        # ``Bot`` model has no unique constraint on ``(client_id, website)``,
+        # and could not usefully have one, because ``website`` is stored raw
+        # and ``https://x.com`` / ``x.com`` are the same site to
+        # ``normalize_domain_input`` and different strings to Postgres.
+        #
+        # Consequence worth stating: one agent per website per account is now
+        # the rule on every path, not just the capped one. Agents created
+        # without a website are unaffected (the lookup answers ``None``), which
+        # is the escape hatch for deliberately running two agents on one site.
+        # Two genuinely simultaneous requests can still both miss this read —
+        # that race is unchanged and needs row-level locking, not a reordering.
+        existing = _find_bot_by_website(session, auth["client_id"], request.website)
+        if existing is not None:
+            existing_plan = bot_plan(existing.id, session)
+            return _bot_to_response(existing, http_request, plan_slug=existing_plan[0], plan_name=existing_plan[1])
+
         # ── Per-bot billing gate, widened by the plan's agent quota ──
         # Default rule: an account gets exactly one bot here, and every
         # additional bot needs its own paid subscription via
         # ``POST /bots/checkout`` so the new agent has a funded counterpart.
-        # That decision is centralised in
-        # :func:`plan_entitlements_service.can_client_add_new_bot` so the
-        # frontend's ``/me/entitlements`` view and this route stay in lockstep.
+        # That default lives in
+        # :func:`plan_entitlements_service.can_client_add_new_bot`, whose only
+        # caller is this route. It is NOT a shared source of truth with
+        # ``/me/entitlements``: that endpoint ships ``limits`` + ``usage`` and
+        # never surfaces this decision, so nothing on the frontend consumes the
+        # service's answer and the two cannot be "in lockstep". Read alone the
+        # service is in fact WRONG about what happens here — on an
+        # unlimited-agents plan it answers ``must_subscribe`` while this route
+        # returns 201, because the full rule is the service's default AND the
+        # widening below. Any surface needing the real answer has to reproduce
+        # both clauses; ``app/src/features/agents/agentLimit.ts`` is the
+        # frontend mirror that does, off ``limits.bots`` + ``usage.bots``. Fold
+        # the widening into the service the day the decision gets an endpoint
+        # of its own — until then it would centralise nothing.
         #
         # ``_plan_bots_limit_allows`` is the override: a plan whose
         # ``limits.bots`` quota still covers the account's current agent count
@@ -1560,15 +1617,10 @@ def create_bot(
 
         decision = can_client_add_new_bot(auth["client_id"], session)
         if not decision.allowed and not _plan_bots_limit_allows(auth["client_id"], session, decision.active_bot_count):
-            # Idempotent onboarding create: a Build Studio double-submit (submit
-            # #1 creates the bot, submit #2 arrives after and is now over the
-            # free 1-bot cap) would otherwise surface a confusing "needs a paid
-            # subscription" 402 during first run. If the workspace already has a
-            # bot for the same site, treat this as a retry and return that bot.
-            existing = _find_bot_by_website(session, auth["client_id"], request.website)
-            if existing is not None:
-                _plan = bot_plan(existing.id, session)
-                return _bot_to_response(existing, http_request, plan_slug=_plan[0], plan_name=_plan[1])
+            # Reached only for a genuinely NEW site — the same-site retry above
+            # has already returned. The frontend paywall keys on this exact
+            # body (``apiErrors.requiresSubscription`` → ``CreateAgentDialog``'s
+            # pricing step), so the shape is a contract.
             raise HTTPException(
                 status_code=402,
                 detail={
@@ -1700,7 +1752,20 @@ def create_bot_checkout(
         from app.db.models import Client, Plan
         from app.services import plan_entitlements_service, razorpay_service
 
-        plan = session.execute(select(Plan).where(Plan.slug == request.plan_slug)).scalars().first()
+        # ``is_active`` is part of the lookup, not a second check: ``delete_plan``
+        # soft-deletes by clearing the flag, and a super admin deactivates a tier
+        # to withdraw it from sale. Without the predicate a withdrawn plan stays
+        # purchasable by slug through a direct API call — the plan list hides it
+        # but this route would still mint a subscription on it. Matches
+        # ``/subscriptions/checkout`` and ``/subscriptions/change-plan``, which
+        # both gate on the flag. Deliberately 404 (not 400): a withdrawn plan is
+        # indistinguishable from one that never existed, so callers can't probe
+        # for retired tiers.
+        plan = (
+            session.execute(select(Plan).where(Plan.slug == request.plan_slug, Plan.is_active.is_(True)))
+            .scalars()
+            .first()
+        )
         if plan is None:
             raise HTTPException(status_code=404, detail=f"Plan '{request.plan_slug}' not found.")
         if plan.slug == "free":

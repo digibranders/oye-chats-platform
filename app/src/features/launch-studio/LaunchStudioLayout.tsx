@@ -74,7 +74,7 @@ export function LaunchStudioLayout({
         {/* Step rail */}
         <aside className="hidden shrink-0 overflow-y-auto border-r border-[var(--ds-border)] bg-[var(--ds-sidebar-bg)] p-5 lg:block">
           <p className="mb-4 px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-            Get your agent live
+            Get your chatbot live
           </p>
           <ProgressStepper
             steps={steps}

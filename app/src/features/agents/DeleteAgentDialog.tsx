@@ -75,7 +75,7 @@ export function DeleteAgentDialog({
 
         {/* What gets removed. */}
         <p className="rounded-[var(--ds-radius-md)] border border-[var(--ds-border)] bg-[var(--ds-danger-soft)] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-[var(--ds-text-muted)]">
-          This permanently deletes the agent along with its knowledge base, conversations, and
+          This permanently deletes the chatbot along with its knowledge base, conversations, and
           captured leads. This action cannot be undone.
         </p>
 
@@ -118,7 +118,7 @@ export function DeleteAgentDialog({
           onClick={onConfirm}
         >
           {busy && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-          {busy ? 'Deleting…' : 'Delete this agent'}
+          {busy ? 'Deleting…' : 'Delete this chatbot'}
         </Button>
       </div>
     </Modal>
