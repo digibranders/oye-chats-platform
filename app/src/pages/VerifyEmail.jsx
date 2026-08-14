@@ -54,24 +54,40 @@ export default function VerifyEmail() {
     inputRefs.current[0]?.focus();
   }, [navigate, safeNext]);
 
-  // Resolve the address from the session when neither the URL nor storage
-  // carried one. Best-effort: a failure leaves `email` empty and the existing
-  // "Email address missing" guards still apply, so this can only ever unblock.
+  // Ask the server who this session is, once on mount. Two jobs, one request:
+  //
+  //  1. Resolve the address when neither the URL nor storage carried one. This
+  //     is load-bearing for the whole verification gate - a user logging in on
+  //     a fresh device has nothing in local storage, and without this the gate
+  //     would strand them on a screen whose verify AND resend both refuse to
+  //     act. Best-effort: on failure `email` stays empty and the existing
+  //     "Email address missing" guards apply, so it can only ever unblock.
+  //
+  //  2. Reconcile a stale `admin_is_verified`. The gate is deliberately
+  //     synchronous on that flag, so this is the authoritative correction: if
+  //     the server says this account IS verified, refresh the flag and leave.
+  //     Without it a wrongly-`'false'` flag would be a closed loop - gated in
+  //     here, with no way to prove otherwise.
   useEffect(() => {
-    if (email) return undefined;
     let cancelled = false;
     (async () => {
       try {
         const me = await getCurrentUser();
-        if (!cancelled && me?.email) setEmail(me.email);
+        if (cancelled) return;
+        if (me?.email) setEmail((prev) => prev || me.email);
+        if (me?.is_verified) {
+          setAuthItem('admin_is_verified', 'true');
+          removeAuthItem('admin_pending_email');
+          navigate(safeNext || '/', { replace: true });
+        }
       } catch {
-        /* leave empty - the submit handlers surface the missing-email error */
+        /* leave state as-is - the submit handlers surface any missing email */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [email]);
+  }, [navigate, safeNext]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;

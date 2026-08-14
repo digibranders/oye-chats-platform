@@ -1079,6 +1079,14 @@ def accept_invite(
         company_name=(company_name or "").strip() or None,
         website=(website or "").strip() or None,
         is_superadmin=False,
+        # Already proven: the magic link was emailed to ``invite.email`` and the
+        # account's address is forced to that same value below — the acceptor
+        # never chooses it. Holding the link therefore demonstrates control of
+        # the inbox, exactly the reasoning that lets Google sign-ups skip the
+        # OTP (see oauth_routes.py). Leaving this False would strand invitees:
+        # no OTP is sent on this path, and the front-end verification gate would
+        # bounce a flow that logs them straight in.
+        is_verified=True,
     )
     session.add(client)
     session.flush()  # populate client.id
