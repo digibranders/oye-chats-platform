@@ -35,6 +35,12 @@ Idempotent: each plan is matched by ``slug`` and updated in place; a new row is
 inserted if the slug is missing. Unknown slugs (custom tiers added by a super
 admin) are left untouched.
 
+``annual_discount_percent`` is NOT in the matrix. It is derived from each tier's
+two INR prices via ``core.pricing.annual_saving_percent`` — the same helper every
+plan payload is served through — so the seed cannot store a headline the prices
+do not back. It was hand-maintained until now, and it drifted: Professional
+carried 22 for a 21.674% saving, which is what the marketing site advertised.
+
 Every INR amount in the matrix is checked against the RBI e-mandate AFA ceiling
 (``core.pricing.emandate_warning``, shared with the super-admin plan editor) in
 BOTH modes. A breach is printed loudly and blocks nothing — see
@@ -56,7 +62,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlalchemy import select
 
-from app.core.pricing import EMANDATE_AFA_CEILING_MINOR, emandate_warning
+from app.core.pricing import EMANDATE_AFA_CEILING_MINOR, annual_saving_percent, emandate_warning
 from app.db.models import Plan
 from app.db.session import get_session
 from app.services.plan_service import plan_checkout_is_wired
@@ -73,7 +79,6 @@ _PLANS: list[dict] = [
         "annual_price_cents": 0,
         "monthly_price_usd_cents": 0,
         "annual_price_usd_cents": 0,
-        "annual_discount_percent": 0,
         "trial_days": 0,
         "included_operator_seats": 0,
         "extra_seat_price_cents": 0,
@@ -116,7 +121,6 @@ _PLANS: list[dict] = [
         "annual_price_cents": 574800,  # ₹5,748 (₹479/mo × 12)
         "monthly_price_usd_cents": 799,  # $7.99
         "annual_price_usd_cents": 7788,  # $77.88 ($6.49/mo × 12)
-        "annual_discount_percent": 20,  # ₹5,748 vs ₹7,188 (12 × monthly)
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 1,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -159,7 +163,6 @@ _PLANS: list[dict] = [
         "annual_price_cents": 1150800,  # ₹11,508 (₹959/mo × 12)
         "monthly_price_usd_cents": 1599,  # $15.99
         "annual_price_usd_cents": 15588,  # $155.88 ($12.99/mo × 12)
-        "annual_discount_percent": 20,  # ₹11,508 vs ₹14,388 (12 × monthly)
         "trial_days": 7,  # the 7-day full-Standard trial
         "included_operator_seats": 2,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -205,7 +208,6 @@ _PLANS: list[dict] = [
         "annual_price_cents": 2818800,  # ₹28,188 (₹2,349/mo × 12)
         "monthly_price_usd_cents": 4599,  # $45.99
         "annual_price_usd_cents": 45588,  # $455.88 ($37.99/mo × 12)
-        "annual_discount_percent": 22,  # ₹28,188 vs ₹35,988 (12 × monthly)
         "trial_days": 0,  # trials are the Standard-only 7-day offer
         "included_operator_seats": 3,
         "extra_seat_price_cents": 44900,  # ₹449
@@ -248,7 +250,6 @@ _PLANS: list[dict] = [
         "annual_price_cents": 5758800,  # ₹57,588 (₹4,799/mo × 12)
         "monthly_price_usd_cents": 8999,  # $89.99
         "annual_price_usd_cents": 86388,  # $863.88 ($71.99/mo × 12)
-        "annual_discount_percent": 20,  # ₹57,588 vs ₹71,988 (12 × monthly)
         "trial_days": 0,
         "included_operator_seats": -1,
         "extra_seat_price_cents": 0,
@@ -302,7 +303,6 @@ _SCALAR_FIELDS = (
     "annual_price_cents",
     "monthly_price_usd_cents",
     "annual_price_usd_cents",
-    "annual_discount_percent",
     "trial_days",
     "included_operator_seats",
     "extra_seat_price_cents",
@@ -412,6 +412,11 @@ def run(*, apply: bool) -> int:
             plan.currency = "INR"
             for field in _SCALAR_FIELDS:
                 setattr(plan, field, data[field])
+            # Derived, never authored — see the module docstring. Uses the same
+            # helper every read route serves, so the row and the payload agree.
+            plan.annual_discount_percent = annual_saving_percent(
+                data["monthly_price_cents"], data["annual_price_cents"]
+            )
 
         if contact_sales_only:
             print(

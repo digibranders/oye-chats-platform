@@ -7,6 +7,7 @@ adds marketing copy + FAQ/matrix/top-ups so the website is fully DB-driven.
 
 from fastapi import APIRouter
 
+from app.core.pricing import annual_saving_percent
 from app.db.session import get_session
 from app.services.plan_service import get_active_plans, get_pricing_content
 
@@ -34,7 +35,11 @@ def pricing_catalog():
                     "annual_price_usd_cents": p.annual_price_usd_cents,
                     "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
                     "extra_seat_price_cents": p.extra_seat_price_cents,
-                    "annual_discount_percent": p.annual_discount_percent,
+                    # Derived from the prices in the same payload, NOT the stored
+                    # column — see core.pricing.annual_saving_percent. Same key,
+                    # same type, so the website needs no deploy to stop showing
+                    # Professional's stale 22% for a 21% saving.
+                    "annual_discount_percent": annual_saving_percent(p.monthly_price_cents, p.annual_price_cents),
                     "trial_days": p.trial_days,
                     "credits_per_month": p.credits_per_month,
                     "included_operator_seats": p.included_operator_seats,

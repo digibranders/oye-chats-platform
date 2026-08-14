@@ -94,17 +94,20 @@ export interface PlanView {
    */
   isContactSales: boolean;
   /**
-   * The backend's stored headline annual discount (`annual_discount_percent`),
-   * a single hand-maintained integer per plan.
+   * The payload's `annual_discount_percent`, which the backend now DERIVES from
+   * the same INR prices this model carries (`core/pricing.annual_saving_percent`,
+   * a port of {@link annualSavingPercent} - same floor, same zero cases). Every
+   * consumer of `GET /subscriptions/plans` and `GET /public/pricing-catalog`
+   * therefore reads one figure computed one way.
    *
-   * NOT the source for any rendered saving badge - use
-   * {@link maxAnnualSavingPercent}, which derives the figure from the very
-   * prices the surface is displaying. The stored integer is a separate value
-   * that can (and does) disagree with the prices: the seeded Professional tier
-   * stores 22 while ₹28,188 against 12 × ₹2,999 is a 21.67% saving, so the
-   * badge read 22% for a discount no plan actually gives. It is also a
-   * single number for a row that carries BOTH an INR and a USD price pair,
-   * which cannot both round to it.
+   * Still NOT the source for any rendered saving badge - use
+   * {@link maxAnnualSavingPercent}. Deriving locally keeps the badge true for
+   * whichever rail the surface is displaying (one integer cannot describe both
+   * the INR and USD price pairs on a plan row), and it keeps rendering correct
+   * against an older API build that still serves the stored column: that column
+   * was hand-maintained and drifted - seeded Professional stored 22 while
+   * ₹28,188 against 12 × ₹2,999 is a 21.67% saving, which is the disagreement
+   * this field is kept around to survive rather than to propagate.
    */
   annualDiscountPercent: number;
   /** Free-trial length in days; 0 for plans with no trial (Free). */

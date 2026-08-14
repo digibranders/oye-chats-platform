@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
 from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
-from app.core.pricing import display_price, emandate_warning
+from app.core.pricing import annual_saving_percent, display_price, emandate_warning
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import plan_entitlements_service
@@ -97,7 +97,12 @@ class CreatePlanRequest(BaseModel):
     monthly_price_usd_cents: int | None = Field(None, ge=0)
     annual_price_usd_cents: int | None = Field(None, ge=0)
     extra_seat_price_usd_cents: int | None = Field(None, ge=0)
-    annual_discount_percent: int = Field(30, ge=0, le=100)
+    # No default. This used to default to 30, so the single most likely way to
+    # create a bespoke tier was to publish a 30% annual discount nobody had
+    # checked and no price backed. It is now derived from the prices below; an
+    # explicit value is accepted only when it already agrees with them
+    # (:func:`_resolve_annual_discount`).
+    annual_discount_percent: int | None = Field(None, ge=0, le=100)
     trial_days: int = Field(7, ge=0)
     limits: dict | None = None
     features: dict | None = None
@@ -193,7 +198,11 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
                 "annual_price_cents": p.annual_price_cents,
                 "monthly_price_usd_cents": p.monthly_price_usd_cents,
                 "annual_price_usd_cents": p.annual_price_usd_cents,
-                "annual_discount_percent": p.annual_discount_percent,
+                # Derived, exactly as the customer-facing catalogs serve it, so
+                # the editor shows the operator the number their customers read
+                # rather than whatever int the row happens to carry. Writes below
+                # store the same derived value, so the two converge on first save.
+                "annual_discount_percent": annual_saving_percent(p.monthly_price_cents, p.annual_price_cents),
                 "trial_days": p.trial_days,
                 "limits": p.limits,
                 "features": p.features,
@@ -247,6 +256,34 @@ def _reject_seat_price_drift(data: dict) -> None:
                 f"extra_seat_price_usd_cents to {EXTRA_SEAT_PRICE_USD_CENTS} or 0."
             ),
         )
+
+
+def _resolve_annual_discount(*, monthly_minor: int | None, annual_minor: int | None, supplied: int | None) -> int:
+    """The ``annual_discount_percent`` a write may store: always the derived one.
+
+    Reads serve :func:`app.core.pricing.annual_saving_percent` regardless, so the
+    stored column can no longer publish anything. This keeps it in sync anyway —
+    one number in the row, in the payload and on every surface — rather than
+    leaving a decorative int that quietly disagrees with the prices beside it and
+    misleads the next person to query the table.
+
+    A supplied value is VALIDATED, not silently dropped. Ignoring it would make
+    the super-admin editor's field a no-op that still looks editable, which is a
+    worse failure than the one being fixed; a 422 naming the derived figure tells
+    the operator that the way to change the advertised discount is to move the
+    annual price. Omitting the field is the normal path and always correct.
+    """
+    derived = annual_saving_percent(monthly_minor, annual_minor)
+    if supplied is not None and int(supplied) != derived:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"annual_discount_percent is derived from the prices, not set: these amounts are a "
+                f"{derived}% annual saving, not {int(supplied)}%. Omit the field, or send {derived}. "
+                "To advertise a different discount, change annual_price_cents."
+            ),
+        )
+    return derived
 
 
 def _emandate_warnings(plan: Plan) -> list[str]:
@@ -320,6 +357,11 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
     """Create a new pricing plan."""
     _require_write(superadmin)
     _reject_seat_price_drift(request.model_dump())
+    annual_discount_percent = _resolve_annual_discount(
+        monthly_minor=request.monthly_price_cents,
+        annual_minor=request.annual_price_cents,
+        supplied=request.annual_discount_percent,
+    )
     # F7: dual-rail model — INR in *_cents, USD in *_usd_cents. A non-INR plan
     # currency has no supported meaning anywhere in the platform.
     if str(request.currency or "INR").upper() != "INR":
@@ -352,7 +394,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
             monthly_price_usd_cents=request.monthly_price_usd_cents,
             annual_price_usd_cents=request.annual_price_usd_cents,
             extra_seat_price_usd_cents=request.extra_seat_price_usd_cents,
-            annual_discount_percent=request.annual_discount_percent,
+            annual_discount_percent=annual_discount_percent,
             trial_days=request.trial_days,
             # Explicit literals (N5): reaching into the SQLAlchemy Column.default
             # internals (``Plan.limits.default.arg``) breaks if the default is a
@@ -396,6 +438,18 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
 
         update_data = request.model_dump(exclude_unset=True)
         _reject_seat_price_drift(update_data)
+
+        # Recomputed on EVERY update, against the prices this edit leaves behind
+        # (a partial update may move neither, one, or both). That makes any save
+        # self-heal a row whose stored int predates this rule — seeded
+        # Professional's 22 becomes the true 21 — and makes it impossible to edit
+        # a price without the advertised discount following it. Resolved BEFORE
+        # the Razorpay mint below so a rejected value cannot orphan a gateway plan.
+        update_data["annual_discount_percent"] = _resolve_annual_discount(
+            monthly_minor=update_data.get("monthly_price_cents", plan.monthly_price_cents),
+            annual_minor=update_data.get("annual_price_cents", plan.annual_price_cents),
+            supplied=update_data.get("annual_discount_percent"),
+        )
 
         # If setting this as default, unset current default
         if update_data.get("is_default"):

@@ -30,7 +30,7 @@ from app.config import (
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
-from app.core.pricing import format_amount, resolve_billing_context, seat_price
+from app.core.pricing import annual_saving_percent, format_amount, resolve_billing_context, seat_price
 from app.core.rate_limit import money_route_limit
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
@@ -239,7 +239,11 @@ def list_plans():
                 "monthly_price_usd_cents": p.monthly_price_usd_cents,
                 "annual_price_usd_cents": p.annual_price_usd_cents,
                 "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
-                "annual_discount_percent": p.annual_discount_percent,
+                # Derived from this payload's own prices, NOT the stored column —
+                # see core.pricing.annual_saving_percent. The admin app derives
+                # the same figure client-side (billingModel.annualSavingPercent);
+                # serving the derived value is what keeps the two in agreement.
+                "annual_discount_percent": annual_saving_percent(p.monthly_price_cents, p.annual_price_cents),
                 "trial_days": p.trial_days,
                 "credits_per_month": p.credits_per_month,
                 "included_operator_seats": p.included_operator_seats,
