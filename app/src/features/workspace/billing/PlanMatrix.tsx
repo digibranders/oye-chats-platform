@@ -40,6 +40,30 @@ function historyText(value: number | undefined): string {
 // so the matrix stays correct as plans change - nothing here is hardcoded per
 // tier. Rows are grouped; group headers render once as a spanning row.
 const FEATURE_ROWS: readonly FeatureRow[] = [
+  {
+    group: 'Usage',
+    // Leads the table: the agent is the unit of the product - credits, seats
+    // and crawl pages all meter something an agent does - and this is the only
+    // row on which the top tier differs from every other, which is the whole
+    // reason that tier exists. Below the fold it would have been invisible on
+    // the one surface built for comparing tiers.
+    //
+    // "included" is load-bearing, not filler. `limits.bots` is a per-
+    // SUBSCRIPTION quota, not an account ceiling: `bot_routes.create_bot`
+    // denies the second agent and then re-allows it through
+    // `_plan_bots_limit_allows` only while the plan's quota still covers the
+    // count, and every agent past that is sold its own subscription via
+    // `POST /bots/checkout`. A bare "AI agents / 1" would therefore advertise a
+    // hard cap of one agent that the server does not enforce. The qualifier
+    // sits in the label so the cells stay bare values, like every other row.
+    label: 'AI agents included',
+    kind: 'text',
+    // Same `limitText` the crawl-pages row uses, so the `-1` UNLIMITED sentinel
+    // renders as "Unlimited" rather than as a count of minus one, and a plan
+    // row carrying no `bots` quota at all renders "-" instead of claiming a
+    // number the backend would read as zero.
+    value: (p) => limitText(p.limits.bots),
+  },
   { group: 'Usage', label: 'Credits / month', kind: 'text', value: (p) => formatCredits(p.creditsPerMonth) },
   {
     group: 'Usage',

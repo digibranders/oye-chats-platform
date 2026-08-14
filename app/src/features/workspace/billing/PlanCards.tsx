@@ -7,6 +7,7 @@ import {
   formatFreeMonths,
   formatMoneyMinor,
   formatSeatAllowance,
+  planGrantsUnlimitedAgents,
   promotionAppliesToPlan,
   type PlanView,
   type PromotionView,
@@ -20,10 +21,21 @@ function isUnconverted(status: string | null | undefined): boolean {
 
 /** Short, differentiated highlights per card - the matrix below carries the full grid. */
 function highlights(plan: PlanView): string[] {
-  const out = [
+  const out: string[] = [];
+  // Deliberately asymmetric with the comparison matrix, which carries an "AI
+  // agents included" row for EVERY tier. This list is four bullets long
+  // (`slice(0, 4)` below) and sells one plan at a time rather than comparing
+  // five, so a "1 AI agent" bullet on four of the five cards would spend a
+  // quarter of each list restating the platform default while displacing a
+  // bullet that actually differentiates. Only the unlimited entitlement earns
+  // the line - and it leads, because it is the single thing that tier is sold
+  // on. The matrix is where "1" becomes information, by sitting next to
+  // "Unlimited".
+  if (planGrantsUnlimitedAgents(plan)) out.push('Unlimited AI agents');
+  out.push(
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
     formatSeatAllowance(plan.includedSeats),
-  ];
+  );
   if (plan.features.live_chat) out.push('Live chat & handoff');
   if (plan.features.bant) out.push('BANT lead qualification');
   if (plan.features.branding_removable) out.push('Remove OyeChats branding');
