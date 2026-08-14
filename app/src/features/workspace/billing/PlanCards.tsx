@@ -19,27 +19,48 @@ function isUnconverted(status: string | null | undefined): boolean {
   return status === 'trialing' || status === 'trial_expired';
 }
 
-/** Short, differentiated highlights per card - the matrix below carries the full grid. */
+/**
+ * Short, differentiated highlights per card - the matrix below carries the full
+ * grid.
+ *
+ * Two tiers of copy, not one list:
+ *
+ * 1. A FOUR-bullet budget of graded entitlements (credits, seats, then whichever
+ *    feature flags this plan carries). Four is a deliberate cap - the seeded
+ *    Standard and Professional tiers already produce five candidates and drop
+ *    "Remove OyeChats branding" off the end.
+ * 2. The unlimited-agents headline, prepended ABOVE that budget rather than
+ *    competing inside it.
+ *
+ * The prepend is what keeps the card honest. Enterprise carries `live_chat`,
+ * `bant` AND `branding_removable`, so it already fills the budget; pushing a
+ * fifth candidate into a fixed four displaces a real entitlement whatever order
+ * they sit in, and the one it displaced was "BANT lead qualification" - leaving
+ * the ₹5,999 tier advertising strictly less than the ₹1,199 one. No ordering
+ * fixes that; only the cap can give.
+ *
+ * It gives for the unlimited tier alone. Raising the cap to five for everyone
+ * would hand Standard and Professional back a branding bullet they were
+ * deliberately truncated out of - changing four cards to fix one. So the budget
+ * stays at four differentiating bullets, and the single tier with an unlimited
+ * agent entitlement gets one extra line above it for the thing it is sold on.
+ *
+ * Deliberately asymmetric with the comparison matrix, which carries an "AI
+ * agents included" row for EVERY tier. These cards sell one plan at a time
+ * rather than comparing five, so a "1 AI agent" bullet on four of the five would
+ * spend a line restating the platform default. "1" is information only when it
+ * sits next to "Unlimited" - which is the matrix's job, not the cards'.
+ */
 function highlights(plan: PlanView): string[] {
-  const out: string[] = [];
-  // Deliberately asymmetric with the comparison matrix, which carries an "AI
-  // agents included" row for EVERY tier. This list is four bullets long
-  // (`slice(0, 4)` below) and sells one plan at a time rather than comparing
-  // five, so a "1 AI agent" bullet on four of the five cards would spend a
-  // quarter of each list restating the platform default while displacing a
-  // bullet that actually differentiates. Only the unlimited entitlement earns
-  // the line - and it leads, because it is the single thing that tier is sold
-  // on. The matrix is where "1" becomes information, by sitting next to
-  // "Unlimited".
-  if (planGrantsUnlimitedAgents(plan)) out.push('Unlimited AI agents');
-  out.push(
+  const budget: string[] = [
     `${formatCredits(plan.creditsPerMonth)} credits / month`,
     formatSeatAllowance(plan.includedSeats),
-  );
-  if (plan.features.live_chat) out.push('Live chat & handoff');
-  if (plan.features.bant) out.push('BANT lead qualification');
-  if (plan.features.branding_removable) out.push('Remove OyeChats branding');
-  return out.slice(0, 4);
+  ];
+  if (plan.features.live_chat) budget.push('Live chat & handoff');
+  if (plan.features.bant) budget.push('BANT lead qualification');
+  if (plan.features.branding_removable) budget.push('Remove OyeChats branding');
+  const graded = budget.slice(0, 4);
+  return planGrantsUnlimitedAgents(plan) ? ['Unlimited AI agents', ...graded] : graded;
 }
 
 /**

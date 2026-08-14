@@ -54,9 +54,25 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
     // `_plan_bots_limit_allows` only while the plan's quota still covers the
     // count, and every agent past that is sold its own subscription via
     // `POST /bots/checkout`. A bare "AI agents / 1" would therefore advertise a
-    // hard cap of one agent that the server does not enforce. The qualifier
-    // sits in the label so the cells stay bare values, like every other row.
-    label: 'AI agents included',
+    // hard cap of one agent that the server does not enforce.
+    //
+    // But "included" alone only carries that caveat for a reader who already
+    // knows there is something to be caveated, and this row LEADS the table,
+    // which maximises the misread. The concrete failure is an under-sell, and
+    // it hits the exact customer this catalogue's top tier was written for: an
+    // agency needing three agents reads `1 / 1 / 1 / 1 / Unlimited`, concludes
+    // that more than one agent requires Enterprise, and either overpays for it
+    // or leaves - when three Standard subscriptions cost roughly half of one
+    // Enterprise and are a path the server fully supports. So the label states
+    // the extension outright rather than implying it.
+    //
+    // The over-sell direction stays clean: "1" on Free is honest (one agent is
+    // what a free account is granted, and the extension is a purchase), and
+    // "Unlimited" on Enterprise is honest for the account-scoped subscription
+    // Launch Studio mints. Both qualifiers sit in the LABEL so the cells stay
+    // bare values, like every other row - the matrix has no footnote mechanism
+    // and one row does not justify inventing one.
+    label: 'AI agents included (add more anytime)',
     kind: 'text',
     // Same `limitText` the crawl-pages row uses, so the `-1` UNLIMITED sentinel
     // renders as "Unlimited" rather than as a count of minus one, and a plan

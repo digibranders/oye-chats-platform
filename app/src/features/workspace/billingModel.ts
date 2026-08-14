@@ -515,11 +515,23 @@ export function annualSavingPercent(plan: PlanView): number {
  * save less than the winner. Any caller phrasing this as a flat "save X%"
  * promises the best plan's deal on whichever plan the customer is reading.
  *
+ * Contact-sales tiers are EXCLUDED. `GET /subscriptions/plans` returns every
+ * active plan, including bespoke tiers a super-admin provisioned for one
+ * account, and those carry real `monthly_price_cents` / `annual_price_cents`
+ * even though every plan surface prices them as "Custom". Reducing over them
+ * let a bespoke tier's 35% internal annual saving set the public toggle to
+ * "Annual · save up to 35%" beside a card quoting no price at all. "Up to"
+ * keeps that literally true, but the rate is unattainable on anything the
+ * reader can actually buy, which is the one thing the badge is claiming.
+ *
  * Returns 0 when no plan has an annual saving - callers should drop the badge
  * entirely rather than render "save up to 0%".
  */
 export function maxAnnualSavingPercent(plans: readonly PlanView[]): number {
-  return plans.reduce((best, plan) => Math.max(best, annualSavingPercent(plan)), 0);
+  return plans.reduce(
+    (best, plan) => (plan.isContactSales ? best : Math.max(best, annualSavingPercent(plan))),
+    0,
+  );
 }
 
 export function formatDate(iso: string | null | undefined): string {

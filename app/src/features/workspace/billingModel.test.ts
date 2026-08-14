@@ -198,6 +198,53 @@ describe('annualSavingPercent / maxAnnualSavingPercent', () => {
   it('is 0 for an empty plan set', () => {
     expect(maxAnnualSavingPercent([])).toBe(0);
   });
+
+  /* `GET /subscriptions/plans` returns every ACTIVE plan, and a bespoke tier a
+     super-admin provisioned for one account carries real prices while every
+     plan surface renders it as "Custom". Its discount must not set the public
+     toggle's rate: "up to" would stay literally true, but the number would be
+     unattainable on anything the reader can buy. */
+  it('never quotes a contact-sales tier’s discount on the public toggle', () => {
+    const purchasable = buildPlan({
+      id: 3,
+      slug: 'standard',
+      name: 'Standard',
+      monthly_price_cents: 119900,
+      annual_price_cents: 1150800, // 20.02%
+    }) as PlanView;
+    const bespoke = buildPlan({
+      id: 9,
+      slug: 'bespoke-acme',
+      name: 'Acme',
+      monthly_price_cents: 1000000,
+      annual_price_cents: 7800000, // 35% - and priced "Custom" on every surface
+      features: { contact_sales: true },
+    }) as PlanView;
+
+    expect(bespoke.isContactSales).toBe(true);
+    expect(annualSavingPercent(bespoke)).toBe(35);
+    expect(maxAnnualSavingPercent([purchasable, bespoke])).toBe(20);
+  });
+
+  /* The `enterprise` feature flag is the other way a plan becomes contact-sales
+     (`buildPlan`), and the SEEDED Enterprise tier carries neither flag - it is
+     priced and checks out like any other plan, so its 20% still counts. */
+  it('still counts the seeded, priced Enterprise tier', () => {
+    const [, , , enterprise] = planSet('inr');
+    expect(enterprise.isContactSales).toBe(false);
+    expect(maxAnnualSavingPercent([enterprise])).toBe(20);
+  });
+
+  it('is 0 when the only plan with a saving is contact-sales', () => {
+    const bespoke = buildPlan({
+      slug: 'bespoke',
+      name: 'Bespoke',
+      monthly_price_cents: 1000000,
+      annual_price_cents: 7800000,
+      features: { enterprise: true },
+    }) as PlanView;
+    expect(maxAnnualSavingPercent([bespoke])).toBe(0);
+  });
 });
 
 describe('buildPlan limits coercion', () => {

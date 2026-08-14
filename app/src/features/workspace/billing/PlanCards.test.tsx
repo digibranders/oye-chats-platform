@@ -62,8 +62,37 @@ describe('PlanCards — agent entitlement bullet', () => {
     expect(bullets[0]).toBe('2,500 credits / month');
   });
 
-  it('keeps the card to its four-bullet budget when the entitlement is added', () => {
-    renderCards([UNLIMITED]);
-    expect(bulletsFor('Enterprise')).toHaveLength(4);
+  /**
+   * The entitlement is PREPENDED above the four-bullet budget, not pushed into
+   * it. Asserting only the length would pass just as happily with "BANT lead
+   * qualification" - or "credits / month" - silently truncated off the end,
+   * which is exactly the regression this pins: Enterprise carries `live_chat`,
+   * `bant` AND `branding_removable`, so it already fills the budget, and a
+   * fifth candidate competing inside a fixed four dropped BANT - leaving the
+   * top tier advertising strictly less than Standard, which sells BANT at a
+   * fifth of the price.
+   */
+  it('adds the entitlement above the budget without displacing a graded bullet', () => {
+    renderCards([CAPPED, UNLIMITED]);
+    expect(bulletsFor('Enterprise')).toEqual([
+      'Unlimited AI agents',
+      '13,000 credits / month',
+      'Unlimited operator seats',
+      'Live chat & handoff',
+      'BANT lead qualification',
+    ]);
+  });
+
+  /* The budget itself is untouched by the entitlement: a capped tier with the
+     same three feature flags renders the same four graded bullets it always
+     did, still dropping "Remove OyeChats branding" off the end. */
+  it('leaves the four-bullet budget of a capped tier exactly as it was', () => {
+    renderCards([{ ...CAPPED, features: { ...CAPPED.features, branding_removable: true } }]);
+    expect(bulletsFor('Standard')).toEqual([
+      '2,500 credits / month',
+      '2 operator seats',
+      'Live chat & handoff',
+      'BANT lead qualification',
+    ]);
   });
 });
