@@ -9,9 +9,6 @@
  */
 import { FALLBACK_USD_TO_INR } from '../../../lib/currency';
 
-/** Sentinel meaning "no limit" - mirrors `plan_entitlements_service.py::UNLIMITED`. */
-const UNLIMITED = -1;
-
 /** A subscription plan row as returned by `getSubscriptionPlans`. */
 export interface PlanRow {
   id: number;
@@ -57,17 +54,6 @@ export const TIER_META: Record<string, { accent: 'accent' | 'neutral'; descripti
 };
 
 export const MOST_POPULAR_SLUG = 'standard';
-
-/**
- * Per-slug fallback crawl limits - mirror the latest alembic revision so the
- * "Crawl up to N pages" bullet renders even when `plan.limits` is absent.
- * `-1` (UNLIMITED) means no per-crawl page cap (page spend governed by credits).
- */
-const CRAWL_FALLBACK_BY_SLUG: Record<string, { pages: number; depth: number }> = {
-  free: { pages: 20, depth: 2 },
-  starter: { pages: -1, depth: 4 },
-  standard: { pages: -1, depth: 4 },
-};
 
 interface DisplayPrice {
   cents: number;
@@ -161,84 +147,6 @@ export function resolveDisplayCents(
       ? (plan.annual_price_usd_cents ?? 0) > 0
       : (plan.annual_price_cents ?? 0) > 0,
   };
-}
-
-/** Build the feature bullet list for a plan (display-currency aware seat price). */
-export function buildFeatureList(plan: PlanRow, geo: Geo | null): string[] {
-  const out: string[] = [];
-  const credits = plan.credits_per_month;
-  const seats = plan.included_operator_seats || 0;
-  const seatCurrency = (geo?.display_currency || plan.currency || 'INR').toUpperCase();
-  const useUsdSeat = seatCurrency === 'USD' && plan.extra_seat_price_usd_cents != null;
-  const seatCents = useUsdSeat ? plan.extra_seat_price_usd_cents ?? 0 : plan.extra_seat_price_cents ?? 0;
-  const sym = useUsdSeat ? '$' : '₹';
-
-  const planLimits = plan.limits || {};
-  const fallback = CRAWL_FALLBACK_BY_SLUG[plan.slug] || null;
-  const maxCrawlPages = planLimits.max_crawl_pages ?? fallback?.pages;
-  const maxCrawlDepth = planLimits.max_crawl_depth ?? fallback?.depth;
-
-  if (credits != null) {
-    out.push(`${credits.toLocaleString()} credits / month`);
-  }
-  if (seats === UNLIMITED) {
-    // `-1` is the UNLIMITED sentinel, never a real count — rendering it raw
-    // would print "-1 operator seats included". No extra-seat price either:
-    // there is nothing to buy beyond unlimited.
-    out.push('Unlimited operator seats');
-  } else if (seats > 0 && plan.slug !== 'free') {
-    out.push(
-      seatCents > 0
-        ? `${seats} operator seat${seats === 1 ? '' : 's'} included (+${sym}${(seatCents / 100).toFixed(0)}/mo each extra)`
-        : `${seats} operator seat${seats === 1 ? '' : 's'} included`,
-    );
-  }
-  if (maxCrawlPages === -1) {
-    out.push('Unlimited pages per crawl' + (maxCrawlDepth != null ? ` · depth ${maxCrawlDepth}` : ''));
-  } else if (maxCrawlPages != null) {
-    out.push(
-      `Crawl up to ${maxCrawlPages.toLocaleString()} pages` +
-        (maxCrawlDepth != null ? ` (depth ${maxCrawlDepth})` : ''),
-    );
-  }
-
-  const features = plan.features || {};
-  if (features.live_chat) out.push('Live chat enabled');
-  if (features.bant) out.push('BANT lead qualification scoring');
-  if (features.webhooks) out.push('Webhooks (5 event types)');
-
-  if (plan.slug === 'free') {
-    out.push('1 AI Chatbot');
-    out.push('Basic widget customization');
-    out.push('Lead capture forms');
-  } else if (plan.slug === 'starter') {
-    if ((plan.trial_days ?? 0) > 0) out.push(`${plan.trial_days}-day free trial`);
-    out.push('Priority email support');
-  } else if (plan.slug === 'standard') {
-    out.push('Behavioral tracking & UTM capture');
-    if ((plan.trial_days ?? 0) > 0) out.push(`${plan.trial_days}-day free trial`);
-  } else if (plan.slug === 'professional') {
-    out.push('Behavioral tracking & UTM capture');
-    out.push('MEDDIC / CHAMP frameworks');
-    out.push('White-label custom domain');
-    out.push('Priority chat support');
-    if ((plan.trial_days ?? 0) > 0) out.push(`${plan.trial_days}-day free trial`);
-  } else if (plan.slug === 'enterprise') {
-    // Enterprise is Professional plus unlimited agents, seats and knowledge —
-    // so it carries EVERY Professional bullet. Without a branch here the tier
-    // rendered with no feature bullets at all, reading as the emptiest plan on
-    // the comparison while being the largest. The unlimited entitlements lead
-    // because they are what the agency tier is actually sold on.
-    if (planLimits.bots === UNLIMITED) out.push('Unlimited AI agents');
-    if (planLimits.documents === UNLIMITED) out.push('Unlimited knowledge sources');
-    out.push('Behavioral tracking & UTM capture');
-    out.push('MEDDIC / CHAMP frameworks');
-    out.push('White-label custom domain');
-    out.push('Priority chat support');
-    if ((plan.trial_days ?? 0) > 0) out.push(`${plan.trial_days}-day free trial`);
-  }
-
-  return out;
 }
 
 interface TrialArgs {

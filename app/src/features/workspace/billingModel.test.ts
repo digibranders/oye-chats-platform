@@ -17,9 +17,9 @@ const SEEDED_ENTERPRISE = {
   id: 5,
   slug: 'enterprise',
   name: 'Enterprise',
-  credits_per_month: 13000,
-  monthly_price_cents: 479900,
-  annual_price_cents: 4606800,
+  credits_per_month: 10000,
+  monthly_price_cents: 599900,
+  annual_price_cents: 5758800,
   included_operator_seats: -1,
   sort_order: 5,
   features: {
@@ -275,15 +275,15 @@ describe('buildPlan', () => {
 
   /* `isContactSales` means "bespoke tier, priced on request" - NOT "the slug
      says enterprise". The seeded Enterprise row is a real, priced, self-serve
-     rung of the ladder (₹4,799/mo), so keying off the slug rendered it as
+     rung of the ladder (₹5,999/mo), so keying off the slug rendered it as
      "Custom" and dead-ended its checkout at a mailto. Only the feature flags
      decide. */
   it('does not mark the seeded Enterprise tier as contact-sales - it is priced and self-serve', () => {
     const plan = buildPlan(SEEDED_ENTERPRISE);
     expect(plan?.isContactSales).toBe(false);
     expect(plan?.isPaid).toBe(true);
-    expect(plan?.monthlyPriceMinor).toBe(479900);
-    expect(plan?.annualPriceMinor).toBe(4606800);
+    expect(plan?.monthlyPriceMinor).toBe(599900);
+    expect(plan?.annualPriceMinor).toBe(5758800);
   });
 
   it('marks any plan carrying contact_sales as contact-sales, whatever its slug', () => {

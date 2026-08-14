@@ -84,9 +84,11 @@ export interface PlanView {
    * when provisioning a per-contract plan (`enterprise-acme` and friends).
    *
    * Deliberately NOT keyed off `slug === 'enterprise'`. The seeded `enterprise`
-   * tier is a real, priced rung of the public ladder (₹4,799/mo · 13,000 pooled
-   * credits · unlimited agents), sold through the same Razorpay checkout as
-   * every other plan - the backend says as much in
+   * tier is a real, priced rung of the public ladder - ₹5,999/mo (or ₹57,588/yr,
+   * which is ₹4,799 per month; quoting that figure as the monthly price is the
+   * usual mix-up) for 10,000 pooled credits and unlimited agents - sold through
+   * the same Razorpay checkout as every other plan. Figures are the seeded ones
+   * in `api/scripts/seed_plans.py`; the backend says as much in
    * `plan_entitlements_service.py::_SEEDED_PLAN_SLUGS`. Matching on the slug
    * priced it as "Custom" and dead-ended its checkout at a mailto.
    */

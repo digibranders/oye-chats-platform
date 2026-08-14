@@ -28,7 +28,7 @@ const UNLIMITED = {
   name: 'Enterprise',
   sort_order: 5,
   monthly_price_cents: 599900,
-  credits_per_month: 13000,
+  credits_per_month: 10000,
   included_operator_seats: -1,
   limits: { bots: -1 },
   features: { live_chat: true, bant: true, branding_removable: true },
@@ -76,7 +76,7 @@ describe('PlanCards — agent entitlement bullet', () => {
     renderCards([CAPPED, UNLIMITED]);
     expect(bulletsFor('Enterprise')).toEqual([
       'Unlimited AI agents',
-      '13,000 credits / month',
+      '10,000 credits / month',
       'Unlimited operator seats',
       'Live chat & handoff',
       'BANT lead qualification',

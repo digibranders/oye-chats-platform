@@ -45,7 +45,7 @@ const SEEDED: readonly Record<string, unknown>[] = [
     name: 'Enterprise',
     sort_order: 5,
     monthly_price_cents: 599900,
-    credits_per_month: 13000,
+    credits_per_month: 10000,
     limits: { bots: -1 },
   },
 ];
