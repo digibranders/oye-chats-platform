@@ -2,7 +2,7 @@ import { type ReactElement, useId } from 'react';
 import { ChevronDown, Table2 } from 'lucide-react';
 import { cn, IconTile } from '../../../design-system';
 import type { PlanView } from '../billingModel';
-import type { BillingCycle } from './planMath';
+import type { BillingCycle } from './planPricing';
 import { PlanMatrix } from './PlanMatrix';
 
 export interface ComparePlansProps {

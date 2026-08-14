@@ -59,7 +59,7 @@ import { PromotionBanner } from './billing/PromotionBanner';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
 import { PlanActivationNotice } from './billing/PlanActivationNotice';
 import { usePlanActivation, type ActivationHint } from './billing/usePlanActivation';
-import type { BillingCycle } from './billing/planMath';
+import type { BillingCycle } from './billing/planPricing';
 import {
   buildInvoice,
   buildSubscription,

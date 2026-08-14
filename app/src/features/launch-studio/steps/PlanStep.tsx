@@ -28,7 +28,7 @@ import { BillingDetailsModal } from '../../workspace/billing/BillingDetailsModal
 import { PromotionBanner } from '../../workspace/billing/PromotionBanner';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import type { StepProps } from '../steps.config';
-import type { BillingCycle } from '../../workspace/billing/planMath';
+import type { BillingCycle } from '../../workspace/billing/planPricing';
 
 // ─── Local data loader ────────────────────────────────────────────────────────
 // Fetches only what the plan step needs — avoids pulling in invoices / seats /

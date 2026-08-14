@@ -8,7 +8,7 @@ import {
   maxAnnualSavingPercent,
   type PlanView,
 } from '../billingModel';
-import type { BillingCycle } from './planMath';
+import type { BillingCycle } from './planPricing';
 import {
   planIncludesEmailVerification,
   planIncludesVisitorIntelligence,

@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from 'react';
 import { SectionHeader } from '../../../design-system';
 import { maxAnnualSavingPercent, type PlanView, type PromotionView } from '../billingModel';
-import type { BillingCycle } from './planMath';
+import type { BillingCycle } from './planPricing';
 import { CycleToggle } from './PlanMatrix';
 import { PlanCards } from './PlanCards';
 import { ComparePlans } from './ComparePlans';

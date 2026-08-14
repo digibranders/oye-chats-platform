@@ -12,7 +12,7 @@ import {
   type PlanView,
   type PromotionView,
 } from '../billingModel';
-import type { BillingCycle } from './planMath';
+import type { BillingCycle } from './planPricing';
 
 /** A subscription that hasn't converted to paid yet - its own plan card offers activation. */
 function isUnconverted(status: string | null | undefined): boolean {

@@ -13,7 +13,7 @@ import {
   type PlanView,
   type PromotionView,
 } from '../billingModel';
-import type { BillingCycle } from './planMath';
+import type { BillingCycle } from './planPricing';
 import type { ActivationHint } from './usePlanActivation';
 import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
 
