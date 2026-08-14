@@ -28,7 +28,7 @@ import { BillingDetailsModal } from '../../workspace/billing/BillingDetailsModal
 import { PromotionBanner } from '../../workspace/billing/PromotionBanner';
 import { useEntitlements } from '../../../hooks/useEntitlements';
 import type { StepProps } from '../steps.config';
-import type { BillingCycle } from '../../workspace/billing/planMath';
+import type { BillingCycle } from '../../workspace/billing/planPricing';
 
 // ─── Feature highlights (from the original WelcomeStep) ──────────────────────
 const HIGHLIGHTS: { icon: LucideIcon; title: string; body: string }[] = [

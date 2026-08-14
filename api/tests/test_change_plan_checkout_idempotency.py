@@ -584,6 +584,22 @@ def test_cancel_superseded_checkout_only_cancels_authorizable_mandates():
     cancel.assert_called_once_with("sub_inflight", at_period_end=False)
 
 
+@pytest.mark.parametrize("status", ["cancelled", "expired", "completed"])
+def test_cancelling_an_already_dead_mandate_is_a_no_op(status):
+    """A redundant cancel has to be harmless, because it WILL happen: webhooks,
+    retries and the customer's own actions all retire mandates behind our back,
+    and every supersede path calls this without first knowing the state. The
+    helper re-reads the mandate and issues nothing from a terminal state, so the
+    caller is free to mint."""
+    with (
+        patch.object(rzp, "_get_razorpay") as get_rzp,
+        patch.object(rzp, "cancel_subscription_by_id") as cancel,
+    ):
+        get_rzp.return_value.subscription.fetch.return_value = {"status": status}
+        assert rzp.cancel_superseded_checkout("sub_dead") == status
+    assert not cancel.called
+
+
 def test_cancel_superseded_checkout_raises_when_the_gateway_is_unreadable():
     with (
         patch.object(rzp, "_get_razorpay") as get_rzp,
@@ -650,7 +666,11 @@ def test_upgrade_does_not_re_mint_over_an_already_paid_replacement(db, monkeypat
 
 
 def test_upgrade_still_reuses_an_unpaid_in_flight_replacement(db, monkeypatch):
-    """The paid check must not break the finding-D reuse it sits in front of."""
+    """The paid check must not break the finding-D reuse it sits in front of.
+
+    And a reused mandate is not a superseded one: nothing may be cancelled on
+    the road the customer is still walking down.
+    """
     api, _client = _mk(db, monkeypatch)
     current = _plan(db, slug="std-upg2-current", monthly=94900)
     target = _plan(db, slug="std-upg2-target", monthly=599900)
@@ -659,6 +679,7 @@ def test_upgrade_still_reuses_an_unpaid_in_flight_replacement(db, monkeypatch):
     with (
         patch.object(rzp, "create_subscription") as mint,
         patch.object(rzp, "rebuild_upgrade_checkout", return_value=_mint("sub_upgrade_unpaid")) as rebuild,
+        patch.object(rzp, "cancel_superseded_checkout") as cancel,
     ):
         res = api.post("/subscriptions/change-plan", json={"plan_id": target.id, "billing_cycle": "monthly"})
 
@@ -666,6 +687,7 @@ def test_upgrade_still_reuses_an_unpaid_in_flight_replacement(db, monkeypatch):
     assert res.json()["subscription_id"] == "sub_upgrade_unpaid"
     assert rebuild.called
     assert not mint.called
+    assert not cancel.called
 
 
 def test_upgrade_to_a_different_plan_after_payment_is_also_refused(db, monkeypatch):
@@ -690,6 +712,126 @@ def test_upgrade_to_a_different_plan_after_payment_is_also_refused(db, monkeypat
     assert not mint.called
     # Never names the plan they did not pay for.
     assert now_wants.name not in res.json()["detail"]["message"]
+
+
+# ── The superseded replacement mandate must not be left authorizable ─────────
+
+
+def test_a_different_plan_upgrade_cancels_the_superseded_replacement(db, monkeypatch):
+    """The leak this closes.
+
+    A customer who started an upgrade to plan A, changed their mind and took
+    plan B, kept a live payment handle for A: Razorpay leaves a ``created``
+    subscription authorizable indefinitely, and nothing else on this path ever
+    retired it. Reopening that stale checkout — from an email, a back button, a
+    tab left open — authorises and charges weeks later for a plan the customer
+    never took. It is cancelled before its replacement is minted.
+    """
+    api, _client = _mk(db, monkeypatch)
+    current = _plan(db, slug="std-upg4-current", monthly=94900)
+    abandoned = _plan(db, slug="std-upg4-abandoned", monthly=599900)
+    now_wants = _plan(db, slug="std-upg4-wants", monthly=799900)
+    sub = _paying_customer(db, current, pending_plan=abandoned, pending_sub_id="sub_upgrade_abandoned")
+
+    with (
+        patch.object(rzp, "create_subscription", return_value=_mint("sub_upgrade_b")) as mint,
+        patch.object(rzp, "rebuild_upgrade_checkout") as rebuild,
+        patch.object(rzp, "cancel_superseded_checkout", return_value="created") as cancel,
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": now_wants.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 200, res.text
+    cancel.assert_called_once_with("sub_upgrade_abandoned")
+    assert mint.call_count == 1
+    # The mandate for a plan the customer never asked for is never rebuilt into
+    # a payment sheet on the way past.
+    assert not rebuild.called
+    db.refresh(sub)
+    assert sub.upgrade_pending_subscription_id == "sub_upgrade_b"
+    assert sub.upgrade_pending_plan_id == now_wants.id
+
+
+def test_a_failed_cancel_does_not_block_the_new_purchase(db, monkeypatch):
+    """The customer is trying to give us money.
+
+    A Razorpay 5xx while tidying up a handle they abandoned must not surface as
+    a failed checkout. The mandate was read as unpaid moments earlier, so this
+    is not minting beside a mandate of unknown state — only beside one whose
+    cancel did not land, which is exactly the pre-existing behaviour on this
+    path. Refusing here would newly break upgrades that succeed today.
+    """
+    api, _client = _mk(db, monkeypatch)
+    current = _plan(db, slug="std-upg5-current", monthly=94900)
+    abandoned = _plan(db, slug="std-upg5-abandoned", monthly=599900)
+    now_wants = _plan(db, slug="std-upg5-wants", monthly=799900)
+    sub = _paying_customer(db, current, pending_plan=abandoned, pending_sub_id="sub_upgrade_stuck")
+
+    with (
+        patch.object(rzp, "create_subscription", return_value=_mint("sub_upgrade_after_stuck")) as mint,
+        patch.object(rzp, "cancel_superseded_checkout", side_effect=rzp.RazorpayBillingError("cancel failed")),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": now_wants.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 200, res.text
+    assert mint.call_count == 1
+    db.refresh(sub)
+    assert sub.upgrade_pending_subscription_id == "sub_upgrade_after_stuck"
+
+
+def test_a_paid_replacement_is_refused_not_cancelled(db, monkeypatch):
+    """Ordering: the paid check runs BEFORE anything can cancel.
+
+    Cancelling a mandate the customer has already paid would kill the
+    subscription they just bought, from a checkout path, behind their back —
+    strictly worse than the double-charge this module exists to prevent. The
+    paid mandate is refused with a 409 and left untouched at the gateway.
+    """
+    api, _client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    current = _plan(db, slug="std-upg6-current", monthly=94900)
+    paid_for = _plan(db, slug="std-upg6-paid", monthly=599900)
+    now_wants = _plan(db, slug="std-upg6-wants", monthly=799900)
+    sub = _paying_customer(db, current, pending_plan=paid_for, pending_sub_id="sub_upgrade_paid_handle")
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "cancel_superseded_checkout") as cancel,
+        patch.object(rzp, "checkout_already_paid", return_value=True),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": now_wants.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert not cancel.called
+    assert not mint.called
+    db.refresh(sub)
+    # The marker survives — the activation still has to consume it.
+    assert sub.upgrade_pending_subscription_id == "sub_upgrade_paid_handle"
+
+
+def test_a_replacement_that_went_active_midflight_blocks_the_mint(db, monkeypatch):
+    """``paid_count`` and ``status`` can move apart for a moment, so the two
+    reads can disagree. Whichever notices first, the answer is the same: nothing
+    was cancelled, and minting now would leave two CHARGED subscriptions for one
+    month."""
+    api, _client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    current = _plan(db, slug="std-upg7-current", monthly=94900)
+    went_active = _plan(db, slug="std-upg7-active", monthly=599900)
+    now_wants = _plan(db, slug="std-upg7-wants", monthly=799900)
+    sub = _paying_customer(db, current, pending_plan=went_active, pending_sub_id="sub_upgrade_raced")
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "cancel_superseded_checkout", return_value="active"),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": now_wants.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert not mint.called
+    db.refresh(sub)
+    assert sub.upgrade_pending_subscription_id == "sub_upgrade_raced"
 
 
 # ── The claim "your payment went through" must be unfalsifiable ─────────────

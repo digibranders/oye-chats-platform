@@ -114,6 +114,53 @@ def charge_currency(country: str | None) -> str:
     return "USD" if normalized and normalized != "IN" else "INR"
 
 
+def annual_saving_percent(monthly_minor: int | None, annual_minor: int | None) -> int:
+    """One plan's annual saving as a whole percent, derived from its two prices.
+
+    The ONE definition of that number for the whole backend. Every plan payload
+    serves it under the existing ``annual_discount_percent`` key, so the marketing
+    site, the admin app and the super-admin editor read one figure computed one
+    way — the response shape is unchanged, only the value is now true.
+
+    Deliberately NOT the stored ``Plan.annual_discount_percent`` column. That is a
+    single hand-maintained int on a row carrying BOTH an INR and a USD price pair,
+    so it can only ever match one rail, and it drifted: seeded Professional stores
+    22 while ₹28,188 against 12 × ₹2,999 is a 21.674% saving. Deriving from the
+    prices makes the badge unfalsifiable by construction.
+
+    Reads the **INR** columns, because that is the rail the stored int always
+    described and the rail every price surface renders today (the USD savings for
+    the same plans are 18.77 / 18.76 / 17.40 / 20.00%, so one int never covered
+    both). When a surface starts choosing its rail via :func:`display_price`, pass
+    that rail's two amounts here instead — the arithmetic is currency-agnostic.
+
+    Integer-only and multiply-before-divide: both operands stay exact, so a saving
+    that is exactly N% divides to exactly N and cannot floor down to N-1.
+
+    Rounds DOWN, never to nearest. This number sits next to a Subscribe button, so
+    the failure modes are not symmetric — understating a saving costs nothing,
+    while overstating one tells a customer they will be charged less than they
+    will be. 21.674% must read as 21, never 22.
+
+    Returns ``0`` for any plan with no real annual saving to quote: free and
+    contact-sales tiers (no monthly price), plans with no annual price, and the
+    defensive case of an annual price at or above twelve monthly ones, which would
+    otherwise produce a negative "saving". Consumers drop the badge on 0 rather
+    than render "0%".
+
+    Exactly mirrors ``annualSavingPercent`` in
+    ``app/src/features/workspace/billingModel.ts``, which is the reference
+    implementation. A server that disagreed with that client would reintroduce the
+    two-numbers-one-name bug in a subtler form, so the guard rails (floor, the
+    zero cases, the operand order) are copied deliberately rather than re-derived.
+    """
+    twelve_months = int(monthly_minor or 0) * 12
+    annual = int(annual_minor or 0)
+    if twelve_months <= 0 or annual <= 0 or annual >= twelve_months:
+        return 0
+    return (twelve_months - annual) * 100 // twelve_months
+
+
 def seat_price(
     *,
     inr_cents: int,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.pricing import annual_saving_percent
 from scripts.seed_plans import _PLANS
 
 # Cheapest → dearest. Every guard below walks this list, so a new tier that is
@@ -121,49 +122,78 @@ def test_annual_is_cheaper_than_paying_monthly(slug: str):
     ₹7,212 MORE than paying monthly — carried by an ``annual_discount_percent``
     of ``-25``. A tolerance guard alone cannot catch that: the stored int
     faithfully described the negative saving. Sign is a separate invariant.
+
+    The percent is no longer authored in the matrix, so this asserts the DERIVED
+    one is positive. That is a strictly weaker statement than it was — the helper
+    floors an inverted pair to 0 rather than going negative — which is why the
+    two raw price comparisons below carry the guard now.
     """
     plan = _plan(slug)
-    assert plan["annual_discount_percent"] > 0, f"{slug}: advertises a non-positive annual discount"
+    assert annual_saving_percent(plan["monthly_price_cents"], plan["annual_price_cents"]) > 0, (
+        f"{slug}: advertises a non-positive annual discount"
+    )
     assert plan["annual_price_cents"] < plan["monthly_price_cents"] * 12, f"{slug}: INR annual is dearer than monthly"
     assert plan["annual_price_usd_cents"] < plan["monthly_price_usd_cents"] * 12, (
         f"{slug}: USD annual is dearer than monthly"
     )
 
 
-@pytest.mark.parametrize("slug", _PAID)
-def test_annual_discount_percent_matches_the_inr_annual_price(slug: str):
-    """``annual_discount_percent`` is displayed, so it must be the true saving,
-    rounded — the exact relationship the int is capable of expressing.
+# The whole percent each seeded tier advertises, derived from its INR prices.
+# Written out rather than recomputed so a price move has to restate the headline
+# it changes: these are the numbers the pricing page and the marketing site show.
+_EXPECTED_SAVING_PCT: dict[str, int] = {
+    "free": 0,  # no monthly price — nothing to save against
+    "starter": 20,  # 20.033%
+    "standard": 20,  # 20.017%
+    "professional": 21,  # 21.674% — stored as 22 until the percent became derived
+    "enterprise": 20,  # 20.003%
+}
 
-    **Why an exact equality and not a tolerance.** The previous guard allowed
-    ±0.35pp, chosen because Professional's 21.674% saving is carried by an int
-    reading "22" (a 0.326pp gap) and nothing tighter fitted. That left 0.024pp
-    of headroom, which is not a margin — it is a trap. Starter at ₹699/mo with
-    an annual ₹499/mo (₹5,988/yr) is an ordinary marketing pair: the true saving
-    is 28.612%, the correct stored int is 29, and the 0.388pp gap FAILS the
-    tolerance while passing both companion guards. The message named neither the
-    tolerance nor a remedy, so the rational fix would have been to widen it —
-    exactly the drift the guard exists to prevent.
 
-    ``round(saving)`` has no such failure mode: it is what the int means. The
-    residual sub-percent slack a tolerance was reaching for is pinned by
-    ``test_annual_prices_are_twelve_whole_monthly_equivalents`` below, which
-    forces every annual amount onto whole monthly-equivalent steps.
+@pytest.mark.parametrize("slug", _LADDER)
+def test_the_advertised_annual_saving_is_the_derived_one(slug: str):
+    """The percent every surface shows for this tier, pinned.
 
-    **This guard bounds the INR rail only, and that is not an oversight.** One
-    int cannot describe two rails: against the same stored percent the actual
-    USD savings are Starter 18.77%, Standard 18.76%, Professional 17.40%,
-    Enterprise 20.00% — Professional is 4.6pp adrift. Tightening this test to
-    cover USD would fail on shipped prices, so the USD rail gets its own,
-    weaker guard below and the honest statement of the gap lives here.
+    ``annual_discount_percent`` is no longer a column anyone authors: the seed,
+    the super-admin editor and all three read routes run the prices through
+    ``core.pricing.annual_saving_percent``. What used to be a consistency guard
+    between two independent values is therefore now a guard on the OUTPUT — move
+    an annual price and this test names the new headline you just published.
+
+    **Floor, not round, and that is the whole point.** The value this replaces
+    was ``round(saving)``, which is why Professional's 21.674% shipped as "save
+    22%" — a discount the plan does not give, printed next to a Subscribe button.
+    Understating a saving costs nothing; overstating one misstates the price.
+
+    **This bounds the INR rail only, and that is not an oversight.** One percent
+    cannot describe two rails: on the same plans the USD savings are Starter
+    18.77%, Standard 18.76%, Professional 17.40%, Enterprise 20.00% —
+    Professional is 4.3pp adrift. The helper is currency-agnostic, so a surface
+    that starts pricing in USD passes it that rail's two amounts; until one does,
+    the INR figure is what ships and the USD rail keeps its own band guard below.
     """
     plan = _plan(slug)
-    saving = _saving_percent(plan["monthly_price_cents"] * 12, plan["annual_price_cents"])
-    assert round(saving) == plan["annual_discount_percent"], (
-        f"{slug}: annual ₹{plan['annual_price_cents'] / 100:,.0f} is a {saving:.3f}% saving, which rounds "
-        f"to {round(saving)}%, but the plan advertises {plan['annual_discount_percent']}%. "
-        f"Set annual_discount_percent to {round(saving)}, or move the annual price."
+    derived = annual_saving_percent(plan["monthly_price_cents"], plan["annual_price_cents"])
+    assert derived == _EXPECTED_SAVING_PCT[slug], (
+        f"{slug}: annual ₹{plan['annual_price_cents'] / 100:,.0f} against 12 × ₹"
+        f"{plan['monthly_price_cents'] / 100:,.0f} now advertises {derived}%, not "
+        f"{_EXPECTED_SAVING_PCT[slug]}%. Update _EXPECTED_SAVING_PCT if the price move was intended."
     )
+
+
+@pytest.mark.parametrize("slug", _PAID)
+def test_the_advertised_annual_saving_never_overstates_the_real_one(slug: str):
+    """The published headline is never larger than the saving actually given.
+
+    The pinned table above would still pass if the helper started rounding to
+    nearest, so this states the property the pins cannot: derived ≤ true, and
+    within one point of it (a floor can never lose more).
+    """
+    plan = _plan(slug)
+    true_saving = _saving_percent(plan["monthly_price_cents"] * 12, plan["annual_price_cents"])
+    derived = annual_saving_percent(plan["monthly_price_cents"], plan["annual_price_cents"])
+    assert derived <= true_saving, f"{slug}: advertises {derived}% for a real saving of {true_saving:.3f}% — overstated"
+    assert true_saving - derived < 1, f"{slug}: {derived}% understates a {true_saving:.3f}% saving by over a point"
 
 
 @pytest.mark.parametrize("slug", _PAID)

@@ -104,6 +104,26 @@ export function CreateAgentDialog({
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
+  /**
+   * Re-entrancy latch for both submit handlers, mirroring `submitting` exactly -
+   * set beside every `setSubmitting(true)`, cleared in the same `finally`.
+   *
+   * `submitting` disables both CTAs, but a disabled button is not a guard: two
+   * clicks dispatched before React flushes the state update both reach the
+   * handler, and on the pay path each one mints a Razorpay subscription
+   * server-side. Two authorised mandates each charge a full cycle. A ref is
+   * readable synchronously, so the second call sees the first immediately.
+   *
+   * One ref for both handlers because they share one `submitting` flag, so this
+   * blocks exactly what that flag already intends to block - no wider.
+   *
+   * Deliberately NOT cleared by the open-reset effect below: that runs on
+   * dialog open, which can happen while a request is still in flight (close
+   * mid-charge, reopen), and clearing it there would reopen the exact window
+   * this closes. The `finally` blocks are the only correct release points.
+   */
+  const inFlight = useRef(false);
+
   // Reset all transient state whenever the dialog (re)opens.
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
@@ -206,8 +226,10 @@ export function CreateAgentDialog({
   // `must_subscribe`) advances to the pricing step instead of erroring out.
   const handleNameSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (!trimmedName || submitting) return;
+    // One attempt at a time - a second submit must not create a second agent.
+    if (!trimmedName || submitting || inFlight.current) return;
     setError('');
+    inFlight.current = true;
     setSubmitting(true);
     try {
       const bot = await createBot({
@@ -223,14 +245,17 @@ export function CreateAgentDialog({
         setError(messageFromError(err));
       }
     } finally {
+      inFlight.current = false;
       setSubmitting(false);
     }
   };
 
   // Step 2: pay for the selected plan, then create the agent server-side.
   const handleSubscribe = async (): Promise<void> => {
-    if (!selectedPlan || submitting) return;
+    // One attempt at a time - a second click must not mint a second mandate.
+    if (!selectedPlan || submitting || inFlight.current) return;
     setError('');
+    inFlight.current = true;
     setSubmitting(true);
     try {
       const payload = asRecord(
@@ -281,6 +306,9 @@ export function CreateAgentDialog({
     } catch (err) {
       setError(messageFromError(err));
     } finally {
+      // Covers the Razorpay-dismissed early return above too - it returns from
+      // inside the `try`, so release is unconditional either way.
+      inFlight.current = false;
       setSubmitting(false);
     }
   };

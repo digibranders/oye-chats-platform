@@ -7,7 +7,7 @@ import { StatusBadge } from '../primitives/Badge';
 import { Button } from '../primitives/Button';
 import { useEntitlements } from '../../hooks/useEntitlements';
 import { getSubscriptionPlans } from '../../services/api';
-import { renderPriceLabel, type PlanRow } from '../../features/workspace/billing/planMath';
+import { renderPriceLabel, type PlanRow } from '../../features/workspace/billing/planPricing';
 import type { UpgradeIntent } from '../../context/upgradeIntents';
 
 /** Re-exported so existing imports of `UpgradeModalReason` from the barrel

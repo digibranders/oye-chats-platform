@@ -306,8 +306,10 @@ def execute_paid_upgrade(
     # first cycles would charge. lock_client_for_billing only serialises
     # CONCURRENT requests, not a sequential re-submit. If an upgrade to the SAME
     # target plan is already in flight on this sub, return its existing checkout.
-    # A different target plan supersedes the stale pending (its unauthorised
-    # Razorpay sub never charges and Razorpay expires it).
+    # A different target plan supersedes the stale pending, which is CANCELLED at
+    # Razorpay before the replacement is minted — an abandoned mandate stays
+    # authorizable indefinitely, so a stale checkout reopened weeks later would
+    # otherwise charge for a plan the customer never took.
     #
     # The "is it dead?" question is not enough on its own, which is what
     # ``pending_checkout_service`` exists to encode: ``rebuild_upgrade_checkout``

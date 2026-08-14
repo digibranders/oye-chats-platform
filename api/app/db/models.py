@@ -1343,6 +1343,13 @@ class Plan(Base):
     currency = Column(String(3), default="INR", server_default="INR", nullable=False)
     monthly_price_cents = Column(Integer, default=0, server_default="0", nullable=False)
     annual_price_cents = Column(Integer, default=0, server_default="0", nullable=False)  # total annual price
+    # DERIVED, never authored. Every writer (super-admin plan CRUD,
+    # scripts/seed_plans.py) computes this from the two INR prices above via
+    # ``core.pricing.annual_saving_percent``, and NO read path serves it — the
+    # plan payloads derive the percent from the prices they are already
+    # returning. It is kept in sync so the table does not contradict the API,
+    # but it is not a source of truth, and the stale ``30`` defaults below
+    # (retained to avoid a schema migration here) can no longer reach a customer.
     annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
 
     # Trial. Default 7 = the Standard-only free-trial length; seed_plans sets

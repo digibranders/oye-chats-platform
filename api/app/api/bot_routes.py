@@ -1750,7 +1750,16 @@ def create_bot_checkout(
     _require_bot_management_access(auth)
     with get_session() as session:
         from app.db.models import Client, Plan
-        from app.services import plan_entitlements_service, razorpay_service
+        from app.services import pending_checkout_service, plan_entitlements_service, razorpay_service
+        from app.services.plan_service import lock_client_for_billing
+
+        # Serialize this client's billing mutations for the whole read → decide
+        # → mint → write sequence (H1). The marker below is a read-then-write
+        # check, so without the lock two concurrent submits both read "nothing
+        # in flight" and both mint a chargeable mandate — which is the bug, not
+        # a smaller version of it. Held to COMMIT, so the loser reads the
+        # winner's COMMITTED marker and reuses it.
+        lock_client_for_billing(session, auth["client_id"])
 
         # ``is_active`` is part of the lookup, not a second check: ``delete_plan``
         # soft-deletes by clearing the flag, and a super admin deactivates a tier
@@ -1813,6 +1822,62 @@ def create_bot_checkout(
         # empty allowlist, so this never bricks a bot without configured domains).
         resolved_check_enabled = True if request.domain_check_enabled is None else bool(request.domain_check_enabled)
 
+        # A re-submit must reuse the in-flight mandate, never mint a sibling
+        # beside it. Two authorised mandates both charge a full cycle: prod
+        # client 19 paid ₹11,998 for one month, client 8 got two mandates 44
+        # seconds apart and 20,000 credits instead of 10,000. Those were the
+        # ACCOUNT-level routes; this one is the same defect on the upsell path
+        # every paid tier below Enterprise uses to buy an extra agent (an
+        # unlimited-agents plan is refused above and never arrives here, which
+        # is why live Enterprise testing could not surface it).
+        #
+        # Same mechanism as ``/subscriptions/checkout`` and ``/change-plan``
+        # Branch 3 — ``clients.pending_checkout_*`` via
+        # ``pending_checkout_service`` — with the two differences this path
+        # forces, both explained on ``reuse_or_supersede``: the agent does not
+        # exist yet, so its identity is compared from the gateway notes rather
+        # than from ``pending_checkout_bot_id``, and a failed supersede-cancel
+        # is logged rather than fatal.
+        #
+        # Recording the marker also closes the leak half: until now an
+        # abandoned per-agent checkout was tracked nowhere, so nothing could
+        # ever supersede or cancel it and it stayed authorizable at Razorpay
+        # indefinitely.
+        billing_country = client.billing_country or "IN"
+        required_notes = razorpay_service.per_bot_checkout_identity(
+            bot_name=request.name.strip(),
+            bot_website=request.website,
+            bot_allowed_domains=resolved_domains,
+            bot_domain_check_enabled=resolved_check_enabled,
+        )
+        try:
+            reused = pending_checkout_service.reuse_or_supersede(
+                session,
+                client_row=client,
+                client=client,
+                plan=plan,
+                billing_cycle=request.billing_cycle,
+                country=billing_country,
+                bot_id=pending_checkout_service.NEW_BOT_SCOPE,
+                required_notes=required_notes,
+                cancel_failure_is_fatal=False,
+            )
+        except razorpay_service.RazorpayBillingError as exc:
+            # Never guess: a fetch failure is not evidence the pending mandate
+            # is dead, and minting beside a live authorizable one is the exact
+            # double-charge this guard exists to prevent.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if reused is not None:
+            session.commit()
+            logger.info(
+                "Per-bot checkout retried: client=%s plan=%s cycle=%s reusing sub=%s",
+                client.id,
+                plan.slug,
+                request.billing_cycle,
+                reused.get("subscription_id"),
+            )
+            return reused
+
         try:
             payload = razorpay_service.create_per_bot_subscription(
                 session,
@@ -1829,6 +1894,16 @@ def create_bot_checkout(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        # Remember the mandate just minted so the next retry reuses it. Cleared
+        # by ``_handle_subscription_activated`` once the customer authorises.
+        pending_checkout_service.record(
+            client,
+            subscription_id=payload.get("subscription_id"),
+            plan_id=plan.id,
+            billing_cycle=request.billing_cycle,
+            country=billing_country,
+            bot_id=pending_checkout_service.NEW_BOT_SCOPE,
+        )
         session.commit()
         logger.info(
             "Per-bot Razorpay subscription started: client=%s plan=%s cycle=%s sub=%s",

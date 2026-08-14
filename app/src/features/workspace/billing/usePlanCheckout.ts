@@ -30,7 +30,7 @@ import {
 } from '../../../services/api';
 import { promotionAppliesToPlan, type PlanView, type PromotionView } from '../billingModel';
 import type { ActivationHint } from './usePlanActivation';
-import type { BillingCycle } from './planMath';
+import type { BillingCycle } from './planPricing';
 
 /**
  * Read the server's `retry_after_seconds` poll hint off a verify response.
@@ -120,8 +120,8 @@ export interface PlanCheckoutResult {
   reset: () => void;
 }
 
-// Mirrors planMath.canStartTrial on a PlanView - kept byte-identical in intent
-// so the trial gate can never drift between the modal and the drawer.
+// The single trial gate for every checkout surface (modal and drawer both call
+// this), so the offer can never drift between them.
 // ``trialUsed`` reflects the backend's lifetime one-trial-per-client rule
 // (from /subscriptions/current); without it the UI would offer a trial the
 // start-trial endpoint rejects with ``already_trialed``.
