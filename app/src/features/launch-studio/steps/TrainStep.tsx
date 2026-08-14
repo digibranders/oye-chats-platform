@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Globe,
@@ -22,12 +22,14 @@ import {
   recordActivationEvent,
   getDocuments,
   getDocumentPages,
+  getCurrentUser,
 } from '../../../services/api';
 import { useBotContext } from '../../../context/BotContext';
 import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
 import { StepShell } from '../StepShell';
 import { PagesDrawer } from '../PagesDrawer';
+import { resolveWebsitePrefill } from './websitePrefill';
 import type { StepProps } from '../steps.config';
 import type { KnowledgeSource, SourcePage, CrawlDiscovery } from '../../../types/domain';
 
@@ -72,13 +74,20 @@ function pageLabel(source: KnowledgeSource): string {
  *
  * Merges website URL entry, discovery estimation, crawl execution, live progress,
  * and knowledge review into one unified state-driven step.
+ *
+ * The URL field prefills from the agent's website, falling back to the account
+ * website captured at signup - see `resolveWebsitePrefill`.
  */
 export function TrainStep(props: StepProps) {
   const { selectedBot } = useBotContext();
   const { crawl, startCrawl } = useCrawl();
 
   // Connect / Input states
-  const [url, setUrl] = useState(selectedBot?.website ?? '');
+  const [url, setUrl] = useState(() => resolveWebsitePrefill(selectedBot?.website, null));
+  const [clientWebsite, setClientWebsite] = useState<string | null>(null);
+  // Has the user typed in the URL field? A ref, not state: it gates the
+  // prefill effect below and must never re-trigger it.
+  const urlEdited = useRef(false);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [uploadingDocs, setUploadingDocs] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -103,6 +112,36 @@ export function TrainStep(props: StepProps) {
 
   const crawlRunning = crawl.status === 'running' || crawl.status === 'cancelling';
   const crawlFailed = crawl.status === 'failed' || crawl.status === 'no_content';
+
+  const websitePrefill = resolveWebsitePrefill(selectedBot?.website, clientWebsite);
+
+  // The account's website, captured at signup. Read once on mount so the field
+  // can be prefilled for an agent created moments ago in step 2, which has no
+  // website of its own yet. Purely a convenience: a failed read leaves the
+  // field empty rather than surfacing an error the user cannot act on.
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setClientWebsite(user.website ?? null);
+      })
+      .catch(() => {
+        /* No prefill - the user types the URL, exactly as before. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // `selectedBot` and the account profile both resolve asynchronously, so the
+  // prefill cannot be a one-shot `useState` initialiser - on a fresh load of
+  // this route it would be computed from `undefined` and never correct itself.
+  // Re-sync whenever the resolved value changes, but never over the top of
+  // something the user typed.
+  useEffect(() => {
+    if (urlEdited.current || !websitePrefill) return;
+    setUrl(websitePrefill);
+  }, [websitePrefill]);
 
   const costPerPage = estimate?.cost_per_page ?? 1;
   const exceeds = Boolean(estimate?.exceeds_balance);
@@ -719,7 +758,10 @@ export function TrainStep(props: StepProps) {
             />
             <Input
               value={url}
-              onChange={(event) => setUrl(event.target.value)}
+              onChange={(event) => {
+                urlEdited.current = true;
+                setUrl(event.target.value);
+              }}
               placeholder="yourcompany.com"
               className="pl-9"
               autoFocus

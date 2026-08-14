@@ -57,12 +57,24 @@ class Client(Base):
     # Gateway state (rebuild_upgrade_checkout) decides staleness, not a TTL;
     # cleared by the activation webhook. Upgrade/resume park theirs on the
     # Subscription row; a first checkout has no row yet, hence here.
+    #
+    # Shared by BOTH first-mandate routes — ``POST /subscriptions/checkout`` and
+    # ``/subscriptions/change-plan`` Branch 3 (trial→paid, Free→paid, revive).
+    # Branch 3 had no marker at all until 2026-08-14, so a retry there minted a
+    # SECOND authorizable mandate and the customer was charged twice for one
+    # month (prod client 18). See ``pending_checkout_service``.
     pending_checkout_subscription_id = Column(String, nullable=True)
     pending_checkout_plan_id = Column(Integer, nullable=True)
     pending_checkout_cycle = Column(String(8), nullable=True)
     # The confirmed country the pending sub was minted under — part of the
     # reuse key so a country change never reuses a wrong-rail checkout.
     pending_checkout_country = Column(String(2), nullable=True)
+    # The bot the pending mandate funds (change-plan's revive-in-place path), or
+    # NULL for an account-level checkout. Part of the reuse key for the same
+    # reason the country is: an account-scoped in-flight mandate must never be
+    # handed back for a per-agent purchase, or the activation would attach the
+    # plan to the wrong ledger.
+    pending_checkout_bot_id = Column(Integer, nullable=True)
     pending_checkout_at = Column(DateTime(timezone=True), nullable=True)
     # Razorpay Customer id — the identity anchor for saved payment instruments.
     # Tokens hang off a customer (GET /v1/customers/{id}/tokens), so without

@@ -17,7 +17,7 @@
  * customer has already been charged and the activation webhook reconciles, so
  * we reassure instead of alarming.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { formatTrialDate } from '../../../utils/trial';
 import { openRazorpayCheckout } from '../../../lib/razorpay';
 import { useCurrency } from '../../../context/CurrencyContext';
@@ -29,7 +29,26 @@ import {
   recordBillingEvent,
 } from '../../../services/api';
 import { promotionAppliesToPlan, type PlanView, type PromotionView } from '../billingModel';
+import type { ActivationHint } from './usePlanActivation';
 import type { BillingCycle } from './planMath';
+
+/**
+ * Read the server's `retry_after_seconds` poll hint off a verify response.
+ * Additive on the backend, so it is absent on older builds and every caller
+ * has to work without it.
+ */
+function activationHint(res: Record<string, unknown> | undefined): ActivationHint | undefined {
+  const seconds = res?.retry_after_seconds;
+  return typeof seconds === 'number' ? { retryAfterSeconds: seconds } : undefined;
+}
+
+/**
+ * Fallback copy for "your money arrived, the plan is still switching on". Used
+ * whenever the server does not supply its own sentence. It never suggests
+ * paying again, because every path that reaches it has already been charged.
+ */
+export const ACTIVATION_PENDING_MESSAGE =
+  'Payment received - we’re activating your plan now. You don’t need to pay again; this usually takes under a minute.';
 
 export interface PlanCheckoutContext {
   currentPlanSlug: string;
@@ -57,6 +76,18 @@ export interface PlanCheckoutContext {
   /** Fired to dismiss the surface (drawer close) after success. */
   onDone: () => void;
   /**
+   * Fired when the money has moved but the plan is NOT yet live locally - the
+   * mandate is still settling at Razorpay, or a second attempt collided with
+   * one that already charged (409 `subscription_activation_conflict`).
+   *
+   * The host is expected to start a poll (see `usePlanActivation`) and hold a
+   * persistent "activating" state on screen. Optional only for
+   * backwards-compatibility: when it is absent this hook falls back to the old
+   * one-shot `onSuccess` message, which is strictly worse - it flashes and
+   * leaves the customer staring at their old plan.
+   */
+  onActivationPending?: (plan: PlanView, hint?: ActivationHint) => void;
+  /**
    * Fired when the backend refuses checkout because the buyer's statutory
    * billing identity is incomplete (409 `billing_details_required`). Not an
    * error state: the account simply isn't invoiceable yet, so the host should
@@ -69,6 +100,20 @@ export interface PlanCheckoutResult {
   submitting: boolean;
   error: string;
   notice: string;
+  /**
+   * True when the server refused with `email_verification_required` (403). The
+   * host surfaces `error` with a link to `/verify-email` instead of a dead end,
+   * and stops offering the button that just failed - retrying it produces the
+   * identical 403.
+   */
+  emailVerificationRequired: boolean;
+  /**
+   * True once a charge has landed but the plan is still activating. The host
+   * MUST stop offering the pay button while this is set: the customer has
+   * already paid, so another click buys a second subscription. Cleared by
+   * `reset()` (drawer re-open) like the other terminal gates.
+   */
+  activationPending: boolean;
   /** Run the checkout money-path for `plan` at `billingCycle`. */
   submit: (plan: PlanView, billingCycle: BillingCycle, actionKind?: string) => Promise<void>;
   /** Clear transient error/notice state (call on drawer open). */
@@ -104,26 +149,68 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
     onSuccess,
     onDone,
     onBillingDetailsRequired,
+    onActivationPending,
   } = ctx;
   const { country: acctCountry, countrySource } = useCurrency();
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
+  const [activationPending, setActivationPending] = useState(false);
+  /**
+   * Re-entrancy latch for `submit`, mirroring `submitting` exactly - set beside
+   * every `setSubmitting(true)`, cleared in the same `finally`.
+   *
+   * `submitting` disables both CTAs, but a disabled button is not a guard: two
+   * clicks dispatched before React flushes the state update both reach the
+   * handler, and each one mints a Razorpay subscription server-side. A ref is
+   * readable synchronously, so the second call sees the first immediately.
+   *
+   * Deliberately NOT cleared by `reset()`. `reset` runs on drawer open, which
+   * can happen while a request is still in flight (close the drawer mid-charge,
+   * reopen); clearing the latch there would reopen the exact window this closes.
+   * The `finally` blocks are the only correct release points.
+   */
+  const inFlight = useRef(false);
 
   const reset = useCallback(() => {
     setError('');
     setNotice('');
+    setEmailVerificationRequired(false);
+    setActivationPending(false);
   }, []);
 
   const submit = useCallback(
     async (plan: PlanView, billingCycle: BillingCycle, actionKind: string = 'auto'): Promise<void> => {
+      // One attempt at a time - a second click must not open a second checkout.
+      if (inFlight.current) return;
+      /**
+       * The money moved but the plan is not live yet. Every caller of this
+       * lands in the same place: a persistent "activating" state owned by the
+       * host, a disabled pay button here, and NO claim that the subscription
+       * exists. `onSuccess` is only used as a degraded fallback when the host
+       * has wired no poll - firing both would put a green "done" banner next
+       * to a spinner that says otherwise.
+       */
+      const enterActivationPending = (message: string, hint?: ActivationHint): void => {
+        setActivationPending(true);
+        setNotice(message);
+        if (onActivationPending) {
+          onActivationPending(plan, hint);
+        } else {
+          onSuccess('Payment received - finalising your subscription.');
+        }
+      };
+      // Stale gate state must never outlive the attempt that produced it.
+      setEmailVerificationRequired(false);
       // Free plan: with an active sub, schedule a cancellation at period end;
       // without one there is nothing to do.
       if (plan.slug === 'free') {
         if (hasActiveSubscription) {
           setError('');
           setNotice('');
+          inFlight.current = true;
           setSubmitting(true);
           try {
             await changePlan(plan.id, billingCycle, botId);
@@ -132,6 +219,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Could not downgrade.');
           } finally {
+            inFlight.current = false;
             setSubmitting(false);
           }
           return;
@@ -153,6 +241,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       if (takeTrialPath) {
         setError('');
         setNotice('');
+        inFlight.current = true;
         setSubmitting(true);
         try {
           await startTrial(plan.slug);
@@ -161,12 +250,14 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         } catch (err: unknown) {
           setError(err instanceof Error ? err.message : 'Could not start your free trial.');
         } finally {
+          inFlight.current = false;
           setSubmitting(false);
         }
         return;
       }
 
       setError('');
+      inFlight.current = true;
       setSubmitting(true);
       try {
         // Routing:
@@ -235,10 +326,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
               razorpay_signature: cb.razorpay_signature,
             })) as Record<string, unknown>;
           } catch {
-            setNotice(
-              'Payment received - we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
-            );
-            onSuccess('Payment received - finalising your subscription.');
+            enterActivationPending(ACTIVATION_PENDING_MESSAGE);
             onDone();
             return;
           }
@@ -251,11 +339,14 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           // Asserting "You're now subscribed" on that told a charged customer
           // they had a plan the app could not see - the same bug the reactivate
           // path fixed by refusing to assert an outcome it hasn't observed.
-          if (verified?.subscription_known === false) {
-            setNotice(
-              'Payment received - we’re finalising your subscription. It’ll activate within a minute; if not, contact support.',
-            );
-            onSuccess('Payment received - finalising your subscription.');
+          //
+          // `status: "verified"` above is emphatically NOT a second opinion on
+          // this: it describes the SIGNATURE, and reading it as "active" is the
+          // mistake that made the modal claim a subscription that did not
+          // exist. `activation_pending` is the newer, explicit spelling of the
+          // same fact; either one routes here.
+          if (verified?.subscription_known === false || verified?.activation_pending === true) {
+            enterActivationPending(ACTIVATION_PENDING_MESSAGE, activationHint(verified));
             onDone();
             return;
           }
@@ -292,6 +383,44 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
           (err as { response?: { data?: { detail?: unknown } }; detail?: unknown })?.response?.data
             ?.detail ?? (err as { detail?: unknown })?.detail;
 
+        // The account hasn't proved it owns its email yet, so the server
+        // refuses to take money (`require_verified_email` /
+        // `require_verified_email_for_workspace` - both send this exact
+        // detail, keyed on `error`). Recoverable in seconds, but only if the
+        // UI says where to go: the host pairs this flag with a link to
+        // `/verify-email` rather than leaving a dead button under a red
+        // message.
+        if (
+          detail &&
+          typeof detail === 'object' &&
+          (detail as { error?: string }).error === 'email_verification_required'
+        ) {
+          setEmailVerificationRequired(true);
+          setError(
+            (detail as { message?: string }).message ||
+              'Please verify your email to continue.',
+          );
+          return;
+        }
+        // The customer has ALREADY paid for this plan and clicked again while
+        // the first mandate was still settling; the backend refuses the second
+        // charge with a 409. The money is safe and the plan is genuinely on
+        // its way, so this is reassurance, not failure: rendering the server's
+        // (correct) copy in red error styling is precisely what sends someone
+        // who has just paid to a third attempt or a support ticket. Mirrors the
+        // `intl_usd_pending` notice branch, and starts the activation poll -
+        // the plan really is activating, so the host must keep saying so.
+        if (
+          detail &&
+          typeof detail === 'object' &&
+          (detail as { reason?: string }).reason === 'subscription_activation_conflict'
+        ) {
+          enterActivationPending(
+            (detail as { message?: string }).message || ACTIVATION_PENDING_MESSAGE,
+            activationHint(detail as Record<string, unknown>),
+          );
+          return;
+        }
         if (
           detail &&
           typeof detail === 'object' &&
@@ -388,6 +517,7 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
         }
         setError(err instanceof Error ? err.message : 'Could not start checkout.');
       } finally {
+        inFlight.current = false;
         setSubmitting(false);
       }
     },
@@ -403,8 +533,17 @@ export function usePlanCheckout(ctx: PlanCheckoutContext): PlanCheckoutResult {
       botId,
       onSuccess,
       onDone,
+      onActivationPending,
     ],
   );
 
-  return { submitting, error, notice, submit, reset };
+  return {
+    submitting,
+    error,
+    notice,
+    emailVerificationRequired,
+    activationPending,
+    submit,
+    reset,
+  };
 }

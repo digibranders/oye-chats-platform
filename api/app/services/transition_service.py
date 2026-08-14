@@ -299,7 +299,7 @@ def execute_paid_upgrade(
     Raises:
         RazorpayBillingError: gateway-side creation of the new subscription failed.
     """
-    from app.services import razorpay_service
+    from app.services import pending_checkout_service, razorpay_service
 
     # Finding D: idempotent upgrade. A sequential double-submit (click → modal →
     # close → click again) must not mint a SECOND Razorpay subscription — both
@@ -308,29 +308,17 @@ def execute_paid_upgrade(
     # target plan is already in flight on this sub, return its existing checkout.
     # A different target plan supersedes the stale pending (its unauthorised
     # Razorpay sub never charges and Razorpay expires it).
-    if sub.upgrade_pending_subscription_id and sub.upgrade_pending_plan_id == new_plan.id:
-        reused = razorpay_service.rebuild_upgrade_checkout(
-            sub.upgrade_pending_subscription_id, client, new_plan, billing_cycle
-        )
-        if reused is not None:
-            logger.info(
-                "Reusing pending upgrade checkout %s for client %s → plan %s",
-                sub.upgrade_pending_subscription_id,
-                client.id,
-                new_plan.slug,
-            )
-            return reused
-        # The pending checkout was abandoned and is no longer authorizable — clear
-        # the stale marker and fall through to mint a fresh one (M3), so the
-        # customer isn't stranded with a dead checkout.
-        logger.info(
-            "Pending upgrade checkout %s for client %s is dead; re-minting",
-            sub.upgrade_pending_subscription_id,
-            client.id,
-        )
-        sub.upgrade_pending_subscription_id = None
-        sub.upgrade_pending_plan_id = None
-        session.flush()
+    #
+    # The "is it dead?" question is not enough on its own, which is what
+    # ``pending_checkout_service`` exists to encode: ``rebuild_upgrade_checkout``
+    # answers ``None`` just as readily for a mandate the customer has ALREADY
+    # PAID as for one they abandoned, and re-minting on that answer is how a
+    # month gets charged twice.
+    reused = pending_checkout_service.reuse_pending_upgrade(
+        session, sub=sub, client=client, plan=new_plan, billing_cycle=billing_cycle
+    )
+    if reused is not None:
+        return reused
 
     # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
     # the activation webhook will call ``reset_monthly_plan_credits`` before

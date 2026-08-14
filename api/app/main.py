@@ -66,6 +66,7 @@ from app.core.middleware import (
     intl_payments_disabled_handler,
     plan_not_checkoutable_handler,
     session_ownership_exception_handler,
+    subscription_activation_conflict_handler,
     validation_exception_handler,
 )
 from app.core.rate_limit import limiter
@@ -73,7 +74,11 @@ from app.core.sentry_scrub import scrub_event
 from app.db.models import Base, Bot
 from app.db.models import ChatSession as CS
 from app.db.session import engine, get_session
-from app.services.razorpay_service import IntlPaymentsDisabled, PlanNotCheckoutable
+from app.services.razorpay_service import (
+    IntlPaymentsDisabled,
+    PlanNotCheckoutable,
+    SubscriptionActivationConflict,
+)
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -210,6 +215,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(SessionOwnershipError, session_ownership_exception_handler)
 app.add_exception_handler(IntlPaymentsDisabled, intl_payments_disabled_handler)
 app.add_exception_handler(PlanNotCheckoutable, plan_not_checkoutable_handler)
+app.add_exception_handler(SubscriptionActivationConflict, subscription_activation_conflict_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # --- Database Initialization ---

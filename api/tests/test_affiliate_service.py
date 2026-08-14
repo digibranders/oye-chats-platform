@@ -450,6 +450,33 @@ class TestInviteLifecycle:
         with pytest.raises(svc.InviteAlreadyUsed):
             svc.lookup_invite_by_token(db, result["raw_token"])
 
+    def test_accept_invite_lands_verified(self, db):
+        """An accepted invite yields a VERIFIED client.
+
+        No OTP is sent on this path, and the front-end verification gate holds
+        every unverified client on /verify-email — so a False here would strand
+        the invitee on a screen with no code to enter. It is safe because the
+        magic link was emailed to ``invite.email`` and ``accept_invite`` forces
+        the account onto that same address: holding the link proves control of
+        the inbox, the same reasoning that exempts Google sign-ups.
+        """
+        superadmin = make_client(db)
+        result = svc.invite_affiliate(db, email="verified@example.com", invited_by_client_id=superadmin.id)
+        db.commit()
+
+        client, _affiliate = svc.accept_invite(
+            db,
+            result["raw_token"],
+            name="Verified Affiliate",
+            password_hash="$2b$12$notarealhash",
+            api_key="accepted-api-key-verified",
+        )
+        db.commit()
+
+        assert client.is_verified is True
+        # The acceptor never chooses the address — it comes from the invite.
+        assert client.email == "verified@example.com"
+
     def test_expired_invite_rejected(self, db):
         superadmin = make_client(db)
         result = svc.invite_affiliate(db, email="slow@example.com", invited_by_client_id=superadmin.id)

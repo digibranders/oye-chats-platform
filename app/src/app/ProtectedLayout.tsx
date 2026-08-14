@@ -9,6 +9,7 @@ import { CurrencyProvider } from '../context/CurrencyContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import { EntitlementsProvider } from '../context/EntitlementsContext';
 import { UpgradeModalProvider } from '../context/UpgradeModalContext';
+import { sessionNeedsEmailVerification, verifyUrlWithNext } from './emailVerificationGate';
 
 /**
  * Build a `/login?next=…` URL that round-trips the current deep link through
@@ -48,6 +49,16 @@ export function ProtectedLayout() {
 
   if (!isAuthenticated) {
     return <Navigate to={loginUrlWithNext(pathname, search)} replace />;
+  }
+
+  // Second boundary: an authenticated but unverified account is held on
+  // `/verify-email` until it proves it owns its address. That route is PUBLIC
+  // (declared outside this layout in routes.tsx), so this gate never runs there
+  // and cannot loop; the deep link the user was reaching for round-trips as
+  // `next`. Logout stays reachable - the verify screen carries its own sign-out.
+  // Operators, super-admins and impersonation tabs are exempt; see the gate.
+  if (sessionNeedsEmailVerification()) {
+    return <Navigate to={verifyUrlWithNext(pathname, search)} replace />;
   }
 
   return (

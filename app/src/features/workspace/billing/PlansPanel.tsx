@@ -20,6 +20,13 @@ export interface PlansPanelProps {
   promotion?: PromotionView | null;
   /** When true (e.g. during onboarding), the current Free plan card CTA is enabled as 'Continue with Free'. */
   allowSelectCurrent?: boolean;
+  /**
+   * Retires every CTA in the picker - cards AND comparison matrix. Set while a
+   * plan the customer has already paid for is still activating: leaving a live
+   * Select button under an "activating…" banner is how the same month gets
+   * charged twice.
+   */
+  selectionDisabled?: boolean;
 }
 
 /**
@@ -40,6 +47,7 @@ export function PlansPanel({
   trialEnd = null,
   promotion = null,
   allowSelectCurrent = false,
+  selectionDisabled = false,
 }: PlansPanelProps): ReactElement {
   const [compareOpen, setCompareOpen] = useState(false);
   const maxSavingPercent = maxAnnualSavingPercent(plans);
@@ -67,6 +75,7 @@ export function PlansPanel({
         trialEnd={trialEnd}
         promotion={promotion}
         allowSelectCurrent={allowSelectCurrent}
+        selectionDisabled={selectionDisabled}
       />
 
       {/* Full feature-by-feature breakdown, in-app and one click away. */}
@@ -78,6 +87,7 @@ export function PlansPanel({
         open={compareOpen}
         onOpenChange={setCompareOpen}
         currentStatus={currentStatus}
+        selectionDisabled={selectionDisabled}
       />
     </section>
   );

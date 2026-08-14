@@ -343,6 +343,23 @@ export function greeting(date: Date): string {
   return 'Good evening';
 }
 
+/**
+ * First name for the header salutation, e.g. "Gaurav Sharma" → "Gaurav".
+ *
+ * The greeting addresses a PERSON, so it must never fall back to the workspace
+ * / company name - "Good afternoon, Fynix 👋" is worse than no name at all.
+ * Returns `''` for anything unusable (missing, blank, whitespace-only), which
+ * the header renders as a plain "Good afternoon 👋".
+ *
+ * A single-word name is returned unchanged; a mononym is a real name, not an
+ * error. Extra internal whitespace is tolerated.
+ */
+export function firstName(fullName: string | null | undefined): string {
+  const trimmed = fullName?.trim();
+  if (!trimmed) return '';
+  return trimmed.split(/\s+/)[0];
+}
+
 /** Long-form date, e.g. "Monday, July 21". */
 export function formatToday(date: Date): string {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });

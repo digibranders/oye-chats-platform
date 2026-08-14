@@ -1,6 +1,7 @@
 import logging
+import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, field_validator
@@ -67,9 +68,36 @@ def create_client(request: CreateClientRequest, superadmin: Client = Depends(get
             is_superadmin=False,
         )
 
+        # This provisions a real paying customer, not platform staff — the
+        # ``is_superadmin`` bypass in ``require_verified_email`` does not cover
+        # them, so they verify like any other account. Mirrors the OTP handling
+        # in ``/auth/register``: same 15-minute window, same double-gated
+        # dev auto-verify, same non-production OTP logging.
+        otp = str(secrets.randbelow(900000) + 100000)
+        new_client.email_otp = otp
+        new_client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+        from app.config import APP_ENV, DEV_AUTO_VERIFY_EMAIL
+
+        new_client.is_verified = DEV_AUTO_VERIFY_EMAIL
+
         session.add(new_client)
         session.commit()
         session.refresh(new_client)
+
+        if DEV_AUTO_VERIFY_EMAIL:
+            logger.info("[DEV] auto-verified %s (local email delivery is gated)", new_client.email)
+        elif APP_ENV != "production":
+            logger.info("[DEV] email verification OTP for %s: %s", new_client.email, otp)
+
+        # Fire after commit and swallow failures — a transient provider error
+        # must never roll back a created client. The recipient can always pull a
+        # fresh code from the "Resend code" action on /verify-email.
+        try:
+            from app.services.email_service import send_verification_otp_email
+
+            send_verification_otp_email(new_client.email, new_client.name, otp)
+        except Exception as mail_err:
+            logger.warning("verification_otp_email_failed for client %s: %s", new_client.id, mail_err)
 
         logger.info(f"Superadmin {superadmin.id} created new client {new_client.id} ({new_client.name})")
 
@@ -77,6 +105,7 @@ def create_client(request: CreateClientRequest, superadmin: Client = Depends(get
             "message": "Client created successfully",
             "client_id": new_client.id,
             "api_key": new_client.api_key,
+            "is_verified": bool(new_client.is_verified),
         }
 
 

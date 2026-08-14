@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Sparkles, Loader2, ArrowRight, RotateCcw, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { verifyEmail, resendVerification } from '../services/api';
+import { verifyEmail, resendVerification, getCurrentUser } from '../services/api';
 import { cn } from '../lib/utils';
 import { getAuthItem, setAuthItem, removeAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { endImpersonationSessionFromSignOut } from '../utils/impersonation';
@@ -14,7 +14,16 @@ export default function VerifyEmail() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const emailFromUrl = searchParams.get('email') || '';
-  const email = emailFromUrl || getAuthItem('admin_pending_email') || '';
+  // ``admin_pending_email`` is written by Register.jsx ONLY. Every other way of
+  // arriving here authenticated - logging back in on a new device, a nudge from
+  // the VerifyEmailBanner, an affiliate/superadmin-provisioned account, a
+  // post-signup email change - leaves it unset, and this screen used to refuse
+  // BOTH verify and resend with "Email address missing". That made the page a
+  // dead end for exactly the users it exists to serve, so fall back to the
+  // authenticated identity from ``/auth/me``.
+  const [email, setEmail] = useState(
+    () => emailFromUrl || getAuthItem('admin_pending_email') || '',
+  );
   // Preserve a deep-link ``next`` (e.g. ``/invite/<token>``) through the
   // verification bounce so an invite-flow signup lands back on the invite
   // airlock after OTP entry instead of the dashboard root. Open-redirect
@@ -43,6 +52,41 @@ export default function VerifyEmail() {
       return;
     }
     inputRefs.current[0]?.focus();
+  }, [navigate, safeNext]);
+
+  // Ask the server who this session is, once on mount. Two jobs, one request:
+  //
+  //  1. Resolve the address when neither the URL nor storage carried one. This
+  //     is load-bearing for the whole verification gate - a user logging in on
+  //     a fresh device has nothing in local storage, and without this the gate
+  //     would strand them on a screen whose verify AND resend both refuse to
+  //     act. Best-effort: on failure `email` stays empty and the existing
+  //     "Email address missing" guards apply, so it can only ever unblock.
+  //
+  //  2. Reconcile a stale `admin_is_verified`. The gate is deliberately
+  //     synchronous on that flag, so this is the authoritative correction: if
+  //     the server says this account IS verified, refresh the flag and leave.
+  //     Without it a wrongly-`'false'` flag would be a closed loop - gated in
+  //     here, with no way to prove otherwise.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await getCurrentUser();
+        if (cancelled) return;
+        if (me?.email) setEmail((prev) => prev || me.email);
+        if (me?.is_verified) {
+          setAuthItem('admin_is_verified', 'true');
+          removeAuthItem('admin_pending_email');
+          navigate(safeNext || '/', { replace: true });
+        }
+      } catch {
+        /* leave state as-is - the submit handlers surface any missing email */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [navigate, safeNext]);
 
   useEffect(() => {
@@ -111,6 +155,9 @@ export default function VerifyEmail() {
     }
     setIsVerifying(true);
     setError('');
+    // Drop any stale "New code sent" confirmation: an expired-code error read
+    // as a contradiction sitting directly under it.
+    setResendSuccess(false);
     try {
       await verifyEmail(email, code);
       setAuthItem('admin_is_verified', 'true');

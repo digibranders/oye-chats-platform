@@ -15,6 +15,8 @@ export interface ComparePlansProps {
   onOpenChange: (open: boolean) => void;
   /** Current subscription status - forwarded so the matrix can offer activation. */
   currentStatus?: string | null;
+  /** Retires the matrix CTAs while a paid plan is still activating. */
+  selectionDisabled?: boolean;
 }
 
 /**
@@ -34,6 +36,7 @@ export function ComparePlans({
   open,
   onOpenChange,
   currentStatus = null,
+  selectionDisabled = false,
 }: ComparePlansProps): ReactElement {
   const regionId = useId();
 
@@ -81,6 +84,7 @@ export function ComparePlans({
             onSelect={onSelect}
             hideToggle
             currentStatus={currentStatus}
+            selectionDisabled={selectionDisabled}
           />
         </div>
       )}

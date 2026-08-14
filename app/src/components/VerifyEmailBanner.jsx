@@ -5,25 +5,32 @@ import { getCurrentUser, resendVerification } from '../services/api';
 import { getAuthItem, setAuthItem } from '../utils/authStorage';
 import { getAuthState } from '../utils/auth';
 
-/** sessionStorage flag - dismissal survives navigation but returns next session. */
-const DISMISS_KEY = 'verify_email_banner_dismissed';
-
 /**
  * Slim, dismissible "verify your email" nudge shown at the top of every
  * authenticated page for unverified CLIENT accounts.
  *
- * Context: organic email/password signups are no longer walled behind
+ * Context: organic email/password signups are not walled behind
  * ``/verify-email`` (see Login.jsx / Register.jsx). They enter the app
  * immediately and are nudged here instead. Verification is still enforced
  * server-side on billing/invite mutations (``require_verified_email``), so a
  * user who ignores the banner simply can't touch those surfaces until they
- * verify.
+ * verify. It also covers the account that becomes unverified LATER, via an
+ * email change - that user is already inside the app, so a signup-time gate
+ * would never catch them.
  *
  * Renders NOTHING when:
  *   - the account is verified,
  *   - the session is an operator (operators have no email-verification
- *     concept - ``getAuthState().isOperator``),
- *   - the banner was dismissed this session.
+ *     concept of their own - ``/auth/me`` mirrors the workspace OWNER's flag,
+ *     and an operator cannot act on someone else's inbox),
+ *   - the banner was dismissed in this page view.
+ *
+ * Dismissal is deliberately in-memory (React state, not web storage): an
+ * unverified account is a state we want to keep surfacing, so the nudge
+ * returns on the next reload or session. Dismissing only buys quiet for the
+ * current page view - the shell keeps this mounted across route changes, so
+ * that is enough to stop it nagging mid-task without ever letting the account
+ * forget it is unverified.
  *
  * Verification state is read optimistically from the persisted
  * ``admin_is_verified`` flag - hidden unless it is explicitly ``'false'`` so
@@ -41,9 +48,7 @@ export default function VerifyEmailBanner() {
     const [isVerified, setIsVerified] = useState(
         () => getAuthItem('admin_is_verified') !== 'false',
     );
-    const [dismissed, setDismissed] = useState(
-        () => sessionStorage.getItem(DISMISS_KEY) === '1',
-    );
+    const [dismissed, setDismissed] = useState(false);
     const [email, setEmail] = useState(() => getAuthItem('admin_pending_email') || '');
     const [resendState, setResendState] = useState('idle'); // idle | sending | sent | error
 
@@ -81,10 +86,7 @@ export default function VerifyEmailBanner() {
         }
     };
 
-    const handleDismiss = () => {
-        sessionStorage.setItem(DISMISS_KEY, '1');
-        setDismissed(true);
-    };
+    const handleDismiss = () => setDismissed(true);
 
     if (isOperator) return null;
     if (isVerified) return null;
@@ -104,41 +106,43 @@ export default function VerifyEmailBanner() {
                     : 'Resend';
 
     return (
+        // Design-system tokens, not the legacy `primary-*` scale: this sits
+        // directly beside PastDueBanner / DowngradeReauthBanner in the shell,
+        // and a second palette there reads as a bug.
         <div
             role="status"
-            className="bg-primary-50 dark:bg-primary-500/10 text-primary-900 dark:text-primary-200 border-b border-primary-200 dark:border-primary-500/20"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--ds-border)] bg-[var(--ds-warning-soft)] px-4 py-2.5 md:px-6"
         >
-            <div className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-1.5 flex items-center gap-2.5">
-                <Mail size={15} className="shrink-0 text-primary-600 dark:text-primary-300" />
-                <span className="text-[13px] leading-snug flex-1 min-w-0">
-                    <span className="font-semibold">Verify your email</span>
-                    <span className="opacity-80 ml-1">
-                        to unlock billing, invites, and payouts.
-                    </span>
+            <Mail size={16} aria-hidden="true" className="shrink-0 text-[var(--ds-warning)]" />
+            <p className="min-w-0 flex-1 text-[13px] text-[var(--ds-text)]">
+                <span className="font-medium">Verify your email</span>
+                <span className="text-[var(--ds-text-muted)]">
+                    {' '}
+                    to unlock checkout, plan changes, and team invites.
                 </span>
-                <button
-                    type="button"
-                    onClick={handleResend}
-                    disabled={!email || resendState === 'sending' || resendState === 'sent'}
-                    className="shrink-0 text-[12.5px] font-semibold text-primary-700 dark:text-primary-200 hover:text-primary-900 dark:hover:text-primary-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)] rounded"
-                >
-                    {resendLabel}
-                </button>
-                <Link
-                    to={verifyHref}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-primary-600 hover:bg-primary-700 text-white text-[12.5px] font-semibold transition-colors"
-                >
-                    Verify now
-                </Link>
-                <button
-                    type="button"
-                    onClick={handleDismiss}
-                    aria-label="Dismiss verify-email banner"
-                    className="shrink-0 -mr-1 p-1 rounded-md text-primary-900/60 hover:text-primary-900 hover:bg-primary-100 dark:text-primary-200/70 dark:hover:text-primary-100 dark:hover:bg-primary-500/15 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]"
-                >
-                    <X size={14} />
-                </button>
-            </div>
+            </p>
+            <button
+                type="button"
+                onClick={handleResend}
+                disabled={!email || resendState === 'sending' || resendState === 'sent'}
+                className="shrink-0 rounded text-[13px] font-medium text-[var(--ds-text-muted)] underline-offset-2 transition-colors hover:text-[var(--ds-text)] hover:underline disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:no-underline"
+            >
+                {resendLabel}
+            </button>
+            <Link
+                to={verifyHref}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[var(--ds-accent)] px-3 py-1.5 text-[13px] font-medium text-[var(--ds-accent-fg)] transition-opacity hover:opacity-90"
+            >
+                Verify now
+            </Link>
+            <button
+                type="button"
+                onClick={handleDismiss}
+                aria-label="Dismiss verify-email banner"
+                className="shrink-0 rounded-md p-1 text-[var(--ds-text-muted)] transition-colors hover:bg-[var(--ds-bg-subtle)] hover:text-[var(--ds-text)]"
+            >
+                <X size={14} aria-hidden="true" />
+            </button>
         </div>
     );
 }

@@ -32,6 +32,16 @@ def _setup(db, credits=0):
     return client, sub, new
 
 
+@pytest.fixture(autouse=True)
+def _pending_mandate_is_unpaid(monkeypatch):
+    """``execute_paid_upgrade`` now asks the gateway whether the in-flight
+    replacement mandate has already been PAID before it reuses or re-mints —
+    re-minting over a paid one is how a month gets charged twice. Unpaid is the
+    right default for these tests; the paid case is covered in
+    test_change_plan_checkout_idempotency."""
+    monkeypatch.setattr("app.services.razorpay_service.checkout_already_paid", lambda *a, **k: False)
+
+
 # ── D: upgrade double-submit idempotency ─────────────────────────────────────
 
 
@@ -57,7 +67,12 @@ def test_second_upgrade_reuses_pending_checkout(db, monkeypatch):
 
     assert len(created) == 1, "second upgrade must NOT mint a second Razorpay subscription"
     assert p1["subscription_id"] == "sub_new_1"
-    assert p2 == {"subscription_id": "sub_new_1", "reused": True}
+    # The reuse now flows through ``pending_checkout_service``, which stamps
+    # ``provider`` on the payload the way /resume's nested checkout needs (the
+    # change-plan route already added it for this path). Assert the substance,
+    # not dict identity.
+    assert p2["subscription_id"] == "sub_new_1"
+    assert p2["reused"] is True
     assert sub.upgrade_pending_subscription_id == "sub_new_1"
     assert sub.upgrade_pending_plan_id == new.id
 

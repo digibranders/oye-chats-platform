@@ -88,6 +88,15 @@ def _mint_payload(sub_id="sub_idem_1"):
     return {"subscription_id": sub_id, "key_id": "rzp_test", "provider": "razorpay"}
 
 
+@pytest.fixture(autouse=True)
+def _pending_mandate_is_unpaid():
+    """Default every test here to an UNPAID in-flight mandate — the reuse path
+    now asks the gateway ``checkout_already_paid`` first, and the PAID case is
+    covered in test_change_plan_checkout_idempotency."""
+    with patch.object(rzp, "checkout_already_paid", return_value=False):
+        yield
+
+
 # ── Sequential re-checkout reuses the in-flight subscription ─────────────────
 
 
@@ -118,15 +127,22 @@ def test_checkout_for_a_different_plan_mints_fresh(db, monkeypatch):
     plan_a = _plan(db, slug="std-idem-a")
     plan_b = _plan(db, slug="std-idem-b")
 
-    with patch(
-        "app.services.razorpay_service.create_subscription",
-        side_effect=[_mint_payload("sub_idem_a"), _mint_payload("sub_idem_b")],
-    ) as mint:
+    with (
+        patch(
+            "app.services.razorpay_service.create_subscription",
+            side_effect=[_mint_payload("sub_idem_a"), _mint_payload("sub_idem_b")],
+        ) as mint,
+        patch("app.services.razorpay_service.cancel_superseded_checkout", return_value="created") as cancel,
+    ):
         first = api.post("/subscriptions/checkout", json={"plan_id": plan_a.id, "billing_cycle": "monthly"})
         second = api.post("/subscriptions/checkout", json={"plan_id": plan_b.id, "billing_cycle": "monthly"})
 
     assert first.status_code == 200 and second.status_code == 200
     assert mint.call_count == 2
+    # The superseded mandate is left authorizable at Razorpay unless it is
+    # explicitly killed — a customer could authorise the abandoned plan-A
+    # checkout later and be billed for a plan they walked away from.
+    cancel.assert_called_once_with("sub_idem_a")
     db.refresh(client)
     # The marker follows the LATEST in-flight checkout.
     assert client.pending_checkout_subscription_id == "sub_idem_b"
@@ -148,12 +164,16 @@ def test_dead_pending_checkout_is_replaced(db, monkeypatch):
     with (
         patch("app.services.razorpay_service.create_subscription", return_value=_mint_payload("sub_idem_new")) as mint,
         patch("app.services.razorpay_service.rebuild_upgrade_checkout", return_value=None),
+        patch("app.services.razorpay_service.cancel_superseded_checkout", return_value="expired") as cancel,
     ):
         res = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "monthly"})
 
     assert res.status_code == 200, res.text
     assert res.json()["subscription_id"] == "sub_idem_new"
     assert mint.call_count == 1
+    # "Not reusable" and "dead" are different facts — only the second makes a
+    # fresh mint safe, so the gateway status is checked before minting.
+    cancel.assert_called_once_with("sub_idem_dead")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_idem_new"
 
@@ -299,14 +319,18 @@ def test_checkout_parks_referral_snapshot_in_notes(db, monkeypatch):
 def test_checkout_different_cycle_mints_fresh(db, monkeypatch):
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-idem-cycle")
-    with patch(
-        "app.services.razorpay_service.create_subscription",
-        side_effect=[_mint_payload("sub_idem_m"), _mint_payload("sub_idem_a")],
-    ) as mint:
+    with (
+        patch(
+            "app.services.razorpay_service.create_subscription",
+            side_effect=[_mint_payload("sub_idem_m"), _mint_payload("sub_idem_a")],
+        ) as mint,
+        patch("app.services.razorpay_service.cancel_superseded_checkout", return_value="created") as cancel,
+    ):
         first = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "monthly"})
         second = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "annual"})
     assert first.status_code == 200 and second.status_code == 200
     assert mint.call_count == 2
+    cancel.assert_called_once_with("sub_idem_m")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_idem_a"
 
@@ -319,10 +343,13 @@ def test_checkout_country_change_never_reuses_wrong_rail(db, monkeypatch):
     monkeypatch.setattr(subscription_routes, "INTL_PAYMENTS_ENABLED", True)
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-idem-country")
-    with patch(
-        "app.services.razorpay_service.create_subscription",
-        side_effect=[_mint_payload("sub_idem_inr"), _mint_payload("sub_idem_usd")],
-    ) as mint:
+    with (
+        patch(
+            "app.services.razorpay_service.create_subscription",
+            side_effect=[_mint_payload("sub_idem_inr"), _mint_payload("sub_idem_usd")],
+        ) as mint,
+        patch("app.services.razorpay_service.cancel_superseded_checkout", return_value="created") as cancel,
+    ):
         first = api.post(
             "/subscriptions/checkout",
             json={"plan_id": plan.id, "billing_cycle": "monthly", "billing_country": "IN"},
@@ -334,6 +361,7 @@ def test_checkout_country_change_never_reuses_wrong_rail(db, monkeypatch):
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
     assert mint.call_count == 2
+    cancel.assert_called_once_with("sub_idem_inr")
     db.refresh(client)
     assert client.pending_checkout_country == "US"
     assert client.pending_checkout_subscription_id == "sub_idem_usd"

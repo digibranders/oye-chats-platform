@@ -79,6 +79,10 @@ def test_concurrent_upgrade_double_submit_mints_once(pg_engine, db):
                         "reused": True,
                     },
                 ),
+                # The reuse path asks the gateway whether the pending mandate was
+                # already PAID before reusing or re-minting. Unpaid here — this
+                # test is about the lock and the committed marker.
+                patch("app.services.razorpay_service.checkout_already_paid", return_value=False),
             ):
                 out = transition_service.execute_paid_upgrade(s, csub, osub, nplan, "monthly")
             s.commit()

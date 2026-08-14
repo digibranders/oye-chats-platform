@@ -153,6 +153,101 @@ class PlanNotCheckoutable(Exception):
         super().__init__(f"{plan_name} is not available for self-serve checkout. Please contact sales.")
 
 
+class SubscriptionActivationConflict(Exception):
+    """The customer has already paid for this plan; the switch just isn't done yet.
+
+    Raised on the two paths that can observe that state:
+
+    * **Mint time** — ``/change-plan`` or ``/checkout`` is called again while the
+      in-flight mandate has already been paid. This is the reported prod
+      sequence, and it is not a double-click: the plan card never updated after
+      payment, so the customer waited (44 seconds, for client 8) and clicked
+      Select again. Handing them a fresh checkout is what charged the month
+      twice.
+    * **Activation time** — a second mandate did get minted and its row collides
+      with ``ix_subscriptions_client_legacy_active`` /
+      ``ix_subscriptions_client_bot_active``. That ``IntegrityError`` reached the
+      customer as a raw 500, mid-checkout, right after their money moved.
+
+    Following :class:`PlanNotCheckoutable`: deliberately not a
+    ``RazorpayBillingError`` (those are gateway faults and 502; this is local
+    state), ``str(exc)`` is the customer-facing sentence, and the operator
+    detail lives in ``ops_detail`` — logged, never returned.
+
+    The message is written for someone who has just paid and been told "no". It
+    leads with the money being safe, and its most important clause is that they
+    must not pay again — because the alternative reading ("payment failed") sends
+    them for a third attempt or to support.
+    """
+
+    def __init__(
+        self,
+        *,
+        razorpay_subscription_id: str,
+        client_id: int | None,
+        constraint: str | None = None,
+        plan_name: str | None = None,
+    ) -> None:
+        self.razorpay_subscription_id = razorpay_subscription_id
+        self.client_id = client_id
+        self.constraint = constraint
+        self.plan_name = plan_name
+        self.reason = "subscription_activation_conflict"
+        if constraint is not None:
+            self.ops_detail = (
+                f"Razorpay subscription {razorpay_subscription_id} could not be materialised for client "
+                f"{client_id}: it collided with {constraint}, so another ACTIVE subscription already holds "
+                "that scope. The customer has paid. Check whether two mandates were minted for this client "
+                "(scripts/audit_duplicate_gateway_subscriptions.py), cancel and refund the surplus one, and "
+                "let the webhook redeliver — the reconcile idempotency key was not burned."
+            )
+        else:
+            # The mint-time half of the same conflict: raised BEFORE any second
+            # mandate exists, which is the cheap place to be right — nothing has
+            # been created that anyone has to refund.
+            self.ops_detail = (
+                f"Refused to mint a replacement mandate for client {client_id}: the in-flight checkout "
+                f"{razorpay_subscription_id} has ALREADY been paid at Razorpay and its activation has not "
+                "landed locally yet. Minting now is exactly how one month gets charged twice. No action "
+                "needed unless the activation never arrives."
+            )
+        plan_clause = f"Your {plan_name} payment" if plan_name else "Your payment"
+        super().__init__(
+            f"{plan_clause} went through — we're activating your plan now. "
+            "You don't need to pay again; this usually takes under a minute."
+        )
+
+
+# The partial unique indexes that enforce "one active subscription per scope".
+# A violation of either is a predictable conflict, not an unexpected fault.
+_ACTIVE_SUBSCRIPTION_CONSTRAINTS = (
+    "ix_subscriptions_client_legacy_active",
+    "ix_subscriptions_client_bot_active",
+)
+
+
+def active_subscription_conflict(exc: Exception) -> str | None:
+    """Name the active-subscription index this ``IntegrityError`` hit, if any.
+
+    Returns ``None`` for every other integrity failure so callers re-raise them
+    untouched: converting a unique-payment-id or FK violation into a friendly
+    "we're finishing up" message would hide a real bug behind reassurance.
+
+    Reads psycopg's structured ``diag.constraint_name`` first and only falls
+    back to substring-matching the message — the same "ask for the structured
+    fact, don't parse prose" rule as ``_gateway_sub_is_terminal`` (F8).
+    """
+    orig = getattr(exc, "orig", None)
+    name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if name in _ACTIVE_SUBSCRIPTION_CONSTRAINTS:
+        return str(name)
+    message = str(orig if orig is not None else exc)
+    for candidate in _ACTIVE_SUBSCRIPTION_CONSTRAINTS:
+        if candidate in message:
+            return candidate
+    return None
+
+
 class RazorpayBillingError(Exception):
     """Base class for Razorpay-specific billing errors."""
 
@@ -661,6 +756,93 @@ def rebuild_upgrade_checkout(
     }
 
 
+def checkout_already_paid(razorpay_subscription_id: str) -> bool:
+    """Has the customer already paid the mandate this checkout would re-open?
+
+    ``status`` alone cannot answer this, and that is the whole reason this
+    function exists. In the reported prod sequence the ``payment.authorized``
+    webhook arrived BEFORE ``/subscriptions/verify-razorpay-subscription`` read
+    the subscription — and that read still said ``created``. Razorpay's status
+    lags its own money by seconds to minutes, so a mandate can be
+    ``created``-and-paid, which is indistinguishable from ``created``-and-
+    abandoned by state alone. ``paid_count`` is the fact that does not lag: it
+    is 1 the moment a cycle has been charged.
+
+    That distinction is the entire defect. Both prod clients paid, saw no plan
+    change, and clicked Select again while the mandate still read ``created``;
+    treating that as an abandoned checkout is what handed them a second
+    chargeable subscription.
+
+    Raises ``RazorpayBillingError`` if the gateway cannot be read — never guess.
+    Guessing "not paid" here is precisely how the month gets charged twice.
+    """
+    try:
+        entity = _get_razorpay().subscription.fetch(razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception("Could not read in-flight checkout %s: %s", razorpay_subscription_id, exc)
+        raise RazorpayBillingError("Could not reach the payment provider. Please try again in a moment.") from exc
+
+    paid_count = int(entity.get("paid_count") or 0)
+    status = str(entity.get("status") or "").lower()
+    # ``active`` is belt-and-braces: it means authorised AND charged, so
+    # paid_count should already be ≥ 1, but a status that has moved while the
+    # counter has not must not read as unpaid.
+    return paid_count > 0 or status in ("active", "completed")
+
+
+def cancel_superseded_checkout(razorpay_subscription_id: str) -> str:
+    """Retire an in-flight checkout before a replacement mandate is minted.
+
+    The counterpart to :func:`rebuild_upgrade_checkout`: that one is for a retry
+    the marker can serve, this one for every retry it cannot — a different plan,
+    cycle, rail or bot scope, and equally a same-key retry whose pending mandate
+    is no longer authorizable. Minting the replacement while the old mandate is
+    still authorizable is the exact double-charge shape that hit prod client 18
+    — both mandates authorised, both charged one cycle, ₹11,998 for one month.
+
+    Three states matter, and the caller branches on the returned one:
+
+    * ``created`` / ``authenticated`` / ``pending`` — the checkout is still
+      payable (or authorised but not yet charged), so it is cancelled here and
+      can never bill.
+    * ``active`` — the customer already authorised AND paid it. Cancelling that
+      from a checkout path would silently kill a live, charged subscription
+      behind the customer's back; the activation handler's sibling sweep owns
+      that transition. We leave it alone and report, and the caller refuses to
+      mint beside it.
+    * terminal (``cancelled`` / ``completed`` / ``expired``) — nothing to do;
+      the caller is free to mint.
+
+    Raises ``RazorpayBillingError`` if the gateway can't be read or the cancel
+    fails, so the caller refuses rather than minting a sibling against a mandate
+    whose state it never confirmed (same doctrine as ``rebuild_upgrade_checkout``).
+
+    Returns the gateway status observed, for logging.
+    """
+    try:
+        sub = _get_razorpay().subscription.fetch(razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception("Could not read superseded checkout %s: %s", razorpay_subscription_id, exc)
+        raise RazorpayBillingError("Could not reach the payment provider. Please try again in a moment.") from exc
+
+    status = str(sub.get("status") or "").lower()
+    if status not in _AUTHORIZABLE_SUB_STATES:
+        logger.info(
+            "Superseded checkout %s is '%s' — nothing to cancel (only the activation path may retire it)",
+            razorpay_subscription_id,
+            status,
+        )
+        return status
+
+    cancel_subscription_by_id(razorpay_subscription_id, at_period_end=False)
+    logger.info(
+        "Cancelled superseded in-flight checkout %s (was '%s') before minting its replacement",
+        razorpay_subscription_id,
+        status,
+    )
+    return status
+
+
 def resolve_discounted_plan(
     session: Session,
     base_plan: Plan,
@@ -1057,15 +1239,18 @@ def cancel_seat_addon_by_id(seat_addon_subscription_id: str) -> None:
         raise RazorpayBillingError("Could not cancel the seat add-on with Razorpay.") from exc
 
 
-def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
-    """Yield every operator-seat add-on subscription known to Razorpay.
+def iter_gateway_subscriptions(
+    *, page_size: int = 100, max_pages: int = 50, caller: str = "iter_gateway_subscriptions"
+) -> Iterator[dict[str, Any]]:
+    """Yield every subscription Razorpay knows about, newest page first.
 
-    Pages through the Razorpay subscriptions list and filters to add-on rows —
-    identified by ``notes.purpose == "seat_addon"`` and, defensively, the
-    Extra-Seat ``plan_id``. Used by the reconciliation sweep to find add-ons
-    whose local owner is gone. ``max_pages`` bounds the scan; if it is hit the
-    shortfall is logged loudly so a silently-partial sweep can't masquerade as
-    a clean one.
+    The gateway — not our DB — is the only complete view: a mandate minted
+    seconds ago, or one whose activation webhook never landed, exists there and
+    nowhere else. That is exactly the state a duplicate is in while it is still
+    dangerous, so every reconciliation sweep starts here.
+
+    ``max_pages`` bounds the scan; hitting the cap is logged loudly (naming the
+    caller) so a silently-partial sweep can't masquerade as a clean one.
     """
     rzp = _get_razorpay()
     skip = 0
@@ -1074,27 +1259,40 @@ def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) 
         items = resp.get("items", []) if isinstance(resp, dict) else []
         if not items:
             return
-        for item in items:
-            item_notes = item.get("notes") or {}
-            if (item_notes.get("purpose") or "").lower() != "seat_addon":
-                continue
-            item_plan_id = item.get("plan_id")
-            # Both rails (F3): the USD seat plan is just as much a seat add-on
-            # as the INR one — filtering to the INR id alone hid every USD seat
-            # mandate from orphan reconciliation, leaving an orphaned $5/seat
-            # debit with no sweep coverage.
-            seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
-            if item_plan_id and seat_plan_ids and item_plan_id not in seat_plan_ids:
-                continue
-            yield item
+        yield from items
         if len(items) < page_size:
             return
         skip += page_size
     logger.error(
-        "iter_seat_addon_subscriptions hit the max_pages=%d cap — some subscriptions were "
-        "NOT scanned for orphan reconciliation. Increase the cap or investigate volume.",
+        "%s hit the max_pages=%d cap — some subscriptions were NOT scanned. Increase the cap or investigate volume.",
+        caller,
         max_pages,
     )
+
+
+def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) -> Iterator[dict[str, Any]]:
+    """Yield every operator-seat add-on subscription known to Razorpay.
+
+    Pages through the Razorpay subscriptions list and filters to add-on rows —
+    identified by ``notes.purpose == "seat_addon"`` and, defensively, the
+    Extra-Seat ``plan_id``. Used by the reconciliation sweep to find add-ons
+    whose local owner is gone.
+    """
+    for item in iter_gateway_subscriptions(
+        page_size=page_size, max_pages=max_pages, caller="iter_seat_addon_subscriptions"
+    ):
+        item_notes = item.get("notes") or {}
+        if (item_notes.get("purpose") or "").lower() != "seat_addon":
+            continue
+        item_plan_id = item.get("plan_id")
+        # Both rails (F3): the USD seat plan is just as much a seat add-on
+        # as the INR one — filtering to the INR id alone hid every USD seat
+        # mandate from orphan reconciliation, leaving an orphaned $5/seat
+        # debit with no sweep coverage.
+        seat_plan_ids = {pid for pid in (RAZORPAY_SEAT_PLAN_ID, RAZORPAY_SEAT_PLAN_ID_USD) if pid}
+        if item_plan_id and seat_plan_ids and item_plan_id not in seat_plan_ids:
+            continue
+        yield item
 
 
 def create_per_bot_subscription(
@@ -1583,8 +1781,6 @@ def _dead_letter_pooled_scope_refusal(
     Best-effort, exactly like the webhook route's helper: a failure to record
     must never turn an ACK into a 5xx that burns the provider's retry window.
     """
-    from app.db.session import get_session
-
     context = {
         "razorpay_subscription_id": razorpay_sub_id,
         "razorpay_payment_id": payment_id,
@@ -1594,7 +1790,46 @@ def _dead_letter_pooled_scope_refusal(
         "plan_slug": plan_slug,
         "bot_id": str(bot_id) if bot_id is not None else None,
     }
-    dedup_key = f"{_POOLED_SCOPE_DEAD_LETTER_PREFIX}{razorpay_sub_id}"
+    _dead_letter_synthetic(
+        dedup_key=f"{_POOLED_SCOPE_DEAD_LETTER_PREFIX}{razorpay_sub_id}",
+        event_type="subscription.activated",
+        context=context,
+        body={"subscription": sub_entity},
+        error=(
+            "MANUAL RECONCILIATION REQUIRED (replay will not help — this row has no signed "
+            f"body). Razorpay subscription {razorpay_sub_id} authorised plan {plan_slug!r} "
+            f"(id={plan_id}) at BOT scope (bot={bot_id}) for client {client_id}, payment "
+            f"{payment_id}. That plan grants unlimited agents and sells ONE pooled credit "
+            "balance, so it must be billed with bot_id NULL — no local subscription was "
+            "created and no credits were granted. The customer HAS been charged: cancel "
+            "this mandate and re-sell at account level, or re-scope it, then re-run "
+            "reconciliation (the idempotency key was released, so the event can be "
+            "reprocessed)."
+        ),
+    )
+
+
+def _dead_letter_synthetic(
+    *,
+    dedup_key: str,
+    event_type: str,
+    context: dict[str, Any],
+    body: dict[str, Any],
+    error: str,
+) -> None:
+    """Write one ``failed_webhooks`` row for an ACKed event that needs a human.
+
+    Shared by every handler that decides an event can never succeed on retry but
+    still moved (or may have moved) money. ``dedup_key`` is a synthetic event id
+    — ``<kind>:<subject>`` — so however many doors hit the same refusal, ops sees
+    ONE open task rather than an accumulating pile.
+
+    Runs in its OWN session so the row survives whatever the caller's transaction
+    does, and swallows its own failures: a dead-letter write must never turn an
+    ACK into a 5xx that burns the provider's retry window.
+    """
+    from app.db.session import get_session
+
     try:
         with get_session() as session:
             already = (
@@ -1614,10 +1849,13 @@ def _dead_letter_pooled_scope_refusal(
                 FailedWebhook(
                     provider="razorpay",
                     event_id=dedup_key,
-                    event_type="subscription.activated",
-                    raw_payload=json.dumps({"context": context, "subscription": sub_entity}, default=str).encode(
-                        "utf-8"
-                    ),
+                    event_type=event_type,
+                    raw_payload=json.dumps({"context": context, **body}, default=str).encode("utf-8"),
+                    # NULL on purpose: this row is synthesised from the parsed
+                    # entity, not captured from a signed request body, so the
+                    # superadmin replay button cannot re-verify it and will
+                    # refuse. That is honest — see the callers for the real
+                    # recovery path.
                     signature=None,
                     headers=context,
                     # Explicit rather than leaning on the column default: this row
@@ -1625,28 +1863,16 @@ def _dead_letter_pooled_scope_refusal(
                     # ``status == "pending"`` so a row an admin has already
                     # triaged to ``ignored`` does not suppress a fresh report.
                     status="pending",
-                    error=(
-                        "MANUAL RECONCILIATION REQUIRED (replay will not help — this row has no signed "
-                        f"body). Razorpay subscription {razorpay_sub_id} authorised plan {plan_slug!r} "
-                        f"(id={plan_id}) at BOT scope (bot={bot_id}) for client {client_id}, payment "
-                        f"{payment_id}. That plan grants unlimited agents and sells ONE pooled credit "
-                        "balance, so it must be billed with bot_id NULL — no local subscription was "
-                        "created and no credits were granted. The customer HAS been charged: cancel "
-                        "this mandate and re-sell at account level, or re-scope it, then re-run "
-                        "reconciliation (the idempotency key was released, so the event can be "
-                        "reprocessed)."
-                    ),
+                    error=error,
                 )
             )
             session.commit()
     except Exception:
         logger.critical(
-            "Failed to dead-letter pooled-plan scope refusal for Razorpay subscription %s "
-            "(client %s, plan %s, bot %s) — the charge is now recorded ONLY in the ERROR log above",
-            razorpay_sub_id,
-            client_id,
-            plan_id,
-            bot_id,
+            "Failed to dead-letter %s (%s) — the event is now recorded ONLY in the ERROR log above: %s",
+            dedup_key,
+            event_type,
+            context,
             exc_info=True,
         )
 
@@ -2342,10 +2568,25 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     if not razorpay_sub_id:
         return "subscription id missing"
 
-    local = _resolve_local_subscription(session, razorpay_sub_id)
     notes = sub_entity.get("notes") or {}
     client_id = _client_id_from_notes(notes)
     plan_id = _plan_id_from_notes(notes)
+
+    # Serialise this client's activations BEFORE reading any of the state the
+    # decisions below depend on. Two mandates authorising at once (the webhook
+    # for one, the verify-reconcile for the other) each ran the sibling sweep
+    # against a snapshot that did not yet contain the other's row, both inserted,
+    # and the loser hit ``ix_subscriptions_client_legacy_active`` — surfacing to
+    # a paying customer as a raw 500 mid-checkout. Taking the same
+    # transaction-scoped advisory lock the money ROUTES take makes the second
+    # activation wait, see the committed row, and retire it through the sweep.
+    # No-op on non-Postgres binds (mocked unit-test sessions).
+    if client_id is not None:
+        from app.services.plan_service import lock_client_for_billing
+
+        lock_client_for_billing(session, client_id)
+
+    local = _resolve_local_subscription(session, razorpay_sub_id)
 
     current_period_start = (
         datetime.fromtimestamp(sub_entity["current_start"], tz=UTC) if sub_entity.get("current_start") else None
@@ -2718,13 +2959,13 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
 
         # The first-checkout H1 marker points at an in-flight authorizable sub;
         # this activation consumes it, so clear it (a stale marker would make a
-        # later /checkout try to reuse an already-activated subscription).
+        # later /checkout or /change-plan try to reuse — or worse, CANCEL as
+        # superseded — an already-activated subscription).
         client_row = session.get(Client, client_id)
         if client_row is not None and client_row.pending_checkout_subscription_id == razorpay_sub_id:
-            client_row.pending_checkout_subscription_id = None
-            client_row.pending_checkout_plan_id = None
-            client_row.pending_checkout_cycle = None
-            client_row.pending_checkout_at = None
+            from app.services import pending_checkout_service
+
+            pending_checkout_service.clear(client_row)
 
         if funded_bot_id is not None:
             # Bot-scoped activation (per-bot new bot, resume, or revive-in-place).
@@ -3576,12 +3817,89 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     return f"Subscription {sub_entity.get('id')} pending"
 
 
+def _is_subscription_payment(pay_entity: dict[str, Any] | None) -> bool:
+    """Is this payment a subscription cycle charge — decidable with no gateway call?
+
+    Razorpay raises an Invoice for every subscription charge and stamps its id on
+    the payment; our top-ups are bare Orders created by ``create_topup_order``
+    and never carry one. So ``invoice_id`` (or an explicit ``subscription_id``)
+    is proof this is not a top-up, available from the webhook body alone.
+
+    That matters because the classification used to happen only AFTER an
+    ``order.fetch`` that fails for subscription orders — turning every single
+    subscription payment into a 500 on the webhook endpoint.
+    """
+    if not pay_entity:
+        return False
+    return bool(pay_entity.get("invoice_id") or pay_entity.get("subscription_id"))
+
+
+def _is_permanent_gateway_failure(exc: BaseException) -> bool:
+    """Will retrying this Razorpay read EVER succeed?
+
+    The SDK maps HTTP 4xx to ``BadRequestError`` — a malformed or unknown id,
+    which no redelivery can fix. ``ServerError``/``GatewayError``, timeouts and
+    transport faults are the opposite: they say nothing about the resource, only
+    about this attempt, and must keep forcing a retry.
+
+    Fails CLOSED (returns False, i.e. "transient") if the SDK's error classes
+    can't be imported, so an unexpected environment retries rather than acking a
+    payment it never classified.
+    """
+    try:
+        from razorpay.errors import BadRequestError
+    except Exception:  # pragma: no cover — razorpay is a hard dependency
+        return False
+    return isinstance(exc, BadRequestError)
+
+
+def _dead_letter_unclassifiable_payment(
+    pay_entity: dict[str, Any] | None, order_id: str | None, exc: BaseException
+) -> None:
+    """Record an ACKed payment whose order could not be read, for manual review."""
+    payment_id = (pay_entity or {}).get("id")
+    context = {
+        "razorpay_payment_id": payment_id,
+        "razorpay_order_id": order_id,
+        "amount": (pay_entity or {}).get("amount"),
+        "currency": (pay_entity or {}).get("currency"),
+        "error": repr(exc),
+    }
+    _dead_letter_synthetic(
+        dedup_key=f"unclassifiable-payment:{payment_id or order_id}",
+        event_type="payment.captured",
+        context=context,
+        body={"payment": pay_entity or {}},
+        error=(
+            "MANUAL REVIEW REQUIRED (replay will not help — this row has no signed body, and the "
+            f"order fetch fails permanently). Razorpay payment {payment_id} references order "
+            f"{order_id}, which cannot be fetched with these keys ({exc!r}), so we could not tell "
+            "whether it was a credits top-up. The event was ACKed rather than 5xx-looped, because "
+            "no retry can change a 4xx. Check the payment in the Razorpay dashboard: if it WAS a "
+            "top-up, grant the credits manually and record the invoice."
+        ),
+    )
+
+
 def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     """Top-up payment captured — grant top-up credits and record the invoice.
 
-    Subscription-cycle payments are handled by ``subscription.charged``; we
-    detect a top-up by ``notes.purpose == 'topup'`` on the order. Anything
-    else here (e.g., a one-off invoice payment) we ignore for now.
+    Also the ``order.paid`` handler. Subscription-cycle payments are handled by
+    ``subscription.charged``; we detect a top-up by ``notes.purpose == 'topup'``
+    on the order. Anything else here (e.g., a one-off invoice payment) we ignore.
+
+    Classification runs in cheapest-first order, and getting that order right is
+    the difference between an ACK and a webhook outage:
+
+    1. notes already on the payment / order entity in the payload;
+    2. ``_is_subscription_payment`` — an ``invoice_id`` proves it is a cycle
+       charge, no gateway call needed;
+    3. an order entity present in the payload with empty notes is authoritative;
+    4. only then, fetch the order.
+
+    Step 2 used to be missing, so a subscription payment fell through to the
+    fetch, the fetch failed, and the whole webhook 500ed — on every subscription
+    payment, for every customer.
     """
     pay_entity = _extract_payment_entity(payload)
     order_entity = _extract_order_entity(payload)
@@ -3590,6 +3908,22 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         notes = pay_entity.get("notes") or {}
     if not notes and order_entity:
         notes = order_entity.get("notes") or {}
+
+    # Classify BEFORE reaching for the gateway. A subscription cycle payment is
+    # not a top-up and never can be, and its order is not fetchable with these
+    # keys — so the fetch below failed, raised ``RazorpayTransientError``, and
+    # 500ed the webhook endpoint on EVERY subscription payment. Razorpay retries
+    # failed webhooks hard and disables endpoints that keep failing, so that
+    # storm could have taken billing webhooks down for every customer.
+    if not notes and _is_subscription_payment(pay_entity):
+        return "payment ignored (subscription cycle payment, not a topup)"
+
+    # Same idea one step further out: when the ORDER entity is already in the
+    # payload (the ``order.paid`` shape), its notes are authoritative. Empty
+    # notes there mean "not a top-up" — not "unknown" — and re-fetching the same
+    # order could only return the same answer.
+    if not notes and order_entity is not None:
+        return "payment ignored (order carries no topup notes)"
 
     # A ``payment.captured`` webhook carries only the PAYMENT entity, but top-up
     # metadata lives on the ORDER's notes. When the order entity isn't in the
@@ -3601,6 +3935,21 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
             fetched_order = _get_razorpay().order.fetch(order_id_for_notes)
             notes = (fetched_order or {}).get("notes") or {}
         except Exception as exc:
+            if _is_permanent_gateway_failure(exc):
+                # A 4xx means this order id will never resolve for these keys, so
+                # no retry can change the answer and 5xx-ing would only burn
+                # Razorpay's whole retry window against a wall. ACK — but leave a
+                # durable, actionable record, because we are acking a payment we
+                # could not classify.
+                logger.error(
+                    "order.fetch for %s failed permanently (%s) — acking payment %s unclassified; "
+                    "recorded in failed_webhooks for manual review",
+                    order_id_for_notes,
+                    exc,
+                    (pay_entity or {}).get("id"),
+                )
+                _dead_letter_unclassifiable_payment(pay_entity, order_id_for_notes, exc)
+                return "payment ignored (order not retrievable; recorded for manual review)"
             # Finding C: we do NOT know whether this was a top-up. Swallowing here
             # acked the event and burned the dedup row, permanently losing a paid
             # top-up. Raise so the event dead-letters and Razorpay retries; the
