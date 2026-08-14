@@ -57,6 +57,8 @@ import { PaymentMethodsPanel } from './billing/PaymentMethodsPanel';
 import { PlansPanel } from './billing/PlansPanel';
 import { PromotionBanner } from './billing/PromotionBanner';
 import { PlanConfirmModal } from './billing/PlanConfirmModal';
+import { PlanActivationNotice } from './billing/PlanActivationNotice';
+import { usePlanActivation, type ActivationHint } from './billing/usePlanActivation';
 import type { BillingCycle } from './billing/planMath';
 import {
   buildInvoice,
@@ -175,6 +177,25 @@ export function BillingPage(): ReactElement {
       window.setTimeout(() => void refreshEntitlements(), 4000);
     },
     [showNotice, reload, refreshEntitlements],
+  );
+
+  /**
+   * A charge that landed before the plan did. `handleSuccess` above is honest
+   * only for outcomes the server has already applied; a Razorpay mandate still
+   * moving `created → active` needs to be waited on, with the wait visible.
+   * Without this the page reloaded onto the OLD plan and said nothing, which is
+   * how a customer concluded the payment had failed and paid a second time.
+   */
+  const activation = usePlanActivation({
+    botId: billingBotId,
+    onSettled: (plan) => handleSuccess(`You’re now on ${plan.name}.`),
+  });
+  const { begin: beginActivation, blocking: activationBlocking } = activation;
+  const handleActivationPending = useCallback(
+    (plan: PlanView, hint?: ActivationHint): void => {
+      beginActivation(plan, hint);
+    },
+    [beginActivation],
   );
 
   // Subscription-lifecycle reversals (undo a scheduled downgrade / reactivate a
@@ -456,6 +477,14 @@ export function BillingPage(): ReactElement {
       {/* Confirmation for Razorpay-gated actions. */}
       <FeedbackBanner feedback={notice} onDismiss={dismissNotice} />
 
+      {/* Above the tabs, so a paid-for plan that is still switching on is
+          visible from every tab - and not dismissible, unlike the toast. */}
+      <PlanActivationNotice
+        status={activation.status}
+        planName={activation.planName}
+        className="mb-6"
+      />
+
       {loading && <LoadingState />}
 
       {error && !loading && (
@@ -581,10 +610,16 @@ export function BillingPage(): ReactElement {
                 currentSlug={currentPlanSlug}
                 cycle={cycle}
                 onCycleChange={setCycle}
-                onSelect={(candidate) => setConfirmPlan(candidate)}
+                onSelect={(candidate) => {
+                  // Belt to the disabled-CTA brace: nothing reopens checkout
+                  // while a charge for this account is still activating.
+                  if (activationBlocking) return;
+                  setConfirmPlan(candidate);
+                }}
                 currentStatus={subscription.status}
                 trialEnd={subscription.trialEnd}
                 promotion={data.promotion}
+                selectionDisabled={activationBlocking}
               />
             </div>
           )}
@@ -620,6 +655,7 @@ export function BillingPage(): ReactElement {
         botId={billingBotId}
         onSuccess={handleSuccess}
         onBillingDetailsRequired={handleBillingDetailsRequired}
+        onActivationPending={handleActivationPending}
       />
 
       <TopupModal

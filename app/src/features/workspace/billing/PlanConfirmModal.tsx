@@ -14,6 +14,7 @@ import {
   type PromotionView,
 } from '../billingModel';
 import type { BillingCycle } from './planMath';
+import type { ActivationHint } from './usePlanActivation';
 import { isTrialEligible, usePlanCheckout } from './usePlanCheckout';
 
 /** Compact "what you get" bullet list for the plan being confirmed. */
@@ -119,6 +120,12 @@ export interface PlanConfirmModalProps {
    * billing-details form.
    */
   onBillingDetailsRequired?: (missing: string[]) => void;
+  /**
+   * Fired when the charge landed but the plan isn't live yet. The host starts
+   * the activation poll and keeps a persistent notice on its own surface -
+   * this modal only retires its pay button.
+   */
+  onActivationPending?: (plan: PlanView, hint?: ActivationHint) => void;
 }
 
 /**
@@ -144,6 +151,7 @@ export function PlanConfirmModal({
   botId = null,
   onSuccess,
   onBillingDetailsRequired,
+  onActivationPending,
 }: PlanConfirmModalProps): ReactElement | null {
   const checkout = usePlanCheckout({
     currentPlanSlug,
@@ -155,6 +163,7 @@ export function PlanConfirmModal({
     onSuccess,
     onDone: onClose,
     onBillingDetailsRequired,
+    onActivationPending,
   });
   const { reset } = checkout;
 
@@ -351,6 +360,11 @@ export function PlanConfirmModal({
   // only closes the money paths - the trial CTA keeps working.
   const paidPathBlocked = checkout.emailVerificationRequired && primaryActionKind !== 'trial';
 
+  // The charge already landed and the plan is switching on. Clicking again
+  // would buy a SECOND subscription for the same month - the exact production
+  // failure - so both pay CTAs retire behind the reassurance notice below.
+  const alreadyPaid = checkout.activationPending;
+
   return (
     <Modal
       open={open}
@@ -374,7 +388,7 @@ export function PlanConfirmModal({
               <button
                 type="button"
                 onClick={() => void checkout.submit(plan, cycle, 'paid')}
-                disabled={checkout.submitting || checkout.emailVerificationRequired}
+                disabled={checkout.submitting || checkout.emailVerificationRequired || alreadyPaid}
                 className="text-[13px] font-medium text-[var(--ds-text-muted)] underline-offset-2 hover:text-[var(--ds-text)] hover:underline disabled:opacity-50"
               >
                 Pay now instead
@@ -390,7 +404,7 @@ export function PlanConfirmModal({
                 verified-email dependency, so a trial CTA must stay live. */}
             <Button
               onClick={() => void checkout.submit(plan, cycle, primaryActionKind)}
-              disabled={checkout.submitting || paidPathBlocked}
+              disabled={checkout.submitting || paidPathBlocked || alreadyPaid}
             >
               {checkout.submitting ? (
                 <Loader2 size={16} className="animate-spin" aria-hidden="true" />

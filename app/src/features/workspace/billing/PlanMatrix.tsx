@@ -166,6 +166,8 @@ export interface PlanMatrixProps {
   hideToggle?: boolean;
   /** Current subscription status - a trialing current column offers activation. */
   currentStatus?: string | null;
+  /** Retires every column CTA while a paid plan is still activating. */
+  selectionDisabled?: boolean;
 }
 
 /**
@@ -183,6 +185,7 @@ export function PlanMatrix({
   onSelect,
   hideToggle = false,
   currentStatus = null,
+  selectionDisabled = false,
 }: PlanMatrixProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
   const maxSavingPercent = maxAnnualSavingPercent(plans);
@@ -247,7 +250,12 @@ export function PlanMatrix({
                         }
                         size="sm"
                         className="w-full"
-                        disabled={isCurrent && !isTrialingCurrent}
+                        disabled={selectionDisabled || (isCurrent && !isTrialingCurrent)}
+                        title={
+                          selectionDisabled
+                            ? 'Your plan is activating - no need to pay again.'
+                            : undefined
+                        }
                         onClick={() => onSelect(plan)}
                       >
                         {isTrialingCurrent

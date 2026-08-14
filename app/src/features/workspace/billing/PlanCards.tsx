@@ -99,6 +99,12 @@ export interface PlanCardsProps {
   promotion?: PromotionView | null;
   /** When true (e.g. during onboarding), the current Free plan card CTA is enabled as 'Continue with Free'. */
   allowSelectCurrent?: boolean;
+  /**
+   * Retires every CTA in the grid. Set while a paid plan the customer has
+   * ALREADY paid for is still activating: a live Select button at that moment
+   * mints a second Razorpay subscription and charges them twice.
+   */
+  selectionDisabled?: boolean;
 }
 
 /**
@@ -120,6 +126,7 @@ export function PlanCards({
   trialEnd = null,
   promotion = null,
   allowSelectCurrent = false,
+  selectionDisabled = false,
 }: PlanCardsProps): ReactElement {
   const ordered = [...plans].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -204,7 +211,8 @@ export function PlanCards({
                       ? 'Downgrade'
                       : 'Select';
         // Only a genuinely-current PAID plan (or non-selectable current Free) is a dead button
-        const ctaDisabled = isCurrent && !isTrialingCurrent && !(isCurrentFree && allowSelectCurrent);
+        const ctaDisabled =
+          selectionDisabled || (isCurrent && !isTrialingCurrent && !(isCurrentFree && allowSelectCurrent));
 
         return (
           <div
@@ -279,6 +287,7 @@ export function PlanCards({
               variant={ctaVariant}
               className="mt-5 w-full"
               disabled={ctaDisabled}
+              title={selectionDisabled ? 'Your plan is activating - no need to pay again.' : undefined}
               onClick={() => onSelect(plan)}
             >
               {ctaLabel}

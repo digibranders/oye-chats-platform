@@ -2,6 +2,7 @@ import {
   type ReactElement,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import { GraduationCap, Zap, Palette, Check, Loader2, AlertTriangle, type LucideIcon } from 'lucide-react';
@@ -21,6 +22,8 @@ import {
 } from '../../workspace/billingModel';
 import { PlansPanel } from '../../workspace/billing/PlansPanel';
 import { PlanConfirmModal } from '../../workspace/billing/PlanConfirmModal';
+import { PlanActivationNotice } from '../../workspace/billing/PlanActivationNotice';
+import { usePlanActivation, type ActivationHint } from '../../workspace/billing/usePlanActivation';
 import { BillingDetailsModal } from '../../workspace/billing/BillingDetailsModal';
 import { PromotionBanner } from '../../workspace/billing/PromotionBanner';
 import { useEntitlements } from '../../../hooks/useEntitlements';
@@ -92,27 +95,58 @@ async function loadPlanStepData(): Promise<PlanStepData> {
 export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): ReactElement {
   const { refresh: refreshEntitlements } = useEntitlements();
 
+  // ── Selection state ───────────────────────────────────────────────────────
+  const [planChosen, setPlanChosen] = useState(false);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  /**
+   * `planChosen` is also kept in a ref because the modal's `onClose` prop is
+   * captured at RENDER time: `onSuccess` and `onDone` fire back-to-back in one
+   * React batch, so the `onClose` that actually runs is the closure built
+   * before `planChosen` flipped. Reading state there always saw `false`, which
+   * is why a successful purchase closed the modal and then advanced nowhere -
+   * the user was left on the welcome screen with an unchanged plan card.
+   */
+  const planChosenRef = useRef(false);
+  const markPlanChosen = useCallback((): void => {
+    planChosenRef.current = true;
+    setPlanChosen(true);
+  }, []);
+
   // ── Plan data ─────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [data, setData] = useState<PlanStepData | null>(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
+  /**
+   * `silent` refreshes leave `loading` alone. The first load owns the spinner;
+   * a post-payment refresh must NOT blank the panel, because the activation
+   * notice lives inside it - replacing the whole surface with a spinner every
+   * time we re-read is another way of showing the customer nothing.
+   */
+  const loadData = useCallback(async (silent: boolean) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
     try {
       const d = await loadPlanStepData();
       setData(d);
       // If the account already has an active paid or trialing plan, mark planChosen = true
       if (d.currentPlanSlug !== 'free' || d.subscription.hasActive) {
-        setPlanChosen(true);
+        markPlanChosen();
       }
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Could not load plans. Please try again.');
+      if (!silent) {
+        setLoadError(err instanceof Error ? err.message : 'Could not load plans. Please try again.');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, []);
+  }, [markPlanChosen]);
+
+  const fetchData = useCallback((): Promise<void> => loadData(false), [loadData]);
+  const refreshData = useCallback((): Promise<void> => loadData(true), [loadData]);
 
   useEffect(() => { void fetchData(); }, [fetchData]);
 
@@ -127,9 +161,42 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
   const [detailsPrompt, setDetailsPrompt] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<PlanView | null>(null);
 
-  // ── Selection state ───────────────────────────────────────────────────────
-  const [planChosen, setPlanChosen] = useState(false);
-  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  // ── Activation ────────────────────────────────────────────────────────────
+  /**
+   * The mandate settles out of band, so the purchase is not over when the
+   * checkout modal closes. This poll is what keeps the screen honest until
+   * `/subscriptions/current` agrees the plan is live.
+   */
+  const activation = usePlanActivation({
+    botId: null,
+    onSettled: (plan) => {
+      setSuccessNotice(`You’re now on ${plan.name}.`);
+      void refreshData();
+      void refreshEntitlements();
+    },
+  });
+  const { begin: beginActivation, blocking: activationBlocking } = activation;
+
+  /**
+   * Set the instant a purchase enters activation - synchronously, in the
+   * handler, not derived from `activation.status`. `onActivationPending` and
+   * `onDone` fire in one batch, so by the time `handleModalClose` runs the
+   * status state has not re-rendered yet; a derived flag would still read
+   * "idle" and let the step advance out from under the live poll.
+   */
+  const activationStartedRef = useRef(false);
+
+  const handleActivationPending = useCallback(
+    (plan: PlanView, hint?: ActivationHint): void => {
+      activationStartedRef.current = true;
+      // The money moved, so the step is satisfied - but nothing is "done" yet,
+      // and a green success line here would contradict the activation notice.
+      setSuccessNotice(null);
+      markPlanChosen();
+      beginActivation(plan, hint);
+    },
+    [beginActivation, markPlanChosen],
+  );
 
   const handleBillingDetailsRequired = useCallback(
     (missing: string[]): void => {
@@ -152,36 +219,48 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
     [confirmPlan],
   );
 
+  /**
+   * A genuinely settled outcome: a trial started, or the server switched the
+   * plan synchronously. There is nothing left to wait for, so one refresh is
+   * the truth. The old "refetch now, refetch again at 3s, then close" lived
+   * here and was the defect: a Razorpay mandate routinely takes longer than
+   * 3s to reach `active`, both refetches read the old Free plan, and the
+   * customer was left staring at a screen that said nothing had happened.
+   * Anything genuinely unsettled now goes to `handleActivationPending`.
+   */
   const handlePlanSuccess = useCallback(
     (message: string): void => {
       setSuccessNotice(message);
-      setPlanChosen(true);
-      void fetchData();
+      markPlanChosen();
+      void refreshData();
       void refreshEntitlements();
-      window.setTimeout(() => {
-        void fetchData();
-        void refreshEntitlements();
-      }, 3_000);
     },
-    [fetchData, refreshEntitlements],
+    [markPlanChosen, refreshData, refreshEntitlements],
   );
 
   // PlanConfirmModal calls onClose when done.
   const handleModalClose = useCallback((): void => {
     setConfirmPlan(null);
-    if (planChosen) {
+    // Never advance out from under an in-flight activation: leaving this step
+    // unmounts the poll AND the notice, which is precisely the silence that
+    // sent a customer back to the pay button for a second ₹5,999 charge.
+    if (planChosenRef.current && !activationStartedRef.current) {
       window.setTimeout(() => onContinue(), 300);
     }
-  }, [planChosen, onContinue]);
+  }, [onContinue]);
 
   const handlePlanSelect = useCallback(
     (plan: PlanView): void => {
+      // A plan the customer has already paid for is still switching on. The
+      // CTAs are disabled for exactly this reason; this is the belt to that
+      // brace, so no path reopens checkout while the charge is settling.
+      if (activationBlocking) return;
       // Free — account is already on Free; advance immediately. The
       // `!isContactSales` clause is load-bearing: a bespoke, per-contract tier
       // is priced on request and so is `!isPaid`, and must NOT be treated as
       // Free.
       if (!plan.isPaid && !plan.isContactSales) {
-        setPlanChosen(true);
+        markPlanChosen();
         onContinue();
         return;
       }
@@ -192,7 +271,7 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
       // contact-sales surface instead of two, matching BillingPage.
       setConfirmPlan(plan);
     },
-    [onContinue],
+    [activationBlocking, markPlanChosen, onContinue],
   );
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -254,6 +333,10 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
 
         {data && !loading && (
           <div className="space-y-5">
+            {/* Persistent for the whole activation window - it is the one thing
+                on this screen that must never flash and vanish. */}
+            <PlanActivationNotice status={activation.status} planName={activation.planName} />
+
             {successNotice && (
               <div className="flex items-center gap-2.5 rounded-xl border border-[var(--ds-success-border,#bbf7d0)] bg-[var(--ds-success-soft,#f0fdf4)] px-4 py-3 text-[13px] text-[var(--ds-success-text,#15803d)]">
                 <Check size={14} className="shrink-0" />
@@ -275,6 +358,7 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
               trialEnd={data.subscription.trialEnd}
               promotion={data.promotion}
               allowSelectCurrent={true}
+              selectionDisabled={activationBlocking}
             />
           </div>
         )}
@@ -318,6 +402,7 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
           botId={null}
           onSuccess={handlePlanSuccess}
           onBillingDetailsRequired={handleBillingDetailsRequired}
+          onActivationPending={handleActivationPending}
         />
       )}
 
