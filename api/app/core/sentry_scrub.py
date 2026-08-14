@@ -101,9 +101,10 @@ _STRIPPED_HEADERS = VISITOR_IP_HEADERS | CREDENTIAL_HEADERS
 def _strip_request_headers(event: dict[str, Any]) -> None:
     """Remove every :data:`_STRIPPED_HEADERS` entry from ``event["request"]``.
 
-    Mutates in place. The event dict is the SDK's own, handed to the hook
-    immediately before serialisation, so there is nothing downstream to copy
-    for.
+    Mutates in place. Safe to: the SDK serialises the event and *then* calls
+    the hook, and hands the returned dict straight to the transport
+    (``client._prepare_event`` → ``serialize`` → ``before_send``), so nothing
+    downstream shares this dict and there is nothing to copy for.
     """
     request = event.get("request")
     if not isinstance(request, dict):
