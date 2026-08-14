@@ -1,15 +1,20 @@
 /**
- * Website prefill resolution for the Train step's URL field.
+ * Website prefill resolution - shared by every "which site should we train on?"
+ * field in the product.
  *
  * Signup already asks for the account's website and stores it on the client
- * row (surfaced on `GET /auth/me` as `website`), so onboarding must never make
- * the user retype a URL the product already knows. An agent created moments
- * earlier in step 2 has no website of its own, which is exactly the case the
- * account website covers.
+ * row (surfaced on `GET /auth/me` as `website`), and the create-chatbot modal
+ * stores a website on the bot itself. Neither surface may make the user retype
+ * a URL the product already knows.
+ *
+ * This lives in `lib/` rather than beside either caller on purpose: it is one
+ * precedence rule shared by Launch Studio's Train step and the agent Knowledge
+ * tab's Add-knowledge panel. Two copies of "which website wins" would drift,
+ * and the two screens would start disagreeing about the same bot.
  */
 
 /**
- * Pick the URL to prefill into the Train step's website field.
+ * Pick the URL to prefill into a website field.
  *
  * The agent's own website wins whenever it is set: a chatbot that has already
  * been pointed at a site must never be silently repointed at the account's
@@ -21,6 +26,10 @@
  * as `example.com`). It is deliberately NOT normalised here: the field feeds
  * the same `normalizeUrl` call every typed value goes through on submit, which
  * is what guarantees the scheme `POST /crawl/discover` requires.
+ *
+ * Callers decide whether a resolved value is APPROPRIATE to show - this
+ * function only decides which one it would be. The Knowledge tab, for
+ * instance, suppresses a prefill whose site is already trained.
  */
 export function resolveWebsitePrefill(
   botWebsite: string | null | undefined,

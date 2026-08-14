@@ -34,7 +34,7 @@ import { CrawlPageTree, canonicalCrawlUrls } from '../../agents/knowledge/CrawlP
 import { totalWebsitePages } from '../../agents/knowledge/knowledge-utils';
 import { StepShell } from '../StepShell';
 import { PagesDrawer } from '../PagesDrawer';
-import { resolveWebsitePrefill } from './websitePrefill';
+import { resolveWebsitePrefill } from '../../../lib/websitePrefill';
 import type { StepProps } from '../steps.config';
 import type { KnowledgeSource, SourcePage, CrawlDiscovery } from '../../../types/domain';
 

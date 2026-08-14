@@ -22,10 +22,12 @@ import {
 import { Button, Card, Input, Progress, cn } from '../../../design-system';
 import {
   discoverCrawlUrls,
+  getCurrentUser,
   previewUploadCost,
   uploadDocuments,
   type UploadCostPreview,
 } from '../../../services/api';
+import { resolveWebsitePrefill } from '../../../lib/websitePrefill';
 import { useCrawl } from '../../../context/CrawlContext';
 import type { StartCrawlOptions } from '../../../context/CrawlContext';
 import { useUpgradeModal } from '../../../context/UpgradeModalContext';
@@ -34,16 +36,33 @@ import {
   SUPPORTED_EXTENSIONS,
   filterUploadFiles,
   hostOf,
+  isUrlSource,
   normalizeUrl,
 } from './knowledge-utils';
 import { CrawlPageTree, canonicalCrawlUrls } from './CrawlPageTree';
 
 type AddMode = 'website' | 'files';
 
+/**
+ * True when the knowledge base already holds a crawled website on `host`.
+ *
+ * `host` must already be canonicalised through `hostOf(normalizeUrl(...))`;
+ * both sides are compared on the same scheme-less, `www`-less, lowercased form.
+ */
+function hasTrainedHost(sources: readonly KnowledgeSource[], host: string): boolean {
+  return sources.some((s) => isUrlSource(s.name) && hostOf(s.name) === host);
+}
+
 export interface AddKnowledgePanelProps {
   /** The agent whose knowledge base is being extended. */
   agentId: number;
   agentName: string;
+  /**
+   * The chatbot's own stored website (`Bot.website`), captured by the
+   * create-chatbot modal. Seeds the website field so we never ask for a URL we
+   * already hold - see `websitePrefill` below for when it is suppressed.
+   */
+  agentWebsite?: string | null;
   /** Existing sources - used to warn when a site is already added. */
   existingSources: readonly KnowledgeSource[];
   /** Called after a source is added so the parent can refresh its list. */
@@ -63,10 +82,15 @@ export interface AddKnowledgePanelProps {
  * crawl a website (discover page count, then ingest) or upload documents. Live
  * crawl progress is read from the shared CrawlContext so it stays in sync with
  * the global crawl indicator.
+ *
+ * The website field prefills from the chatbot's own stored site, falling back
+ * to the account website captured at signup, and stays empty once that site is
+ * already trained - see `websitePrefill` inside.
  */
 export function AddKnowledgePanel({
   agentId,
   agentName,
+  agentWebsite = null,
   existingSources,
   onChanged,
   isEmpty = false,
@@ -78,7 +102,47 @@ export function AddKnowledgePanel({
   const [mode, setMode] = useState<AddMode>('website');
 
   // ── Website sub-flow ──────────────────────────────────────────────
-  const [siteUrl, setSiteUrl] = useState('');
+  // The account website captured at signup, read once on mount. Only ever a
+  // fallback for a chatbot with no site of its own; a failed read simply means
+  // no prefill, never an error the user cannot act on.
+  const [clientWebsite, setClientWebsite] = useState<string | null>(null);
+
+  /**
+   * The URL to offer in the website field: the chatbot's own site, else the
+   * account's (see `resolveWebsitePrefill`) - **unless that site is already
+   * trained**, in which case we offer nothing.
+   *
+   * That suppression is the whole reason this is not a bare call to the
+   * helper. Every website crawl on this panel costs real credits per page, and
+   * the panel's two entry states want opposite things:
+   *
+   *  - A chatbot with no sources yet is here to train its own site. Prefilling
+   *    is the fix for the reported defect: the create-chatbot modal already
+   *    stored the URL, so asking for it again is the product forgetting.
+   *  - A chatbot that already learned that site is here to add something ELSE
+   *    (a docs subdomain, a document). Handing it back its own already-trained
+   *    URL invites a second full crawl of pages it already knows - and routes
+   *    around the cheaper, previewed re-train path (`RecrawlMenu`, which shows
+   *    a diff and a cost before charging) that exists for exactly this job.
+   *
+   * Deriving the suppression from the SOURCE LIST rather than from crawl
+   * status is what makes it durable: `CrawlContext` is global and its `done`
+   * survives navigation, whereas "this host is in my knowledge base" is server
+   * truth that reads the same on a cold load as it does mid-session.
+   */
+  const websitePrefill = useMemo(() => {
+    const resolved = resolveWebsitePrefill(agentWebsite, clientWebsite);
+    if (!resolved) return '';
+    return hasTrainedHost(existingSources, hostOf(normalizeUrl(resolved))) ? '' : resolved;
+  }, [agentWebsite, clientWebsite, existingSources]);
+
+  // Seeded synchronously so the already-known case paints filled on the first
+  // frame rather than flashing empty. The effect below is what actually
+  // guarantees correctness; this only removes the flicker.
+  const [siteUrl, setSiteUrl] = useState(websitePrefill);
+  // Has the user touched the website field? A ref, not state: it gates the
+  // prefill sync effect below and must never re-trigger it.
+  const siteUrlEdited = useRef(false);
   const [estimate, setEstimate] = useState<CrawlDiscovery | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [websiteError, setWebsiteError] = useState<string | null>(null);
@@ -123,9 +187,33 @@ export function AddKnowledgePanel({
     typeof estimate?.max_affordable_pages === 'number' &&
     selectedCount > estimate.max_affordable_pages;
 
+  // The account website, for the fallback leg of the prefill. Best-effort: a
+  // failure leaves `clientWebsite` null and the field simply stays empty.
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setClientWebsite(user.website ?? null);
+      })
+      .catch(() => {
+        /* No prefill - the user types the URL, exactly as before. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Clear the website inputs once our crawl finishes cleanly, so the field is
   // ready for the next site. Reacts to a status transition - not a render-time
   // derivation - and is guarded so it can't loop.
+  //
+  // This SURVIVES the prefill, and the two cannot fight. Finishing a crawl adds
+  // that host to `existingSources`, which collapses `websitePrefill` to '' - so
+  // the sync effect below has nothing to put back, and the user is not shown
+  // the site they just paid to train sitting in the box as if it were queued
+  // again. (Ordering is belt-and-braces anyway: the clear fires on a
+  // `crawl.status` change, which does not move `websitePrefill`, so the sync
+  // effect does not re-run at all in that tick.)
   useEffect(() => {
     if (crawlIsOurs && crawl.status === 'done') {
       setSiteUrl('');
@@ -135,14 +223,25 @@ export function AddKnowledgePanel({
     }
   }, [crawl.status, crawlIsOurs]);
 
+  // `agentWebsite` (from the bot list) and the account profile (`/auth/me`)
+  // resolve asynchronously and independently, so the prefill cannot rely on the
+  // `useState` initialiser alone - on a cold load of this route it would be
+  // computed from `undefined` and never correct itself. Re-sync whenever the
+  // resolved value changes, but never over the top of what the user typed -
+  // including a field they deliberately cleared.
+  //
+  // Declared AFTER the post-crawl clear so that a still-`done` crawl of some
+  // OTHER site cannot wipe a prefill that is still legitimate on remount.
+  useEffect(() => {
+    if (siteUrlEdited.current || !websitePrefill) return;
+    setSiteUrl(websitePrefill);
+  }, [websitePrefill]);
+
   const alreadyAddedHost = useMemo(() => {
     const trimmed = siteUrl.trim();
     if (!trimmed) return null;
     const host = hostOf(normalizeUrl(trimmed));
-    const match = existingSources.find(
-      (s) => (s.name.startsWith('http') ? hostOf(s.name) : '') === host,
-    );
-    return match ? host : null;
+    return hasTrainedHost(existingSources, host) ? host : null;
   }, [siteUrl, existingSources]);
 
   async function handleDiscover(): Promise<void> {
@@ -360,6 +459,7 @@ export function AddKnowledgePanel({
                   inputMode="url"
                   value={siteUrl}
                   onChange={(e) => {
+                    siteUrlEdited.current = true;
                     setSiteUrl(e.target.value);
                     setEstimate(null);
                     setSelectedUrls([]);
