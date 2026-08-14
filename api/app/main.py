@@ -56,7 +56,7 @@ from app.api.unsubscribe_routes import router as unsubscribe_router
 from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
-from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
+from app.config import APP_ENV, DOCUMENTS_DIR
 from app.core.exceptions import SessionOwnershipError
 from app.core.middleware import (
     TimeoutMiddleware,
@@ -68,6 +68,7 @@ from app.core.middleware import (
     validation_exception_handler,
 )
 from app.core.rate_limit import limiter
+from app.core.sentry_scrub import scrub_event
 from app.db.models import Base, Bot
 from app.db.models import ChatSession as CS
 from app.db.session import engine, get_session
@@ -96,8 +97,25 @@ _litellm.drop_params = True
 # (start_as_current_observation) and its call sites in llm_service.py /
 # rag_service.py.
 
-# Initialize Sentry (must be before FastAPI app creation)
-if SENTRY_ENABLED:
+
+def _init_sentry_for_api() -> None:
+    """Initialise Sentry in the API process. Must run before the FastAPI app is
+    created, so that the ASGI integration wraps the finished app.
+
+    A function rather than bare module-level statements so the wiring is
+    reachable from a test — ``tests/test_sentry_no_visitor_pii.py`` asserts that both
+    ``before_send`` and ``before_send_transaction`` point at the scrubber, which
+    is the only thing standing between a visitor's IP address and Sentry. Mirrors
+    ``app.worker.settings._init_sentry_for_worker``, which is the same call for
+    the other process.
+    """
+    from app.config import APP_ENV, SENTRY_DSN, SENTRY_ENABLED
+
+    if not SENTRY_ENABLED:
+        reason = f"APP_ENV={APP_ENV}, production only" if SENTRY_DSN else "no DSN configured"
+        logger.info(f"Sentry error tracking disabled ({reason})")
+        return
+
     import sentry_sdk
 
     sentry_sdk.init(
@@ -113,16 +131,25 @@ if SENTRY_ENABLED:
         # ran out and Sentry paused ingestion for the whole project, which takes
         # error reporting down with it. Do not re-enable without a paid plan.
         traces_sample_rate=0.1,
+        # PRIVACY — ``send_default_pii=False`` is not enough on its own. It
+        # suppresses ``user.ip_address`` and ``REMOTE_ADDR``, but the SDK still
+        # attaches every request header, and its scrub list does not include
+        # ``CF-Connecting-IP`` — the one header that carries the real visitor
+        # address behind Cloudflare, and the one ``chat_routes`` reads first.
+        # Both hooks are required: Sentry routes transactions past
+        # ``before_send`` entirely, and a transaction carries the same request
+        # block. See ``app.core.sentry_scrub``.
+        before_send=scrub_event,
+        before_send_transaction=scrub_event,
     )
     # Tag every event with the service name so API and worker can be
     # filtered apart in the Sentry UI (the worker uses the same DSN
     # but tags itself ``service: worker`` in app/worker/settings.py).
     sentry_sdk.set_tag("service", "api")
     logger.info(f"Sentry error tracking enabled | env={APP_ENV}")
-elif SENTRY_DSN:
-    logger.info(f"Sentry error tracking disabled (APP_ENV={APP_ENV}, production only)")
-else:
-    logger.info("Sentry error tracking disabled (no DSN configured)")
+
+
+_init_sentry_for_api()
 
 
 # Initialize FastAPI
