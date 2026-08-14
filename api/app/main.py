@@ -64,6 +64,7 @@ from app.core.middleware import (
     get_cors_origin_regex,
     get_cors_origins,
     intl_payments_disabled_handler,
+    plan_not_checkoutable_handler,
     session_ownership_exception_handler,
     validation_exception_handler,
 )
@@ -72,7 +73,7 @@ from app.core.sentry_scrub import scrub_event
 from app.db.models import Base, Bot
 from app.db.models import ChatSession as CS
 from app.db.session import engine, get_session
-from app.services.razorpay_service import IntlPaymentsDisabled
+from app.services.razorpay_service import IntlPaymentsDisabled, PlanNotCheckoutable
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -208,6 +209,7 @@ app.include_router(affiliate_superadmin_router)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(SessionOwnershipError, session_ownership_exception_handler)
 app.add_exception_handler(IntlPaymentsDisabled, intl_payments_disabled_handler)
+app.add_exception_handler(PlanNotCheckoutable, plan_not_checkoutable_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # --- Database Initialization ---

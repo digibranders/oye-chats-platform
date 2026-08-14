@@ -47,12 +47,13 @@ The extra-seat add-on plans are NOT stored on a plan row — they are configured
 via the ``RAZORPAY_SEAT_PLAN_ID`` (INR) and ``RAZORPAY_SEAT_PLAN_ID_USD``
 environment variables (per Razorpay account/mode).
 
-Attaching ids is also what puts a tier ON SALE. ``plans.is_active`` is derived
-from ``plan_service.plan_is_sellable`` here and in ``seed_plans.py``: a paid tier
-with both INR ids is activated, one without them is deactivated. The two rules
-are the same rule, so the order the scripts run in does not change the outcome —
-the seed writes the catalogue, this script wires the gateway, and whichever runs
-last leaves ``is_active`` agreeing with what the environment can actually charge.
+Attaching ids opens SELF-SERVE checkout; it does not list or unlist anything.
+This script never writes ``plans.is_active`` — listing is a product decision
+(super-admin plan editor / soft-delete), and a paid tier with no INR ids stays
+on the pricing page and degrades to contact-sales rather than disappearing (see
+``plan_service.plan_checkout_is_wired``). What it does print is the transition
+each ``--apply`` causes: contact-sales → self-serve as ids land, and back again
+when they are cleared.
 
 To clear a plan ID (set it back to NULL), pass the literal string 'null'.
 
@@ -74,7 +75,7 @@ from sqlalchemy import select
 
 from app.db.models import Plan
 from app.db.session import get_session
-from app.services.plan_service import plan_is_sellable
+from app.services.plan_service import plan_checkout_is_wired
 
 _SLUGS: tuple[str, ...] = ("starter", "standard", "professional", "enterprise")
 
@@ -124,8 +125,15 @@ def _print_rail(title: str, plan_map: dict[str, Plan], columns: dict[str, str]) 
             print(f"{slug:<12} {mo:<32} {yr:<32}")
 
 
-def _sellable_after(plan: Plan, ids: dict[str, Any]) -> bool:
-    """Whether ``plan`` can be charged once ``ids`` have been written to it."""
+def _wired_after(plan: Plan, ids: dict[str, Any]) -> bool:
+    """Whether ``plan`` can take a self-serve checkout once ``ids`` are written.
+
+    A column absent from ``ids`` is untouched by this run, so it resolves to
+    whatever the row already carries; a column set to the ``_CLEAR`` sentinel
+    (the literal CLI argument ``null``) resolves to ``None``. Without that
+    distinction, clearing the monthly id would still read the stale value and
+    report the tier as self-serve.
+    """
 
     def resolved(column: str) -> str | None:
         if column not in ids:
@@ -133,7 +141,7 @@ def _sellable_after(plan: Plan, ids: dict[str, Any]) -> bool:
         value = ids[column]
         return None if value is _CLEAR else value
 
-    return plan_is_sellable(
+    return plan_checkout_is_wired(
         is_free=not plan.monthly_price_cents and not plan.annual_price_cents,
         razorpay_plan_id_monthly=resolved("razorpay_plan_id_monthly"),
         razorpay_plan_id_annual=resolved("razorpay_plan_id_annual"),
@@ -160,8 +168,11 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             print("Current Razorpay plan IDs in DB:")
             _print_rail("INR rail", plan_map, _INR_COLUMNS)
             _print_rail("USD rail", plan_map, _USD_COLUMNS)
-            on_sale = [slug for slug in _SLUGS if slug in plan_map and plan_map[slug].is_active]
-            print(f"\nOn sale (plans.is_active): {', '.join(on_sale) or '(none)'}")
+            listed = [slug for slug in _SLUGS if slug in plan_map and plan_map[slug].is_active]
+            self_serve = [slug for slug in _SLUGS if slug in plan_map and _wired_after(plan_map[slug], {})]
+            print(f"\nListed on the pricing catalog (plans.is_active): {', '.join(listed) or '(none)'}")
+            print(f"Self-serve checkout (both INR plan ids):          {', '.join(self_serve) or '(none)'}")
+            print("A listed tier missing from the second line sells by contact-sales, not at all.")
             return 0
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}")
@@ -176,18 +187,19 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
                 label = column.removeprefix("razorpay_plan_id_")
                 print(f"    {label + ':':<14} {getattr(p, column) or '(none)'!r} → {_render(value)}")
 
-            # Attaching (or clearing) the INR ids is what puts a tier on or off
-            # sale — see the module docstring.
-            sellable = _sellable_after(p, ids)
-            if sellable != p.is_active:
-                print(
-                    f"    {'is_active:':<14} {p.is_active!r} → {sellable!r}  ({'ON SALE' if sellable else 'OFF SALE'})"
-                )
+            # Attaching (or clearing) the INR ids opens or closes SELF-SERVE
+            # checkout. It does not list or unlist the tier — see the module
+            # docstring — so nothing here writes ``is_active``.
+            was_wired = _wired_after(p, {})
+            will_be_wired = _wired_after(p, ids)
+            if will_be_wired != was_wired:
+                before = "self-serve" if was_wired else "contact-sales"
+                after = "self-serve" if will_be_wired else "contact-sales"
+                print(f"    {'checkout:':<14} {before} → {after}")
 
             if apply:
                 for column, value in ids.items():
                     setattr(p, column, None if value is _CLEAR else value)
-                p.is_active = sellable
 
         if apply:
             session.commit()

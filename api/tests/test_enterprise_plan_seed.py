@@ -107,14 +107,6 @@ def test_the_price_ladder_never_inverts(axis: str, cheaper: str, dearer: str):
     )
 
 
-# The tightest bound the shipped catalogue permits. Professional is the binding
-# case: ₹2,349/mo × 12 is a 21.674% saving carried by an int that reads "22",
-# a 0.326pp gap that no amount of tightening removes without moving a price.
-# The previous guard used round(), i.e. ±0.5pp — ±₹360/yr of unnoticed drift on
-# Enterprise. This allows ±₹252/yr, and the ×12 guard below pins what is left to
-# whole-rupee steps.
-_INR_DISCOUNT_TOLERANCE_PP = 0.35
-
 # The USD rail has no discount field of its own, so it can only be bounded, not
 # pinned. The band is wide enough for the shipped spread (17.40%–20.00%) and
 # narrow enough that a transposed or dropped digit fails.
@@ -140,7 +132,23 @@ def test_annual_is_cheaper_than_paying_monthly(slug: str):
 
 @pytest.mark.parametrize("slug", _PAID)
 def test_annual_discount_percent_matches_the_inr_annual_price(slug: str):
-    """``annual_discount_percent`` is displayed, so it must not lie about INR.
+    """``annual_discount_percent`` is displayed, so it must be the true saving,
+    rounded — the exact relationship the int is capable of expressing.
+
+    **Why an exact equality and not a tolerance.** The previous guard allowed
+    ±0.35pp, chosen because Professional's 21.674% saving is carried by an int
+    reading "22" (a 0.326pp gap) and nothing tighter fitted. That left 0.024pp
+    of headroom, which is not a margin — it is a trap. Starter at ₹699/mo with
+    an annual ₹499/mo (₹5,988/yr) is an ordinary marketing pair: the true saving
+    is 28.612%, the correct stored int is 29, and the 0.388pp gap FAILS the
+    tolerance while passing both companion guards. The message named neither the
+    tolerance nor a remedy, so the rational fix would have been to widen it —
+    exactly the drift the guard exists to prevent.
+
+    ``round(saving)`` has no such failure mode: it is what the int means. The
+    residual sub-percent slack a tolerance was reaching for is pinned by
+    ``test_annual_prices_are_twelve_whole_monthly_equivalents`` below, which
+    forces every annual amount onto whole monthly-equivalent steps.
 
     **This guard bounds the INR rail only, and that is not an oversight.** One
     int cannot describe two rails: against the same stored percent the actual
@@ -148,15 +156,13 @@ def test_annual_discount_percent_matches_the_inr_annual_price(slug: str):
     Enterprise 20.00% — Professional is 4.6pp adrift. Tightening this test to
     cover USD would fail on shipped prices, so the USD rail gets its own,
     weaker guard below and the honest statement of the gap lives here.
-
-    INR gaps today: Enterprise 0.003pp, Standard 0.017pp, Starter 0.033pp,
-    Professional 0.326pp.
     """
     plan = _plan(slug)
     saving = _saving_percent(plan["monthly_price_cents"] * 12, plan["annual_price_cents"])
-    assert abs(saving - plan["annual_discount_percent"]) <= _INR_DISCOUNT_TOLERANCE_PP, (
-        f"{slug}: annual ₹{plan['annual_price_cents'] / 100:,.0f} is a {saving:.3f}% saving "
-        f"but the plan advertises {plan['annual_discount_percent']}%"
+    assert round(saving) == plan["annual_discount_percent"], (
+        f"{slug}: annual ₹{plan['annual_price_cents'] / 100:,.0f} is a {saving:.3f}% saving, which rounds "
+        f"to {round(saving)}%, but the plan advertises {plan['annual_discount_percent']}%. "
+        f"Set annual_discount_percent to {round(saving)}, or move the annual price."
     )
 
 
@@ -165,8 +171,10 @@ def test_annual_prices_are_twelve_whole_monthly_equivalents(slug: str):
     """Annual is always priced as a whole monthly-equivalent × 12, on both rails.
 
     Every annual amount in the catalogue is built this way (₹479 · ₹959 · ₹2,349
-    · ₹4,799 and $6.49 · $12.99 · $37.99 · $71.99 per month). Asserting it
-    removes the sub-unit slack the percentage tolerance above cannot close.
+    · ₹4,799 and $6.49 · $12.99 · $37.99 · $71.99 per month). Asserting it is
+    what pins the sub-percent residual the rounded-percent guard above leaves
+    open: a stored percent can only ever describe the saving to the nearest
+    point, so the price itself has to be on a whole monthly-equivalent step.
     """
     plan = _plan(slug)
     assert plan["annual_price_cents"] % 1200 == 0, f"{slug}: INR annual is not a whole ₹/mo × 12"

@@ -155,19 +155,29 @@ def test_create_subscription_keeps_inr_plan_for_domestic_and_unknown(country):
 
 def test_create_subscription_refuses_foreign_client_without_usd_plan(_intl_on):
     """The dangerous failure is a silent INR fallback: a US customer charged
-    ₹449 instead of $9. A missing USD id must raise instead."""
+    ₹449 instead of $9. A missing USD id must raise instead.
+
+    It raises ``PlanNotCheckoutable`` carrying ``intl_usd_pending`` — the code
+    the USD branch of ``/checkout/quote`` already returns for the same plan — so
+    the quote and the charge agree. The rail is asserted on the exception's
+    ``currency``, not on the message: the message is the customer-facing
+    sentence and deliberately names no gateway internals.
+    """
     from app.services import razorpay_service
 
     plan = _make_plan(razorpay_plan_id_monthly_usd=None)
     fake = _fake_rzp()
     with (
         patch.object(razorpay_service, "_get_razorpay", return_value=fake),
-        pytest.raises(ValueError, match="USD"),
+        pytest.raises(razorpay_service.PlanNotCheckoutable) as excinfo,
     ):
         razorpay_service.create_subscription(
             MagicMock(), _make_client(billing_country="US"), plan, "monthly", discount_bps=0
         )
 
+    assert excinfo.value.currency == "USD"
+    assert excinfo.value.reason == "intl_usd_pending"
+    assert "USD" in excinfo.value.ops_detail
     fake.subscription.create.assert_not_called()
 
 

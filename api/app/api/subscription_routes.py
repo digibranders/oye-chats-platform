@@ -1310,12 +1310,14 @@ def checkout_quote(
         # Domestic paid plan: the live INR rail — but only when this tier
         # actually has an INR Razorpay plan wired for the cycle. Same principle
         # as the USD branch above, and it applies to every plan, not just newly
-        # seeded ones: ``razorpay_service.create_subscription`` raises
-        # ``ValueError("Plan 'X' has no INR Razorpay plan id configured …
-        # Create the plan in the Razorpay dashboard …")`` on a missing id, and
-        # ``/subscriptions/checkout`` re-raises that verbatim as a 400. Quoting
-        # ``checkout_supported: true`` here therefore walks the buyer from a
-        # price straight into an internal ops instruction. The CTA is better.
+        # seeded ones. A tier with no INR plan id is LISTED on purpose (a
+        # contact-sales tier needs no gateway id to appear on the pricing page —
+        # see ``plan_service.plan_checkout_is_wired``), so this branch is the
+        # only thing standing between the buyer and a checkout that cannot
+        # complete. ``POST /subscriptions/checkout`` refuses in the SAME shape:
+        # ``create_subscription`` raises ``PlanNotCheckoutable``, which the
+        # app-level handler maps to a 409 carrying this same ``reason`` and
+        # ``contact_sales``. Quote and button therefore agree.
         inr_plan_id = plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
         if not inr_plan_id:
             return {

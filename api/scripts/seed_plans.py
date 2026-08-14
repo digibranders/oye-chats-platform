@@ -12,15 +12,24 @@ Razorpay plan IDs are intentionally NOT set here — they differ per environment
 so no plan ID is hardcoded in the repo. The extra-seat add-on plan is likewise
 env-config (``RAZORPAY_SEAT_PLAN_ID``), not a plan row.
 
-``is_active`` is DERIVED, never asserted: a tier goes on sale only once this
-environment has the gateway plan ids that can charge for it (see
-``plan_service.plan_is_sellable``). This file is the catalogue — prices,
-entitlements, ordering — not the sales lifecycle, and it has no way to know
-which plans a given Razorpay account actually holds. Forcing ``is_active =
-True`` here is what silently re-published Enterprise on a prod reseed: migration
-``f1a2b3c4d5e6`` deactivates it, the baseline schema seeds no plan rows, so on a
-wiped database that migration matches nothing and this seed had the last word —
-listing a tier with no Live plan id, whose checkout 400s.
+``is_active`` is set on INSERT and NEVER on UPDATE. This file is the catalogue —
+prices, entitlements, ordering — not the listing lifecycle, and the two writes
+answer different questions:
+
+* A row this run creates has no history to respect, so it is listed. Under the
+  current policy that is right even with no gateway plan id: an unwired paid
+  tier stays on the pricing page and degrades to contact-sales rather than
+  vanishing from ``GET /public/pricing-catalog`` (see
+  ``plan_service.plan_checkout_is_wired``).
+* A row that already exists may have been deactivated ON PURPOSE — by migration
+  ``f1a2b3c4d5e6``, by super-admin soft-delete, or by the plan editor. The seed
+  cannot tell a deliberate deactivation from a stale one, so it does not touch
+  the column at all. The blanket ``plan.is_active = True`` this replaces is
+  exactly what silently undid that migration on every ``reset_and_seed.sh`` run.
+
+What the seed DOES report is which tiers this environment can actually charge
+for, so a fresh database tells you what is missing without turning that into a
+listing decision.
 
 Idempotent: each plan is matched by ``slug`` and updated in place; a new row is
 inserted if the slug is missing. Unknown slugs (custom tiers added by a super
@@ -50,7 +59,7 @@ from sqlalchemy import select
 from app.core.pricing import EMANDATE_AFA_CEILING_MINOR, emandate_warning
 from app.db.models import Plan
 from app.db.session import get_session
-from app.services.plan_service import plan_is_sellable
+from app.services.plan_service import plan_checkout_is_wired
 
 # ── Canonical matrix — single source of truth ──────────────────────────────
 # INR paise for *_cents; US cents for *_usd_cents. -1 in limits means unlimited.
@@ -306,14 +315,15 @@ _SCALAR_FIELDS = (
 )
 
 
-def _would_be_sellable(data: dict, plan: Plan | None) -> bool:
-    """Sellability of the row this run will leave behind.
+def _would_be_wired(data: dict, plan: Plan | None) -> bool:
+    """Whether the row this run leaves behind can take a self-serve checkout.
 
     Gateway plan ids live on the existing row — this script never writes them —
-    so a brand-new paid row is by definition not yet sellable. It goes on sale
-    when ``set_razorpay_plan_ids.py`` attaches this environment's ids.
+    so a brand-new paid row is by definition not yet wired. It becomes
+    checkoutable when ``set_razorpay_plan_ids.py`` attaches this environment's
+    ids. Reported only: it does NOT decide ``is_active``.
     """
-    return plan_is_sellable(
+    return plan_checkout_is_wired(
         is_free=not data["monthly_price_cents"] and not data["annual_price_cents"],
         razorpay_plan_id_monthly=getattr(plan, "razorpay_plan_id_monthly", None),
         razorpay_plan_id_annual=getattr(plan, "razorpay_plan_id_annual", None),
@@ -372,7 +382,7 @@ def run(*, apply: bool) -> int:
         existing = {p.slug: p for p in session.scalars(select(Plan)).all()}
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}\n")
-        off_sale: list[str] = []
+        contact_sales_only: list[str] = []
         # Collected in BOTH modes. A dry-run exists so someone can see what a
         # change would do before committing it; a ceiling warning that only
         # appeared under --apply would arrive after the price was already
@@ -383,10 +393,10 @@ def run(*, apply: bool) -> int:
             plan = existing.get(slug)
             verb = "update" if plan else "insert"
             price = data["monthly_price_cents"] / 100
-            sellable = _would_be_sellable(data, plan)
-            if not sellable:
-                off_sale.append(slug)
-            state = "on sale" if sellable else "OFF SALE — no Razorpay plan id"
+            wired = _would_be_wired(data, plan)
+            if not wired:
+                contact_sales_only.append(slug)
+            state = "self-serve" if wired else "CONTACT SALES — no Razorpay plan id"
             print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
             ceiling_warnings.extend(_emandate_warnings(data))
 
@@ -394,19 +404,23 @@ def run(*, apply: bool) -> int:
                 continue
 
             if plan is None:
-                plan = Plan(slug=slug, currency="INR", pricing_model="per_operator")
+                # is_active ONLY here. A row this run creates has no deliberate
+                # deactivation to override; an existing one may, so the update
+                # below leaves the column alone. See the module docstring.
+                plan = Plan(slug=slug, currency="INR", pricing_model="per_operator", is_active=True)
                 session.add(plan)
             plan.currency = "INR"
-            plan.is_active = sellable
             for field in _SCALAR_FIELDS:
                 setattr(plan, field, data[field])
 
-        if off_sale:
+        if contact_sales_only:
             print(
-                f"\nNot on sale in this environment: {', '.join(off_sale)}. "
-                "A tier without both INR Razorpay plan ids cannot complete a checkout, so it is\n"
-                "left deactivated rather than listed. Attach this environment's ids with\n"
-                "scripts/set_razorpay_plan_ids.py --apply — that puts each tier on sale as its ids land."
+                f"\nNot self-serve in this environment: {', '.join(contact_sales_only)}. "
+                "A tier without both INR Razorpay\nplan ids stays LISTED — the quote answers "
+                "'inr_plan_unconfigured' with a contact-sales address and\ncheckout refuses in the "
+                "same shape — but nobody can buy it without leaving the site. Attach this\n"
+                "environment's ids with scripts/set_razorpay_plan_ids.py --apply to open self-serve "
+                "checkout."
             )
 
         if apply:

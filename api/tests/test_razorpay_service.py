@@ -214,11 +214,24 @@ def test_create_subscription_rejects_invalid_billing_cycle():
 
 
 def test_create_subscription_rejects_missing_plan_id():
+    """A missing plan id refuses as ``PlanNotCheckoutable``, NOT as a ValueError.
+
+    The type is the contract. A tier with no gateway plan id stays listed and
+    quotes contact-sales, so the charge path has to refuse in that same shape —
+    and the money routes' ``except ValueError -> 400 str(exc)`` handlers would
+    have handed the buyer the operator instruction verbatim. Staying outside
+    ``ValueError`` is what routes it to the app-level 409 handler instead.
+    """
     from app.services import razorpay_service
 
     plan = _make_plan(razorpay_plan_id_monthly=None)
-    with pytest.raises(ValueError, match=r"(?i)razorpay plan id"):
+    with pytest.raises(razorpay_service.PlanNotCheckoutable) as excinfo:
         razorpay_service.create_subscription(MagicMock(), _make_client(), plan)
+
+    assert not isinstance(excinfo.value, ValueError)
+    assert excinfo.value.reason == "inr_plan_unconfigured"
+    assert "Razorpay plan id" in excinfo.value.ops_detail
+    assert "Razorpay" not in str(excinfo.value)
 
 
 def test_base_subscription_quantity_is_one_for_multi_seat_plan():

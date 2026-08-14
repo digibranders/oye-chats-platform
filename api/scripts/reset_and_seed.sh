@@ -15,10 +15,13 @@
 #   3. `alembic upgrade head` — rebuilds the SCHEMA ONLY. Migrations seed no
 #      plan rows (see b6c86b4c8434), so data-only migrations that target a plan
 #      — e.g. f1a2b3c4d5e6, which deactivates Enterprise — match zero rows here
-#      and the seed below has the last word on every column it owns.
+#      and the seed below inserts the rows fresh.
 #   4. Seed the plan matrix + pricing config, then an idempotent super-admin
-#      account (skip the last with --no-superadmin). Paid tiers are seeded OFF
-#      SALE: a tier goes live only once step 5 attaches ids that can charge it.
+#      account (skip the last with --no-superadmin). Every tier is LISTED; the
+#      seed sets `is_active` only on rows it creates and never on rows it
+#      updates, so a deliberate deactivation survives a re-run. Paid tiers are
+#      listed but not self-serve until step 5 attaches ids that can charge them
+#      — until then their checkout degrades to contact-sales.
 #
 # After it finishes the DB is empty of customer accounts, so you can sign up a
 # fresh account through the dashboard and walk the onboarding flow end-to-end.
@@ -117,10 +120,10 @@ fi
 
 echo ""
 echo "==> Done. Database reset and seeded."
-echo "    Every paid tier is currently OFF SALE — a plan with no Razorpay plan id"
-echo "    cannot complete a checkout, so seed_plans.py leaves it deactivated."
-echo "    Next: attach this environment's Razorpay plan IDs (that puts them on sale),"
-echo "    e.g."
+echo "    Every paid tier is LISTED but not yet SELF-SERVE — a plan with no Razorpay"
+echo "    plan id cannot complete a checkout, so it quotes contact-sales instead."
+echo "    Next: attach this environment's Razorpay plan IDs (that opens self-serve"
+echo "    checkout), e.g."
 echo "      uv run python scripts/set_razorpay_plan_ids.py --apply \\"
 echo "        --starter-monthly <id> --starter-annual <id> \\"
 echo "        --standard-monthly <id> --standard-annual <id> \\"
