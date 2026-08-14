@@ -2709,7 +2709,10 @@ export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_i
 
 /**
  * Subscription billing geo / currency profile. Returns the country and
- * ``display_currency`` (always "USD"), and whether checkout is wired
+ * ``display_currency``, which follows the currency the charge path would
+ * actually use: "INR" for India AND for an unresolved country (an unconfirmed
+ * buyer is treated as domestic), "USD" only for a stored or IP-detected non-IN
+ * country. Also returns ``checkout_available`` - whether checkout is wired
  * (Razorpay enabled). Cached at call sites - geo doesn't change mid-session.
  */
 export const getBillingGeo = async (overrideCountry) => {

@@ -79,11 +79,14 @@ so a stale id found in a DB or a script can be *recognised* rather than guessed 
 ### Seed to a reset DB (Test)
 A fresh DB is built and seeded by `scripts/reset_and_seed.sh` (schema baseline →
 `seed_plans.py` → `seed_pricing_config.py` → `seed_superadmin.py`). That seeds the plan
-rows and pricing config but **not** the Razorpay IDs (they are per-environment). Every paid tier
-is therefore seeded **off sale** — `is_active` is derived from whether the tier has both INR
-gateway ids, so the command below is what actually puts the tiers on sale (Enterprise included,
-because Test *has* Enterprise ids; prod does not, which is the whole point). After the reset
-finishes, attach the Test IDs:
+rows and pricing config but **not** the Razorpay IDs (they are per-environment). Every tier the
+seed creates is therefore **listed but not self-serve**: listing and checkout wiring are separate
+decisions. `is_active` is written on INSERT only and never on UPDATE (so a reseed cannot resurrect
+a row something deactivated on purpose), while a paid tier with no INR gateway ids simply degrades
+— its quote answers `checkout_supported: false` / `reason: "inr_plan_unconfigured"` with a
+contact-sales address, and checkout refuses with a **409** in that same shape. The command below is
+what opens **self-serve** checkout; it does not put anything "on sale" that was hidden. After the
+reset finishes, attach the Test IDs:
 ```bash
 cd api && uv run python scripts/set_razorpay_plan_ids.py \
   --starter-monthly          plan_TPWQmN57OaBc5k \
@@ -127,9 +130,9 @@ This is what production currently charges.
 
 > ⚠️ **Live has the same drift Test just had fixed, and is NOT yet re-minted.** The ids above
 > bill the 16 Jul amounts while `seed_plans.py` holds the new ones. A production DB seeded from
-> the current file therefore breaks in two distinct ways:
+> the current file therefore breaks, in one specific and expensive way:
 >
-> **1. Silent under-collection on every paid subscription.** Prod would *display* the seed file's
+> **Silent under-collection on every paid subscription.** Prod would *display* the seed file's
 > prices and *charge* what these immutable ids carry — always in the customer's favour, never
 > flagged:
 >
@@ -147,13 +150,18 @@ This is what production currently charges.
 > the charged amount, so the platform's own records are internally consistent and the gap is
 > invisible until someone reconciles displayed price against settled amount by hand.
 >
-> **2. Enterprise cannot be sold at all.** There is **no Live Enterprise plan**, in either
-> currency. `seed_plans.py` now derives `plans.is_active` from whether a tier has both INR
-> gateway ids (`plan_service.plan_is_sellable`), so a prod reseed leaves Enterprise
-> **deactivated** rather than publishing it — this is what stops the seed from silently undoing
-> migration `f1a2b3c4d5e6`. If it is activated anyway (super admin toggle, or Live ids minted
-> for only one cycle), `razorpay_service.create_subscription` raises `ValueError` and every
-> Enterprise checkout returns **400** — the tier renders as purchasable and the button is dead.
+> **Enterprise is NOT part of this blocker.** There is **no Live Enterprise plan**, in either
+> currency, and that is fine: a contact-sales tier needs no gateway plan id to be listed. Nothing
+> derives `plans.is_active` from gateway wiring — `plan_service.plan_checkout_is_wired` is
+> reporting only (the seed and `set_razorpay_plan_ids.py` print it, and the super-admin plan
+> routes warn on it), and must never be written to the column. A prod reseed therefore leaves
+> Enterprise **listed**: it appears in `GET /public/pricing-catalog` and so on
+> oyechats.com/pricing, its quote answers `checkout_supported: false` /
+> `reason: "inr_plan_unconfigured"` with a contact-sales address, and `POST /subscriptions/checkout`
+> refuses with a **409** in that same shape (`razorpay_service.PlanNotCheckoutable`) instead of a
+> bare 400 carrying an operator instruction. That is the intended behaviour for a tier whose entire
+> go-to-market is contact-sales. Minting Live Enterprise ids is what would turn it self-serve, and
+> is not a prerequisite for a reseed.
 >
 > Re-minting Live is a deliberate, separately-authorised commercial act — it re-prices real
 > customers — so it was intentionally left alone here.
