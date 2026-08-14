@@ -87,6 +87,13 @@ def _plan(slug: str, bots_limit: int) -> Plan:
 def _mock_session(plan: Plan) -> MagicMock:
     session = MagicMock()
     session.execute.return_value = _ExecuteResult(plan)
+    # A real (transient) Client, not the default MagicMock: the route consults
+    # ``clients.pending_checkout_*`` before minting, and every attribute of a
+    # MagicMock is truthy — so an auto-mocked client would look like it had a
+    # mandate in flight and send these plan-guard tests to the live gateway.
+    # None across the marker columns is what a client with no in-flight
+    # checkout actually looks like.
+    session.get.return_value = Client(id=1, name="o", email="guard@e.com", api_key="guard")
     return session
 
 

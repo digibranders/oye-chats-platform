@@ -38,7 +38,7 @@ import hmac
 import json
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -704,7 +704,12 @@ _AUTHORIZABLE_SUB_STATES = frozenset({"created", "authenticated", "pending"})
 
 
 def rebuild_upgrade_checkout(
-    subscription_id: str, client: Client, plan: Plan, billing_cycle: str
+    subscription_id: str,
+    client: Client,
+    plan: Plan,
+    billing_cycle: str,
+    *,
+    required_notes: Mapping[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Rebuild the Checkout payload for an EXISTING (in-flight) Razorpay
     subscription — used to return a pending upgrade's checkout on a double-submit
@@ -716,6 +721,16 @@ def rebuild_upgrade_checkout(
     when the pending sub is no longer authorizable (abandoned → cancelled/expired)
     so the caller can clear the stale marker and mint a fresh checkout instead of
     handing back a dead one (M3).
+
+    ``required_notes`` adds a third not-reusable condition for callers whose
+    purchase is not fully described by (plan, cycle, rail). The per-bot path is
+    the one that needs it: the agent a mandate will create lives ONLY in the
+    gateway notes while the checkout is in flight, so two same-plan purchases of
+    two different agents are indistinguishable without reading them. A mismatch
+    is treated exactly like the rail mismatch below — not reusable, so the
+    caller supersedes it and mints the right one. Compared with a missing key
+    read as "", which is how :func:`per_bot_checkout_identity` renders an absent
+    field, so an added or removed website is a difference either way round.
     """
     try:
         sub = _get_razorpay().subscription.fetch(subscription_id)
@@ -743,6 +758,19 @@ def rebuild_upgrade_checkout(
             billing_cycle,
         )
         return None
+    if required_notes is not None:
+        actual_notes = sub.get("notes") or {}
+        mismatched = sorted(
+            key for key, value in required_notes.items() if str(actual_notes.get(key) or "") != str(value)
+        )
+        if mismatched:
+            logger.info(
+                "Pending checkout %s describes a different purchase (notes differ on %s) — not reusable; "
+                "caller will supersede and re-mint",
+                subscription_id,
+                ", ".join(mismatched),
+            )
+            return None
     return {
         "provider": "razorpay",
         "subscription_id": subscription_id,
@@ -1295,6 +1323,48 @@ def iter_seat_addon_subscriptions(*, page_size: int = 100, max_pages: int = 50) 
         yield item
 
 
+def per_bot_checkout_identity(
+    *,
+    bot_name: str,
+    bot_website: str | None,
+    bot_allowed_domains: list[str] | None,
+    bot_domain_check_enabled: bool,
+) -> dict[str, str]:
+    """Which bot a per-bot mandate would materialise, as Razorpay notes.
+
+    The bot row does not exist while its checkout is in flight — ``POST
+    /bots/checkout`` deliberately creates nothing until the mandate is paid, so
+    a dismissed checkout leaves no orphan rows. These notes ARE the bot's
+    identity for the whole in-flight window; :func:`_create_bot_from_notes`
+    builds the row from exactly these keys on activation.
+
+    That makes them the reuse key for the per-bot path, which is why this is a
+    function rather than a literal inside the mint below. ``clients.
+    pending_checkout_bot_id`` cannot hold this identity (there is no id yet), so
+    a retry that changed the agent's name or website would otherwise be reused
+    as if it were the same purchase — handing the customer a mandate that
+    creates the OTHER agent, pointed at the other website, with the other
+    domain allowlist. Minting and comparing from one source is what keeps the
+    two from drifting.
+
+    Every key is always present, empty string where the field is absent, so the
+    comparison is symmetric: a pending mandate carrying a website and a request
+    without one must differ, not silently pass because the key was missing from
+    one side of the dict.
+    """
+    return {
+        "purpose": "per_bot_subscription",
+        "bot_name": bot_name,
+        "bot_website": bot_website or "",
+        # Razorpay note values must be strings — pack as a JSON-encoded list so
+        # the webhook handler can round-trip back to a Python list. Order is
+        # the caller's, and both sides of a comparison come from the same
+        # normalisation, so the encoded form is stable.
+        "bot_allowed_domains": json.dumps(list(bot_allowed_domains)) if bot_allowed_domains else "",
+        "bot_domain_check_enabled": "1" if bot_domain_check_enabled else "0",
+    }
+
+
 def create_per_bot_subscription(
     session: Session,
     client: Client,
@@ -1319,19 +1389,20 @@ def create_per_bot_subscription(
     paying account, so a second trial would be free credits we don't
     want to grant.
     """
-    extra_notes: dict[str, str] = {
-        "purpose": "per_bot_subscription",
-        "bot_name": bot_name,
-        "bot_domain_check_enabled": "1" if bot_domain_check_enabled else "0",
+    # Empty values are dropped rather than sent as "": the activation handler
+    # reads a missing key and an empty one identically (``notes.get(...) or
+    # None`` / ``or "0"``), so this is the same wire payload as before, and it
+    # keeps the notes free of keys that carry no information.
+    extra_notes = {
+        key: value
+        for key, value in per_bot_checkout_identity(
+            bot_name=bot_name,
+            bot_website=bot_website,
+            bot_allowed_domains=bot_allowed_domains,
+            bot_domain_check_enabled=bot_domain_check_enabled,
+        ).items()
+        if value != ""
     }
-    if bot_website:
-        extra_notes["bot_website"] = bot_website
-    if bot_allowed_domains:
-        # Razorpay note values must be strings — pack as a JSON-encoded list
-        # so the webhook handler can round-trip back to a Python list.
-        import json as _json
-
-        extra_notes["bot_allowed_domains"] = _json.dumps(list(bot_allowed_domains))
 
     return create_subscription(
         session,
