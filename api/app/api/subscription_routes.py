@@ -523,6 +523,31 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
 
     Includes the Razorpay public key so the React layer doesn't have to
     re-stuff it from a separate env / endpoint when opening the modal.
+
+    ``display_currency`` is NOT unconditionally the charge currency — the four
+    cases, and what keeps each of them honest:
+
+    * ``stored`` IN → INR shown, INR charged.
+    * ``stored`` non-IN → USD shown, and no INR debit can contradict it because
+      the charge paths refuse instead of charging: top-up always 409s
+      ``intl_usd_pending`` (``create_topup_order`` is INR-only), checkout 409s
+      unless ``INTL_PAYMENTS_ENABLED`` puts it on the USD rail.
+    * ``detected`` (IP geo) non-IN → USD shown while the charge path would
+      confirm IN. This divergence is DELIBERATE: an IP signal is display-grade
+      only — the frontend never echoes it back as ``billing_country``
+      (``usePlanCheckout.ts``) and ``_resolve_confirmed_billing_country_or_409``
+      never resolves on it. It cannot turn into a wrong charge because that same
+      gate 409s ``billing_country_required`` whenever a foreign IP is the ONLY
+      signal, so the customer confirms a country before any money moves.
+    * ``unresolved`` (no stored country, no IP signal) → INR, because the gate
+      treats an unconfirmed buyer as domestic. Reporting USD here (the old rule)
+      was a live money bug: nothing 409s an unresolved country, so the top-up
+      modal rendered $13/$50/$125 and Razorpay debited ₹1,000/₹4,000/₹10,000.
+
+    That last case is why the currency is taken from ``resolve_billing_context``
+    rather than re-derived: it routes through ``charge_currency``, the same
+    helper the quote and the charge gate use, so this endpoint cannot drift
+    from the rail it is describing.
     """
     from app.config import RAZORPAY_KEY_ID
 
@@ -530,21 +555,20 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
     # settings / onboarding); IP geo is only the fallback for accounts that
     # haven't chosen one yet. This is what makes "set the country once, and the
     # currency follows everywhere" hold across sessions.
-    stored = (client.billing_country or "").strip().upper() or None
-    country = stored or resolve_country(request)
-    # Geo-split model: Indians see and pay INR; everyone else sees (and — once
-    # the Phase-2 USD rail is live — pays) USD. Display currency == charge
-    # currency by design, so there is no currency mismatch to disclose.
-    display_currency = "INR" if country == "IN" else "USD"
+    ctx = resolve_billing_context(
+        stored_country=client.billing_country,
+        detected_country=resolve_country(request),
+    )
     return {
-        "country": country,
+        "country": ctx.country,
         # Trust grade for the frontend: a "detected" (IP geo) country is
         # DISPLAY-ONLY and must never be echoed back into a money route's
         # billing_country param — that would launder the IP signal into the
         # charge-grade request-confirmation slot and defeat the server's
-        # refusal to charge on it (Wave 1.2).
-        "country_source": "stored" if stored else ("detected" if country else None),
-        "display_currency": display_currency,
+        # refusal to charge on it (Wave 1.2). "unresolved" is reported as null
+        # so the wire contract stays 'stored' | 'detected' | null.
+        "country_source": None if ctx.source == "unresolved" else ctx.source,
+        "display_currency": ctx.currency,
         "display_rate": DISPLAY_USD_TO_INR,
         "razorpay_enabled": RAZORPAY_ENABLED,
         "razorpay_key_id": RAZORPAY_KEY_ID if RAZORPAY_ENABLED else None,
