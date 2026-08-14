@@ -179,18 +179,28 @@ class SubscriptionActivationConflict(Exception):
     rather than "payment failed".
     """
 
-    def __init__(self, *, razorpay_subscription_id: str, client_id: int | None, constraint: str) -> None:
+    def __init__(self, *, razorpay_subscription_id: str, client_id: int | None, constraint: str | None = None) -> None:
         self.razorpay_subscription_id = razorpay_subscription_id
         self.client_id = client_id
         self.constraint = constraint
         self.reason = "subscription_activation_conflict"
-        self.ops_detail = (
-            f"Razorpay subscription {razorpay_subscription_id} could not be materialised for client "
-            f"{client_id}: it collided with {constraint}, so another ACTIVE subscription already holds "
-            "that scope. The customer has paid. Check whether two mandates were minted for this client "
-            "(scripts/audit_duplicate_gateway_subscriptions.py), cancel and refund the surplus one, and "
-            "let the webhook redeliver — the reconcile idempotency key was not burned."
-        )
+        if constraint is not None:
+            self.ops_detail = (
+                f"Razorpay subscription {razorpay_subscription_id} could not be materialised for client "
+                f"{client_id}: it collided with {constraint}, so another ACTIVE subscription already holds "
+                "that scope. The customer has paid. Check whether two mandates were minted for this client "
+                "(scripts/audit_duplicate_gateway_subscriptions.py), cancel and refund the surplus one, and "
+                "let the webhook redeliver — the reconcile idempotency key was not burned."
+            )
+        else:
+            # The mint-time half of the same conflict: raised BEFORE any second
+            # mandate exists, which is the cheap place to be right.
+            self.ops_detail = (
+                f"Refused to mint a replacement mandate for client {client_id}: the in-flight checkout "
+                f"{razorpay_subscription_id} is already ACTIVE at Razorpay, so the customer has paid on "
+                "it and its activation has not landed locally yet. Minting now is exactly how one month "
+                "gets charged twice. No action needed unless the activation never arrives."
+            )
         super().__init__(
             "Your payment went through. We're still finishing the switch to your new plan — "
             "refresh in a minute, and contact support if it hasn't appeared."
@@ -736,23 +746,27 @@ def rebuild_upgrade_checkout(
 
 
 def cancel_superseded_checkout(razorpay_subscription_id: str) -> str:
-    """Kill an in-flight checkout that a DIFFERENT new mandate is replacing.
+    """Retire an in-flight checkout before a replacement mandate is minted.
 
     The counterpart to :func:`rebuild_upgrade_checkout`: that one is for a retry
-    the marker can serve, this one for a retry it cannot (different plan, cycle,
-    rail or bot scope). Minting the replacement while the superseded mandate is
+    the marker can serve, this one for every retry it cannot — a different plan,
+    cycle, rail or bot scope, and equally a same-key retry whose pending mandate
+    is no longer authorizable. Minting the replacement while the old mandate is
     still authorizable is the exact double-charge shape that hit prod client 18
     — both mandates authorised, both charged one cycle, ₹11,998 for one month.
 
-    Two states matter:
+    Three states matter, and the caller branches on the returned one:
 
     * ``created`` / ``authenticated`` / ``pending`` — the checkout is still
       payable (or authorised but not yet charged), so it is cancelled here and
       can never bill.
-    * anything else — ``active`` means the customer already authorised AND paid
-      it. Cancelling that from a checkout path would silently kill a live,
-      charged subscription behind the customer's back; the activation handler's
-      sibling sweep owns that transition. We leave it alone and only report.
+    * ``active`` — the customer already authorised AND paid it. Cancelling that
+      from a checkout path would silently kill a live, charged subscription
+      behind the customer's back; the activation handler's sibling sweep owns
+      that transition. We leave it alone and report, and the caller refuses to
+      mint beside it.
+    * terminal (``cancelled`` / ``completed`` / ``expired``) — nothing to do;
+      the caller is free to mint.
 
     Raises ``RazorpayBillingError`` if the gateway can't be read or the cancel
     fails, so the caller refuses rather than minting a sibling against a mandate

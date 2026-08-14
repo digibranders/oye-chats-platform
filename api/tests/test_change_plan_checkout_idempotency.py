@@ -14,7 +14,9 @@ pin the extended mechanism:
 * a retry under the same key reuses the in-flight mandate (asserted on the
   CREATE CALL COUNT, not just the end state — one mandate, not two);
 * a retry under a different key cancels the superseded mandate at Razorpay
-  before minting its replacement, so the abandoned one can never charge;
+  before minting its replacement, so the abandoned one can never charge —
+  unless that mandate has ALREADY been paid, in which case the replacement is
+  refused rather than minted beside it;
 * the marker is durable (a DB column, not process memory);
 * concurrent callers serialise on the billing advisory lock, so the loser reads
   the winner's committed marker instead of racing past a read-then-write check.
@@ -35,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.api import subscription_routes
 from app.api.auth import get_current_client_strict, require_verified_email
+from app.core.middleware import subscription_activation_conflict_handler
 from app.db.models import Bot, Client, Plan
 from app.services import pending_checkout_service, plan_service
 from app.services import razorpay_service as rzp
@@ -275,6 +278,99 @@ def test_supersede_cancel_failure_refuses_rather_than_minting_a_sibling(db, monk
     assert client.pending_checkout_subscription_id == "sub_cpidem_stuck"
 
 
+def test_a_pending_mandate_that_just_went_active_blocks_the_replacement(db, monkeypatch):
+    """The narrowest remaining window: the customer authorises AND pays the
+    pending mandate between the two requests. Nothing may cancel a charged
+    mandate from a checkout path, so minting the replacement would leave two
+    charged subscriptions for one month — the original defect, one race later.
+    Refuse; once the activation lands, this customer goes through the real
+    upgrade/downgrade branches instead."""
+    api, client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    plan_a = _plan(db, slug="std-cpidem-live-a")
+    plan_b = _plan(db, slug="std-cpidem-live-b", monthly=94900)
+    pending_checkout_service.record(
+        client,
+        subscription_id="sub_cpidem_just_paid",
+        plan_id=plan_a.id,
+        billing_cycle="monthly",
+        country="IN",
+    )
+    db.flush()
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "cancel_superseded_checkout", return_value="active"),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan_b.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["payment_captured"] is True
+    assert not mint.called
+    db.refresh(client)
+    # The marker survives: the activation still has to consume it.
+    assert client.pending_checkout_subscription_id == "sub_cpidem_just_paid"
+
+
+def test_a_terminal_pending_mandate_does_not_block_the_replacement(db, monkeypatch):
+    """``cancelled``/``expired`` at the gateway: nothing to cancel, nothing to
+    fear — mint the replacement."""
+    api, client = _mk(db, monkeypatch)
+    plan_a = _plan(db, slug="std-cpidem-term-a")
+    plan_b = _plan(db, slug="std-cpidem-term-b", monthly=94900)
+    pending_checkout_service.record(
+        client,
+        subscription_id="sub_cpidem_expired",
+        plan_id=plan_a.id,
+        billing_cycle="monthly",
+        country="IN",
+    )
+    db.flush()
+
+    with (
+        patch.object(rzp, "create_subscription", return_value=_mint("sub_cpidem_term_new")) as mint,
+        patch.object(rzp, "cancel_superseded_checkout", return_value="expired"),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan_b.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 200, res.text
+    assert mint.call_count == 1
+    db.refresh(client)
+    assert client.pending_checkout_subscription_id == "sub_cpidem_term_new"
+
+
+def test_same_plan_retry_after_the_mandate_went_active_is_refused(db, monkeypatch):
+    """The nastiest shape, and the one prod hit: the customer re-submits the SAME
+    plan while the first mandate has just been authorised and charged.
+    ``rebuild_upgrade_checkout`` says "not reusable" for a paid mandate exactly
+    as it does for an expired one, so re-minting on that answer alone would
+    charge the month twice. The gateway status is what separates them."""
+    api, client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    plan = _plan(db, slug="std-cpidem-samepaid")
+    pending_checkout_service.record(
+        client,
+        subscription_id="sub_cpidem_samepaid",
+        plan_id=plan.id,
+        billing_cycle="monthly",
+        country="IN",
+    )
+    db.flush()
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "rebuild_upgrade_checkout", return_value=None),
+        patch.object(rzp, "cancel_superseded_checkout", return_value="active"),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["payment_captured"] is True
+    assert not mint.called
+
+
 def test_dead_pending_mandate_is_re_minted(db, monkeypatch):
     api, client = _mk(db, monkeypatch)
     plan = _plan(db, slug="std-cpidem-dead")
@@ -291,14 +387,15 @@ def test_dead_pending_mandate_is_re_minted(db, monkeypatch):
     with (
         patch.object(rzp, "create_subscription", return_value=_mint("sub_cpidem_fresh")) as mint,
         patch.object(rzp, "rebuild_upgrade_checkout", return_value=None),
-        patch.object(rzp, "cancel_superseded_checkout") as cancel,
+        patch.object(rzp, "cancel_superseded_checkout", return_value="expired") as cancel,
     ):
         res = api.post("/subscriptions/change-plan", json={"plan_id": plan.id, "billing_cycle": "monthly"})
 
     assert res.status_code == 200, res.text
     assert mint.call_count == 1
-    # Dead at the gateway means there is nothing left to cancel.
-    assert not cancel.called
+    # "Not reusable" is not the same fact as "dead", and only one of them makes a
+    # fresh mint safe — so the gateway is asked before anything is minted.
+    cancel.assert_called_once_with("sub_cpidem_dead")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_cpidem_fresh"
 

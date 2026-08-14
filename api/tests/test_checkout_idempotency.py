@@ -155,12 +155,16 @@ def test_dead_pending_checkout_is_replaced(db, monkeypatch):
     with (
         patch("app.services.razorpay_service.create_subscription", return_value=_mint_payload("sub_idem_new")) as mint,
         patch("app.services.razorpay_service.rebuild_upgrade_checkout", return_value=None),
+        patch("app.services.razorpay_service.cancel_superseded_checkout", return_value="expired") as cancel,
     ):
         res = api.post("/subscriptions/checkout", json={"plan_id": plan.id, "billing_cycle": "monthly"})
 
     assert res.status_code == 200, res.text
     assert res.json()["subscription_id"] == "sub_idem_new"
     assert mint.call_count == 1
+    # "Not reusable" and "dead" are different facts — only the second makes a
+    # fresh mint safe, so the gateway status is checked before minting.
+    cancel.assert_called_once_with("sub_idem_dead")
     db.refresh(client)
     assert client.pending_checkout_subscription_id == "sub_idem_new"
 

@@ -23,7 +23,10 @@ Two rules, and the difference between them is the whole point:
 * **Different key → supersede.** A genuinely different purchase needs a new
   mandate, but the old one is still authorizable at Razorpay, indefinitely. It
   is cancelled at the gateway in the same operation, before the replacement is
-  minted, so it can never charge.
+  minted, so it can never charge. The one exception is a pending mandate the
+  customer has ALREADY paid: nothing may cancel that from a checkout path, so
+  the new mint is refused instead — minting beside a charged mandate is the
+  original defect, one race later.
 
 Durability and concurrency are deliberately not this module's invention:
 
@@ -129,6 +132,10 @@ def reuse_or_supersede(
     NOT mint: a fetch failure is not evidence the pending mandate is dead, and
     minting a sibling against a live authorizable one is the double-charge this
     module exists to prevent.
+
+    Raises ``razorpay_service.SubscriptionActivationConflict`` (→ a 409 that
+    tells the customer their payment DID arrive) when the pending mandate turns
+    out to be already ACTIVE — paid, but not yet materialised locally.
     """
     from app.services import razorpay_service
 
@@ -151,33 +158,43 @@ def reuse_or_supersede(
                 bot_id,
             )
             return reused
-        # Dead at the gateway (abandoned → cancelled/expired, or already
-        # activated). Nothing to cancel; clear and let the caller re-mint rather
-        # than handing the customer a checkout that can never be paid.
-        logger.info("In-flight checkout %s for client %s is dead; re-minting", pending_id, client.id)
-        clear(client_row)
-        session.flush()
-        return None
+        logger.info("In-flight checkout %s for client %s is no longer reusable for this request", pending_id, client.id)
+    else:
+        logger.info(
+            "Superseding in-flight checkout %s for client %s: requested plan %s (%s, %s, bot %s) "
+            "differs from the pending plan %s (%s, %s, bot %s)",
+            pending_id,
+            client.id,
+            plan.id,
+            billing_cycle,
+            country,
+            bot_id,
+            client_row.pending_checkout_plan_id,
+            client_row.pending_checkout_cycle,
+            client_row.pending_checkout_country,
+            client_row.pending_checkout_bot_id,
+        )
 
-    # Different purchase. The pending mandate cannot serve it AND must not be
-    # left behind authorizable — a customer could authorise the abandoned
-    # checkout weeks later and be billed for a plan they walked away from, or
-    # (as in prod) authorise both within the same minute.
-    logger.info(
-        "Superseding in-flight checkout %s for client %s: requested plan %s (%s, %s, bot %s) "
-        "differs from the pending plan %s (%s, %s, bot %s)",
-        pending_id,
-        client.id,
-        plan.id,
-        billing_cycle,
-        country,
-        bot_id,
-        client_row.pending_checkout_plan_id,
-        client_row.pending_checkout_cycle,
-        client_row.pending_checkout_country,
-        client_row.pending_checkout_bot_id,
-    )
-    razorpay_service.cancel_superseded_checkout(pending_id)
+    # Both roads lead here — the pending mandate cannot serve this request,
+    # either because it describes a different purchase or because it is no
+    # longer authorizable — and both need the SAME question answered before
+    # anything is minted: is it dead, or has the customer already PAID it?
+    # ``rebuild_upgrade_checkout`` answers None to both, which is why the check
+    # cannot live in the branch above.
+    status = razorpay_service.cancel_superseded_checkout(pending_id)
+    if status == "active":
+        # The customer authorised and PAID the pending mandate in the window
+        # between the two requests, and its activation has not landed locally
+        # yet — so none of the "you already have a subscription" guards can see
+        # it. Nothing was cancelled (only the activation sweep may retire a live
+        # mandate), so minting now would leave two CHARGED subscriptions for one
+        # month: the original defect, one race later. Refuse instead; once the
+        # activation lands, /change-plan routes this customer through the real
+        # upgrade/downgrade branches.
+        raise razorpay_service.SubscriptionActivationConflict(
+            razorpay_subscription_id=pending_id,
+            client_id=client.id,
+        )
     clear(client_row)
     session.flush()
     return None
