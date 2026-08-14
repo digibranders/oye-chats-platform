@@ -65,7 +65,6 @@ const FREE_FALLBACK: Entitlements = {
   },
   usage: {},
   is_free: true,
-  is_enterprise: false,
   topup_allowed: false,
 };
 

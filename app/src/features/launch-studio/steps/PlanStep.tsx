@@ -185,12 +185,16 @@ export function PlanStep({ onBack, onContinue, isFirst }: StepProps): ReactEleme
       // A bespoke, per-contract tier is sold by a human — there is no checkout
       // to open. The priced Enterprise tier is NOT one of these and falls
       // through to the confirm modal like any other paid plan.
+      //
+      // A `mailto:` is a hand-off to the OS mail client, not a document to
+      // render, so it is a plain navigation — same as the anchor the billing
+      // confirm modal uses. `window.open` would need a windowFeatures string
+      // (its third argument is NOT a rel list: any non-empty value forces a
+      // popup window) and would leave a blank tab behind.
       if (plan.isContactSales) {
-        window.open(
-          `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(`${plan.name} plan inquiry`)}`,
-          '_blank',
-          'noopener,noreferrer',
-        );
+        window.location.href = `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(
+          `${plan.name} plan inquiry`,
+        )}`;
         return;
       }
       // Paid / trial → confirm modal.

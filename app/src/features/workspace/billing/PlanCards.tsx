@@ -141,7 +141,7 @@ export function PlanCards({
 
         // CTA hierarchy: a trialing current plan gets a live primary "activate"
         // CTA; a paid current plan is a disabled ghost; recommended = filled
-        // primary; other upgrade = outline; downgrade = quiet ghost. An
+        // primary; other upgrade = outline; downgrade = quiet ghost. A
         // bespoke contact-sales tier always routes to sales rather than
         // checkout - the priced Enterprise tier is not one, and checks out
         // like any other plan.
