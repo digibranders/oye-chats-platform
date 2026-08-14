@@ -15,6 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import config as app_config
@@ -645,6 +646,21 @@ def verify_razorpay_subscription(
                     client.id,
                     payload.razorpay_subscription_id,
                 )
+            except IntegrityError as exc:
+                # "One active subscription per scope" is a constraint this
+                # endpoint can PREDICT — a second in-flight mandate collides with
+                # the first active row — and a predictable constraint must not
+                # reach a paying customer as a raw 500 mid-checkout. Any OTHER
+                # integrity failure is a real bug and is re-raised untouched.
+                session.rollback()
+                constraint = razorpay_service.active_subscription_conflict(exc)
+                if constraint is None:
+                    raise
+                raise razorpay_service.SubscriptionActivationConflict(
+                    razorpay_subscription_id=payload.razorpay_subscription_id,
+                    client_id=client.id,
+                    constraint=constraint,
+                ) from exc
             # Re-read with the client-id scope so we never expose somebody
             # else's row even if the notes were misconfigured server-side.
             sub = (

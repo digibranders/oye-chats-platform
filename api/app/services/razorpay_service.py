@@ -153,6 +153,80 @@ class PlanNotCheckoutable(Exception):
         super().__init__(f"{plan_name} is not available for self-serve checkout. Please contact sales.")
 
 
+class SubscriptionActivationConflict(Exception):
+    """A verified payment could not be materialised: the client already holds an
+    active subscription in the scope this one wants.
+
+    The partial unique indexes ``ix_subscriptions_client_legacy_active`` and
+    ``ix_subscriptions_client_bot_active`` allow exactly one active subscription
+    per (client) / (client, bot). ``_handle_subscription_activated`` normally
+    retires the sibling first, but two mandates authorising at once could both
+    pass that sweep before either committed — and the loser's ``IntegrityError``
+    reached the customer as a raw 500 in the middle of checkout, right after
+    their money had moved (prod client 18).
+
+    Serialising activation on the per-client billing lock closes that race, but
+    the constraint is still one the endpoint can PREDICT, and a predictable
+    constraint must never surface as a 500. So it is caught and re-raised as
+    this, following :class:`PlanNotCheckoutable`: deliberately not a
+    ``RazorpayBillingError`` (those are gateway faults and 502; this is a local
+    state conflict), ``str(exc)`` is the customer-facing sentence, and the
+    operator detail lives in ``ops_detail`` — logged, never returned.
+
+    The message leads with the fact that matters to the payer: the money DID
+    arrive. Only the local switch-over is unfinished, and the handler marks the
+    response ``payment_captured`` so the frontend says "we're finishing up"
+    rather than "payment failed".
+    """
+
+    def __init__(self, *, razorpay_subscription_id: str, client_id: int | None, constraint: str) -> None:
+        self.razorpay_subscription_id = razorpay_subscription_id
+        self.client_id = client_id
+        self.constraint = constraint
+        self.reason = "subscription_activation_conflict"
+        self.ops_detail = (
+            f"Razorpay subscription {razorpay_subscription_id} could not be materialised for client "
+            f"{client_id}: it collided with {constraint}, so another ACTIVE subscription already holds "
+            "that scope. The customer has paid. Check whether two mandates were minted for this client "
+            "(scripts/audit_duplicate_gateway_subscriptions.py), cancel and refund the surplus one, and "
+            "let the webhook redeliver — the reconcile idempotency key was not burned."
+        )
+        super().__init__(
+            "Your payment went through. We're still finishing the switch to your new plan — "
+            "refresh in a minute, and contact support if it hasn't appeared."
+        )
+
+
+# The partial unique indexes that enforce "one active subscription per scope".
+# A violation of either is a predictable conflict, not an unexpected fault.
+_ACTIVE_SUBSCRIPTION_CONSTRAINTS = (
+    "ix_subscriptions_client_legacy_active",
+    "ix_subscriptions_client_bot_active",
+)
+
+
+def active_subscription_conflict(exc: Exception) -> str | None:
+    """Name the active-subscription index this ``IntegrityError`` hit, if any.
+
+    Returns ``None`` for every other integrity failure so callers re-raise them
+    untouched: converting a unique-payment-id or FK violation into a friendly
+    "we're finishing up" message would hide a real bug behind reassurance.
+
+    Reads psycopg's structured ``diag.constraint_name`` first and only falls
+    back to substring-matching the message — the same "ask for the structured
+    fact, don't parse prose" rule as ``_gateway_sub_is_terminal`` (F8).
+    """
+    orig = getattr(exc, "orig", None)
+    name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if name in _ACTIVE_SUBSCRIPTION_CONSTRAINTS:
+        return str(name)
+    message = str(orig if orig is not None else exc)
+    for candidate in _ACTIVE_SUBSCRIPTION_CONSTRAINTS:
+        if candidate in message:
+            return candidate
+    return None
+
+
 class RazorpayBillingError(Exception):
     """Base class for Razorpay-specific billing errors."""
 
@@ -2407,10 +2481,25 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any], *,
     if not razorpay_sub_id:
         return "subscription id missing"
 
-    local = _resolve_local_subscription(session, razorpay_sub_id)
     notes = sub_entity.get("notes") or {}
     client_id = _client_id_from_notes(notes)
     plan_id = _plan_id_from_notes(notes)
+
+    # Serialise this client's activations BEFORE reading any of the state the
+    # decisions below depend on. Two mandates authorising at once (the webhook
+    # for one, the verify-reconcile for the other) each ran the sibling sweep
+    # against a snapshot that did not yet contain the other's row, both inserted,
+    # and the loser hit ``ix_subscriptions_client_legacy_active`` — surfacing to
+    # a paying customer as a raw 500 mid-checkout. Taking the same
+    # transaction-scoped advisory lock the money ROUTES take makes the second
+    # activation wait, see the committed row, and retire it through the sweep.
+    # No-op on non-Postgres binds (mocked unit-test sessions).
+    if client_id is not None:
+        from app.services.plan_service import lock_client_for_billing
+
+        lock_client_for_billing(session, client_id)
+
+    local = _resolve_local_subscription(session, razorpay_sub_id)
 
     current_period_start = (
         datetime.fromtimestamp(sub_entity["current_start"], tz=UTC) if sub_entity.get("current_start") else None

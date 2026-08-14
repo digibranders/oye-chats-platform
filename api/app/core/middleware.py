@@ -124,6 +124,36 @@ async def plan_not_checkoutable_handler(request: Request, exc):
     )
 
 
+async def subscription_activation_conflict_handler(request: Request, exc):
+    """Map ``SubscriptionActivationConflict`` to a structured 409 instead of the
+    raw 500 the underlying ``IntegrityError`` used to produce mid-checkout.
+
+    The customer has PAID by the time this fires — only the local switch-over
+    could not complete — so the response says so explicitly (``payment_captured``)
+    and the message never mentions the constraint. The operator instruction lives
+    in ``exc.ops_detail`` and is logged here, at ERROR: unlike the two policy
+    refusals above this is not "working as designed", it means a client holds two
+    subscriptions in one scope and somebody has to decide which one to refund.
+    """
+    logger.error(
+        "Subscription activation conflict on %s %s: %s",
+        request.method,
+        request.url.path,
+        getattr(exc, "ops_detail", exc),
+    )
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": {
+                "reason": getattr(exc, "reason", "subscription_activation_conflict"),
+                "message": str(exc),
+                "payment_captured": True,
+                "support": "developer@oyechats.com",
+            }
+        },
+    )
+
+
 async def generic_exception_handler(request: Request, exc: Exception):
     """Catch-all handler for unhandled exceptions. Tags Sentry events with request context."""
     logger.error(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}", exc_info=True)
