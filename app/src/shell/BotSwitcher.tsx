@@ -89,7 +89,7 @@ export function BotSwitcher() {
   // an empty control.
   if (bots.length < 2 || !activeBot) return null;
 
-  const label = activeBot.name || 'Agent';
+  const label = activeBot.name || 'Chatbot';
 
   return (
     <Popover
@@ -104,7 +104,7 @@ export function BotSwitcher() {
           aria-haspopup={triggerProps['aria-haspopup']}
           aria-expanded={triggerProps['aria-expanded']}
           aria-controls={triggerProps['aria-controls']}
-          aria-label={`Current agent: ${label}. Switch agent`}
+          aria-label={`Current chatbot: ${label}. Switch chatbot`}
           className="flex h-9 max-w-[42vw] items-center gap-2 rounded-lg border border-[var(--ds-border)] bg-[var(--ds-bg-surface)] px-2.5 text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-bg-hover)] md:max-w-[200px]"
         >
           <BotAvatar
@@ -159,7 +159,7 @@ function AgentPickerPanel({
   return (
     <div>
       <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ds-text-subtle)]">
-        Switch agent
+        Switch chatbot
       </p>
 
       {showFilter && (
@@ -176,8 +176,8 @@ function AgentPickerPanel({
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            aria-label="Filter agents"
-            placeholder="Filter agents"
+            aria-label="Filter chatbots"
+            placeholder="Filter chatbots"
             autoComplete="off"
             className="h-9 pl-8 text-[13px]"
           />
@@ -187,7 +187,7 @@ function AgentPickerPanel({
       <div className="max-h-80 overflow-y-auto p-1">
         {visibleBots.length === 0 ? (
           <p role="status" className="px-3 py-6 text-center text-[13px] text-[var(--ds-text-muted)]">
-            No agents match &ldquo;{query.trim()}&rdquo;
+            No chatbots match &ldquo;{query.trim()}&rdquo;
           </p>
         ) : (
           visibleBots.map((bot) => (
@@ -197,7 +197,7 @@ function AgentPickerPanel({
               avatarType={bot.avatar_type}
               orbColor={bot.orb_color}
               primaryColor={bot.primary_color}
-              label={bot.name || `Agent #${bot.id}`}
+              label={bot.name || `Chatbot #${bot.id}`}
               sublabel={bot.bot_key ?? undefined}
               active={activeBotId === bot.id}
               onSelect={() => onSelect(bot)}

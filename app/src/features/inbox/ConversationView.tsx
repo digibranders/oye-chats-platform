@@ -53,7 +53,7 @@ function slugify(value: string): string {
 /** Build the plain-text transcript body for a conversation. */
 function buildTranscript(chat: ActiveChat, messages: OperatorMessage[]): string {
   const lines: string[] = [`Conversation with ${chat.visitor_name}`];
-  if (chat.bot_name) lines.push(`Agent: ${chat.bot_name}`);
+  if (chat.bot_name) lines.push(`Chatbot: ${chat.bot_name}`);
   lines.push('');
   for (const message of messages) {
     const role = TRANSCRIPT_ROLE_LABELS[message.role];

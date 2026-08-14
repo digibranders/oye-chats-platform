@@ -229,7 +229,7 @@ export function PersonalitySection({
         />
         <TextAreaField
           label="Custom instructions"
-          hint="Layered on top of your knowledge base to guide the agent's behaviour."
+          hint="Layered on top of your knowledge base to guide the chatbot's behaviour."
           value={draft.systemPrompt}
           maxLength={FIELD_LIMITS.systemPrompt}
           rows={6}
@@ -241,7 +241,7 @@ export function PersonalitySection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title="Brand voice"
-          description="Describe the tone your agent should match. Visitors feel this in every message."
+          description="Describe the tone your chatbot should match. Visitors feel this in every message."
           actions={
             <Button
               variant="outline"
@@ -347,7 +347,7 @@ export function PersonalitySection({
             </p>
           )}
           <p className="text-[11px] text-[var(--ds-text-subtle)]">
-            Streams a real answer using your agent&apos;s saved settings - save your voice changes
+            Streams a real answer using your chatbot&apos;s saved settings - save your voice changes
             first to hear them here.
           </p>
         </div>
@@ -356,7 +356,7 @@ export function PersonalitySection({
       <section className="space-y-4 border-t border-[var(--ds-border)] pt-6">
         <SectionHeader
           title="Company details"
-          description="Context the agent uses to describe your business accurately."
+          description="Context the chatbot uses to describe your business accurately."
         />
         <div className="space-y-1.5">
           <label htmlFor={companyId} className="block text-[13px] font-medium text-[var(--ds-text)]">

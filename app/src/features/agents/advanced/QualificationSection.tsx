@@ -59,7 +59,7 @@ export function QualificationSection({
               Lead qualification
             </span>
           }
-          description="The method your agent uses to score visitors as leads while it chats with them."
+          description="The method your chatbot uses to score visitors as leads while it chats with them."
         />
         {bantUnlocked && (
           <div className="flex shrink-0 items-center gap-2 pt-0.5">

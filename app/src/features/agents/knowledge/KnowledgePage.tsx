@@ -554,8 +554,8 @@ export function KnowledgePage(): ReactElement {
       ) : agentId == null ? (
         <EmptyState
           icon={BookOpen}
-          title="Agent not found"
-          description="We couldn't find this agent. Pick an agent from the list and try again."
+          title="Chatbot not found"
+          description="We couldn't find this chatbot. Pick a chatbot from the list and try again."
         />
       ) : (
         <div className="space-y-6">
@@ -594,12 +594,12 @@ export function KnowledgePage(): ReactElement {
                 {/* The `documents` limit is workspace-scoped, so this count spans
                     every agent - not just the rows visible on this agent's page. */}
                 <p className="text-[11px] text-[var(--ds-text-subtle)]">
-                  Across all agents in your workspace
+                  Across all chatbots in your workspace
                 </p>
               </div>
               <div className="space-y-1">
                 <QuotaMeter label="Website pages" used={pagesUsed} limit={pagesLimit} />
-                <p className="text-[11px] text-[var(--ds-text-subtle)]">This agent</p>
+                <p className="text-[11px] text-[var(--ds-text-subtle)]">This chatbot</p>
               </div>
             </div>
           </section>
@@ -640,7 +640,7 @@ export function KnowledgePage(): ReactElement {
 
           <AddKnowledgePanel
             agentId={agentId}
-            agentName={agent?.name ?? 'your agent'}
+            agentName={agent?.name ?? 'your chatbot'}
             existingSources={sources ?? []}
             onChanged={refresh}
             isEmpty={stats.total === 0}

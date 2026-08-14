@@ -70,7 +70,7 @@ function AgentReportTable({
         <thead>
           <tr className="border-b border-[var(--ds-border)]">
             <th scope="col" className={cn(HEAD_CELL, 'text-left')}>
-              Agent
+              Chatbot
             </th>
             <th scope="col" className={cn(HEAD_CELL, 'text-right')}>
               Conversations
@@ -104,7 +104,7 @@ function AgentReportTable({
         <tfoot>
           <tr className="border-t border-[var(--ds-border)] bg-[var(--ds-bg-subtle)]">
             <th scope="row" className="px-4 py-3 text-left font-semibold text-[var(--ds-text)]">
-              All agents
+              All chatbots
             </th>
             <td className={cn(NUMERIC_CELL, 'font-semibold')}>
               {metric(report.totals.conversations)}

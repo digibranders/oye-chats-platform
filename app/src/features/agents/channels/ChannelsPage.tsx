@@ -92,8 +92,8 @@ export function ChannelsPage(): ReactElement {
       return (
         <EmptyState
           icon={PlugZap}
-          title="No agent selected"
-          description="Open an agent to see where it's connected."
+          title="No chatbot selected"
+          description="Open a chatbot to see where it's connected."
         />
       );
     }
@@ -126,7 +126,7 @@ export function ChannelsPage(): ReactElement {
           <InsightCard
             tone="warning"
             icon={PlugZap}
-            title="Your agent isn’t live yet"
+            title="Your chatbot isn’t live yet"
             body="Add the snippet below to your website so visitors can start chatting. It takes about a minute."
           />
         )}
@@ -135,7 +135,7 @@ export function ChannelsPage(): ReactElement {
         <section aria-label="Live channels" className="space-y-4">
           <SectionHeader
             title="Live channels"
-            description="Places your agent can answer people today."
+            description="Places your chatbot can answer people today."
           />
 
           {/* Website - the primary channel, with the full install flow */}
@@ -195,7 +195,7 @@ export function ChannelsPage(): ReactElement {
               </>
             ) : (
               <p className="text-[13px] text-[var(--ds-text-muted)]">
-                This agent doesn’t have an embed key yet. Finish creating the agent to get one.
+                This chatbot doesn’t have an embed key yet. Finish creating the chatbot to get one.
               </p>
             )}
           </ChannelCard>

@@ -147,7 +147,7 @@ export function CancelSubscriptionModal({
         <ul className="space-y-2 text-[13px] text-[var(--ds-text-muted)]">
           {[
             `Full access to ${planName} continues until ${endLabel}.`,
-            'After that, your agents stop replying and go offline.',
+            'After that, your chatbots stop replying and go offline.',
             topupNote,
             `Changed your mind? Reactivate anytime before ${endLabel} - it's instant, and there's nothing to pay.`,
           ].map((item) => (

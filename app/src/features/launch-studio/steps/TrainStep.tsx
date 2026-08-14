@@ -393,7 +393,7 @@ export function TrainStep(props: StepProps) {
     return (
       <StepShell
         title="Teaching your AI"
-        description="We're reading your content and turning it into knowledge your agent can use."
+        description="We're reading your content and turning it into knowledge your chatbot can use."
         onBack={props.onBack}
         onContinue={props.onContinue}
         isFirst={props.isFirst}
@@ -462,7 +462,7 @@ export function TrainStep(props: StepProps) {
     return (
       <StepShell
         title="What your AI learned"
-        description="A quick look at your agent's knowledge before you test it."
+        description="A quick look at your chatbot's knowledge before you test it."
         onBack={props.onBack}
         onContinue={props.onContinue}
         isFirst={props.isFirst}

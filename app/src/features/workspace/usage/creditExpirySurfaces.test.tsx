@@ -61,7 +61,7 @@ describe('AgentCreditHero top-up expiry claim', () => {
     const { container } = render(
       <AgentCreditHero
         pool={pool({ topupRemaining: 500, soonestExpiry: '2026-11-30T00:00:00Z' })}
-        agentName="All agents"
+        agentName="All chatbots"
         onTopup={vi.fn()}
       />,
     );
@@ -74,7 +74,7 @@ describe('AgentCreditHero top-up expiry claim', () => {
     const { container } = render(
       <AgentCreditHero
         pool={pool({ topupRemaining: 500, soonestExpiry: null })}
-        agentName="All agents"
+        agentName="All chatbots"
         onTopup={vi.fn()}
       />,
     );
@@ -86,7 +86,7 @@ describe('AgentCreditHero top-up expiry claim', () => {
        unbacked guarantee is the defect; inventing the opposite would be the
        same mistake mirrored. */
     const { container } = render(
-      <AgentCreditHero pool={pool()} agentName="All agents" onTopup={vi.fn()} />,
+      <AgentCreditHero pool={pool()} agentName="All chatbots" onTopup={vi.fn()} />,
     );
     expect(container.textContent).not.toMatch(/never expire|roll over|expire/i);
   });
@@ -95,7 +95,7 @@ describe('AgentCreditHero top-up expiry claim', () => {
     const { container } = render(
       <AgentCreditHero
         pool={pool({ resetsAt: '2026-09-01T00:00:00Z', topupRemaining: 500 })}
-        agentName="All agents"
+        agentName="All chatbots"
         onTopup={vi.fn()}
       />,
     );

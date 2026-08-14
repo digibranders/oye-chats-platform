@@ -72,7 +72,7 @@ function submitNameStep(): void {
       />
     </MemoryRouter>,
   );
-  fireEvent.change(screen.getByLabelText(/agent name/i), { target: { value: 'Second Assistant' } });
+  fireEvent.change(screen.getByLabelText(/chatbot name/i), { target: { value: 'Second Assistant' } });
   fireEvent.click(screen.getByRole('button', { name: /continue to plans/i }));
 }
 

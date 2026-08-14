@@ -51,7 +51,7 @@ function bulletsFor(planName: string): string[] {
 describe('PlanCards — agent entitlement bullet', () => {
   it('leads the unlimited tier with its unlimited-agents entitlement', () => {
     renderCards([CAPPED, UNLIMITED]);
-    expect(bulletsFor('Enterprise')[0]).toBe('Unlimited AI agents');
+    expect(bulletsFor('Enterprise')[0]).toBe('Unlimited AI chatbots');
   });
 
   it('spends no bullet on the single included agent of a capped tier', () => {
@@ -75,7 +75,7 @@ describe('PlanCards — agent entitlement bullet', () => {
   it('adds the entitlement above the budget without displacing a graded bullet', () => {
     renderCards([CAPPED, UNLIMITED]);
     expect(bulletsFor('Enterprise')).toEqual([
-      'Unlimited AI agents',
+      'Unlimited AI chatbots',
       '10,000 credits / month',
       'Unlimited operator seats',
       'Live chat & handoff',

@@ -301,11 +301,11 @@ export function AdvancedPage(): ReactElement {
         <PageContainer title="Advanced">
           <EmptyState
             icon={SlidersHorizontal}
-            title={agentError ? 'Couldn’t load this agent' : 'Agent not found'}
+            title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
             description={
               agentError
-                ? 'We couldn’t load this agent’s settings. Please try again.'
-                : 'Pick an agent to configure its technical behaviour.'
+                ? 'We couldn’t load this chatbot’s settings. Please try again.'
+                : 'Pick a chatbot to configure its technical behaviour.'
             }
           />
         </PageContainer>
@@ -442,7 +442,7 @@ export function AdvancedPage(): ReactElement {
                 Discard unsaved changes?
               </h2>
               <p className="mt-1 text-[13px] leading-relaxed text-[var(--ds-text-muted)]">
-                You have unsaved changes to this agent’s advanced settings. If you leave now, they’ll
+                You have unsaved changes to this chatbot’s advanced settings. If you leave now, they’ll
                 be discarded.
               </p>
             </div>

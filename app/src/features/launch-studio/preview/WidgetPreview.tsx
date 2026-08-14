@@ -16,7 +16,7 @@ export function WidgetPreview() {
   const { hasFeature } = useEntitlements();
 
   const settings: WidgetPreviewSettings = {
-    bot_name: selectedBot?.name || 'Your agent',
+    bot_name: selectedBot?.name || 'Your chatbot',
     bot_logo: preview.botLogo,
     avatar_type: preview.avatarType,
     orb_color: preview.orbColor,

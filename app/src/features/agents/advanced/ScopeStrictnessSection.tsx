@@ -59,7 +59,7 @@ export function ScopeStrictnessSection({
             Answering scope
           </span>
         }
-        description="How strictly your agent stays within what it has learned. Loosen it if real questions get turned away; tighten it to keep answers locked to your content."
+        description="How strictly your chatbot stays within what it has learned. Loosen it if real questions get turned away; tighten it to keep answers locked to your content."
       />
 
       <div

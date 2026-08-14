@@ -1651,7 +1651,7 @@ export const previewChatStream = async (botId, question, sessionId, { onChunk, o
             body: JSON.stringify({ question, session_id: sessionId }),
             signal: controller.signal,
         });
-        if (!res.ok || !res.body) throw new Error('The agent could not answer that just now.');
+        if (!res.ok || !res.body) throw new Error('The chatbot could not answer that just now.');
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();

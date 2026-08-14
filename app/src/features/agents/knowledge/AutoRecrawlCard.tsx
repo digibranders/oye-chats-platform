@@ -199,7 +199,7 @@ export function AutoRecrawlCard({ botId, reloadToken = 0, onUpgrade }: AutoRecra
             <div className="text-[13px] text-[var(--ds-text)]">
               <p className="font-medium">Turn off auto-retrain?</p>
               <p className="mt-0.5 text-[var(--ds-text-muted)]">
-                Your agent stops refreshing crawled pages automatically. Turning it back on later
+                Your chatbot stops refreshing crawled pages automatically. Turning it back on later
                 starts a fresh 7-day countdown.
               </p>
             </div>

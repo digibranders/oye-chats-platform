@@ -60,7 +60,7 @@ function highlights(plan: PlanView): string[] {
   if (plan.features.bant) budget.push('BANT lead qualification');
   if (plan.features.branding_removable) budget.push('Remove OyeChats branding');
   const graded = budget.slice(0, 4);
-  return planGrantsUnlimitedAgents(plan) ? ['Unlimited AI agents', ...graded] : graded;
+  return planGrantsUnlimitedAgents(plan) ? ['Unlimited AI chatbots', ...graded] : graded;
 }
 
 /**

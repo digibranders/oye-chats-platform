@@ -72,7 +72,7 @@ const FEATURE_ROWS: readonly FeatureRow[] = [
     // Launch Studio mints. Both qualifiers sit in the LABEL so the cells stay
     // bare values, like every other row - the matrix has no footnote mechanism
     // and one row does not justify inventing one.
-    label: 'AI agents included (add more anytime)',
+    label: 'AI chatbots included (add more anytime)',
     kind: 'text',
     // Same `limitText` the crawl-pages row uses, so the `-1` UNLIMITED sentinel
     // renders as "Unlimited" rather than as a count of minus one, and a plan

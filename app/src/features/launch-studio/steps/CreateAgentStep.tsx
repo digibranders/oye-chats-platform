@@ -51,7 +51,7 @@ export function CreateAgentStep(props: StepProps) {
         openUpgradeModal('add_bot', { current: bots.length, planName });
       } else {
         setError(
-          err instanceof Error ? err.message : 'Could not save your agent. Please try again.',
+          err instanceof Error ? err.message : 'Could not save your chatbot. Please try again.',
         );
       }
     } finally {
@@ -61,7 +61,7 @@ export function CreateAgentStep(props: StepProps) {
 
   return (
     <StepShell
-      title="Create your agent"
+      title="Create your chatbot"
       description="Give your AI chatbot a name. You can change it anytime."
       onBack={props.onBack}
       onContinue={handleContinue}
@@ -73,7 +73,7 @@ export function CreateAgentStep(props: StepProps) {
       <div className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]">
-            Agent name
+            Chatbot name
           </span>
           <div className="relative">
             <Bot

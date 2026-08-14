@@ -67,7 +67,7 @@ export function resolveAgentCreationGate(agentCount: number, agentLimit: number)
 }
 
 /** The half of the notice that never varies - what the user is being told to expect. */
-const PER_AGENT_BILLING = 'Each additional agent runs on its own plan, with its own credits and knowledge base.';
+const PER_AGENT_BILLING = 'Each additional chatbot runs on its own plan, with its own credits and knowledge base.';
 
 /**
  * One sentence explaining why the next agent is a paid one, for the notice
@@ -82,6 +82,6 @@ export function describeAgentLimit(gate: AgentCreationGate, planName: string): s
   if (gate.kind !== 'requires_plan') return null;
   if (gate.agentLimit < 1) return PER_AGENT_BILLING;
   const plan = planName.trim() || 'Your plan';
-  const quota = gate.agentLimit === 1 ? '1 agent' : `${gate.agentLimit} agents`;
+  const quota = gate.agentLimit === 1 ? '1 chatbot' : `${gate.agentLimit} chatbots`;
   return `${plan} includes ${quota} and you already have ${gate.agentCount}. ${PER_AGENT_BILLING}`;
 }

@@ -130,14 +130,14 @@ function AgentShell(): ReactElement {
             </div>
           ) : (
             <h1 className="text-[15px] font-semibold tracking-tight text-[var(--ds-text)]">
-              {error ? 'Couldn’t load this agent' : 'Agent not found'}
+              {error ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
             </h1>
           )}
         </div>
 
         {/* Tab row - real nav semantics so screen readers announce the section
             list; NavLink stamps aria-current="page" on the active tab. */}
-        <nav aria-label="Agent sections" className="mt-5 -mb-px overflow-x-auto">
+        <nav aria-label="Chatbot sections" className="mt-5 -mb-px overflow-x-auto">
           <ul className="flex min-w-max items-center gap-1">
             {AGENT_TABS.map((tab) => {
               const locked =

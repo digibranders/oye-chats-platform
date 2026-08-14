@@ -310,11 +310,11 @@ export function CreateAgentDialog({
             </span>
             <div className="min-w-0">
               <h2 id={titleId} className="text-base font-semibold text-[var(--ds-text)]">
-                {step === 'name' ? 'Create a new agent' : `Choose a plan for ${trimmedName || 'your agent'}`}
+                {step === 'name' ? 'Create a new chatbot' : `Choose a plan for ${trimmedName || 'your chatbot'}`}
               </h2>
               <p className="text-[13px] text-[var(--ds-text-muted)]">
                 {step === 'plan'
-                  ? 'Each agent runs on its own plan. Pick one to activate it.'
+                  ? 'Each chatbot runs on its own plan. Pick one to activate it.'
                   : limitNotice
                     ? 'Name it, then choose the plan it runs on.'
                     : 'Give it a name - you can train and customize it next.'}
@@ -358,7 +358,7 @@ export function CreateAgentDialog({
                   htmlFor="create-agent-name"
                   className="mb-1.5 block text-[13px] font-medium text-[var(--ds-text)]"
                 >
-                  Agent name
+                  Chatbot name
                 </label>
                 <Input
                   id="create-agent-name"
@@ -386,7 +386,7 @@ export function CreateAgentDialog({
                   onChange={(event) => setWebsite(event.target.value)}
                 />
                 <p className="mt-1.5 text-[12px] text-[var(--ds-text-subtle)]">
-                  We&rsquo;ll use this to help train your agent later.
+                  We&rsquo;ll use this to help train your chatbot later.
                 </p>
               </div>
 
@@ -513,7 +513,7 @@ export function CreateAgentDialog({
                       Starting checkout&hellip;
                     </>
                   ) : (
-                    'Subscribe & create agent'
+                    'Subscribe & create chatbot'
                   )}
                 </Button>
               </div>

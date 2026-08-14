@@ -1045,8 +1045,8 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
     return (
       <EmptyState
         icon={Compass}
-        title="Pick an agent to see its flow"
-        description="Journey flows are always per-agent. Use the agent switcher above to focus this view."
+        title="Pick a chatbot to see its flow"
+        description="Journey flows are always per-chatbot. Use the chatbot switcher above to focus this view."
       />
     );
   }
@@ -1076,7 +1076,7 @@ export function UserJourneyFlow({ botId }: UserJourneyFlowProps): ReactElement {
       <EmptyState
         icon={UserCheck}
         title="No chat sessions yet in this window"
-        description="Once visitors start chatting with your agent, their journey through your pages will render here."
+        description="Once visitors start chatting with your chatbot, their journey through your pages will render here."
       />
     );
   }

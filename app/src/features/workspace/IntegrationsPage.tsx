@@ -1479,8 +1479,8 @@ export function IntegrationsPage(): ReactElement {
         ) : (
           <EmptyState
             icon={WebhookIcon}
-            title="Pick an agent to see its connections"
-            description="Integrations are configured per agent. Choose one from the switcher to view and manage what’s connected."
+            title="Pick a chatbot to see its connections"
+            description="Integrations are configured per chatbot. Choose one from the switcher to view and manage what’s connected."
           />
         )}
       </PageContainer>
@@ -1626,7 +1626,7 @@ export function IntegrationsPage(): ReactElement {
       <section aria-label="More channels" className="mt-8 space-y-4">
         <SectionHeader
           title="More channels"
-          description="We’re bringing your agent to more places soon."
+          description="We’re bringing your chatbot to more places soon."
         />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {COMING_SOON_CHANNELS.map((channel) => (

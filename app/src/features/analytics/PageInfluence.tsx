@@ -153,8 +153,8 @@ export function PageInfluence({ botId }: PageInfluenceProps): ReactElement {
     return (
       <EmptyState
         icon={Compass}
-        title="Pick an agent to see which pages drive chats"
-        description="Page Influence is scoped per agent. Use the agent switcher above to focus this view."
+        title="Pick a chatbot to see which pages drive chats"
+        description="Page Influence is scoped per chatbot. Use the chatbot switcher above to focus this view."
       />
     );
   }

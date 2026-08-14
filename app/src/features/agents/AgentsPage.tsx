@@ -132,8 +132,8 @@ export function AgentsPage(): ReactElement {
 
   return (
     <PageContainer
-      title="Your agents"
-      description="Select an agent to view its health, knowledge and settings."
+      title="Your chatbots"
+      description="Select a chatbot to view its health, knowledge and settings."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           {/* Launch Studio saves progress but had no door back in once the user
@@ -148,7 +148,7 @@ export function AgentsPage(): ReactElement {
           )}
           <Button onClick={handleAddAgent}>
             <Plus size={16} aria-hidden="true" />
-            New agent
+            New chatbot
           </Button>
         </div>
       }
@@ -163,10 +163,10 @@ export function AgentsPage(): ReactElement {
           </span>
           <div>
             <h2 className="text-[15px] font-semibold text-[var(--ds-text)]">
-              We couldn&rsquo;t load your agents
+              We couldn&rsquo;t load your chatbots
             </h2>
             <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-[var(--ds-text-muted)]">
-              {error.message || 'Something went wrong while loading your agents.'}
+              {error.message || 'Something went wrong while loading your chatbots.'}
             </p>
           </div>
           <Button variant="outline" onClick={() => void refreshBots()}>
@@ -184,7 +184,7 @@ export function AgentsPage(): ReactElement {
           action={
             <Button onClick={handleAddAgent}>
               <Plus size={16} aria-hidden="true" />
-              New agent
+              New chatbot
             </Button>
           }
         />

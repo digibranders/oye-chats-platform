@@ -95,7 +95,7 @@ export default function StudioResumeCard() {
           <Sparkles size={18} />
         </span>
         <div>
-          <p className="text-sm font-semibold text-[var(--text)]">Finish setting up your agent</p>
+          <p className="text-sm font-semibold text-[var(--text)]">Finish setting up your chatbot</p>
           <p className="text-sm text-[var(--text-muted)]">
             Pick up the guided setup where you left off - train it, test it, and put it live.
           </p>

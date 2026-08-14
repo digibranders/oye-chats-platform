@@ -28,21 +28,21 @@ export const COMING_SOON_CHANNELS: readonly ComingSoonChannel[] = [
   {
     id: 'whatsapp',
     name: 'WhatsApp',
-    description: 'Answer customers on WhatsApp with the same trained agent.',
+    description: 'Answer customers on WhatsApp with the same trained chatbot.',
     icon: WhatsAppGlyph,
     brand: true,
   },
   {
     id: 'messenger',
     name: 'Messenger',
-    description: 'Connect your Facebook Page inbox to your agent.',
+    description: 'Connect your Facebook Page inbox to your chatbot.',
     icon: MessengerGlyph,
     brand: true,
   },
   {
     id: 'api',
     name: 'Conversation API',
-    description: 'Send messages to your agent from your own app or backend.',
+    description: 'Send messages to your chatbot from your own app or backend.',
     icon: Code2,
   },
 ];

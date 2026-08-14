@@ -59,7 +59,7 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
   if (!hasAnything) {
     return {
       title: 'No conversations yet',
-      body: 'Once your agent is deployed and visitors start chatting, performance insights will appear here automatically.',
+      body: 'Once your chatbot is deployed and visitors start chatting, performance insights will appear here automatically.',
       tone: 'info',
       icon: Rocket,
     };
@@ -68,7 +68,7 @@ function computeInsight(data: AgentAnalytics, totalMessages: number): Insight {
   if (ratings.total > 0 && ratings.avg !== null) {
     const strong = ratings.avg >= 4;
     return {
-      title: `Visitors rate this agent ${ratings.avg} out of 5`,
+      title: `Visitors rate this chatbot ${ratings.avg} out of 5`,
       body: strong
         ? `Across ${ratings.total.toLocaleString()} rated chat${ratings.total === 1 ? '' : 's'}, satisfaction is strong. Keep your knowledge fresh to hold the score.`
         : `Across ${ratings.total.toLocaleString()} rated chat${ratings.total === 1 ? '' : 's'}, there's room to improve. Review low-rated chats and fill knowledge gaps.`,
@@ -164,11 +164,11 @@ export function AgentAnalyticsPage(): ReactElement {
       <PageContainer title="Analytics">
         <EmptyState
           icon={AlertTriangle}
-          title={agentError ? 'Couldn’t load this agent' : 'Agent not found'}
+          title={agentError ? 'Couldn’t load this chatbot' : 'Chatbot not found'}
           description={
             agentError
-              ? 'Something went wrong loading this agent. Please try again.'
-              : 'This agent may have been deleted or you don’t have access to it.'
+              ? 'Something went wrong loading this chatbot. Please try again.'
+              : 'This chatbot may have been deleted or you don’t have access to it.'
           }
         />
       </PageContainer>

@@ -88,7 +88,7 @@ function deriveInsight(
     return {
       tone: 'accent',
       title: `${leads.sql.toLocaleString()} ready-to-buy ${leads.sql === 1 ? 'lead' : 'leads'} captured`,
-      body: 'Your agents are turning conversations into qualified pipeline. Review them in Leads to follow up.',
+      body: 'Your chatbots are turning conversations into qualified pipeline. Review them in Leads to follow up.',
     };
   }
 
@@ -270,7 +270,7 @@ export function AnalyticsPage(): ReactElement {
                 <CardHeader>
                   <SectionHeader
                     title="Message volume"
-                    description="Daily messages across every agent"
+                    description="Daily messages across every chatbot"
                     actions={
                       <SegmentedControl
                         options={TREND_RANGES}
@@ -312,7 +312,7 @@ export function AnalyticsPage(): ReactElement {
                     <EmptyState
                       icon={Activity}
                       title="No messages in this range"
-                      description="Try a wider time range, or come back once your agents have handled more conversations."
+                      description="Try a wider time range, or come back once your chatbots have handled more conversations."
                     />
                   ) : (
                     <MessageTrendChart points={trendWindow} />
@@ -324,7 +324,7 @@ export function AnalyticsPage(): ReactElement {
                 <CardHeader>
                   <SectionHeader
                     title="Top questions"
-                    description="What visitors ask your agents most"
+                    description="What visitors ask your chatbots most"
                   />
                 </CardHeader>
                 <CardContent className="pt-0">
@@ -365,7 +365,7 @@ export function AnalyticsPage(): ReactElement {
                   <CardHeader>
                     <SectionHeader
                       title="Visitor satisfaction"
-                      description="Post-chat ratings from live conversations, across every agent"
+                      description="Post-chat ratings from live conversations, across every chatbot"
                     />
                   </CardHeader>
                   <CardContent className="pt-0">
