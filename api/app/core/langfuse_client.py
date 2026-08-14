@@ -33,8 +33,14 @@ _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 _PHONE_RE = re.compile(r"(?<!\d)(\+\d[\d\-.\s()]{5,}\d|\(\d{2,4}\)[\d\-.\s]{5,}\d)(?!\d)")
 
 
-def _redact_pii(text: str | None) -> str | None:
+def redact_pii(text: str | None) -> str | None:
     """Best-effort scrub of emails/phone numbers before text reaches Langfuse.
+
+    Exported rather than module-private because :func:`langfuse_generation` is
+    not the only way spans get built: the ``rag-pipeline`` /
+    ``rag-pipeline-stream`` chain spans in ``rag_service`` construct their
+    payloads against the Langfuse SDK directly, and call this instead of
+    carrying a second copy of the patterns above.
 
     Never raises — a redaction bug must not break tracing or, worse, an LLM
     call. Falls back to returning the original text unredacted on error
@@ -90,7 +96,7 @@ class _GenerationRecorder:
         with contextlib.suppress(Exception):
             kwargs: dict = {"model": model or self._model}
             if output is not None:
-                kwargs["output"] = _redact_pii(output) if isinstance(output, str) else output
+                kwargs["output"] = redact_pii(output) if isinstance(output, str) else output
             if usage is not None:
                 kwargs["usage"] = usage
             self._span.update(**kwargs)
@@ -121,9 +127,17 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
 
     AR-30: ``prompt`` is redacted (emails, phone numbers) before being sent as
     ``input=`` — every call site in this codebase passes ``prompt=``, not the
-    raw ``input=`` escape hatch, so this covers every traced call today. A
-    caller that ever passes pre-built ``input=`` directly is responsible for
+    raw ``input=`` escape hatch, so this covers every *generation* span today.
+    A caller that ever passes pre-built ``input=`` directly is responsible for
     redacting it itself first.
+
+    It does not, however, cover observations built against the SDK directly.
+    The ``rag-pipeline`` / ``rag-pipeline-stream`` chain spans in
+    ``rag_service`` never pass through here, so they call :func:`redact_pii`
+    themselves — an earlier revision of this docstring claimed the coverage was
+    total, which left a visitor's typed email verbatim on the parent trace
+    while the identical string was scrubbed on the generation nested inside it.
+    Any new observation built straight from the SDK owes the same call.
 
     Usage::
 
@@ -137,7 +151,7 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
         return
 
     resolved_input = (
-        input if input is not None else ([{"role": "user", "content": _redact_pii(prompt)}] if prompt else None)
+        input if input is not None else ([{"role": "user", "content": redact_pii(prompt)}] if prompt else None)
     )
     mgr = None
     span = None

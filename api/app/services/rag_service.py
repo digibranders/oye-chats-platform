@@ -14,7 +14,7 @@ from sqlalchemy.orm import joinedload
 
 from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
-from app.core.langfuse_client import get_langfuse, langfuse_generation
+from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii
 from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
@@ -6270,18 +6270,28 @@ def rag_pipeline(
                 # ``location`` still reaches ``ensure_chat_session`` /
                 # ``add_chat_message`` below: what we store is unchanged, only what
                 # we transmit.
-                metadata={"bot_id": bid, "question": question, "device": device},
+                #
+                # PRIVACY — ``question`` is deliberately absent too. It was a second,
+                # unredacted copy of the very same string already sent as the chain
+                # span's ``input=`` just below, which keeps it (scrubbed). One copy of
+                # the visitor's text per trace, and one place to redact it.
+                metadata={"bot_id": bid, "device": device},
                 tags=["rag", f"bot:{bid}"] if bid else ["rag"],
             ),
             lf.start_as_current_observation(
                 name="rag-pipeline",
                 as_type="chain",
-                input=question,
+                # AR-30: scrubbed here exactly as on the generation spans nested
+                # inside this chain. These SDK calls do not go through
+                # ``langfuse_generation``, so they inherit none of its redaction —
+                # without ``redact_pii`` a visitor's typed email sat verbatim on the
+                # parent trace while the identical string was scrubbed one level down.
+                input=redact_pii(question),
                 metadata={"bot_id": bid, "session_id": session_id},
             ) as trace,
         ):
             result = _run_pipeline()
-            trace.update(output=result.get("answer", ""))
+            trace.update(output=redact_pii(result.get("answer", "")))
             return result
     else:
         return _run_pipeline()
@@ -6343,13 +6353,21 @@ async def rag_pipeline_stream(
             # Do not add it back while debugging. Storage is untouched —
             # ``location`` still flows into ``ensure_chat_session`` /
             # ``add_chat_message`` further down.
-            metadata={"bot_id": bid, "question": question, "device": device},
+            #
+            # PRIVACY — ``question`` is likewise absent, for the same reason as in
+            # ``rag_pipeline`` above: it duplicated the chain span's ``input=``,
+            # which now carries the one redacted copy.
+            metadata={"bot_id": bid, "device": device},
             tags=["rag", f"bot:{bid}"] if bid else ["rag"],
         )
         _lf_obs_mgr = _lf.start_as_current_observation(
             name="rag-pipeline-stream",
             as_type="chain",
-            input=question,
+            # AR-30: see the note in ``rag_pipeline`` — this span is built straight
+            # from the SDK, so it does not inherit ``langfuse_generation``'s
+            # redaction and has to ask for it. The matching ``update(output=…)``
+            # in the ``finally`` below is redacted for the same reason.
+            input=redact_pii(question),
             metadata={"bot_id": bid, "session_id": session_id},
         )
         _lf_attr_mgr.__enter__()
@@ -7293,7 +7311,7 @@ async def rag_pipeline_stream(
     finally:
         if _lf_trace is not None:
             with contextlib.suppress(Exception):
-                _lf_trace.update(output=full_answer)
+                _lf_trace.update(output=redact_pii(full_answer))
         if _lf_obs_mgr is not None:
             with contextlib.suppress(Exception):
                 _lf_obs_mgr.__exit__(None, None, None)
