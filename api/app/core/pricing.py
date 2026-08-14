@@ -10,11 +10,12 @@ added) and never reaches a captured amount. A paid plan persisted with a NULL
 USD column is a config error to fix at the source, not here.
 
 Sibling module ``app.core.money`` owns basis-point math (commission /
-discount); this module owns currency selection + formatting. They are kept
-separate because they change for different reasons.
+discount); this module owns currency selection + formatting, plus the one
+regulatory bound a *price* has to clear (:func:`emandate_warning`). They are
+kept separate because they change for different reasons.
 
 Nothing here touches the database or the network — pure value helpers, safe
-to call from anywhere (routes, services, tests).
+to call from anywhere (routes, services, scripts, tests).
 """
 
 from __future__ import annotations
@@ -139,6 +140,49 @@ def seat_price(
     if is_usd:
         return int(usd_cents or 0), "USD"
     return int(inr_cents or 0), "INR"
+
+
+# RBI Digital Payments — E-mandate Framework, 2026 (notified 21 Apr 2026):
+# a recurring debit above this amount requires Additional Factor of
+# Authentication on EVERY charge, so the renewal stops being silent and the
+# customer must re-authenticate each cycle. The Rs 1,00,000 ceiling applies
+# only to insurance, mutual funds and credit card bills — SaaS does not
+# qualify. Expressed in paise to match the price columns.
+EMANDATE_AFA_CEILING_MINOR = 1_500_000
+
+
+def emandate_warning(amount_minor: int | None, currency: str | None) -> str | None:
+    """Warn when a per-charge amount would forfeit AFA-exempt auto-debit.
+
+    Deliberately a WARNING, not a hard block: pricing above the ceiling is a
+    legitimate business decision (an enterprise tier may accept per-renewal
+    re-authentication, or bill by invoice instead of by mandate). The failure
+    this prevents is crossing the line *unknowingly* — and the catalogue is
+    already well across it: Professional annual is Rs 28,188 (88% ABOVE the
+    ceiling) and Enterprise annual Rs 57,588 (3.8x it). Every monthly amount
+    still clears it, as do Starter and Standard annual (Rs 5,748 / Rs 11,508).
+
+    Lives in ``core`` rather than on the super-admin route that first needed it
+    because a price also reaches the database through ``scripts/seed_plans.py``,
+    and a script importing from ``app.api`` would drag the whole FastAPI/auth
+    import graph into a CLI. Both callers now import THIS function, so neither
+    can drift from the other's idea of the ceiling.
+
+    Non-INR is out of scope: the threshold is a rupee figure and cannot be
+    compared against a USD amount. The 2026 framework does cover cross-border,
+    so the FX-converted test lands with the USD rail once Razorpay confirms how
+    the ceiling applies to foreign-issued cards.
+    """
+    if (currency or "INR").upper() != "INR":
+        return None
+    if int(amount_minor or 0) <= EMANDATE_AFA_CEILING_MINOR:
+        return None
+    return (
+        f"₹{int(amount_minor) / 100:,.0f} per charge exceeds the RBI e-mandate AFA-exempt "
+        f"ceiling of ₹{EMANDATE_AFA_CEILING_MINOR / 100:,.0f}. Auto-debit will require the "
+        f"customer to authenticate every renewal. Consider monthly billing or invoice-based "
+        f"collection for this tier."
+    )
 
 
 def _group_indian(major: int) -> str:

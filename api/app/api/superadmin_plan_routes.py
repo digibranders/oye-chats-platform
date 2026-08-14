@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from app.api.auth import get_superadmin
 from app.api.superadmin_routes_v2 import _require_write
 from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_SEAT_PLAN_PRICE_CENTS
-from app.core.pricing import display_price
+from app.core.pricing import display_price, emandate_warning
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import plan_entitlements_service
@@ -249,51 +249,14 @@ def _reject_seat_price_drift(data: dict) -> None:
         )
 
 
-# RBI Digital Payments — E-mandate Framework, 2026 (notified 21 Apr 2026):
-# a recurring debit above this amount requires Additional Factor of
-# Authentication on EVERY charge, so the renewal stops being silent and the
-# customer must re-authenticate each cycle. The Rs 1,00,000 ceiling applies
-# only to insurance, mutual funds and credit card bills — SaaS does not
-# qualify. Expressed in paise to match the price columns.
-EMANDATE_AFA_CEILING_MINOR = 1_500_000
-
-
-def emandate_warning(amount_minor: int | None, currency: str | None) -> str | None:
-    """Warn when a per-charge amount would forfeit AFA-exempt auto-debit.
-
-    Deliberately a WARNING, not a hard block: pricing above the ceiling is a
-    legitimate business decision (an enterprise tier may accept per-renewal
-    re-authentication, or bill by invoice instead of by mandate). The failure
-    this prevents is crossing the line *unknowingly* — and the catalogue is
-    already well across it: Professional annual is Rs 28,188 (88% ABOVE the
-    ceiling) and Enterprise annual Rs 57,588 (3.8x it). Every monthly amount
-    still clears it, as do Starter and Standard annual (Rs 5,748 / Rs 11,508).
-
-    Non-INR is out of scope: the threshold is a rupee figure and cannot be
-    compared against a USD amount. The 2026 framework does cover cross-border,
-    so the FX-converted test lands with the USD rail once Razorpay confirms how
-    the ceiling applies to foreign-issued cards.
-    """
-    if (currency or "INR").upper() != "INR":
-        return None
-    if int(amount_minor or 0) <= EMANDATE_AFA_CEILING_MINOR:
-        return None
-    return (
-        f"₹{int(amount_minor) / 100:,.0f} per charge exceeds the RBI e-mandate AFA-exempt "
-        f"ceiling of ₹15,000. Auto-debit will require the customer to authenticate every "
-        f"renewal. Consider monthly billing or invoice-based collection for this tier."
-    )
-
-
 def _emandate_warnings(plan: Plan) -> list[str]:
     """Every amount this plan can debit in one transaction.
 
-    UNCOVERED ROUTE: this fires only on the super-admin plan-CRUD path. Prices
-    also change via ``scripts/seed_plans.py``, which never calls it — and that is
-    the path every price change has actually taken so far, which is how both
-    annual tiers crossed the ceiling without anyone being warned. Wiring the
-    check into the seed is a behaviour change owed its own review; until then,
-    re-price through this endpoint or run the check by hand.
+    The check itself is :func:`app.core.pricing.emandate_warning` — shared with
+    ``scripts/seed_plans.py``, which is the path every real price change has
+    actually taken and which used to run no check at all (that is how both
+    annual tiers crossed the ceiling unnoticed). Both writers now warn off the
+    same constant, so neither can be re-priced past the ceiling silently.
     """
     return [
         w

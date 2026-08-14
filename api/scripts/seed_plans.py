@@ -26,6 +26,11 @@ Idempotent: each plan is matched by ``slug`` and updated in place; a new row is
 inserted if the slug is missing. Unknown slugs (custom tiers added by a super
 admin) are left untouched.
 
+Every INR amount in the matrix is checked against the RBI e-mandate AFA ceiling
+(``core.pricing.emandate_warning``, shared with the super-admin plan editor) in
+BOTH modes. A breach is printed loudly and blocks nothing — see
+``_print_emandate_warnings``.
+
 Usage:
     cd platform/api
     uv run python scripts/seed_plans.py            # dry-run (prints a diff)
@@ -42,6 +47,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlalchemy import select
 
+from app.core.pricing import EMANDATE_AFA_CEILING_MINOR, emandate_warning
 from app.db.models import Plan
 from app.db.session import get_session
 from app.services.plan_service import plan_is_sellable
@@ -314,12 +320,64 @@ def _would_be_sellable(data: dict, plan: Plan | None) -> bool:
     )
 
 
+def _emandate_warnings(data: dict) -> list[str]:
+    """Warnings for every amount this catalogue entry can debit in one charge.
+
+    ``run`` writes ``currency="INR"`` on every row it touches, so the paise
+    ceiling always applies and the currency is passed as a literal rather than
+    read back off a row that may not exist yet.
+
+    Labelled by slug and cycle because the amounts are printed together at the
+    end of the run: "professional annual" says which price to move, where a
+    bare rupee figure would not.
+    """
+    return [
+        f"{data['slug']} {cycle}: {warning}"
+        for cycle, warning in (
+            ("monthly", emandate_warning(data["monthly_price_cents"], "INR")),
+            ("annual", emandate_warning(data["annual_price_cents"], "INR")),
+        )
+        if warning
+    ]
+
+
+def _print_emandate_warnings(warnings: list[str]) -> None:
+    """Report ceiling breaches loudly, and do nothing else.
+
+    Explicitly NOT a failure: the exit code stays 0 and the seed still writes.
+    Pricing above the ceiling is a deliberate business decision (both annual
+    tiers are already there), and a seed that refused to run because of one
+    would be unusable — the whole catalogue would be hostage to a pricing
+    argument. The value is that the NEXT price change gets flagged before it
+    ships, so this is sized to be unmissable in a wall of seed output instead.
+    """
+    if not warnings:
+        return
+    plural = "" if len(warnings) == 1 else "s"
+    ceiling = EMANDATE_AFA_CEILING_MINOR / 100
+    print("\n" + "!" * 100)
+    print(f"RBI E-MANDATE CEILING — {len(warnings)} plan-cycle{plural} above ₹{ceiling:,.0f} in a single charge:\n")
+    for warning in warnings:
+        print(f"  {warning}")
+    print(
+        "\nNot a blocker: the seed still ran and exits 0. What it costs is silent renewal — "
+        "each of those\ncharges needs the customer to complete Additional Factor of Authentication, "
+        "every cycle. Price\nbelow the ceiling, bill those tiers monthly, or invoice them instead."
+    )
+    print("!" * 100)
+
+
 def run(*, apply: bool) -> int:
     with get_session() as session:
         existing = {p.slug: p for p in session.scalars(select(Plan)).all()}
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}\n")
         off_sale: list[str] = []
+        # Collected in BOTH modes. A dry-run exists so someone can see what a
+        # change would do before committing it; a ceiling warning that only
+        # appeared under --apply would arrive after the price was already
+        # written, which is exactly the moment it stops being actionable.
+        ceiling_warnings: list[str] = []
         for data in _PLANS:
             slug = data["slug"]
             plan = existing.get(slug)
@@ -330,6 +388,7 @@ def run(*, apply: bool) -> int:
                 off_sale.append(slug)
             state = "on sale" if sellable else "OFF SALE — no Razorpay plan id"
             print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
+            ceiling_warnings.extend(_emandate_warnings(data))
 
             if not apply:
                 continue
@@ -355,6 +414,9 @@ def run(*, apply: bool) -> int:
             print("\nCommitted.")
         else:
             print("\nDry-run — re-run with --apply to commit.")
+
+        # Last, so it is the block still on screen when the run ends.
+        _print_emandate_warnings(ceiling_warnings)
     return 0
 
 
