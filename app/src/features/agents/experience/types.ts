@@ -27,16 +27,6 @@ export interface ExperienceDraft {
    * turn this off; the backend force-sets it back to `true` on save
    * otherwise (see `bot_routes.py` `_plan_branding_removable`). */
   showBranding: boolean;
-  /** `bot.branding_text` - the badge label. Only meaningful when
-   * `showBranding` is true AND the plan has `branding_removable`; the backend
-   * forces both this and `brandingUrl` back to defaults otherwise, so a
-   * non-entitled workspace cannot white-label by calling the API directly. */
-  brandingText: string;
-  /** `bot.branding_url` - where the badge links. Same entitlement rule as
-   * `brandingText`. The widget validates this independently
-   * (`widget/src/services/brandingLink.js`) and falls back to the default for
-   * anything non-http, so a bad value here can never reach a live `href`. */
-  brandingUrl: string;
 
   // ── Messages (widget_messages.*) ────────────────────────────────────────────
   welcomeGreeting: string;
@@ -91,8 +81,6 @@ const DEFAULTS = {
   welcomeGreeting: 'Hi there, how can I help you today?',
   welcomeSubtitle: 'Ask me anything - I answer from your knowledge base.',
   inputPlaceholder: 'Write a message…',
-  brandingText: 'Powered by OyeChats',
-  brandingUrl: 'https://www.oyechats.com',
 } as const;
 
 /**
@@ -173,8 +161,6 @@ export function draftFromSettings(raw: Record<string, unknown>): ExperienceDraft
     botLogo: typeof raw.bot_logo === 'string' && raw.bot_logo.length > 0 ? raw.bot_logo : null,
     botLogoSource: typeof raw.bot_logo_source === 'string' ? raw.bot_logo_source : null,
     showBranding: asBoolean(featureFlags.show_branding, true),
-    brandingText: asNonEmptyString(raw.branding_text, DEFAULTS.brandingText),
-    brandingUrl: asNonEmptyString(raw.branding_url, DEFAULTS.brandingUrl),
 
     welcomeGreeting: asNonEmptyString(widgetMessages.welcome_greeting, DEFAULTS.welcomeGreeting),
     welcomeSubtitle: asNonEmptyString(widgetMessages.welcome_subtitle, DEFAULTS.welcomeSubtitle),
@@ -232,8 +218,10 @@ export function settingsFromDraft(
     // Partial-merged server-side (bot_routes.py PATCH /bots/{id}) - other
     // stored feature flags (managed on the Advanced tab) are untouched.
     feature_flags: { show_branding: draft.showBranding },
-    branding_text: draft.brandingText.trim() || DEFAULTS.brandingText,
-    branding_url: draft.brandingUrl.trim() || DEFAULTS.brandingUrl,
+    // `branding_text` / `branding_url` are deliberately NOT sent. The editor for
+    // them was removed, so this page has no value to write; the backend PATCH
+    // parses with `exclude_unset=True`, so omitting them leaves whatever each
+    // bot already has stored untouched rather than resetting it to the default.
 
     widget_messages: {
       ...draft.extraWidgetMessages,
@@ -256,51 +244,6 @@ export function draftsEqual(a: ExperienceDraft, b: ExperienceDraft): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** True only for an absolute `http:`/`https:` URL - what the widget's own
- * `brandingLink.js` guard requires before it will use a custom badge link. */
-export function isValidBrandingUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-/** Blocking validation errors for the draft, keyed by field. `null` means the
- * field is valid (or not currently checkable - see `brandingUrl` below). */
-export interface ExperienceDraftErrors {
-  /** Non-null only when the badge-link field is both visible/editable AND
-   * holds a non-empty value that isn't an absolute http(s) URL. An empty
-   * value is valid - `settingsFromDraft` falls back to the default badge URL
-   * for blank input, so clearing the field is "use the default", not a
-   * mistake. */
-  brandingUrl: string | null;
-}
-
-/**
- * Validation for fields that must block save, computed from the draft plus
- * whatever external context decides whether that field's editor is even
- * visible. Currently one field (`brandingUrl`); returns a structured result
- * rather than a bare boolean so a future field can join without another
- * refactor.
- *
- * `whiteLabelFieldsVisible` must mirror the exact gate BrandingSection uses
- * to show the badge text/link inputs (`hasFeature('branding_removable') &&
- * draft.showBranding`). A workspace that isn't entitled, or has branding
- * switched back on, can't see or edit these fields - so a stale invalid value
- * left over in the draft from before must never block that workspace from
- * saving unrelated changes.
- */
-export function experienceDraftErrors(
-  draft: ExperienceDraft,
-  whiteLabelFieldsVisible: boolean,
-): ExperienceDraftErrors {
-  const trimmedBrandingUrl = draft.brandingUrl.trim();
-  const brandingUrl =
-    whiteLabelFieldsVisible && trimmedBrandingUrl.length > 0 && !isValidBrandingUrl(trimmedBrandingUrl)
-      ? 'Enter a full URL starting with http:// or https://'
-      : null;
-
-  return { brandingUrl };
-}
+/* No draft field currently needs save-blocking validation. The former
+ * `experienceDraftErrors` / `isValidBrandingUrl` pair existed solely to check
+ * the badge-link input, and went with it when that editor was removed. */

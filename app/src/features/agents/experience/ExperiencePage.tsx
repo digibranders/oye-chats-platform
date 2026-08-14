@@ -9,14 +9,12 @@ import {
 } from '../../../design-system';
 import { Tabs, type TabItem } from '../../../design-system/components/Tabs';
 import { useAgent } from '../../../context/AgentContext';
-import { useEntitlements } from '../../../hooks/useEntitlements';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../../../services/api';
 import {
   type ExperienceDraft,
   asStringArray,
   draftFromSettings,
   draftsEqual,
-  experienceDraftErrors,
   settingsFromDraft,
 } from './types';
 import { BrandingSection } from './BrandingSection';
@@ -53,7 +51,6 @@ const PRESET_SWATCHES = ['#7C3AED', '#4f46e5', '#0ea5e9', '#059669', '#e11d48', 
  */
 export function ExperiencePage(): ReactElement {
   const { agent, loading: agentLoading, error: agentError, refresh } = useAgent();
-  const { hasFeature } = useEntitlements();
   const botId = agent?.id ?? null;
 
   // Tracks the currently-loaded agent so in-flight save/upload handlers can
@@ -147,8 +144,6 @@ export function ExperiencePage(): ReactElement {
 
   const handleSave = useCallback(async (): Promise<void> => {
     if (botId === null || !draft) return;
-    const whiteLabelVisible = hasFeature('branding_removable') && draft.showBranding;
-    if (experienceDraftErrors(draft, whiteLabelVisible).brandingUrl !== null) return;
     const saveBotId = botId;
     // The widget display name IS the agent name, and the sidebar / header / bot
     // switcher render each agent's configured avatar - so the shared agent list
@@ -175,7 +170,7 @@ export function ExperiencePage(): ReactElement {
     } finally {
       if (botIdRef.current === saveBotId) setSaving(false);
     }
-  }, [botId, draft, baseline, refresh, hasFeature]);
+  }, [botId, draft, baseline, refresh]);
 
   const handleDiscard = useCallback((): void => {
     setDraft(baseline);
@@ -187,13 +182,7 @@ export function ExperiencePage(): ReactElement {
   const dirty = draft !== null && baseline !== null && !draftsEqual(draft, baseline);
   const showLoading = agentLoading || (botId !== null && draft === null && loadError === null);
 
-  // Mirrors BrandingSection's own gate for showing the badge text/link inputs
-  // exactly - a workspace that can't see those fields must never be blocked
-  // from saving unrelated changes by a stale invalid value sitting in the draft.
-  const whiteLabelFieldsVisible = draft !== null && hasFeature('branding_removable') && draft.showBranding;
-  const draftErrors = draft !== null ? experienceDraftErrors(draft, whiteLabelFieldsVisible) : null;
-  const blockingError = draftErrors?.brandingUrl ?? null;
-  const saveDisabled = !dirty || saving || blockingError !== null;
+  const saveDisabled = !dirty || saving;
 
   return (
     <PageContainer width="wide">
@@ -286,8 +275,6 @@ export function ExperiencePage(): ReactElement {
                     <span className="text-[var(--ds-danger)]">{saveError}</span>
                   ) : saving ? (
                     'Saving…'
-                  ) : blockingError ? (
-                    <span className="text-[var(--ds-danger)]">Fix the badge link to save: {blockingError}</span>
                   ) : justSaved && !dirty ? (
                     'All changes saved'
                   ) : (
@@ -307,8 +294,7 @@ export function ExperiencePage(): ReactElement {
                     size="sm"
                     onClick={handleSave}
                     disabled={saveDisabled}
-                    title={blockingError ?? undefined}
-                    aria-label={blockingError ? `Save changes - ${blockingError}` : 'Save changes'}
+                    aria-label="Save changes"
                   >
                     {saving ? 'Saving…' : 'Save changes'}
                   </Button>

@@ -11,12 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import {
-  draftFromSettings,
-  experienceDraftErrors,
-  settingsFromDraft,
-  type ExperienceDraft,
-} from './types';
+import { settingsFromDraft, type ExperienceDraft } from './types';
 
 function draftWith(overrides: Partial<ExperienceDraft> = {}): ExperienceDraft {
   return {
@@ -30,8 +25,6 @@ function draftWith(overrides: Partial<ExperienceDraft> = {}): ExperienceDraft {
     botLogo: null,
     botLogoSource: null,
     showBranding: true,
-    brandingText: 'Powered by OyeChats',
-    brandingUrl: 'https://www.oyechats.com',
     welcomeGreeting: 'Hi there',
     welcomeSubtitle: 'How can I help?',
     quickActions: [],
@@ -114,87 +107,36 @@ describe('settingsFromDraft avatar handling', () => {
   });
 });
 
-describe('branding text/url round-trip', () => {
-  it('reads a stored custom badge label and link from the raw settings payload', () => {
-    const raw = {
-      branding_text: 'Powered by Acme',
-      branding_url: 'https://acme.example',
-    };
+describe('badge text/link are no longer written by this editor', () => {
+  /**
+   * The badge-text / badge-link inputs were removed from the Branding section,
+   * so this page has no value to write for them. The columns still exist and
+   * the widget still renders whatever each bot has stored, so the payload must
+   * OMIT them rather than send a default: the backend parses the PATCH with
+   * `exclude_unset=True`, so an absent key leaves the stored value alone while
+   * a present one would silently reset every custom badge to "Powered by
+   * OyeChats" on the next unrelated save.
+   */
+  it('omits branding_text and branding_url from the save payload', () => {
+    const payload = settingsFromDraft(draftWith({ primaryColor: '#059669' }));
 
-    const draft = draftFromSettings(raw);
-
-    expect(draft.brandingText).toBe('Powered by Acme');
-    expect(draft.brandingUrl).toBe('https://acme.example');
+    expect(payload).not.toHaveProperty('branding_text');
+    expect(payload).not.toHaveProperty('branding_url');
+    // The edits this page does own still go.
+    expect(payload.primary_color).toBe('#059669');
   });
 
-  it('falls back to the OyeChats defaults when the raw payload has no branding fields', () => {
-    const draft = draftFromSettings({});
+  it('omits them on a baseline-diffed save too', () => {
+    const baseline = draftWith();
+    const payload = settingsFromDraft(draftWith({ userBubbleColor: '#eeeeee' }), baseline);
 
-    expect(draft.brandingText).toBe('Powered by OyeChats');
-    expect(draft.brandingUrl).toBe('https://www.oyechats.com');
+    expect(payload).not.toHaveProperty('branding_text');
+    expect(payload).not.toHaveProperty('branding_url');
   });
 
-  it('falls back to the defaults when the stored values are blank', () => {
-    const draft = draftFromSettings({ branding_text: '   ', branding_url: '' });
+  it('still writes the show_branding entitlement toggle, which was not removed', () => {
+    const payload = settingsFromDraft(draftWith({ showBranding: false }));
 
-    expect(draft.brandingText).toBe('Powered by OyeChats');
-    expect(draft.brandingUrl).toBe('https://www.oyechats.com');
-  });
-
-  it('persists a custom badge label and link unchanged', () => {
-    const payload = settingsFromDraft(
-      draftWith({ brandingText: 'Powered by Acme', brandingUrl: 'https://acme.example' }),
-    );
-
-    expect(payload.branding_text).toBe('Powered by Acme');
-    expect(payload.branding_url).toBe('https://acme.example');
-  });
-
-  it('saves whitespace-only input as the default rather than a blank value', () => {
-    const payload = settingsFromDraft(draftWith({ brandingText: '   ', brandingUrl: '   ' }));
-
-    expect(payload.branding_text).toBe('Powered by OyeChats');
-    expect(payload.branding_url).toBe('https://www.oyechats.com');
-  });
-});
-
-describe('experienceDraftErrors', () => {
-  it('passes a valid https badge URL when the fields are visible', () => {
-    const draft = draftWith({ brandingUrl: 'https://acme.example' });
-
-    expect(experienceDraftErrors(draft, true).brandingUrl).toBeNull();
-  });
-
-  it('passes an empty badge URL - clearing the field means "use the default", not a mistake', () => {
-    const draft = draftWith({ brandingUrl: '' });
-
-    expect(experienceDraftErrors(draft, true).brandingUrl).toBeNull();
-  });
-
-  it('passes a whitespace-only badge URL for the same reason', () => {
-    const draft = draftWith({ brandingUrl: '   ' });
-
-    expect(experienceDraftErrors(draft, true).brandingUrl).toBeNull();
-  });
-
-  it('fails a bare word that is not an absolute URL', () => {
-    const draft = draftWith({ brandingUrl: 'not-a-url' });
-
-    expect(experienceDraftErrors(draft, true).brandingUrl).not.toBeNull();
-  });
-
-  it('fails a javascript: URL', () => {
-    const draft = draftWith({ brandingUrl: 'javascript:alert(1)' });
-
-    expect(experienceDraftErrors(draft, true).brandingUrl).not.toBeNull();
-  });
-
-  it('reports no error for an invalid URL when the white-label fields are not visible', () => {
-    // Not entitled, or entitled but branding switched back on - either way the
-    // customer can't see or edit this field, so a stale invalid value left
-    // over in the draft must never block them from saving unrelated changes.
-    const draft = draftWith({ brandingUrl: 'not-a-url' });
-
-    expect(experienceDraftErrors(draft, false).brandingUrl).toBeNull();
+    expect(payload.feature_flags).toEqual({ show_branding: false });
   });
 });
