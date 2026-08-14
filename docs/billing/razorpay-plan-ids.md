@@ -1,13 +1,18 @@
 # Razorpay Plan IDs — Canonical Reference
 
 **Single source of truth** for which Razorpay plan IDs are wired into each environment.
-Last updated: **13 Aug 2026** — Enterprise tier created in Test (INR + USD).
+Last updated: **14 Aug 2026** — every Test plan re-minted against the current
+`scripts/seed_plans.py` (INR **and** USD), and Enterprise INR corrected to ₹5,999.
 
-> **Relaunch context.** OyeChats is relaunching on new pricing
-> (**Starter ₹449 · Standard ₹949 · Professional ₹1,399**). The production database is
-> being reset for a fresh start, so every pre-relaunch plan (the old ₹1,799 / ₹4,599 tiers,
-> in both Test and Live) is **retired and intentionally not listed here** — no code or DB
-> should reference them.
+> **Pricing lineage.** The 16 Jul relaunch shipped **Starter ₹449 · Standard ₹949 ·
+> Professional ₹1,399**. Those amounts are **no longer what the product displays** —
+> `scripts/seed_plans.py` now holds **₹599 · ₹1,199 · ₹2,999 · ₹5,999**. Everything
+> older than that (the pre-relaunch ₹1,799 / ₹4,599 tiers) is retired and intentionally
+> not listed here.
+>
+> **`scripts/seed_plans.py` is the price source of truth.** These tables only record which
+> immutable Razorpay object carries each amount. If a table and the seed file disagree, the
+> plan needs re-minting — the table is never the thing to "correct".
 
 > **Test Mode and Live Mode are fully isolated** — separate keys, separate plans, separate IDs.
 > A plan created in one mode does not exist in the other, and you cannot tell test vs live from
@@ -19,29 +24,53 @@ Last updated: **13 Aug 2026** — Enterprise tier created in Test (INR + USD).
 
 ---
 
-## Test Mode — new pricing (`rzp_test_…`) ✅
+## Test Mode — INR rail (`rzp_test_…`) ✅ CURRENT
 
-Created 16 Jul 2026. Amounts are **GST-inclusive** (plan amount == displayed price); annual is
-the full yearly charge at ~20% off monthly.
+Created **14 Aug 2026**, re-minted from `scripts/seed_plans.py`. Amounts are **GST-inclusive**
+(plan amount == displayed price); annual is the full yearly charge at ~20% off monthly. Each
+carries `notes = {"oyechats_slug": …, "cycle": …, "rail": "INR"}`.
 
 | Plan | Plan ID | Amount | Cycle |
 |------|---------|--------|-------|
-| Starter Monthly | `plan_TE3II9mLg0dQxp` | ₹449 | Monthly |
-| Starter Annual | `plan_TE3MuL8gS38Ewv` | ₹4,308 | **Yearly** |
-| Standard Monthly | `plan_TE3OX0Hws0c6Q7` | ₹949 | Monthly |
-| Standard Annual | `plan_TE3QE2KpwbeQTd` | ₹9,108 | **Yearly** |
-| Professional Monthly | `plan_TE3Rj85kkmkhQx` | ₹1,399 | Monthly |
-| Professional Annual | `plan_TE3TU2vQsQJtHQ` | ₹13,428 | **Yearly** |
-| Enterprise Monthly | `plan_TPIlGXkYkdihvl` | ₹2,799 | Monthly |
-| Enterprise Annual | `plan_TPIlGiLEiZ027p` | ₹26,868 | **Yearly** |
+| Starter Monthly | `plan_TPWQmN57OaBc5k` | ₹599 | Monthly |
+| Starter Annual | `plan_TPWQoAGVD82M3K` | ₹5,748 | **Yearly** |
+| Standard Monthly | `plan_TPWQpxMT7XNnNf` | ₹1,199 | Monthly |
+| Standard Annual | `plan_TPWQrkJ2lMblai` | ₹11,508 | **Yearly** |
+| Professional Monthly | `plan_TPWQtWl2CjxUBN` | ₹2,999 | Monthly |
+| Professional Annual | `plan_TPWQvKMoG1tws9` | ₹28,188 | **Yearly** |
+| Enterprise Monthly | `plan_TPWQx9mE8O7GRR` | ₹5,999 | Monthly |
+| Enterprise Annual | `plan_TPWQyy9LrhoA7S` | ₹57,588 | **Yearly** |
 
-The two **Enterprise** rows were created 13 Aug 2026 (the rest are from the 16 Jul batch) and
-carry `notes = {"oyechats_slug": "enterprise", "cycle": …}`.
+Every id above was re-fetched individually from the API after creation and asserted on
+amount, currency, period and interval — not trusted from the create response.
 
-> ⚠️ **The Starter / Standard / Professional ids above bill the 16 Jul amounts (₹449 / ₹949 /
-> ₹1,399), which `scripts/seed_plans.py` no longer holds** — it now seeds ₹599 / ₹1,199 / ₹2,999.
-> Only Enterprise's ids match what the seed writes. Until those three tiers get re-minted plans,
-> a Test checkout on them displays the new price and charges the old one. Enterprise is unaffected.
+### Retired Test INR plans — DO NOT WIRE
+
+Razorpay plans are immutable, so these still exist in the Test dashboard. They are listed
+so a stale id found in a DB or a script can be *recognised* rather than guessed at.
+
+| Plan ID | Amount | Cycle | Minted | Retired because |
+|---------|--------|-------|--------|-----------------|
+| `plan_TE3II9mLg0dQxp` | ₹449 | Monthly | 16 Jul 2026 | Starter re-priced to ₹599 |
+| `plan_TE3MuL8gS38Ewv` | ₹4,308 | Yearly | 16 Jul 2026 | Starter re-priced to ₹5,748 |
+| `plan_TE3OX0Hws0c6Q7` | ₹949 | Monthly | 16 Jul 2026 | Standard re-priced to ₹1,199 |
+| `plan_TE3QE2KpwbeQTd` | ₹9,108 | Yearly | 16 Jul 2026 | Standard re-priced to ₹11,508 |
+| `plan_TE3Rj85kkmkhQx` | ₹1,399 | Monthly | 16 Jul 2026 | Professional re-priced to ₹2,999 |
+| `plan_TE3TU2vQsQJtHQ` | ₹13,428 | Yearly | 16 Jul 2026 | Professional re-priced to ₹28,188 |
+| `plan_TMWSBeJVLdm4Eg` | ₹449 | Monthly | 06 Aug 2026 | duplicate 16 Jul amounts (see below) |
+| `plan_TMWSBvo8k0qfs5` | ₹4,308 | Yearly | 06 Aug 2026 | duplicate 16 Jul amounts |
+| `plan_TMWSCz0nxoHp4R` | ₹949 | Monthly | 06 Aug 2026 | duplicate 16 Jul amounts |
+| `plan_TMWSDImrWyYs3p` | ₹9,108 | Yearly | 06 Aug 2026 | duplicate 16 Jul amounts |
+| `plan_TMWSEOwKDFNfVx` | ₹1,399 | Monthly | 06 Aug 2026 | duplicate 16 Jul amounts |
+| `plan_TMWSEisARB2Mck` | ₹13,428 | Yearly | 06 Aug 2026 | duplicate 16 Jul amounts |
+| `plan_TPIlGXkYkdihvl` | ₹2,799 | Monthly | 13 Aug 2026 | Enterprise corrected to ₹5,999 |
+| `plan_TPIlGiLEiZ027p` | ₹26,868 | Yearly | 13 Aug 2026 | Enterprise corrected to ₹57,588 |
+
+> **The `plan_TMWS…` batch was undocumented.** It was minted 06 Aug 2026 tagged
+> `notes = {"oyechats_env": "test-mode-prod"}` at the *same* 16 Jul amounts, and it — not the
+> `plan_TE3…` batch this file used to list — was what the dev database actually had attached.
+> Two independent id sets for one set of prices is how a table drifts from reality; anything
+> minted from now on is recorded here at creation time.
 
 ### Seed to a reset DB (Test)
 A fresh DB is built and seeded by `scripts/reset_and_seed.sh` (schema baseline →
@@ -50,41 +79,58 @@ rows and pricing config but **not** the Razorpay IDs (they are per-environment).
 finishes, attach the Test IDs:
 ```bash
 cd api && uv run python scripts/set_razorpay_plan_ids.py \
-  --starter-monthly      plan_TE3II9mLg0dQxp \
-  --starter-annual       plan_TE3MuL8gS38Ewv \
-  --standard-monthly     plan_TE3OX0Hws0c6Q7 \
-  --standard-annual      plan_TE3QE2KpwbeQTd \
-  --professional-monthly plan_TE3Rj85kkmkhQx \
-  --professional-annual  plan_TE3TU2vQsQJtHQ \
-  --enterprise-monthly   plan_TPIlGXkYkdihvl \
-  --enterprise-annual    plan_TPIlGiLEiZ027p \
+  --starter-monthly          plan_TPWQmN57OaBc5k \
+  --starter-annual           plan_TPWQoAGVD82M3K \
+  --standard-monthly         plan_TPWQpxMT7XNnNf \
+  --standard-annual          plan_TPWQrkJ2lMblai \
+  --professional-monthly     plan_TPWQtWl2CjxUBN \
+  --professional-annual      plan_TPWQvKMoG1tws9 \
+  --enterprise-monthly       plan_TPWQx9mE8O7GRR \
+  --enterprise-annual        plan_TPWQyy9LrhoA7S \
+  --starter-monthly-usd      plan_TPWR0ltxG5VCrk \
+  --starter-annual-usd       plan_TPWR2cn2GNjIaR \
+  --standard-monthly-usd     plan_TPWR4Qq9wZEBSr \
+  --standard-annual-usd      plan_TPWR6F90foLfA2 \
+  --professional-monthly-usd plan_TPWR83U8rK7Bni \
+  --professional-annual-usd  plan_TPWR9rXizbETnJ \
+  --enterprise-monthly-usd   plan_TPIlGtrKGvGxKZ \
+  --enterprise-annual-usd    plan_TPIlH5qqhl60dD \
   --apply
 ```
-The `--professional-*` / `--enterprise-*` flags and the Professional and Enterprise plan rows are
-all in place. The extra-seat add-on is configured via the `RAZORPAY_SEAT_PLAN_ID` env var (not a
-plan row) — Enterprise includes unlimited seats, so it never bills the add-on.
+That one command wires **both** rails. The `--professional-*` / `--enterprise-*` flags and the
+Professional and Enterprise plan rows are all in place. The extra-seat add-on is configured via
+the `RAZORPAY_SEAT_PLAN_ID` env var (not a plan row) — Enterprise includes unlimited seats, so it
+never bills the add-on.
 
 ---
 
-## Live Mode — new pricing (`rzp_live_…`) ✅ WIRED (relaunch 16 Jul 2026)
+## Live Mode — 16 Jul relaunch pricing (`rzp_live_…`) ⚠️ BEHIND THE SEED FILE
 
 Created via the Razorpay API and seeded into the prod `plans` table during the DB reset.
 This is what production currently charges.
 
-| Plan | Plan ID | Amount | Cycle |
-|------|---------|--------|-------|
-| Starter Monthly | `plan_TE6Pae1HaV4bNx` | ₹449 | Monthly |
-| Starter Annual | `plan_TE6PasUXZc3sbL` | ₹4,308 | Yearly |
-| Standard Monthly | `plan_TE6Pb9a4XXVKB5` | ₹949 | Monthly |
-| Standard Annual | `plan_TE6PbQEmXZhhtm` | ₹9,108 | Yearly |
-| Professional Monthly | `plan_TE6PbfKUnVNB6q` | ₹1,399 | Monthly |
-| Professional Annual | `plan_TE6Pbuixn7mmDB` | ₹13,428 | Yearly |
+| Plan | Plan ID | Amount | Cycle | `seed_plans.py` now says |
+|------|---------|--------|-------|--------------------------|
+| Starter Monthly | `plan_TE6Pae1HaV4bNx` | ₹449 | Monthly | ₹599 |
+| Starter Annual | `plan_TE6PasUXZc3sbL` | ₹4,308 | Yearly | ₹5,748 |
+| Standard Monthly | `plan_TE6Pb9a4XXVKB5` | ₹949 | Monthly | ₹1,199 |
+| Standard Annual | `plan_TE6PbQEmXZhhtm` | ₹9,108 | Yearly | ₹11,508 |
+| Professional Monthly | `plan_TE6PbfKUnVNB6q` | ₹1,399 | Monthly | ₹2,999 |
+| Professional Annual | `plan_TE6Pbuixn7mmDB` | ₹13,428 | Yearly | ₹28,188 |
+
+> ⚠️ **Live has the same drift Test just had fixed, and is NOT yet re-minted.** The ids above
+> bill the 16 Jul amounts while `seed_plans.py` holds the new ones, so a production DB seeded
+> from the current file would display a price these plans do not charge. There is also **no
+> Live Enterprise plan at all**. Re-minting Live is a deliberate, separately-authorised
+> commercial act — it re-prices real customers — so it was intentionally left alone here.
+> **Before any prod reseed:** mint the Live replacements, record them in this table, and
+> re-point the prod DB, or explicitly revert `seed_plans.py` to the amounts Live charges.
 
 Seat add-on (live, unchanged ₹499): `RAZORPAY_SEAT_PLAN_ID=plan_T5rNFpt3vSkl4R` (GHA variable).
 
 ---
 
-## USD plans — international rail ✅ CREATED (3 Aug 2026)
+## USD plans — international rail
 
 Separate Razorpay plan objects priced in USD. A plan's currency is fixed at creation,
 so these are the ONLY ids that can serve an international charge — the INR ids above
@@ -92,8 +138,14 @@ cannot. Stored on `plans.razorpay_plan_id_monthly_usd` / `razorpay_plan_id_annua
 (migration `b4e7c2f9a801`), seeded with the `--*-usd` flags of
 `scripts/set_razorpay_plan_ids.py`.
 
-Amounts match the `*_usd_cents` columns in `scripts/seed_plans.py` — a deliberate USD
-headline, never FX-converted. Annual = 12 × the discounted monthly ($7 / $15 / $31).
+Amounts track the `*_usd_cents` columns in `scripts/seed_plans.py` — a deliberate USD
+headline, never FX-converted.
+
+> **The USD rail drifts on its own schedule.** The 13 Aug re-pricing changed the USD columns
+> too ($9/$19/$39 → $7.99/$15.99/$45.99), which silently invalidated the whole 3 Aug USD batch.
+> USD drift is easy to miss because an INR price change *reads* like an INR-only event —
+> **when a tier is re-priced, check both `*_cents` and `*_usd_cents` before assuming one rail
+> is unaffected.**
 
 ### Live Mode (`rzp_live_…`)
 
@@ -108,26 +160,53 @@ headline, never FX-converted. Annual = 12 × the discounted monthly ($7 / $15 / 
 
 Seat add-on (live): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLF7UFHVzhJU0R` ($5/seat/month).
 
-### Test Mode (`rzp_test_…`)
+### Test Mode (`rzp_test_…`) ✅ CURRENT
 
-| Plan | Plan ID | Amount | Cycle |
-|------|---------|--------|-------|
-| Starter Monthly | `plan_TLFB8lG6zmggVB` | $9 | Monthly |
-| Starter Annual | `plan_TLFBQoPTonDDwh` | $84 | Yearly |
-| Standard Monthly | `plan_TLFBQzoxkBVVar` | $19 | Monthly |
-| Standard Annual | `plan_TLFBRC1uN9YHjj` | $180 | Yearly |
-| Professional Monthly | `plan_TLFBROcMoO4A9R` | $39 | Monthly |
-| Professional Annual | `plan_TLFBRaOh3Dv5rq` | $372 | Yearly |
-| Enterprise Monthly | `plan_TPIlGtrKGvGxKZ` | $89.99 | Monthly |
-| Enterprise Annual | `plan_TPIlH5qqhl60dD` | $863.88 | Yearly |
+Starter / Standard / Professional re-minted **14 Aug 2026**. Enterprise's two rows are the
+originals from 13 Aug 2026 — the 14 Aug correction moved Enterprise's **INR** price only, so
+its USD plans still match `seed_plans.py` (8999 / 86388) and were deliberately **not** re-minted.
 
-Seat add-on (test): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLFBRlMIoz1QeC` ($5/seat/month).
+| Plan | Plan ID | Amount | Cycle | Minted |
+|------|---------|--------|-------|--------|
+| Starter Monthly | `plan_TPWR0ltxG5VCrk` | $7.99 | Monthly | 14 Aug 2026 |
+| Starter Annual | `plan_TPWR2cn2GNjIaR` | $77.88 | Yearly | 14 Aug 2026 |
+| Standard Monthly | `plan_TPWR4Qq9wZEBSr` | $15.99 | Monthly | 14 Aug 2026 |
+| Standard Annual | `plan_TPWR6F90foLfA2` | $155.88 | Yearly | 14 Aug 2026 |
+| Professional Monthly | `plan_TPWR83U8rK7Bni` | $45.99 | Monthly | 14 Aug 2026 |
+| Professional Annual | `plan_TPWR9rXizbETnJ` | $455.88 | Yearly | 14 Aug 2026 |
+| Enterprise Monthly | `plan_TPIlGtrKGvGxKZ` | $89.99 | Monthly | 13 Aug 2026 |
+| Enterprise Annual | `plan_TPIlH5qqhl60dD` | $863.88 | Yearly | 13 Aug 2026 |
 
-The two **Enterprise** rows were created 13 Aug 2026 and match `seed_plans.py`'s
-`monthly_price_usd_cents` / `annual_price_usd_cents` (8999 / 86388). There is **no Live-mode
-Enterprise plan** — the tier exists in Test only.
+Seat add-on (test): `RAZORPAY_SEAT_PLAN_ID_USD=plan_TLFBRlMIoz1QeC` ($5/seat/month) — unchanged.
+
+There is **no Live-mode Enterprise plan** — the tier exists in Test only.
+
+#### Retired Test USD plans — DO NOT WIRE
+
+| Plan ID | Amount | Cycle | Minted | Retired because |
+|---------|--------|-------|--------|-----------------|
+| `plan_TLFB8lG6zmggVB` | $9 | Monthly | 3 Aug 2026 | Starter re-priced to $7.99 |
+| `plan_TLFBQoPTonDDwh` | $84 | Yearly | 3 Aug 2026 | Starter re-priced to $77.88 |
+| `plan_TLFBQzoxkBVVar` | $19 | Monthly | 3 Aug 2026 | Standard re-priced to $15.99 |
+| `plan_TLFBRC1uN9YHjj` | $180 | Yearly | 3 Aug 2026 | Standard re-priced to $155.88 |
+| `plan_TLFBROcMoO4A9R` | $39 | Monthly | 3 Aug 2026 | Professional re-priced to $45.99 |
+| `plan_TLFBRaOh3Dv5rq` | $372 | Yearly | 3 Aug 2026 | Professional re-priced to $455.88 |
+| `plan_TMWSCDPIDcFxiX` | $9 | Monthly | 6 Aug 2026 | undocumented `test-mode-prod` duplicate |
+| `plan_TMWSCZs5JhcCL8` | $84 | Yearly | 6 Aug 2026 | undocumented `test-mode-prod` duplicate |
+| `plan_TMWSDa4WMmMTjL` | $19 | Monthly | 6 Aug 2026 | undocumented `test-mode-prod` duplicate |
+| `plan_TMWSDvMqxoCB1V` | $180 | Yearly | 6 Aug 2026 | undocumented `test-mode-prod` duplicate |
+| `plan_TMWSF0TzgWXs18` | $39 | Monthly | 6 Aug 2026 | undocumented `test-mode-prod` duplicate |
+| `plan_TMWSFJ7KnDPnNu` | $372 | Yearly | 6 Aug 2026 | undocumented `test-mode-prod` duplicate |
+
+The **Live** USD plans ($9 / $84 / $19 / $180 / $39 / $372) are equally behind the seed file,
+and are left alone for the same reason as the Live INR rail. `INTL_PAYMENTS_ENABLED=false`
+means nothing charges against them today.
 
 ### Seed the USD ids
+
+For **Test**, use the single combined command in
+[Seed to a reset DB (Test)](#seed-to-a-reset-db-test) — it already carries the real ids for
+both rails. The USD-only form below is a template for wiring a *different* environment:
 
 ```bash
 cd api && uv run python scripts/set_razorpay_plan_ids.py \
@@ -222,3 +301,24 @@ cd api && uv run python scripts/set_razorpay_plan_ids.py
   `discounted_plan_cache`; never created by hand and never listed here.
 - **Updating this file** — whenever plans change in either dashboard, update the matching table
   and re-run the apply command for that environment.
+
+### Re-minting checklist
+
+Editing a `*_price_*` field in `scripts/seed_plans.py` is only half a price change — the
+Razorpay side does not follow automatically, and nothing fails loudly when the two disagree.
+A checkout will happily *display* the new price and *charge* the old one.
+
+1. **Assert the mode.** Confirm `RAZORPAY_KEY_ID` starts with `rzp_test` before any API call.
+   Parse `api/.env` in Python — never `source` it.
+2. **Do both rails.** Check `*_cents` **and** `*_usd_cents`. An "INR-only" re-price has twice
+   silently invalidated USD plans.
+3. **Print, then reconcile, then create.** Amounts come from `seed_plans.py`, never retyped.
+4. **Re-fetch every new plan individually** and assert amount, currency, period *and* interval.
+   The create response is not proof — the 3 Aug live batch produced a wrong-currency and a
+   wrong-cycle plan that were only caught later.
+5. **Record the new ids here at creation time**, and move the old rows to the retired tables
+   rather than deleting them — an immutable plan that still exists is worth recognising.
+6. **Confirm `DB_URL` is local** before `seed_plans.py --apply`, then attach with
+   `set_razorpay_plan_ids.py --apply`.
+7. **Verify against the DB**, not the script output: every tier's price and id, cross-checked
+   against the live plan the id resolves to.

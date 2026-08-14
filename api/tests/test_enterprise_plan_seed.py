@@ -20,8 +20,8 @@ def test_enterprise_plan_exists_with_agency_entitlements():
     ent = _plan("enterprise")
 
     assert ent["credits_per_month"] == 10000
-    assert ent["monthly_price_cents"] == 279900  # ₹2,799
-    assert ent["annual_price_cents"] == 2686800  # ₹26,868 (₹2,239/mo × 12)
+    assert ent["monthly_price_cents"] == 599900  # ₹5,999
+    assert ent["annual_price_cents"] == 5758800  # ₹57,588 (₹4,799/mo × 12)
     assert ent["monthly_price_usd_cents"] == 8999  # $89.99
     assert ent["annual_price_usd_cents"] == 86388  # $863.88 ($71.99/mo × 12)
 
@@ -41,3 +41,24 @@ def test_enterprise_plan_exists_with_agency_entitlements():
 
 def test_enterprise_sorts_after_professional():
     assert _plan("enterprise")["sort_order"] > _plan("professional")["sort_order"]
+
+
+def test_enterprise_priced_above_professional():
+    """The ladder must not invert — Enterprise carries more entitlements.
+
+    Enterprise once sat at ₹2,799 against Professional's ₹2,999: a strictly
+    better tier for less money on the INR rail.
+    """
+    ent, prof = _plan("enterprise"), _plan("professional")
+    assert ent["monthly_price_cents"] > prof["monthly_price_cents"]
+    assert ent["annual_price_cents"] > prof["annual_price_cents"]
+    assert ent["monthly_price_usd_cents"] > prof["monthly_price_usd_cents"]
+    assert ent["annual_price_usd_cents"] > prof["annual_price_usd_cents"]
+
+
+def test_enterprise_annual_discount_matches_the_annual_price():
+    """``annual_discount_percent`` is displayed, so it must track the real saving."""
+    ent = _plan("enterprise")
+    full = ent["monthly_price_cents"] * 12
+    saving = (full - ent["annual_price_cents"]) / full * 100
+    assert round(saving) == ent["annual_discount_percent"]

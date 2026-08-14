@@ -218,11 +218,11 @@ _PLANS: list[dict] = [
         "name": "Enterprise",
         "description": "For agencies running many client sites from one account.",
         "credits_per_month": 10000,
-        "monthly_price_cents": 279900,  # ₹2,799
-        "annual_price_cents": 2686800,  # ₹26,868 (₹2,239/mo × 12)
+        "monthly_price_cents": 599900,  # ₹5,999
+        "annual_price_cents": 5758800,  # ₹57,588 (₹4,799/mo × 12)
         "monthly_price_usd_cents": 8999,  # $89.99
         "annual_price_usd_cents": 86388,  # $863.88 ($71.99/mo × 12)
-        "annual_discount_percent": 20,  # ₹26,868 vs ₹33,588 (12 × monthly)
+        "annual_discount_percent": 20,  # ₹57,588 vs ₹71,988 (12 × monthly)
         "trial_days": 0,
         "included_operator_seats": -1,
         "extra_seat_price_cents": 0,
