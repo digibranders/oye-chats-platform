@@ -12,6 +12,16 @@ Razorpay plan IDs are intentionally NOT set here — they differ per environment
 so no plan ID is hardcoded in the repo. The extra-seat add-on plan is likewise
 env-config (``RAZORPAY_SEAT_PLAN_ID``), not a plan row.
 
+``is_active`` is DERIVED, never asserted: a tier goes on sale only once this
+environment has the gateway plan ids that can charge for it (see
+``plan_service.plan_is_sellable``). This file is the catalogue — prices,
+entitlements, ordering — not the sales lifecycle, and it has no way to know
+which plans a given Razorpay account actually holds. Forcing ``is_active =
+True`` here is what silently re-published Enterprise on a prod reseed: migration
+``f1a2b3c4d5e6`` deactivates it, the baseline schema seeds no plan rows, so on a
+wiped database that migration matches nothing and this seed had the last word —
+listing a tier with no Live plan id, whose checkout 400s.
+
 Idempotent: each plan is matched by ``slug`` and updated in place; a new row is
 inserted if the slug is missing. Unknown slugs (custom tiers added by a super
 admin) are left untouched.
@@ -34,6 +44,7 @@ from sqlalchemy import select
 
 from app.db.models import Plan
 from app.db.session import get_session
+from app.services.plan_service import plan_is_sellable
 
 # ── Canonical matrix — single source of truth ──────────────────────────────
 # INR paise for *_cents; US cents for *_usd_cents. -1 in limits means unlimited.
@@ -283,28 +294,55 @@ _SCALAR_FIELDS = (
 )
 
 
+def _would_be_sellable(data: dict, plan: Plan | None) -> bool:
+    """Sellability of the row this run will leave behind.
+
+    Gateway plan ids live on the existing row — this script never writes them —
+    so a brand-new paid row is by definition not yet sellable. It goes on sale
+    when ``set_razorpay_plan_ids.py`` attaches this environment's ids.
+    """
+    return plan_is_sellable(
+        is_free=not data["monthly_price_cents"] and not data["annual_price_cents"],
+        razorpay_plan_id_monthly=getattr(plan, "razorpay_plan_id_monthly", None),
+        razorpay_plan_id_annual=getattr(plan, "razorpay_plan_id_annual", None),
+    )
+
+
 def run(*, apply: bool) -> int:
     with get_session() as session:
         existing = {p.slug: p for p in session.scalars(select(Plan)).all()}
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}\n")
+        off_sale: list[str] = []
         for data in _PLANS:
             slug = data["slug"]
             plan = existing.get(slug)
             verb = "update" if plan else "insert"
             price = data["monthly_price_cents"] / 100
-            print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits")
+            sellable = _would_be_sellable(data, plan)
+            if not sellable:
+                off_sale.append(slug)
+            state = "on sale" if sellable else "OFF SALE — no Razorpay plan id"
+            print(f"  {verb:<6} {slug:<13} ₹{price:>8,.0f}/mo  {data['credits_per_month']:>6} credits  {state}")
 
             if not apply:
                 continue
 
             if plan is None:
-                plan = Plan(slug=slug, currency="INR", pricing_model="per_operator", is_active=True)
+                plan = Plan(slug=slug, currency="INR", pricing_model="per_operator")
                 session.add(plan)
             plan.currency = "INR"
-            plan.is_active = True
+            plan.is_active = sellable
             for field in _SCALAR_FIELDS:
                 setattr(plan, field, data[field])
+
+        if off_sale:
+            print(
+                f"\nNot on sale in this environment: {', '.join(off_sale)}. "
+                "A tier without both INR Razorpay plan ids cannot complete a checkout, so it is\n"
+                "left deactivated rather than listed. Attach this environment's ids with\n"
+                "scripts/set_razorpay_plan_ids.py --apply — that puts each tier on sale as its ids land."
+            )
 
         if apply:
             session.commit()

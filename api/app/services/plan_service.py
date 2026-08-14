@@ -44,6 +44,35 @@ def get_active_plans(session: Session) -> list[Plan]:
     return list(session.execute(stmt).scalars().all())
 
 
+def plan_is_sellable(
+    *,
+    is_free: bool,
+    razorpay_plan_id_monthly: str | None,
+    razorpay_plan_id_annual: str | None,
+) -> bool:
+    """Whether this environment can actually take money for a tier.
+
+    A free tier is always sellable — there is nothing to charge. A paid tier is
+    sellable only when it carries BOTH INR gateway plan ids for the mode this
+    environment's keys point at: ``razorpay_service.create_subscription`` raises
+    ``ValueError`` (surfaced as a 400) the moment the requested cycle's id is
+    missing, so publishing a tier without them offers a checkout that cannot
+    complete. The USD rail is deliberately out of scope — it is gated behind
+    ``INTL_PAYMENTS_ENABLED`` and fails loudly on its own, so a missing USD id
+    must not pull a working INR tier off sale.
+
+    This is the single rule ``scripts/seed_plans.py`` and
+    ``scripts/set_razorpay_plan_ids.py`` derive ``plans.is_active`` from, so
+    activation follows the gateway wiring each environment actually has rather
+    than a constant that can only be right in one of them. Test and Live carry
+    different plan ids (and Live has no Enterprise plan at all), which is exactly
+    why a hardcoded ``True`` in the seed re-published an unbuyable tier on prod.
+    """
+    if is_free:
+        return True
+    return bool(razorpay_plan_id_monthly and razorpay_plan_id_annual)
+
+
 _PRICING_CONTENT_KEYS: dict[str, str] = {
     "faq": "pricing_faq",
     "feature_matrix": "pricing_feature_matrix",

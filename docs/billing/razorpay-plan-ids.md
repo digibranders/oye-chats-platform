@@ -1,8 +1,10 @@
 # Razorpay Plan IDs — Canonical Reference
 
 **Single source of truth** for which Razorpay plan IDs are wired into each environment.
-Last updated: **14 Aug 2026** — every Test plan re-minted against the current
-`scripts/seed_plans.py` (INR **and** USD), and Enterprise INR corrected to ₹5,999.
+Last updated: **14 Aug 2026** — Enterprise INR corrected to ₹5,999, and every Test plan
+re-minted against the current `scripts/seed_plans.py` on both rails **except Enterprise
+USD**, which already matched the seed file (8999 / 86388) and was deliberately left as
+minted on 13 Aug (see the USD plans section below).
 
 > **Pricing lineage.** The 16 Jul relaunch shipped **Starter ₹449 · Standard ₹949 ·
 > Professional ₹1,399**. Those amounts are **no longer what the product displays** —
@@ -27,8 +29,10 @@ Last updated: **14 Aug 2026** — every Test plan re-minted against the current
 ## Test Mode — INR rail (`rzp_test_…`) ✅ CURRENT
 
 Created **14 Aug 2026**, re-minted from `scripts/seed_plans.py`. Amounts are **GST-inclusive**
-(plan amount == displayed price); annual is the full yearly charge at ~20% off monthly. Each
-carries `notes = {"oyechats_slug": …, "cycle": …, "rail": "INR"}`.
+(plan amount == displayed price); annual is the full yearly charge, discounted 20.0% off monthly
+on Starter, Standard and Enterprise and **21.7% on Professional** (₹28,188 vs ₹35,988 — the plan
+row rounds that to `annual_discount_percent: 22`). Each carries
+`notes = {"oyechats_slug": …, "cycle": …, "rail": "INR"}`.
 
 | Plan | Plan ID | Amount | Cycle |
 |------|---------|--------|-------|
@@ -75,7 +79,10 @@ so a stale id found in a DB or a script can be *recognised* rather than guessed 
 ### Seed to a reset DB (Test)
 A fresh DB is built and seeded by `scripts/reset_and_seed.sh` (schema baseline →
 `seed_plans.py` → `seed_pricing_config.py` → `seed_superadmin.py`). That seeds the plan
-rows and pricing config but **not** the Razorpay IDs (they are per-environment). After it
+rows and pricing config but **not** the Razorpay IDs (they are per-environment). Every paid tier
+is therefore seeded **off sale** — `is_active` is derived from whether the tier has both INR
+gateway ids, so the command below is what actually puts the tiers on sale (Enterprise included,
+because Test *has* Enterprise ids; prod does not, which is the whole point). After the reset
 finishes, attach the Test IDs:
 ```bash
 cd api && uv run python scripts/set_razorpay_plan_ids.py \
@@ -119,10 +126,37 @@ This is what production currently charges.
 | Professional Annual | `plan_TE6Pbuixn7mmDB` | ₹13,428 | Yearly | ₹28,188 |
 
 > ⚠️ **Live has the same drift Test just had fixed, and is NOT yet re-minted.** The ids above
-> bill the 16 Jul amounts while `seed_plans.py` holds the new ones, so a production DB seeded
-> from the current file would display a price these plans do not charge. There is also **no
-> Live Enterprise plan at all**. Re-minting Live is a deliberate, separately-authorised
-> commercial act — it re-prices real customers — so it was intentionally left alone here.
+> bill the 16 Jul amounts while `seed_plans.py` holds the new ones. A production DB seeded from
+> the current file therefore breaks in two distinct ways:
+>
+> **1. Silent under-collection on every paid subscription.** Prod would *display* the seed file's
+> prices and *charge* what these immutable ids carry — always in the customer's favour, never
+> flagged:
+>
+> | Tier | Displayed | Charged | Under-collected |
+> |------|-----------|---------|-----------------|
+> | Starter monthly | ₹599 | ₹449 | **−25.0%** |
+> | Starter annual | ₹5,748 | ₹4,308 | **−25.1%** |
+> | Standard monthly | ₹1,199 | ₹949 | **−20.9%** |
+> | Standard annual | ₹11,508 | ₹9,108 | **−20.9%** |
+> | Professional monthly | ₹2,999 | ₹1,399 | **−53.4%** |
+> | Professional annual | ₹28,188 | ₹13,428 | **−52.4%** |
+>
+> That is **21–53% of gross revenue lost per subscription, on every renewal, with no error
+> raised anywhere** — checkout succeeds, the webhook is accepted, and the invoice is issued at
+> the charged amount, so the platform's own records are internally consistent and the gap is
+> invisible until someone reconciles displayed price against settled amount by hand.
+>
+> **2. Enterprise cannot be sold at all.** There is **no Live Enterprise plan**, in either
+> currency. `seed_plans.py` now derives `plans.is_active` from whether a tier has both INR
+> gateway ids (`plan_service.plan_is_sellable`), so a prod reseed leaves Enterprise
+> **deactivated** rather than publishing it — this is what stops the seed from silently undoing
+> migration `f1a2b3c4d5e6`. If it is activated anyway (super admin toggle, or Live ids minted
+> for only one cycle), `razorpay_service.create_subscription` raises `ValueError` and every
+> Enterprise checkout returns **400** — the tier renders as purchasable and the button is dead.
+>
+> Re-minting Live is a deliberate, separately-authorised commercial act — it re-prices real
+> customers — so it was intentionally left alone here.
 > **Before any prod reseed:** mint the Live replacements, record them in this table, and
 > re-point the prod DB, or explicitly revert `seed_plans.py` to the amounts Live charges.
 

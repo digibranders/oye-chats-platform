@@ -47,6 +47,13 @@ The extra-seat add-on plans are NOT stored on a plan row — they are configured
 via the ``RAZORPAY_SEAT_PLAN_ID`` (INR) and ``RAZORPAY_SEAT_PLAN_ID_USD``
 environment variables (per Razorpay account/mode).
 
+Attaching ids is also what puts a tier ON SALE. ``plans.is_active`` is derived
+from ``plan_service.plan_is_sellable`` here and in ``seed_plans.py``: a paid tier
+with both INR ids is activated, one without them is deactivated. The two rules
+are the same rule, so the order the scripts run in does not change the outcome —
+the seed writes the catalogue, this script wires the gateway, and whichever runs
+last leaves ``is_active`` agreeing with what the environment can actually charge.
+
 To clear a plan ID (set it back to NULL), pass the literal string 'null'.
 
 Verification:
@@ -67,6 +74,7 @@ from sqlalchemy import select
 
 from app.db.models import Plan
 from app.db.session import get_session
+from app.services.plan_service import plan_is_sellable
 
 _SLUGS: tuple[str, ...] = ("starter", "standard", "professional", "enterprise")
 
@@ -116,6 +124,22 @@ def _print_rail(title: str, plan_map: dict[str, Plan], columns: dict[str, str]) 
             print(f"{slug:<12} {mo:<32} {yr:<32}")
 
 
+def _sellable_after(plan: Plan, ids: dict[str, Any]) -> bool:
+    """Whether ``plan`` can be charged once ``ids`` have been written to it."""
+
+    def resolved(column: str) -> str | None:
+        if column not in ids:
+            return getattr(plan, column)
+        value = ids[column]
+        return None if value is _CLEAR else value
+
+    return plan_is_sellable(
+        is_free=not plan.monthly_price_cents and not plan.annual_price_cents,
+        razorpay_plan_id_monthly=resolved("razorpay_plan_id_monthly"),
+        razorpay_plan_id_annual=resolved("razorpay_plan_id_annual"),
+    )
+
+
 def run(args: argparse.Namespace, *, apply: bool) -> int:
     updates: dict[str, dict[str, Any]] = {}
 
@@ -136,6 +160,8 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             print("Current Razorpay plan IDs in DB:")
             _print_rail("INR rail", plan_map, _INR_COLUMNS)
             _print_rail("USD rail", plan_map, _USD_COLUMNS)
+            on_sale = [slug for slug in _SLUGS if slug in plan_map and plan_map[slug].is_active]
+            print(f"\nOn sale (plans.is_active): {', '.join(on_sale) or '(none)'}")
             return 0
 
         print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}")
@@ -149,8 +175,19 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             for column, value in ids.items():
                 label = column.removeprefix("razorpay_plan_id_")
                 print(f"    {label + ':':<14} {getattr(p, column) or '(none)'!r} → {_render(value)}")
-                if apply:
+
+            # Attaching (or clearing) the INR ids is what puts a tier on or off
+            # sale — see the module docstring.
+            sellable = _sellable_after(p, ids)
+            if sellable != p.is_active:
+                print(
+                    f"    {'is_active:':<14} {p.is_active!r} → {sellable!r}  ({'ON SALE' if sellable else 'OFF SALE'})"
+                )
+
+            if apply:
+                for column, value in ids.items():
                     setattr(p, column, None if value is _CLEAR else value)
+                p.is_active = sellable
 
         if apply:
             session.commit()

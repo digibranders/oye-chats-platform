@@ -264,8 +264,10 @@ def emandate_warning(amount_minor: int | None, currency: str | None) -> str | No
     Deliberately a WARNING, not a hard block: pricing above the ceiling is a
     legitimate business decision (an enterprise tier may accept per-renewal
     re-authentication, or bill by invoice instead of by mandate). The failure
-    this prevents is crossing the line *unknowingly* — Professional annual sits
-    at Rs 13,428, only 10.5% below it.
+    this prevents is crossing the line *unknowingly* — and the catalogue is
+    already well across it: Professional annual is Rs 28,188 (88% ABOVE the
+    ceiling) and Enterprise annual Rs 57,588 (3.8x it). Every monthly amount
+    still clears it, as do Starter and Standard annual (Rs 5,748 / Rs 11,508).
 
     Non-INR is out of scope: the threshold is a rupee figure and cannot be
     compared against a USD amount. The 2026 framework does cover cross-border,
@@ -284,7 +286,15 @@ def emandate_warning(amount_minor: int | None, currency: str | None) -> str | No
 
 
 def _emandate_warnings(plan: Plan) -> list[str]:
-    """Every amount this plan can debit in one transaction."""
+    """Every amount this plan can debit in one transaction.
+
+    UNCOVERED ROUTE: this fires only on the super-admin plan-CRUD path. Prices
+    also change via ``scripts/seed_plans.py``, which never calls it — and that is
+    the path every price change has actually taken so far, which is how both
+    annual tiers crossed the ceiling without anyone being warned. Wiring the
+    check into the seed is a behaviour change owed its own review; until then,
+    re-price through this endpoint or run the check by hand.
+    """
     return [
         w
         for w in (
