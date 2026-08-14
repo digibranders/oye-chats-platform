@@ -722,7 +722,14 @@ def send_manual_follow_up(
                 html_body=html_body,
             )
         except Exception as e:
-            logger.error(f"Failed to send follow up to {lead_info.email}: {e}")
+            # PRIVACY — ``session_id``, never the address. This is a visitor's
+            # email (the lead captured in the chat), personal data under GDPR and
+            # under India's DPDP Act, where this product's basis is consent-only.
+            # ``logger.error`` is not a log line here: Sentry's LoggingIntegration
+            # promotes ERROR records to full events, so the address was the
+            # event's own message — the one field no scrubber gets to see. The
+            # session is the join key to the lead row for anyone with DB access.
+            logger.error(f"Failed to send follow up | session={session_id} | {e}")
             raise HTTPException(status_code=500, detail="Failed to send email") from e
 
         lead_info.last_followup_sent_at = datetime.now(UTC)

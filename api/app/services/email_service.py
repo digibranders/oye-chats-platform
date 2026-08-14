@@ -12,6 +12,7 @@ import base64
 import contextlib
 import json
 import logging
+import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -35,6 +36,48 @@ BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
 _SUPPORT_LINK = link(esc(SUPPORT_EMAIL), f"mailto:{SUPPORT_EMAIL}")
 
 
+def _redact(to_email: str) -> str:
+    """``gaurav@example.com`` → ``g***@example.com``.
+
+    The module's one address redactor: local part cut to its first character,
+    domain kept. The domain is the diagnostic — "every @outlook.com send is
+    bouncing" is a real finding and a fully masked address cannot express it —
+    and it is not personal data on its own for the consumer domains that make up
+    most of this list. Anything without an ``@`` collapses to ``***``, because a
+    value that is not an address is a value we cannot vouch for.
+    """
+    local, _, domain = to_email.partition("@")
+    return f"{local[:1]}***@{domain}" if local and domain else "***"
+
+
+# Same shape as ``core.langfuse_client._EMAIL_RE``, deliberately duplicated
+# rather than imported: that module is the Langfuse client and pulling it in
+# here would make every email send depend on the tracing stack for a regex.
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+
+def _email_failure_tags(tags: dict) -> dict[str, str]:
+    """Build the ``email.*`` Sentry tags for :func:`_capture_email_failure`.
+
+    PRIVACY — every address in a tag value is redacted to ``_redact`` form
+    before it leaves the process. Callers pass the recipient verbatim (as
+    ``to=`` or ``email=``), and for the visitor-facing senders — the chat
+    follow-up in ``lead_routes``, the offline-message notification — that
+    recipient is a *visitor's* address, personal data under GDPR and under
+    India's DPDP Act, where this product's basis is consent-only. Every one of
+    these call sites already redacts the same value for its local log; the
+    Sentry path was simply missed.
+
+    Redaction rather than dropping (the usual call, see ``core.visitor_privacy``
+    and d041a7a) because ``g***@example.com`` is not a constant: the domain
+    survives, which is the whole reason to tag a send failure with a recipient
+    at all. Applied as a substitution over the value rather than per key, so it
+    also catches the ``reason`` tag — Brevo's error bodies quote the offending
+    address back at us — and so a caller inventing a new key cannot reopen this.
+    """
+    return {f"email.{key}": _EMAIL_RE.sub(lambda m: _redact(m.group(0)), str(value)) for key, value in tags.items()}
+
+
 def _capture_email_failure(exc: Exception, **tags) -> None:
     """Capture an email-send failure to Sentry (if configured) with tags.
 
@@ -45,8 +88,8 @@ def _capture_email_failure(exc: Exception, **tags) -> None:
         import sentry_sdk
 
         with sentry_sdk.push_scope() as scope:
-            for key, value in tags.items():
-                scope.set_tag(f"email.{key}", str(value))
+            for key, value in _email_failure_tags(tags).items():
+                scope.set_tag(key, value)
             sentry_sdk.capture_exception(exc)
 
 
@@ -1150,11 +1193,6 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | 
         ),
         attachments=attachments,
     )
-
-
-def _redact(to_email: str) -> str:
-    local, _, domain = to_email.partition("@")
-    return f"{local[:1]}***@{domain}" if local and domain else "***"
 
 
 # ── Dunning (failed recurring payment) ───────────────────────────────────────
