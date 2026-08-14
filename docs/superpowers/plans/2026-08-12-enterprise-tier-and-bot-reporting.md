@@ -10,6 +10,90 @@
 
 ---
 
+## Amendments
+
+Decisions taken after this plan was written that supersede figures in its body. The body has been
+updated to match the shipped code; this log is what says *when* and *why*, so the plan still reads as
+a record of what was decided rather than a document that was quietly made correct.
+
+### 2026-08-13 — Enterprise credits stay at 10,000/month (supersedes 13,000) · `ba22a0c`
+
+The plan specified 13,000 credits/month. **Enterprise grants 10,000/month, the same as
+Professional.** Its value proposition is unlimited AI agents, unlimited operator seats and unlimited
+domains *sharing one credit pool* — agencies buy the pooling, not a larger allowance, and heavy
+accounts top up.
+
+`ba22a0c` moved `credits_per_month` to 10,000 but left the `limits["credits"]` copy at the plan's
+13,000, so the seed carried two figures for one quantity for two days. Reconciled 2026-08-14 (see
+below).
+
+### 2026-08-13 — Enterprise USD is $89.99/mo · $863.88/yr (supersedes $91.99/mo · $911.88/yr) · `ba22a0c`
+
+The USD rail moved in the same commit. Shipped: **$89.99/mo**, **$863.88/yr** ($71.99/mo × 12), and
+it has not moved since — the 2026-08-14 INR correction below deliberately left USD alone.
+
+Affected in the body: the Task 1 test and seed snippets.
+
+### 2026-08-14 — Enterprise INR is ₹5,999/mo · ₹57,588/yr (supersedes ₹4,799/mo · ₹46,068/yr) · `98eeeb3`
+
+Final INR pricing is **₹5,999/mo** and **₹57,588/yr** — the annual being ₹4,799/mo × 12, a true 20%
+discount.
+
+It took two hops, which is why old commits disagree. `ba22a0c` (08-13) replaced the plan's
+₹4,799/₹46,068 with ₹2,799/₹26,868 — which put Enterprise *below* Professional's ₹2,999, a strictly
+better tier for less money. `98eeeb3` (08-14) corrected it to ₹5,999/₹57,588. The ladder guards in
+`api/tests/test_enterprise_plan_seed.py` were widened in response and now walk every rung on all four
+price axes, so that inversion cannot recur silently. Razorpay plans are immutable, so new IDs were
+minted and the old ones retired — see `docs/billing/razorpay-plan-ids.md`.
+
+**Note the coincidence, because it is a trap when reading old commits and Razorpay dashboards:** the
+plan's original *monthly* figure, ₹4,799, is now the *annual monthly-equivalent*. A ₹4,799 in this
+codebase means the annual rail today; in this plan as first written it meant the monthly one.
+
+Affected in the body: the Task 1 test and seed snippets, and the Task 5 Razorpay step.
+
+### 2026-08-14 — `limits["credits"]` reconciled to `credits_per_month`
+
+Closing the two-field disagreement the 08-13 credits decision left behind: the Enterprise seed granted
+10,000 and advertised 13,000.
+
+No runtime path read the advertised copy. The only `limit_for()` consumers are `operators`
+(`operator_routes.py`, `invite_service.py`, `transition_service.py`) and `documents`
+(`document_routes.py`); `within_limit()` is called only for `bots`; `enforce_limit()` is defined in
+`auth.py` and never called; and the frontend's `limitFor()` is called for `operators`, `documents`,
+`leads`, `bots`, `page_scraping` and `chat_history_days` — never `credits`, though the `LimitKey`
+union permits it. So the disagreement changed no behaviour.
+
+It did leak, though: `GET /subscriptions/plans` and `GET /public/pricing-catalog` serialize
+`plan.limits` verbatim, so any surface rendering the catalog would have advertised a number the ledger
+never grants. Reconciled to 10,000, with `test_limits_credits_mirrors_credits_per_month` now pinning
+the two fields together on **every** rung — the mirror holds catalogue-wide, and Enterprise was the
+only tier that had broken it.
+
+Affected in the body: the Task 1 test and seed snippets, and the Task 5 verification step.
+
+### Structural drift — flagged, not fixed (2026-08-14)
+
+Noticed while reconciling the figures above. None of these are wrong decisions; they are places where
+the body no longer describes the shipped shape. Left as-is so this stays a plan rather than a
+retrofitted spec:
+
+- **Every task shipped, but every checkbox is still `- [ ]`.** Phases A, B and C are all in the
+  codebase (`attributed_bot_id` migration `a9fc12693ff6`, `reporting_service.py`, `/analytics/by-bot`
+  and its CSV, the Reports page, the searchable switcher, the agent-creation gate). The checkbox
+  state is not a record of what is done.
+- **Task 5's test was never written.** `api/tests/test_public_pricing_enterprise.py` does not exist.
+  The catalog does expose Enterprise (`public_pricing_routes.py` reads every plan row), so the
+  behaviour the test would have pinned is present — but unpinned.
+- **The Reports page shipped elsewhere, in TypeScript.** File Structure names
+  `app/src/pages/Reports.jsx`; it shipped as `app/src/features/workspace/ReportsPage.tsx` plus
+  `reportsModel.ts`, under the Admin 2.0 layout.
+- **Line references drift.** Callouts such as `operator_routes.py:386` and
+  `plan_entitlements_service.py:98-110` were accurate when written; treat them as pointers to
+  symbols, not to lines.
+
+---
+
 ## Scope note
 
 This plan covers two subsystems that could ship separately:
@@ -75,11 +159,11 @@ def _plan(slug: str) -> dict:
 def test_enterprise_plan_exists_with_agency_entitlements():
     ent = _plan("enterprise")
 
-    assert ent["credits_per_month"] == 13000
-    assert ent["monthly_price_cents"] == 479900       # ₹4,799
-    assert ent["annual_price_cents"] == 4606800       # ₹46,068 (₹3,839/mo)
-    assert ent["monthly_price_usd_cents"] == 9199     # $91.99
-    assert ent["annual_price_usd_cents"] == 91188     # $911.88 ($75.99/mo)
+    assert ent["credits_per_month"] == 10000
+    assert ent["monthly_price_cents"] == 599900       # ₹5,999
+    assert ent["annual_price_cents"] == 5758800       # ₹57,588 (₹4,799/mo × 12)
+    assert ent["monthly_price_usd_cents"] == 8999     # $89.99
+    assert ent["annual_price_usd_cents"] == 86388     # $863.88 ($71.99/mo × 12)
 
     # Unlimited is -1 everywhere in this codebase.
     assert ent["limits"]["bots"] == -1
@@ -113,12 +197,12 @@ In `api/scripts/seed_plans.py`, append this dict to `_PLANS` immediately after t
         "slug": "enterprise",
         "name": "Enterprise",
         "description": "For agencies running many client sites from one account.",
-        "credits_per_month": 13000,
-        "monthly_price_cents": 479900,  # ₹4,799
-        "annual_price_cents": 4606800,  # ₹46,068 (₹3,839/mo × 12)
-        "monthly_price_usd_cents": 9199,  # $91.99
-        "annual_price_usd_cents": 91188,  # $911.88 ($75.99/mo × 12)
-        "annual_discount_percent": 20,
+        "credits_per_month": 10000,
+        "monthly_price_cents": 599900,  # ₹5,999
+        "annual_price_cents": 5758800,  # ₹57,588 (₹4,799/mo × 12)
+        "monthly_price_usd_cents": 8999,  # $89.99
+        "annual_price_usd_cents": 86388,  # $863.88 ($71.99/mo × 12)
+        "annual_discount_percent": 20,  # ₹57,588 vs ₹71,988 (12 × monthly)
         "trial_days": 0,
         "included_operator_seats": -1,
         "extra_seat_price_cents": 0,
@@ -126,7 +210,10 @@ In `api/scripts/seed_plans.py`, append this dict to `_PLANS` immediately after t
         "is_default": False,
         "sort_order": 5,
         "limits": {
-            "credits": 13000,
+            # Mirrors ``credits_per_month`` — every other rung does the same,
+            # and this copy is what the plan and pricing-catalog endpoints
+            # serialize as ``limits.credits``.
+            "credits": 10000,
             # Unlimited bots is the whole point of this tier. Credits still
             # meter real cost (5 per page, 1 per 250 words), so uncapped
             # ingestion is self-limiting — no separate knowledge cap needed.
@@ -390,7 +477,7 @@ Expected: PASS — the catalog reads every plan row. If it FAILS, remove the exc
 
 - [ ] **Step 3: Create the live Razorpay plans**
 
-Razorpay plans are immutable, so Enterprise needs new IDs in both Test and Live mode. Create four: Enterprise Monthly INR ₹4,799, Enterprise Annual INR ₹46,068, and the USD equivalents if the USD rail is active.
+Razorpay plans are immutable, so Enterprise needs new IDs in both Test and Live mode. Create four: Enterprise Monthly INR ₹5,999, Enterprise Annual INR ₹57,588, and the USD equivalents if the USD rail is active.
 
 Record them in `docs/billing/razorpay-plan-ids.md` under a new Enterprise row in both the Test and Live tables, then attach them:
 
@@ -407,7 +494,7 @@ cd api && uv run python scripts/seed_plans.py --apply
 curl -s localhost:8000/public/pricing | python3 -m json.tool | grep -A3 enterprise
 ```
 
-Expected: an `enterprise` object with `credits_per_month: 13000`.
+Expected: an `enterprise` object with `credits_per_month: 10000`.
 
 - [ ] **Step 5: Commit**
 
@@ -674,7 +761,7 @@ def test_rollup_returns_one_row_per_bot_with_credits_spent(db):
                      delta=-12, reason="ai_chat", created_at=now),
         # A grant must never count as consumption.
         CreditLedger(client_id=client.id, bot_id=None, attributed_bot_id=None,
-                     delta=13000, reason="plan_grant", created_at=now),
+                     delta=10000, reason="plan_grant", created_at=now),
     ])
     db.flush()
 

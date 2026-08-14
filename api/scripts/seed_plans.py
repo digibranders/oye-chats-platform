@@ -241,7 +241,13 @@ _PLANS: list[dict] = [
         "is_default": False,
         "sort_order": 5,
         "limits": {
-            "credits": 13000,
+            # Mirrors ``credits_per_month`` — every other rung does the same, and
+            # this copy is what ``/subscriptions/plans`` and the public pricing
+            # catalog serialize as ``limits.credits``. Enterprise sells pooling
+            # (unlimited agents/seats/domains on ONE pool), not a bigger
+            # allowance, so the pooled figure stays at Professional's 10,000 and
+            # heavy accounts top up.
+            "credits": 10000,
             # Unlimited bots is the whole point of this tier. Credits still
             # meter real cost (5 per page, 1 per 250 words), so uncapped
             # ingestion is self-limiting — no separate knowledge cap needed.

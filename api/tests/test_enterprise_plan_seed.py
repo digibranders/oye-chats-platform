@@ -65,6 +65,25 @@ def test_enterprise_sorts_after_professional():
     assert _plan("enterprise")["sort_order"] > _plan("professional")["sort_order"]
 
 
+@pytest.mark.parametrize("slug", _LADDER)
+def test_limits_credits_mirrors_credits_per_month(slug: str):
+    """One quantity, two fields — they must never disagree.
+
+    ``credits_per_month`` is what actually grants credits (``credit_service``
+    and ``plan_service``); ``limits["credits"]`` is a copy that no runtime path
+    reads today but that ``GET /subscriptions/plans`` and
+    ``GET /public/pricing-catalog`` both serialize verbatim. Enterprise shipped
+    with 10,000 granted and 13,000 advertised — invisible in the product,
+    visible to anyone rendering the catalog, and a trap for the next surface
+    wired to the limits map.
+    """
+    plan = _plan(slug)
+    assert plan["limits"]["credits"] == plan["credits_per_month"], (
+        f"{slug}: limits.credits {plan['limits']['credits']} disagrees with "
+        f"credits_per_month {plan['credits_per_month']}"
+    )
+
+
 def test_the_ladder_covers_every_seeded_plan():
     """``_LADDER`` is the subject of every guard below — keep it total and ordered."""
     assert {p["slug"] for p in _PLANS} == set(_LADDER)
