@@ -15,7 +15,6 @@ import {
   buildPlan,
   buildPromotion,
   buildSubscription,
-  SALES_EMAIL,
   type PlanView,
   type PromotionView,
   type SubscriptionView,
@@ -177,27 +176,20 @@ export function WelcomePlanStep({ onBack, onContinue, isFirst }: StepProps): Rea
 
   const handlePlanSelect = useCallback(
     (plan: PlanView): void => {
+      // Free — account is already on Free; advance immediately. The
+      // `!isContactSales` clause is load-bearing: a bespoke, per-contract tier
+      // is priced on request and so is `!isPaid`, and must NOT be treated as
+      // Free.
       if (!plan.isPaid && !plan.isContactSales) {
-        // Free — account is already on Free; advance immediately.
         setPlanChosen(true);
         onContinue();
         return;
       }
-      // A bespoke, per-contract tier is sold by a human — there is no checkout
-      // to open. The priced Enterprise tier is NOT one of these and falls
-      // through to the confirm modal like any other paid plan.
-      //
-      // A `mailto:` is a hand-off to the OS mail client, not a document to
-      // render, so it is a plain navigation — same as the anchor the billing
-      // confirm modal uses. `window.open` would need a windowFeatures string
-      // (its third argument is NOT a rel list: any non-empty value forces a
-      // popup window) and would leave a blank tab behind.
-      if (plan.isContactSales) {
-        window.location.href = `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(
-          `${plan.name} plan inquiry`,
-        )}`;
-        return;
-      }
+      // Paid, trial, and bespoke contact-sales tiers all open the confirm
+      // modal — it short-circuits the quote for `isContactSales` and renders a
+      // real "Contact sales" anchor in place of the pay button, so the hand-off
+      // keeps link semantics (middle-click, copy address, link role). One
+      // contact-sales surface instead of two, matching BillingPage.
       setConfirmPlan(plan);
     },
     [onContinue],
