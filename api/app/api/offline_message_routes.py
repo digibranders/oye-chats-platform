@@ -13,6 +13,7 @@ from app.db.models import Bot, OfflineMessage
 from app.db.session import get_session
 from app.services.email_service import (
     get_notification_recipients,
+    redact_email,
     send_offline_message_email,
     send_unavailable_callback_email,
     send_visitor_confirmation_email,
@@ -132,7 +133,10 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
                 bot.id,
             )
 
-        logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
+        # PRIVACY — ``request.email`` is the visitor's, straight off the offline
+        # form, and this INFO record becomes a Sentry breadcrumb. The message id
+        # is the join key to the stored row; the domain is all the log needs.
+        logger.info(f"Offline message saved: {msg.id} from {redact_email(request.email)} for bot {bot.id}")
 
     # Notify connected operators about new offline message (live-chat console).
     from app.services.live_chat_service import manager

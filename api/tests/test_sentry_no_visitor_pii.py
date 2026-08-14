@@ -10,7 +10,9 @@ or email past it:
    ``chat_routes`` actually trusts is the one that shipped.
 2. Raw addresses interpolated into WARNING log records, which Sentry's
    LoggingIntegration turns into breadcrumbs on a shared background thread.
-3. A recipient address set verbatim as an ``email.*`` Sentry tag.
+3. A recipient address set verbatim as an ``email.*`` Sentry tag — and, one line
+   above the capture that sets it, the same address in the WARNING record that
+   becomes a breadcrumb on that very event.
 4. A recipient address as the *message* of an ERROR record, which
    LoggingIntegration promotes to a full Sentry event.
 
@@ -391,6 +393,26 @@ class TestNoEmailInSentryTags:
             "email.days_remaining": "3",
             "email.template_id": "17",
         }
+
+    def test_the_breadcrumb_beside_the_event_is_redacted_too(self, monkeypatch, caplog):
+        """``_send_brevo_email`` logs a WARNING and *then* captures to Sentry.
+        Redacting only the tag would have left the full address one line above,
+        riding along as a breadcrumb on that very event."""
+        from app.services import email_service
+
+        monkeypatch.setattr(email_service, "EMAIL_ENABLED", True)
+        monkeypatch.setattr(email_service, "_capture_email_failure", lambda *_a, **_k: None)
+
+        def _boom(*_a, **_k):
+            raise OSError("connection reset by peer")
+
+        monkeypatch.setattr(email_service, "urlopen", _boom)
+        with caplog.at_level(logging.WARNING):
+            assert email_service._send_brevo_email(VISITOR_EMAIL, "Following up", "<p>hi</p>") is False
+
+        assert "Brevo email failed" in caplog.text
+        assert VISITOR_EMAIL not in caplog.text
+        assert "p***@example.com" in caplog.text, "the domain is what makes a bounce pattern visible"
 
 
 class TestBackgroundTasksDoNotShareASentryScope:
