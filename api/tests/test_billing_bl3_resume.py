@@ -655,6 +655,10 @@ def test_resume_double_submit_reuses_pending_checkout_no_second_mint(db):
             "app.services.razorpay_service.rebuild_upgrade_checkout",
             return_value={"provider": "razorpay", "subscription_id": "sub_new_idem", "short_url": "u1-reused"},
         ) as rebuild,
+        # The reuse path now asks the gateway whether the pending mandate has
+        # already been PAID before it considers reusing or re-minting. Unpaid
+        # here — the paid case has its own test below.
+        patch("app.services.razorpay_service.checkout_already_paid", return_value=False),
     ):
         first = api.post("/subscriptions/resume", json={})
         # The first call must persist the pending marker for the guard to see.
@@ -671,6 +675,48 @@ def test_resume_double_submit_reuses_pending_checkout_no_second_mint(db):
     rebuild.assert_called_once()
     assert second.json()["mandate_action"] == "reauthorise_required"
     assert (second.json().get("checkout") or {}).get("short_url") == "u1-reused"
+
+
+def test_resume_refuses_to_re_mint_over_an_already_paid_reauth(db):
+    """The /resume twin of the reported defect.
+
+    Mode 2 mints a fresh mandate because Razorpay has no un-cancel, and it
+    re-minted whenever ``rebuild_upgrade_checkout`` returned ``None`` — which it
+    does for a mandate the customer has ALREADY authorised and paid exactly as
+    it does for an abandoned one. A customer who re-authorised and then clicked
+    Reactivate again (the emailed re-auth link is clickable twice) would get a
+    second chargeable mandate.
+    """
+    from app.core.middleware import subscription_activation_conflict_handler
+    from app.services import razorpay_service
+
+    client = _make_client(db, email="bl3-paid-reauth@e.com")
+    plan = _make_plan(db, slug="std-bl3-paid-reauth")
+    sub = _make_sub(db, client, plan, razorpay_subscription_id="sub_old_paid_reauth")
+    sub.upgrade_pending_subscription_id = "sub_reauth_paid"
+    sub.upgrade_pending_plan_id = plan.id
+    db.commit()
+
+    app, subscription_routes = _app(client)
+    app.add_exception_handler(razorpay_service.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+        patch("app.services.razorpay_service.create_subscription") as create_sub,
+        patch("app.services.razorpay_service.rebuild_upgrade_checkout") as rebuild,
+        patch("app.services.razorpay_service.checkout_already_paid", return_value=True),
+    ):
+        resp = api.post("/subscriptions/resume", json={})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["payment_captured"] is True
+    assert not create_sub.called
+    assert not rebuild.called
+    db.refresh(sub)
+    # The marker survives — the activation still has to consume it.
+    assert sub.upgrade_pending_subscription_id == "sub_reauth_paid"
 
 
 def test_resume_rejects_when_not_scheduled_for_cancellation(db):

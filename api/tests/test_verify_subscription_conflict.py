@@ -154,6 +154,71 @@ def test_the_conflict_keeps_the_operator_detail_out_of_the_customer_sentence():
     assert not isinstance(exc, rzp.RazorpayBillingError)
 
 
+# ── The verify response contract: additive, unambiguous ─────────────────────
+
+
+def test_a_deferred_upsert_is_flagged_without_breaking_subscription_known(db, monkeypatch):
+    """The trigger for the whole incident was silence: the plan never appeared
+    and the customer bought it again. The endpoint already answered
+    ``subscription_known: false``, but the top-level ``status: "verified"``
+    refers to the SIGNATURE, and that distinction is one a reader has to notice.
+
+    ``activation_pending`` states it in the affirmative and ``retry_after_seconds``
+    says how to wait. Both are ADDITIVE — ``subscription_known`` keeps its exact
+    meaning and value, because a caller is being built against it right now.
+    """
+    api, _client = _api(db, monkeypatch)
+    with (
+        patch.object(rzp, "verify_subscription_payment_signature"),
+        # Razorpay still reports the mandate as non-billable, so the reconcile
+        # defers and no local row exists — the exact prod state.
+        patch.object(rzp, "reconcile_subscription_from_razorpay", return_value=None),
+    ):
+        res = api.post("/subscriptions/verify-razorpay-subscription", json=_BODY)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "verified"  # unchanged: the SIGNATURE verified
+    assert body["subscription_known"] is False  # unchanged contract
+    assert body["activation_pending"] is True
+    assert body["retry_after_seconds"] == subscription_routes.ACTIVATION_POLL_SECONDS
+    # A cadence, not a deadline — 3s was demonstrably too eager in prod.
+    assert body["retry_after_seconds"] > 3
+
+
+def test_a_materialised_subscription_reports_no_pending_activation(db, monkeypatch):
+    api, client = _api(db, monkeypatch)
+    plan = Plan(name="P", slug="std-verify-known", monthly_price_cents=94900, credits_per_month=10, is_active=True)
+    db.add(plan)
+    db.flush()
+    db.add(
+        Subscription(
+            client_id=client.id,
+            plan_id=plan.id,
+            status="active",
+            billing_cycle="monthly",
+            operator_quantity=1,
+            payment_provider="razorpay",
+            razorpay_subscription_id="sub_conflict",
+        )
+    )
+    db.flush()
+
+    with (
+        patch.object(rzp, "verify_subscription_payment_signature"),
+        patch.object(rzp, "record_verified_subscription_charge"),
+        patch.object(subscription_routes.invoice_service, "request_pdf_render_soon"),
+    ):
+        res = api.post("/subscriptions/verify-razorpay-subscription", json=_BODY)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["subscription_known"] is True
+    assert body["activation_pending"] is False
+    # No hint when there is nothing to wait for.
+    assert "retry_after_seconds" not in body
+
+
 # ── Activation serialises per client ────────────────────────────────────────
 
 

@@ -52,6 +52,30 @@ logger = logging.getLogger(__name__)
 # seat charges in a single call (§5).
 _MAX_OPERATOR_SEATS_ABSOLUTE = 100
 
+# How long a client should wait before re-reading ``GET /subscriptions/current``
+# while a paid subscription is still activating. Returned as
+# ``retry_after_seconds`` from ``/verify-razorpay-subscription``.
+#
+# Honest provenance: this is NOT measured. A real value wants the distribution
+# of "payment captured → local row exists" across live mandates, and that data
+# is in production, which this work is not permitted to touch. What the incident
+# does establish is a floor and a ceiling:
+#
+# * The floor: 3s is demonstrably too eager. The old frontend re-fetched at 0s
+#   and 3s and stopped; at 3s the mandate still read ``created`` and the
+#   customer saw no plan change.
+# * The ceiling: a customer gave up and re-bought at 44s, so any budget under a
+#   minute is inside the window where people take matters into their own hands.
+#
+# 5s is chosen as a cadence between those: fast enough that activation feels
+# immediate when the webhook lands in the usual couple of seconds, slow enough
+# that a two-minute wait is 24 polls rather than 40. The number that actually
+# matters is not this one but the caller's give-up budget, which is why the
+# field is documented as a cadence and the response says to poll until
+# ``activation_pending`` clears. Replace this with a measured p95 the first time
+# anyone can query production for it.
+ACTIVATION_POLL_SECONDS = 5
+
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
 
@@ -596,8 +620,31 @@ def verify_razorpay_subscription(
     active" state the moment the modal closes, without waiting for the
     out-of-band webhook round-trip.
 
+    Response contract — read ``status`` carefully, it is the narrowest field:
+
+    * ``status: "verified"`` refers to the SIGNATURE, and nothing else. It says
+      Razorpay signed this payment for this subscription. It does NOT say a
+      subscription exists locally, and misreading it as "active" is how a
+      caller ends up asserting a plan the app cannot see.
+    * ``subscription_known`` — whether a local ``Subscription`` row exists yet.
+      The long-standing flag; unchanged, and callers built against it keep
+      working exactly as before.
+    * ``activation_pending`` — the same fact stated in the affirmative, added
+      because "``status`` is about the signature" is a distinction a reader has
+      to notice, and the cost of not noticing it is a double charge. ``True``
+      means: the money is fine, the plan is not visible yet, keep polling.
+    * ``retry_after_seconds`` — how long to wait before re-reading
+      ``GET /subscriptions/current``. Present only while activation is pending.
+      It is a CADENCE, not a deadline: poll until ``activation_pending`` clears
+      rather than giving up after a fixed number of attempts. The old frontend
+      re-fetched twice (immediately, then at 3s) and stopped — the prod mandate
+      was still non-billable well past that, so the customer saw no plan change
+      and bought it a second time.
+
     Failure modes (caller-facing):
       * 400 — signature mismatch (replay / tampering).
+      * 409 — ``subscription_activation_conflict``: the money arrived but the
+        local row collided with another active subscription in this scope.
       * 502 — Razorpay SDK error (network / quota).
     """
     from app.services import razorpay_service
@@ -683,11 +730,19 @@ def verify_razorpay_subscription(
             razorpay_service.record_verified_subscription_charge(session, sub, payload.razorpay_payment_id)
             session.commit()
             invoice_service.request_pdf_render_soon()
-        return {
+        # Additive only. ``status`` and ``subscription_known`` keep their exact
+        # meanings and values — a caller polling on ``subscription_known`` is
+        # unaffected. The two new fields exist so a caller does not have to
+        # infer the pending state from the ABSENCE of something.
+        response: dict[str, object] = {
             "status": "verified",
             "subscription_known": sub is not None,
             "razorpay_subscription_id": payload.razorpay_subscription_id,
+            "activation_pending": sub is None,
         }
+        if sub is None:
+            response["retry_after_seconds"] = ACTIVATION_POLL_SECONDS
+        return response
 
 
 @router.get("/usage")
@@ -2679,36 +2734,25 @@ def resume_subscription(
         # if a re-auth checkout for the SAME plan is already in flight, reuse it
         # instead of minting again. The markers are cleared at activation by
         # apply_pending_proration (matched via prev_razorpay_subscription_id).
-        if sub.upgrade_pending_subscription_id and sub.upgrade_pending_plan_id == plan.id:
-            reused = razorpay_service.rebuild_upgrade_checkout(
-                sub.upgrade_pending_subscription_id, client, plan, billing_cycle
-            )
-            if reused is not None:
-                reused.setdefault("provider", "razorpay")
-                logger.info(
-                    "Reusing pending resume checkout %s for client %s (sub %s)",
-                    sub.upgrade_pending_subscription_id,
-                    client.id,
-                    sub.id,
-                )
-                return {
-                    "status": "reauthorise_required",
-                    "mandate_action": "reauthorise_required",
-                    "message": _reauth_message,
-                    "first_charge_at": first_charge_at,
-                    "checkout": reused,
-                }
-            # The pending checkout was abandoned / is no longer authorizable —
-            # clear the stale marker and fall through to mint a fresh one so the
-            # customer isn't stranded with a dead checkout.
-            logger.info(
-                "Pending resume checkout %s for client %s is dead; re-minting",
-                sub.upgrade_pending_subscription_id,
-                client.id,
-            )
-            sub.upgrade_pending_subscription_id = None
-            sub.upgrade_pending_plan_id = None
-            session.flush()
+        #
+        # Shared with the upgrade path via ``pending_checkout_service``, because
+        # "is the pending checkout dead?" is the wrong question on its own:
+        # ``rebuild_upgrade_checkout`` answers ``None`` just as readily for a
+        # mandate the customer has ALREADY PAID as for one they abandoned, and
+        # re-minting on that answer is how a month gets charged twice.
+        from app.services import pending_checkout_service
+
+        reused = pending_checkout_service.reuse_pending_upgrade(
+            session, sub=sub, client=client, plan=plan, billing_cycle=billing_cycle
+        )
+        if reused is not None:
+            return {
+                "status": "reauthorise_required",
+                "mandate_action": "reauthorise_required",
+                "message": _reauth_message,
+                "first_charge_at": first_charge_at,
+                "checkout": reused,
+            }
 
         extra_notes: dict[str, str] = {}
         if sub.razorpay_subscription_id:

@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from app.api import subscription_routes
 from app.api.auth import get_current_client_strict, require_verified_email
 from app.core.middleware import subscription_activation_conflict_handler
-from app.db.models import Bot, Client, Plan
+from app.db.models import Bot, Client, Plan, Subscription
 from app.services import pending_checkout_service, plan_service
 from app.services import razorpay_service as rzp
 
@@ -593,6 +593,148 @@ def test_cancel_superseded_checkout_raises_when_the_gateway_is_unreadable():
         get_rzp.return_value.subscription.fetch.side_effect = TimeoutError("boom")
         rzp.cancel_superseded_checkout("sub_unknown")
     assert not cancel.called
+
+
+# ── The same defect on the Subscription-row marker (upgrade / resume) ───────
+
+
+def _paying_customer(db, plan, *, pending_plan, pending_sub_id="sub_upgrade_pending"):
+    """An existing paying customer mid-upgrade: live mandate + in-flight replacement."""
+    sub = Subscription(
+        client_id=plan.id and db.query(Client).one().id,
+        plan_id=plan.id,
+        status="active",
+        billing_cycle="monthly",
+        operator_quantity=1,
+        payment_provider="razorpay",
+        razorpay_subscription_id="sub_upgrade_current",
+        current_period_end=datetime.now(UTC) + timedelta(days=20),
+        upgrade_pending_subscription_id=pending_sub_id,
+        upgrade_pending_plan_id=pending_plan.id,
+    )
+    sub.plan = plan
+    db.add(sub)
+    db.flush()
+    return sub
+
+
+def test_upgrade_does_not_re_mint_over_an_already_paid_replacement(db, monkeypatch):
+    """The Branch 2a twin of the reported defect.
+
+    ``execute_paid_upgrade`` cleared ``upgrade_pending_subscription_id`` and
+    re-minted whenever ``rebuild_upgrade_checkout`` returned ``None`` — which it
+    does for a PAID mandate exactly as for an abandoned one. It missed the
+    incident only because both affected clients were first purchases; an
+    existing paying customer upgrading is a more valuable account to
+    double-charge, not a less likely one.
+    """
+    api, client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    current = _plan(db, slug="std-upg-current", monthly=94900)
+    target = _plan(db, slug="std-upg-target", monthly=599900)
+    _paying_customer(db, current, pending_plan=target)
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "rebuild_upgrade_checkout") as rebuild,
+        patch.object(rzp, "checkout_already_paid", return_value=True),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": target.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["payment_captured"] is True
+    assert target.name in res.json()["detail"]["message"]
+    assert not mint.called
+    assert not rebuild.called
+
+
+def test_upgrade_still_reuses_an_unpaid_in_flight_replacement(db, monkeypatch):
+    """The paid check must not break the finding-D reuse it sits in front of."""
+    api, _client = _mk(db, monkeypatch)
+    current = _plan(db, slug="std-upg2-current", monthly=94900)
+    target = _plan(db, slug="std-upg2-target", monthly=599900)
+    _paying_customer(db, current, pending_plan=target, pending_sub_id="sub_upgrade_unpaid")
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "rebuild_upgrade_checkout", return_value=_mint("sub_upgrade_unpaid")) as rebuild,
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": target.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["subscription_id"] == "sub_upgrade_unpaid"
+    assert rebuild.called
+    assert not mint.called
+
+
+def test_upgrade_to_a_different_plan_after_payment_is_also_refused(db, monkeypatch):
+    """The paid check runs BEFORE the plan-id match. A customer who paid and then
+    asked for a different plan is in the same position as one who re-asked for
+    the same plan, and neither may be handed a fresh mandate."""
+    api, _client = _mk(db, monkeypatch)
+    api.app.add_exception_handler(rzp.SubscriptionActivationConflict, subscription_activation_conflict_handler)
+    api = TestClient(api.app, raise_server_exceptions=False)
+    current = _plan(db, slug="std-upg3-current", monthly=94900)
+    paid_for = _plan(db, slug="std-upg3-paid", monthly=599900)
+    now_wants = _plan(db, slug="std-upg3-other", monthly=799900)
+    _paying_customer(db, current, pending_plan=paid_for, pending_sub_id="sub_upgrade_paid_other")
+
+    with (
+        patch.object(rzp, "create_subscription") as mint,
+        patch.object(rzp, "checkout_already_paid", return_value=True),
+    ):
+        res = api.post("/subscriptions/change-plan", json={"plan_id": now_wants.id, "billing_cycle": "monthly"})
+
+    assert res.status_code == 409, res.text
+    assert not mint.called
+    # Never names the plan they did not pay for.
+    assert now_wants.name not in res.json()["detail"]["message"]
+
+
+# ── The claim "your payment went through" must be unfalsifiable ─────────────
+
+
+@pytest.mark.parametrize(
+    "entity",
+    [
+        # Never authorised — the customer closed the sheet.
+        {"status": "created", "paid_count": 0},
+        # Mandate approved, first charge not taken yet (deferred start / promo).
+        {"status": "authenticated", "paid_count": 0},
+        # Razorpay's "the payment failed and I am retrying" state, first cycle.
+        {"status": "pending", "paid_count": 0},
+        # Retries exhausted with nothing ever collected.
+        {"status": "halted", "paid_count": 0},
+        # Customer or ops killed it before any money moved.
+        {"status": "cancelled", "paid_count": 0},
+        {"status": "expired", "paid_count": 0},
+    ],
+)
+def test_a_payment_that_never_landed_never_claims_it_did(entity):
+    """``payment_captured: true`` and "your payment went through" are
+    load-bearing claims: a customer who reads them stops chasing the payment.
+    If a FAILED payment could reach that message it would be worse than the bug
+    this fixes.
+
+    Every state in which money has NOT moved must answer False, so the refusal —
+    and therefore the claim — cannot be raised at all.
+    """
+    rzp_client = MagicMock()
+    rzp_client.subscription.fetch.return_value = entity
+    with patch.object(rzp, "_get_razorpay", return_value=rzp_client):
+        assert _real_checkout_already_paid("sub_x") is False
+
+
+def test_the_claim_requires_money_to_have_actually_moved():
+    """The mirror of the above: it is True only when Razorpay says a cycle was
+    charged (``paid_count``) or the subscription is live (``active`` — Razorpay
+    only moves it there after the first successful charge)."""
+    rzp_client = MagicMock()
+    for entity in ({"status": "created", "paid_count": 1}, {"status": "active", "paid_count": 1}):
+        rzp_client.subscription.fetch.return_value = entity
+        with patch.object(rzp, "_get_razorpay", return_value=rzp_client):
+            assert _real_checkout_already_paid("sub_x") is True
 
 
 # ── Concurrency: the loser reads the winner's COMMITTED marker ───────────────

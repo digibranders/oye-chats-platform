@@ -60,7 +60,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db.models import Client, Plan
+from app.db.models import Client, Plan, Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -230,5 +230,94 @@ def reuse_or_supersede(
             client_id=client.id,
         )
     clear(client_row)
+    session.flush()
+    return None
+
+
+# ── The Subscription-row twin: upgrade / resume re-auth ──────────────────────
+#
+# ``clients.pending_checkout_*`` covers the FIRST mandate. An existing paying
+# customer's replacement mandate is parked on the Subscription row instead
+# (``upgrade_pending_subscription_id`` / ``upgrade_pending_plan_id``), written by
+# ``transition_service.execute_paid_upgrade`` and ``/subscriptions/resume``
+# Mode 2. Different column, identical hazard — and both sites had the same
+# defect this module was created to fix: they re-mint whenever
+# ``rebuild_upgrade_checkout`` answers ``None``, which it does just as readily
+# for a mandate the customer has already PAID as for one they abandoned.
+#
+# It missed the reported incident only because both affected clients were first
+# purchases. An existing paying customer upgrading is a more valuable account to
+# double-charge, not a less likely one.
+
+
+def reuse_pending_upgrade(
+    session: Session,
+    *,
+    sub: Subscription,
+    client: Client,
+    plan: Plan,
+    billing_cycle: str,
+) -> dict[str, Any] | None:
+    """Resolve the in-flight REPLACEMENT mandate before a caller mints another.
+
+    Returns the Checkout payload when the pending mandate can serve this
+    request, or ``None`` when the caller should mint. Callers package the
+    payload themselves — ``/resume`` wraps it in a ``reauthorise_required``
+    envelope, the upgrade path returns it directly.
+
+    Raises ``razorpay_service.SubscriptionActivationConflict`` when the pending
+    mandate has ALREADY been paid. That check runs before the plan-id match, not
+    after: a customer who paid and then asked for a *different* plan is in the
+    same position as one who re-asked for the same plan, and neither may be
+    handed a fresh mandate while the paid one is still unmaterialised.
+
+    Raises ``razorpay_service.RazorpayBillingError`` if the gateway cannot be
+    read — never guess.
+    """
+    from app.services import razorpay_service
+
+    pending_id = sub.upgrade_pending_subscription_id
+    if not pending_id:
+        return None
+
+    if razorpay_service.checkout_already_paid(pending_id):
+        logger.info(
+            "Client %s re-submitted a plan change while pending mandate %s (sub %s) is already PAID — "
+            "refusing to open another payment sheet",
+            client.id,
+            pending_id,
+            sub.id,
+        )
+        raise razorpay_service.SubscriptionActivationConflict(
+            razorpay_subscription_id=pending_id,
+            client_id=client.id,
+            # Only name the plan when this request IS the one they paid for.
+            plan_name=getattr(plan, "name", None) if sub.upgrade_pending_plan_id == plan.id else None,
+        )
+
+    if sub.upgrade_pending_plan_id != plan.id:
+        # A different target plan. The caller mints and overwrites the marker;
+        # the superseded mandate is left for Razorpay to expire, which is the
+        # pre-existing behaviour on this path and is NOT what
+        # ``reuse_or_supersede`` does for the first-mandate marker (it cancels).
+        # Deliberately unchanged here — see the report accompanying this commit.
+        return None
+
+    reused = razorpay_service.rebuild_upgrade_checkout(pending_id, client, plan, billing_cycle)
+    if reused is not None:
+        reused.setdefault("provider", "razorpay")
+        logger.info(
+            "Reusing pending replacement mandate %s for client %s → plan %s",
+            pending_id,
+            client.id,
+            plan.slug,
+        )
+        return reused
+
+    # Unpaid AND no longer authorizable: genuinely abandoned. Clear the stale
+    # marker so the customer isn't stranded on a dead checkout.
+    logger.info("Pending replacement mandate %s for client %s is dead; re-minting", pending_id, client.id)
+    sub.upgrade_pending_subscription_id = None
+    sub.upgrade_pending_plan_id = None
     session.flush()
     return None
