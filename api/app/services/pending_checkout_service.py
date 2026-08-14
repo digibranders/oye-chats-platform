@@ -248,6 +248,20 @@ def reuse_or_supersede(
 # It missed the reported incident only because both affected clients were first
 # purchases. An existing paying customer upgrading is a more valuable account to
 # double-charge, not a less likely one.
+#
+# The supersede half is shared too: a retry the marker cannot serve retires the
+# mandate at Razorpay via ``cancel_superseded_checkout``, exactly as
+# ``reuse_or_supersede`` does. Leaving it to expire — the behaviour until now —
+# leaves the customer holding a live payment handle for a plan they walked away
+# from, and Razorpay keeps a ``created`` subscription authorizable indefinitely:
+# a stale checkout reopened weeks later from an email or a back button still
+# charges. Nothing else retires it, either — no cron sweeps abandoned mandates,
+# and the activation handler's sibling sweep only knows the mandate named in the
+# new subscription's ``prev_razorpay_subscription_id``, which the superseded one
+# never is.
+#
+# One difference from the twin, and it is deliberate: a gateway failure during
+# that cancel is logged, not raised. See :func:`reuse_pending_upgrade`.
 
 
 def reuse_pending_upgrade(
@@ -261,18 +275,24 @@ def reuse_pending_upgrade(
     """Resolve the in-flight REPLACEMENT mandate before a caller mints another.
 
     Returns the Checkout payload when the pending mandate can serve this
-    request, or ``None`` when the caller should mint. Callers package the
-    payload themselves — ``/resume`` wraps it in a ``reauthorise_required``
-    envelope, the upgrade path returns it directly.
+    request, or ``None`` when the caller should mint — by which point the
+    superseded mandate has been cancelled at Razorpay (or the failure to do so
+    logged at ERROR) and the marker cleared. Callers package the payload
+    themselves — ``/resume`` wraps it in a ``reauthorise_required`` envelope,
+    the upgrade path returns it directly.
 
     Raises ``razorpay_service.SubscriptionActivationConflict`` when the pending
     mandate has ALREADY been paid. That check runs before the plan-id match, not
     after: a customer who paid and then asked for a *different* plan is in the
     same position as one who re-asked for the same plan, and neither may be
-    handed a fresh mandate while the paid one is still unmaterialised.
+    handed a fresh mandate while the paid one is still unmaterialised. It is
+    raised again if the mandate turns out to be ``active`` at the moment it
+    would be cancelled — the two facts (``paid_count`` and ``status``) can move
+    apart for a moment, and whichever notices first, the answer is the same.
 
     Raises ``razorpay_service.RazorpayBillingError`` if the gateway cannot be
-    read — never guess.
+    READ — never guess. A failed CANCEL is different and does not raise; see
+    below.
     """
     from app.services import razorpay_service
 
@@ -295,28 +315,80 @@ def reuse_pending_upgrade(
             plan_name=getattr(plan, "name", None) if sub.upgrade_pending_plan_id == plan.id else None,
         )
 
-    if sub.upgrade_pending_plan_id != plan.id:
-        # A different target plan. The caller mints and overwrites the marker;
-        # the superseded mandate is left for Razorpay to expire, which is the
-        # pre-existing behaviour on this path and is NOT what
-        # ``reuse_or_supersede`` does for the first-mandate marker (it cancels).
-        # Deliberately unchanged here — see the report accompanying this commit.
-        return None
-
-    reused = razorpay_service.rebuild_upgrade_checkout(pending_id, client, plan, billing_cycle)
-    if reused is not None:
-        reused.setdefault("provider", "razorpay")
+    if sub.upgrade_pending_plan_id == plan.id:
+        reused = razorpay_service.rebuild_upgrade_checkout(pending_id, client, plan, billing_cycle)
+        if reused is not None:
+            reused.setdefault("provider", "razorpay")
+            logger.info(
+                "Reusing pending replacement mandate %s for client %s → plan %s",
+                pending_id,
+                client.id,
+                plan.slug,
+            )
+            return reused
+        # Unpaid AND not reusable: abandoned, or minted on the other rail (an
+        # annual pending against a monthly request). Either way it cannot serve
+        # this request — and the rail-mismatch shape is still authorizable, so
+        # it is a live handle exactly like a different-plan pending.
+        logger.info("Pending replacement mandate %s for client %s cannot serve this request", pending_id, client.id)
+    else:
         logger.info(
-            "Reusing pending replacement mandate %s for client %s → plan %s",
+            "Superseding pending replacement mandate %s for client %s: requested plan %s differs from the pending %s",
             pending_id,
             client.id,
-            plan.slug,
+            plan.id,
+            sub.upgrade_pending_plan_id,
         )
-        return reused
 
-    # Unpaid AND no longer authorizable: genuinely abandoned. Clear the stale
-    # marker so the customer isn't stranded on a dead checkout.
-    logger.info("Pending replacement mandate %s for client %s is dead; re-minting", pending_id, client.id)
+    # Both roads lead here, as in ``reuse_or_supersede``: the pending mandate
+    # cannot serve this request, so it is retired at the gateway BEFORE its
+    # replacement is minted. Left alone it stays authorizable indefinitely, and
+    # a customer who reopens that stale checkout weeks later — from the re-auth
+    # email, a back button, a tab they never closed — is charged for a plan they
+    # never took. A redundant cancel is harmless:
+    # ``cancel_superseded_checkout`` re-reads the mandate and only issues the
+    # cancel from an authorizable state, so a webhook or a retry that already
+    # retired it is a no-op returning the terminal status.
+    try:
+        status = razorpay_service.cancel_superseded_checkout(pending_id)
+    except razorpay_service.RazorpayBillingError:
+        # NOT fatal here, unlike the first-mandate twin. The customer is trying
+        # to give us money; a Razorpay 5xx while tidying up a handle they have
+        # abandoned must not come back as a failed purchase. The safety property
+        # the twin protects is intact either way — ``checkout_already_paid``
+        # read this same mandate successfully moments ago and said unpaid, so we
+        # are not minting beside a mandate whose state was never confirmed, only
+        # beside one whose cancel did not land. And the fallback is precisely
+        # today's behaviour on this path (leave it for Razorpay to expire), so a
+        # failed cancel is no worse than not attempting one — whereas refusing
+        # would newly block upgrades during a gateway wobble that currently
+        # succeed.
+        #
+        # ERROR, not WARNING: the caller overwrites the marker with the fresh
+        # mandate, so this log line is the only remaining record that the old
+        # handle is live. It is the same artifact the activation handler leaves
+        # when its own supersede-cancel fails.
+        logger.error(
+            "Could not cancel superseded replacement mandate %s for client %s (sub %s) before minting "
+            "its replacement — the handle is STILL AUTHORIZABLE at Razorpay and can charge if the "
+            "customer reopens that checkout. Proceeding with the purchase; needs manual cancellation.",
+            pending_id,
+            client.id,
+            sub.id,
+            exc_info=True,
+        )
+    else:
+        if status == "active":
+            # Defence in depth against the paid check above, which asks
+            # ``paid_count`` while this asks ``status``; the two can move apart
+            # for a moment. Nothing was cancelled (only the activation sweep may
+            # retire a live mandate), so minting now would leave two CHARGED
+            # subscriptions for one month.
+            raise razorpay_service.SubscriptionActivationConflict(
+                razorpay_subscription_id=pending_id,
+                client_id=client.id,
+            )
+
     sub.upgrade_pending_subscription_id = None
     sub.upgrade_pending_plan_id = None
     session.flush()
