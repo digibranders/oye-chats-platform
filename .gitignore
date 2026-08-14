@@ -64,3 +64,6 @@ api/uv.toml
 
 # Superpowers / brainstorm skill scratch output (never commit)
 .superpowers/
+
+# /graphify knowledge-graph output — generated, ~29MB, stale the moment code changes
+graphify-out/
