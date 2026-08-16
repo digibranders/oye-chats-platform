@@ -4,12 +4,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.sql import func
 
 from app.api.auth import get_current_client_or_operator
+from app.core.rate_limit import limiter
 from app.db.models import Bot, OfflineMessage
 from app.db.session import get_session
 from app.schemas.validators import (
@@ -79,25 +81,37 @@ class UpdateOfflineMessageRequest(BaseModel):
 
 
 @router.post("")
-async def submit_offline_message(request: SubmitOfflineMessageRequest):
-    """Submit an offline message (called by widget when no agent is available)."""
+@limiter.limit("5/minute", key_func=get_remote_address)
+async def submit_offline_message(request: Request, body: SubmitOfflineMessageRequest):
+    """Submit an offline message (called by widget when no agent is available).
+
+    Unauthenticated by necessity — it is the out-of-hours form on a public
+    widget, and the bot key it carries is public too. Every accepted submission
+    fans out to real inboxes: one e-mail per configured team recipient, PLUS a
+    confirmation to whatever address the CALLER typed. Ungated that is an
+    e-mail amplifier — a script with a bot key lifted from any customer's page
+    could bury that customer's team in mail and, because the confirmation goes
+    to an attacker-chosen recipient, use our sending domain to spray a third
+    party. The per-IP ceiling here is well above what a human filling in a form
+    can reach and turns the amplifier into a trickle.
+    """
     with get_session() as session:
         bot = session.execute(
-            select(Bot).where(Bot.bot_key == request.bot_key, Bot.is_active.is_(True))
+            select(Bot).where(Bot.bot_key == body.bot_key, Bot.is_active.is_(True))
         ).scalar_one_or_none()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found.")
 
         msg = OfflineMessage(
             bot_id=bot.id,
-            session_id=request.session_id,
-            department_id=request.department_id,
-            visitor_name=request.name.strip(),
-            visitor_email=request.email.strip().lower(),
-            visitor_phone=request.phone,
-            message_body=request.message.strip(),
-            fallback_reason=request.reason,
-            transcript=[turn.model_dump() for turn in request.transcript] if request.transcript else None,
+            session_id=body.session_id,
+            department_id=body.department_id,
+            visitor_name=body.name.strip(),
+            visitor_email=body.email.strip().lower(),
+            visitor_phone=body.phone,
+            message_body=body.message.strip(),
+            fallback_reason=body.reason,
+            transcript=[turn.model_dump() for turn in body.transcript] if body.transcript else None,
         )
         session.add(msg)
         session.commit()
@@ -123,14 +137,14 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
                     bot.id,
                 )
             for recipient in recipients:
-                if request.phone and request.phone.strip():
+                if body.phone and body.phone.strip():
                     send_unavailable_callback_email(
                         notification_email=recipient,
                         bot_name=bot.name,
                         contact={
-                            "name": request.name.strip(),
-                            "email": request.email.strip(),
-                            "phone": request.phone.strip(),
+                            "name": body.name.strip(),
+                            "email": body.email.strip(),
+                            "phone": body.phone.strip(),
                         },
                         reply_to=reply_to,
                     )
@@ -138,18 +152,18 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
                     send_offline_message_email(
                         notification_email=recipient,
                         bot_name=bot.name,
-                        visitor_name=request.name.strip(),
-                        visitor_email=request.email.strip(),
-                        message_preview=request.message.strip()[:200],
+                        visitor_name=body.name.strip(),
+                        visitor_email=body.email.strip(),
+                        message_preview=body.message.strip()[:200],
                         reply_to=reply_to,
                     )
 
         # Send visitor confirmation email
         if getattr(bot, "email_visitor_confirmation", True):
             send_visitor_confirmation_email(
-                to_email=request.email.strip(),
+                to_email=body.email.strip(),
                 company_name=(bot.company_name or bot.name),
-                visitor_name=request.name.strip(),
+                visitor_name=body.name.strip(),
                 reply_to=reply_to,
             )
         else:
@@ -158,18 +172,18 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
                 bot.id,
             )
 
-        # PRIVACY — ``request.email`` is the visitor's, straight off the offline
+        # PRIVACY — ``body.email`` is the visitor's, straight off the offline
         # form, and this INFO record becomes a Sentry breadcrumb. The message id
         # is the join key to the stored row; the domain is all the log needs.
-        logger.info(f"Offline message saved: {msg.id} from {redact_email(request.email)} for bot {bot.id}")
+        logger.info(f"Offline message saved: {msg.id} from {redact_email(body.email)} for bot {bot.id}")
 
     # Notify connected operators about new offline message (live-chat console).
     from app.services.live_chat_service import manager
 
     notification = {
         "type": "offline_message_received",
-        "visitor_name": request.name.strip(),
-        "message_preview": request.message.strip()[:100],
+        "visitor_name": body.name.strip(),
+        "message_preview": body.message.strip()[:100],
     }
     for operator_id in list(manager.operator_connections.keys()):
         await manager._send_to_operator(operator_id, notification)
@@ -196,14 +210,14 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
         with get_session() as ns_session:
             # Re-read bot inside this session so the relationship is live for
             # the notification factory (the previous `bot` object is detached).
-            bot_row = ns_session.execute(select(Bot).where(Bot.bot_key == request.bot_key)).scalar_one_or_none()
+            bot_row = ns_session.execute(select(Bot).where(Bot.bot_key == body.bot_key)).scalar_one_or_none()
             if bot_row is not None:
                 notify_offline_message(
                     ns_session,
                     client_id=bot_row.client_id,
-                    visitor_name=request.name.strip(),
-                    visitor_email=request.email.strip(),
-                    message_preview=request.message.strip(),
+                    visitor_name=body.name.strip(),
+                    visitor_email=body.email.strip(),
+                    message_preview=body.message.strip(),
                     offline_message_id=msg.id,
                     bot_name=bot_row.name,
                 )

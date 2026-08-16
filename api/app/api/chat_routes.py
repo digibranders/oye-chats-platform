@@ -1755,6 +1755,7 @@ def get_lead_info_endpoint(session_id: SessionId, bot: Bot = Depends(get_current
 
 
 @router.post("/chat/feedback/{message_id}")
+@limiter.limit("30/minute", key_func=key_from_bot_key)
 def submit_feedback_endpoint(
     message_id: int, body: FeedbackRequest, request: Request, bot: Bot = Depends(get_current_bot)
 ):
@@ -1794,6 +1795,7 @@ def submit_feedback_endpoint(
 
 
 @router.get("/chat/history/{session_id}")
+@limiter.limit("60/minute", key_func=key_from_bot_key)
 def get_history_endpoint(
     request: Request,
     session_id: SessionId,
