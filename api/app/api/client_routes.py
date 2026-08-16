@@ -388,7 +388,20 @@ def change_client_password(
     body: ChangePasswordRequest,
     client: Client = Depends(get_current_client_strict),
 ):
-    """Change the authenticated client's password (verifies the current one)."""
+    """Change the authenticated client's password (verifies the current one).
+
+    Rotates ``api_key`` in the same transaction. That key IS the session
+    credential (the dashboard stores it and sends it as ``X-API-Key``), it never
+    expires, and there is no server-side session table — so without rotation a
+    password change revoked nothing: a key lifted from a shared machine, a
+    browser backup, or an XSS payload kept working forever, and the "change your
+    password" advice every incident response gives would have been false here.
+
+    The new key is returned so the caller's own tab can keep working; every
+    OTHER holder of the old key is logged out on their next request. Callers
+    that ignore the field simply get bounced to /login by the 401 interceptor,
+    which is also an acceptable outcome — the important half is the revocation.
+    """
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
@@ -396,8 +409,11 @@ def change_client_password(
         if not verify_password(body.current_password, row.hashed_password or ""):
             raise HTTPException(status_code=400, detail="Current password is incorrect.")
         row.hashed_password = get_password_hash(body.new_password)
+        new_key = uuid.uuid4().hex
+        row.api_key = new_key
         session.commit()
-        return {"ok": True}
+        logger.info("client_password_changed_api_key_rotated client_id=%s", row.id)
+        return {"ok": True, "api_key": new_key}
 
 
 # ── Account: email change (password-confirmed, OTP-verified) ─────────────────
