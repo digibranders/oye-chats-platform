@@ -18,7 +18,13 @@ from app.api.auth import (
 )
 from app.core.dates import trial_days_remaining
 from app.core.geo import resolve_country
-from app.core.rate_limit import limiter
+from app.core.otp_guard import clear_attempts, register_failed_attempt
+from app.core.rate_limit import (
+    clear_failed_logins,
+    limiter,
+    login_attempts_exhausted,
+    note_failed_login,
+)
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
 from app.db.session import get_session
@@ -621,7 +627,15 @@ def complete_onboarding(client: Client = Depends(get_current_client_strict)):
 @router.post("/verify-email")
 @limiter.limit("10/minute")
 def verify_email(request: Request, body: VerifyEmailRequest):
-    """Verify a client's email using the 6-digit OTP sent at registration."""
+    """Verify a client's email using the 6-digit OTP sent at registration.
+
+    Wrong guesses are counted per ACCOUNT (see :mod:`app.core.otp_guard`), not
+    just per IP: the ``@limiter.limit`` below keys on the caller's address, so
+    on its own it does nothing against a prober rotating through a proxy pool
+    with a 6-digit keyspace to cover. Once the per-account budget is spent the
+    code is burned and the user has to request a fresh one, which is the
+    behaviour the other OTP flows in this module already have.
+    """
     try:
         with get_session() as session:
             stmt = select(Client).where(Client.email == body.email).limit(1)
@@ -637,6 +651,16 @@ def verify_email(request: Request, body: VerifyEmailRequest):
                 raise HTTPException(status_code=400, detail="Code has expired. Please request a new one.")
 
             if not hmac.compare_digest(client.email_otp, body.otp.strip()):
+                exhausted = register_failed_attempt("verify_email", body.email)
+                if exhausted:
+                    client.email_otp = None
+                    client.email_otp_expires_at = None
+                    session.commit()
+                    logger.warning("email_otp_attempts_exhausted client_id=%s — code invalidated", client.id)
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Too many incorrect codes. Please request a new one.",
+                    )
                 raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
 
             client.is_verified = True
@@ -644,6 +668,7 @@ def verify_email(request: Request, body: VerifyEmailRequest):
             client.email_otp_expires_at = None
             session.commit()
 
+            clear_attempts("verify_email", body.email)
             logger.info("Email verified for client %s", client.id)
             return {"message": "Email verified successfully."}
     except HTTPException:
@@ -719,17 +744,36 @@ class ResetPasswordRequest(BaseModel):
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("10/minute")
 def login(request: Request, body: LoginRequest):
-    """Authenticate a Client and return their permanent API key."""
+    """Authenticate a Client and return their permanent API key.
+
+    Two independent ceilings apply. ``@limiter.limit`` bounds one SOURCE
+    address; :func:`note_failed_login` bounds attempts against one TARGET
+    account, which is what password-spraying from a proxy pool defeats when
+    only the per-IP limit exists. The account ceiling is checked before the
+    password comparison so a throttled account costs an attacker a 429 rather
+    than a bcrypt verification.
+    """
+    email = body.email.strip().lower()
     try:
+        if login_attempts_exhausted(email):
+            logger.warning("Login throttled: too many failed attempts for %s", _redact_email(_sanitize_for_log(email)))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed sign-in attempts. Please wait a few minutes and try again.",
+                headers={"Retry-After": "900"},
+            )
+
         with get_session() as session:
-            stmt = select(Client).where(Client.email == body.email.strip().lower()).limit(1)
+            stmt = select(Client).where(Client.email == email).limit(1)
             client = session.execute(stmt).scalars().first()
 
             if not client:
+                note_failed_login(email)
                 logger.warning("Login failed: unknown email %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
             if not verify_password(body.password, client.hashed_password):
+                note_failed_login(email)
                 logger.warning("Login failed: incorrect password for %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
@@ -754,6 +798,7 @@ def login(request: Request, body: LoginRequest):
                         ),
                     )
 
+            clear_failed_logins(email)
             logger.info("Successful dashboard login for client %s (%s)", client.id, client.name)
 
             return {
@@ -1118,8 +1163,18 @@ def reset_password(request: Request, body: ResetPasswordRequest):
             client.hashed_password = get_password_hash(body.new_password)
             client.reset_otp = None
             client.reset_otp_expires_at = None
+            # Rotate the session credential. ``api_key`` is a permanent bearer
+            # token with no expiry and no server-side session table, so a reset
+            # that leaves it in place revokes nothing — the whole point of a
+            # password reset ("someone else may have my account") is defeated if
+            # the attacker's copy of the key keeps working. The new key is NOT
+            # returned: a reset is unauthenticated, so handing a credential back
+            # to whoever posted the OTP would be worse than the problem. The
+            # user signs in again, which is the flow the frontend already runs.
+            client.api_key = str(uuid.uuid4().hex)
             session.commit()
 
+            logger.info("password_reset_completed_api_key_rotated client_id=%s", client.id)
             return {"message": "Password successfully reset."}
     except HTTPException:
         raise
@@ -1275,9 +1330,22 @@ def operator_login(request: Request, body: OperatorLoginRequest):
     Authenticate an Operator via email and password.
     Returns the Operator's API Key for subsequent requests via X-Operator-Key header.
     """
+    email = body.email.strip().lower()
     try:
+        # Same per-account ceiling as the client login above — an operator key
+        # is a full workspace credential, so this door needs the same lock.
+        if login_attempts_exhausted(f"operator:{email}"):
+            logger.warning(
+                "Operator login throttled: too many failed attempts for %s",
+                _redact_email(_sanitize_for_log(email)),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed sign-in attempts. Please wait a few minutes and try again.",
+                headers={"Retry-After": "900"},
+            )
+
         with get_session() as session:
-            email = body.email.strip().lower()
             operators = (
                 session.execute(
                     select(Operator)
@@ -1293,6 +1361,7 @@ def operator_login(request: Request, body: OperatorLoginRequest):
             ]
 
             if not valid_operators:
+                note_failed_login(f"operator:{email}")
                 logger.warning(
                     "Operator login failed: unknown email or no password set for %s",
                     _redact_email(_sanitize_for_log(body.email)),
@@ -1329,6 +1398,7 @@ def operator_login(request: Request, body: OperatorLoginRequest):
 
             workspace = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
 
+            clear_failed_logins(f"operator:{email}")
             logger.info(f"Successful operator login for operator {operator.id} ({operator.name})")
 
             return {
@@ -1369,9 +1439,17 @@ def operator_change_password(
                 raise HTTPException(status_code=400, detail="Current password is incorrect.")
 
             db_operator.hashed_password = get_password_hash(request.new_password)
+            # Same rationale as the client flows: ``operator_api_key`` is the
+            # operator's permanent session credential, so a password change that
+            # left it alone would revoke nothing. Returned as ``access_token``
+            # (matching the login response's field name) so the caller's own tab
+            # can swap it in instead of being logged out.
+            new_key = uuid.uuid4().hex
+            db_operator.operator_api_key = new_key
             session.commit()
 
-            return {"message": "Password changed successfully."}
+            logger.info("operator_password_changed_api_key_rotated operator_id=%s", operator.id)
+            return {"message": "Password changed successfully.", "access_token": new_key}
     except HTTPException:
         raise
     except Exception as e:
