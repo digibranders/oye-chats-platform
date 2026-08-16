@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getAuthItem, clearAuthStorage } from '../utils/authStorage';
+import { getAuthItem, setAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import {
     IMPERSONATION_FORBIDDEN_MESSAGE,
@@ -2124,12 +2124,22 @@ export const loginOperator = async (email, password) => {
     }
 };
 
+/**
+ * Change the authenticated operator's password.
+ *
+ * As with ``changeClientPassword``, the backend rotates the operator's API key
+ * so other sessions are revoked, and returns the replacement as
+ * ``access_token``. Swap it into storage so this tab survives the rotation.
+ */
 export const operatorChangePassword = async (currentPassword, newPassword) => {
     try {
         const response = await api.post('/auth/operator-change-password', {
             current_password: currentPassword,
             new_password: newPassword,
         });
+        if (response.data?.access_token) {
+            setAuthItem('admin_token', response.data.access_token);
+        }
         return response.data;
     } catch (error) {
         console.error('API Error operator change password:', error);
@@ -3230,9 +3240,16 @@ export const cancelClientEmailChange = async () => {
 /**
  * Change the authenticated client's password. The backend verifies the current
  * password and enforces strength (≥8 chars, a letter and a number).
+ *
+ * The backend also ROTATES the account's API key as part of the change, so
+ * every other session holding the old key is revoked. It returns the new key
+ * in ``api_key``; we swap it into storage immediately so THIS tab keeps
+ * working. Without that swap the very next request 401s and the interceptor
+ * bounces the user to /login mid-flow.
+ *
  * @param {string} currentPassword
  * @param {string} newPassword
- * @returns {Promise<{ ok: boolean }>}
+ * @returns {Promise<{ ok: boolean, api_key?: string }>}
  */
 export const changeClientPassword = async (currentPassword, newPassword) => {
     try {
@@ -3240,6 +3257,9 @@ export const changeClientPassword = async (currentPassword, newPassword) => {
             current_password: currentPassword,
             new_password: newPassword,
         });
+        if (response.data?.api_key) {
+            setAuthItem('admin_token', response.data.api_key);
+        }
         return response.data;
     } catch (error) {
         console.error('API Error changing client password:', error);

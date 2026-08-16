@@ -64,6 +64,58 @@ limiter = Limiter(
 )
 
 
+# Failed sign-ins tolerated per account before that account is throttled,
+# independent of where the attempts come from. The per-IP `@limiter.limit`
+# on the login routes bounds one source; this bounds one TARGET, which is the
+# dimension password-spraying from a proxy pool attacks. Deliberately a
+# throttle and not a lockout: a permanent lock would hand any attacker a
+# denial-of-service against any account whose e-mail they know.
+_FAILED_LOGIN_LIMIT = "10/15 minutes"
+
+
+def login_attempts_exhausted(identity: str) -> bool:
+    """``True`` when ``identity`` has spent its failed-sign-in budget.
+
+    ``identity`` is the submitted e-mail address (lowercased by the caller) —
+    the only account handle an unauthenticated request carries. A pure read:
+    it does not consume budget, so calling it on every attempt (including the
+    successful ones) is free. Rides the same ``limits`` storage as every other
+    limit in this module, so the count is shared across Gunicorn workers rather
+    than being a per-process guess.
+
+    Fail-OPEN on a storage error, the opposite of :mod:`app.core.otp_guard`:
+    a broken counter here would lock every customer out of their own account,
+    and the per-IP limit on the route is still in force underneath.
+    """
+    from limits import parse
+
+    try:
+        return not limiter.limiter.test(parse(_FAILED_LOGIN_LIMIT), "login", identity)
+    except Exception:  # noqa: BLE001 - never let a counter outage become an outage
+        logger.warning("failed_login_counter_unavailable — allowing the attempt", exc_info=True)
+        return False
+
+
+def note_failed_login(identity: str) -> None:
+    """Record one failed sign-in against ``identity``."""
+    from limits import parse
+
+    try:
+        limiter.limiter.hit(parse(_FAILED_LOGIN_LIMIT), "login", identity)
+    except Exception:  # noqa: BLE001 - see login_attempts_exhausted
+        logger.warning("failed_login_counter_unavailable — attempt not counted", exc_info=True)
+
+
+def clear_failed_logins(identity: str) -> None:
+    """Reset an account's failed-sign-in count after a successful login."""
+    from limits import parse
+
+    try:
+        limiter.limiter.clear(parse(_FAILED_LOGIN_LIMIT), "login", identity)
+    except Exception:  # noqa: BLE001 - cosmetic cleanup
+        logger.debug("failed_login_counter_clear_failed", exc_info=True)
+
+
 def money_route_limit(scope: str, *limit_strings: str):
     """Per-client rate-limit DEPENDENCY for the money routes (M7, Wave 3.2).
 

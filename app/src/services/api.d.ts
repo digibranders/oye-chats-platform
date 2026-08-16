@@ -492,12 +492,25 @@ export function verifyTopupPayment(payload: {
 }): Promise<Record<string, unknown>>;
 
 // ── Security / account ───────────────────────────────────────────────────────
-export function changeClientPassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }>;
-/** POST /auth/operator-change-password - an operator changes their own password. */
+/**
+ * POST /client/change-password. The backend rotates the account's API key as
+ * part of the change (revoking every other session) and returns the
+ * replacement in `api_key`; the helper writes it back to auth storage before
+ * resolving, so callers do not have to.
+ */
+export function changeClientPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ ok: boolean; api_key?: string }>;
+/**
+ * POST /auth/operator-change-password - an operator changes their own password.
+ * Rotates the operator API key the same way; the replacement arrives as
+ * `access_token` and is written back to auth storage by the helper.
+ */
 export function operatorChangePassword(
   currentPassword: string,
   newPassword: string,
-): Promise<{ message: string }>;
+): Promise<{ message: string; access_token?: string }>;
 /**
  * Start an email change: verifies the current password, stores the new
  * address as pending, and emails it a confirmation code. The login email
