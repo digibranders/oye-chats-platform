@@ -12,8 +12,10 @@ are accepted via ``get_current_client_or_operator``. Rows in
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
@@ -23,10 +25,20 @@ from app.db.session import get_session
 
 router = APIRouter(prefix="/operators/push", tags=["push"])
 
+# Base64url payload with generous slack over the real sizes (87 / 22 chars).
+WebPushKey = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256, pattern=r"^[A-Za-z0-9_\-=]+$"),
+]
+
 
 class PushSubscriptionKeys(BaseModel):
-    p256dh: str
-    auth: str
+    # Browser-generated ECDH public key and auth secret, both URL-safe base64.
+    # They are persisted and later fed to the Web Push encryption routine, so
+    # the charset and the ceiling both matter — a P-256 key is 87 characters
+    # and the auth secret 22, base64url-encoded.
+    p256dh: WebPushKey
+    auth: WebPushKey
 
 
 class PushSubscribeRequest(BaseModel):
@@ -46,7 +58,7 @@ class PushSubscribeRequest(BaseModel):
 
 
 class ExpoPushSubscribeRequest(BaseModel):
-    token: str
+    token: str = Field(..., min_length=1, max_length=256)
 
     @field_validator("token")
     @classmethod

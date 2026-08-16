@@ -9,6 +9,7 @@ from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, Webhook, WebhookDelivery
 from app.db.session import get_session
 from app.schemas.client import _is_public_hostname
+from app.schemas.validators import RowId
 from app.services.webhook_service import SUPPORTED_EVENTS, generate_webhook_secret, queue_webhook_delivery
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -77,7 +78,7 @@ def _validate_events(events: list[str]) -> None:
 
 @router.get("")
 def list_webhooks(
-    bot_id: int = Query(...),
+    bot_id: RowId = Query(...),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     with get_session() as session:
@@ -104,7 +105,7 @@ def list_webhooks(
 @router.post("")
 def create_webhook(
     body: CreateWebhookRequest,
-    bot_id: int = Query(...),
+    bot_id: RowId = Query(...),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     # ── Plan enforcement: check webhooks feature ──

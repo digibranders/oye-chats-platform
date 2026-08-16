@@ -23,6 +23,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["billing-webhooks"])
 
+# ── Input ceilings ───────────────────────────────────────────────────────────
+# This route is unauthenticated until the HMAC verifies, so everything it
+# touches before that point is attacker-controlled. Ceilings on the two
+# headers, checked before the compare, the idempotency lookup, and the
+# dead-letter write. Razorpay's event id is a ~20-character handle and the
+# signature is a 64-character hex digest.
+_MAX_SIGNATURE_LEN = 512
+_MAX_EVENT_ID_LEN = 128
+# ``event`` from the (by-then authenticated) body. Used in log lines and
+# persisted on the dead-letter row.
+_MAX_EVENT_TYPE_LEN = 128
+
 # ── Signature-failure escalation (P1-6a) ─────────────────────────────────────
 # A single bad signature is noise (scanner, replay). A BURST of them is a
 # rotated/mistyped RAZORPAY_WEBHOOK_SECRET: every billing event 400s before
@@ -130,9 +142,20 @@ async def razorpay_webhook(request: Request):
             detail="Webhook signature verification is not configured.",
         )
 
+    # ``BodySizeLimitMiddleware`` already refuses anything over the global
+    # ceiling before we get here — which matters more on this route than any
+    # other, because the HMAC cannot be checked until the bytes are in hand,
+    # so the allocation is controlled by an unauthenticated caller.
     raw_payload = await request.body()
     signature = request.headers.get("x-razorpay-signature", "")
     event_id = request.headers.get("x-razorpay-event-id")
+    # Bound the two header values before they are compared, used as an
+    # idempotency key, or written to the dead-letter table. Razorpay's event
+    # id is a ~20-char handle and the signature is a 64-char hex digest;
+    # anything materially longer is not a delivery from them.
+    if len(signature) > _MAX_SIGNATURE_LEN or (event_id is not None and len(event_id) > _MAX_EVENT_ID_LEN):
+        logger.warning("Razorpay webhook rejected: oversized signature/event-id header")
+        raise HTTPException(status_code=400, detail="Malformed webhook headers.")
     # Headers worth keeping for replay/debug (not the whole set) — reused by both
     # the missing-id and processing-error dead-letter paths.
     replay_headers = {
@@ -193,7 +216,14 @@ def _process_razorpay_webhook(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
 
-    event_type = event.get("event", "unknown")
+    # Post-signature, so the payload is authenticated — but "signed by
+    # Razorpay" is not "shaped the way this handler assumes". A JSON document
+    # is not necessarily an object, and ``event`` is not necessarily a string:
+    # both used to flow straight into ``.get()`` and into a log format.
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Webhook payload must be a JSON object.")
+    raw_event_type = event.get("event")
+    event_type = raw_event_type[:_MAX_EVENT_TYPE_LEN] if isinstance(raw_event_type, str) else "unknown"
     logger.info("Razorpay webhook received: %s | id=%s", event_type, event_id or "N/A")
 
     # Finding #4: a delivery with no X-Razorpay-Event-Id cannot be idempotency-

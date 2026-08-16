@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import (
@@ -22,6 +22,13 @@ from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
 from app.db.session import get_session
+from app.schemas.validators import (
+    EmailAddress,
+    OptionalName,
+    Password,
+    RequiredName,
+    Token,
+)
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
 from app.services.runtime_config import is_impersonation_enabled
@@ -236,8 +243,13 @@ def _get_default_workspace_bot(session, client_id: int) -> Bot | None:
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    # Neither field is length-checked against the *stored* credential here —
+    # this is the unauthenticated entry point, so the bound exists to keep an
+    # arbitrary-size string out of the query parameter and the bcrypt call,
+    # not to hint at what a valid password looks like. ``verify_password``
+    # truncates to bcrypt's 72 bytes regardless.
+    email: EmailAddress
+    password: Password
 
 
 class LoginResponse(BaseModel):
@@ -252,28 +264,28 @@ class LoginResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    name: str
-    email: str
-    password: str
-    company_name: str | None = None
-    website: str | None = None
+    name: RequiredName
+    email: EmailAddress
+    password: Password
+    company_name: OptionalName = None
+    website: OptionalName = None
     # Billing country chosen at signup — sets the account's display/charge
     # currency (IN -> INR, else USD) from the very first load. Optional; falls
     # back to IP geo when omitted.
-    billing_country: str | None = None
+    billing_country: str | None = Field(default=None, max_length=8)
     # Optional affiliate referral code captured from the ``?ref=`` cookie at
     # signup. Silent on invalid/self-referral — registration must never fail
-    # because of a referral problem.
-    referral_code: str | None = None
+    # because of a referral problem. Bounded because it is looked up verbatim
+    # and echoed into audit records.
+    referral_code: str | None = Field(default=None, max_length=64)
     # Optional launch-promo code captured from the campaign link's ``?code=``.
     # Makes the offer link-exclusive (only link arrivals qualify). Silent on
     # unknown codes — a bad link must never fail signup.
-    promo_code: str | None = None
+    promo_code: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod
     def name_not_empty(cls, v):
-        v = v.strip()
         if len(v) < 2:
             raise ValueError("Name must be at least 2 characters.")
         return v
@@ -286,15 +298,6 @@ class RegisterRequest(BaseModel):
         v = v.strip().upper()
         if not re.fullmatch(r"[A-Z]{2}", v):
             raise ValueError("billing_country must be a 2-letter ISO code")
-        return v
-
-    @field_validator("email")
-    @classmethod
-    def valid_email(cls, v):
-        v = v.strip().lower()
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if not re.match(pattern, v):
-            raise ValueError("Please enter a valid email address.")
         return v
 
     @field_validator("password")
@@ -584,22 +587,15 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
 
 
 class VerifyEmailRequest(BaseModel):
-    email: str
-    otp: str
-
-    @field_validator("email")
-    @classmethod
-    def normalise_email(cls, v):
-        return v.strip().lower()
+    email: EmailAddress
+    # Server-issued 6-digit code. Pinned to exactly that shape so the
+    # constant-time compare below is fed a fixed-size candidate and a caller
+    # cannot probe with a 1 MB string.
+    otp: str = Field(..., pattern=r"^\d{6}$")
 
 
 class ResendVerificationRequest(BaseModel):
-    email: str
-
-    @field_validator("email")
-    @classmethod
-    def normalise_email(cls, v):
-        return v.strip().lower()
+    email: EmailAddress
 
 
 @router.post("/onboarding/complete")
@@ -696,13 +692,13 @@ def resend_verification(request: Request, body: ResendVerificationRequest):
 
 
 class RequestPasswordResetRequest(BaseModel):
-    email: str
+    email: EmailAddress
 
 
 class ResetPasswordRequest(BaseModel):
-    email: str
-    otp: str
-    new_password: str
+    email: EmailAddress
+    otp: str = Field(..., pattern=r"^\d{6}$")
+    new_password: Password
 
     @field_validator("new_password")
     @classmethod
@@ -1134,7 +1130,9 @@ def reset_password(request: Request, body: ResetPasswordRequest):
 
 
 class ImpersonationRedeemRequest(BaseModel):
-    token: str
+    # Unauthenticated endpoint whose whole job is to validate a secret, so the
+    # secret itself is bounded before any lookup or comparison runs.
+    token: Token
 
 
 class ImpersonationRedeemResponse(BaseModel):
@@ -1235,8 +1233,8 @@ def redeem_impersonation_token(request: Request, body: ImpersonationRedeemReques
 
 
 class OperatorLoginRequest(BaseModel):
-    email: str
-    password: str
+    email: EmailAddress
+    password: Password
 
 
 class OperatorLoginResponse(BaseModel):
@@ -1253,8 +1251,8 @@ class OperatorLoginResponse(BaseModel):
 
 
 class OperatorChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: Password
+    new_password: Password
 
     @field_validator("new_password")
     @classmethod

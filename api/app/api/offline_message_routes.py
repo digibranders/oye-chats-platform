@@ -2,15 +2,28 @@
 
 import logging
 from datetime import UTC, datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.sql import func
 
 from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, OfflineMessage
 from app.db.session import get_session
+from app.schemas.validators import (
+    BotKey,
+    EmailAddress,
+    Name,
+    Phone,
+    RequiredLongText,
+    RequiredName,
+    RowId,
+    SessionId,
+    bounded_list,
+)
+from app.schemas.ws import MAX_TRANSCRIPT_TURNS, TranscriptTurn
 from app.services.email_service import (
     get_notification_recipients,
     redact_email,
@@ -28,28 +41,38 @@ router = APIRouter(prefix="/offline-messages", tags=["offline-messages"])
 
 
 class SubmitOfflineMessageRequest(BaseModel):
-    bot_key: str = Field(..., max_length=100)
-    name: str = Field(..., min_length=1, max_length=200)
-    email: str = Field(..., max_length=320)
-    phone: str | None = Field(None, max_length=30)
-    message: str = Field(..., min_length=1, max_length=5000)
-    session_id: str | None = Field(None, max_length=100)
-    department_id: int | None = None
+    """Unauthenticated widget submission — the bot key is the only credential.
 
-    @field_validator("email")
-    @classmethod
-    def valid_email(cls, v):
-        import re
+    ``reason`` and ``transcript`` were undeclared here while the widget has
+    been sending both since the fallback-reason feature shipped. Pydantic's
+    default is to ignore unknown keys, so on this path they were parsed and
+    dropped — the columns stayed null and the admin inbox showed no fallback
+    cause, while the WebSocket fallback (``submit_offline_form``) stored them
+    correctly. Declaring them is the fix: same fields, same bounds, same
+    behaviour on both paths.
+    """
 
-        v = v.strip().lower()
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if not re.match(pattern, v):
-            raise ValueError("Please enter a valid email address.")
-        return v
+    bot_key: BotKey
+    name: RequiredName
+    email: EmailAddress
+    phone: Phone | None = None
+    message: RequiredLongText
+    session_id: SessionId | None = None
+    department_id: RowId | None = None
+    # Resolver state at the moment the visitor fell back to the form
+    # (``no_operators``, ``out_of_hours``, ``queue_timeout``, …). Drives the
+    # admin filter and the "why so many of these?" analytics.
+    reason: Name = "manual"
+    # Bot turns preceding the fallback, so the replying operator has context.
+    # Same shape and cap as the WebSocket frame.
+    transcript: Annotated[list[TranscriptTurn], bounded_list(MAX_TRANSCRIPT_TURNS)] | None = None
 
 
 class UpdateOfflineMessageRequest(BaseModel):
-    status: str | None = None  # read|replied
+    # ``new`` is the initial state; an admin moves a message to ``read`` or
+    # ``replied``. Previously a free ``str`` compared against the same three
+    # values downstream, so anything else silently no-opped.
+    status: Literal["new", "read", "replied"] | None = None
 
 
 # ── Public Endpoint (Widget) ──
@@ -73,6 +96,8 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
             visitor_email=request.email.strip().lower(),
             visitor_phone=request.phone,
             message_body=request.message.strip(),
+            fallback_reason=request.reason,
+            transcript=[turn.model_dump() for turn in request.transcript] if request.transcript else None,
         )
         session.add(msg)
         session.commit()
@@ -193,11 +218,11 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
 
 @router.get("")
 def list_offline_messages(
-    status_filter: str | None = Query(None, alias="status"),
-    bot_id: int | None = None,
+    status_filter: Literal["new", "read", "replied"] | None = Query(None, alias="status"),
+    bot_id: RowId | None = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    acting_as: str | None = Header(None, alias="X-Acting-Role"),
+    acting_as: str | None = Header(None, alias="X-Acting-Role", max_length=32),
     auth=Depends(get_current_client_or_operator),
 ):
     """List offline messages for the authenticated client / operator.

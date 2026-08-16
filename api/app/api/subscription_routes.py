@@ -10,10 +10,10 @@ import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -34,6 +34,15 @@ from app.core.pricing import annual_saving_percent, format_amount, resolve_billi
 from app.core.rate_limit import money_route_limit
 from app.db.models import Bot, Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
+from app.schemas.validators import (
+    EmailAddress,
+    GatewayRef,
+    GatewaySignature,
+    MediumText,
+    Name,
+    RowId,
+    SmallJsonObject,
+)
 from app.services import credit_service, invoice_service, plan_entitlements_service, razorpay_customer_service
 from app.services.plan_service import (
     get_account_subscription,
@@ -77,6 +86,22 @@ _MAX_OPERATOR_SEATS_ABSOLUTE = 100
 ACTIVATION_POLL_SECONDS = 5
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
+
+# monthly | annual — the only two cycles the plan catalog and the gateway
+# plan ids are built for. Previously a bare ``str``: an unrecognised cycle
+# fell through to the monthly branch instead of being refused.
+BillingCycle = Literal["monthly", "annual"]
+
+# Promo / coupon code as typed at checkout. Looked up verbatim.
+CouponCode = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\-]+$"),
+]
+
+# Seats added or removed in one request. Each unit is a real charge against
+# the customer's mandate, so the delta is bounded — an unbounded one is an
+# unbounded invoice. Well above any realistic single adjustment.
+_MAX_SEAT_DELTA = 500
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
 
 
@@ -290,7 +315,7 @@ class StartTrialRequest(BaseModel):
     ``trial_days > 0`` — the free plan is intentionally excluded.
     """
 
-    plan_slug: str = Field(..., min_length=1, max_length=64)
+    plan_slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_\-]+$")
 
 
 @router.post("/start-trial")
@@ -607,9 +632,12 @@ def get_billing_geo(request: Request, client: Client = Depends(get_current_clien
 
 
 class VerifyRazorpaySubscriptionRequest(BaseModel):
-    razorpay_payment_id: str
-    razorpay_subscription_id: str
-    razorpay_signature: str
+    # Gateway-issued handles echoed back by the browser after Checkout, plus
+    # the hex HMAC. Bounded and charset-pinned before the signature compare
+    # and the gateway lookup run.
+    razorpay_payment_id: GatewayRef
+    razorpay_subscription_id: GatewayRef
+    razorpay_signature: GatewaySignature
 
 
 @router.post("/verify-razorpay-subscription", dependencies=[Depends(money_route_limit("verify-sub", "30/minute"))])
@@ -864,17 +892,38 @@ def list_invoices(client: Client = Depends(get_current_client), bot_id: int | No
 # ── Billing details (buyer tax identity for invoicing v2) ─────────────────────
 
 
+class BillingAddress(BaseModel):
+    """Postal address printed on the customer's tax invoice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    line1: str | None = Field(default=None, max_length=200)
+    line2: str | None = Field(default=None, max_length=200)
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=20)
+    country: str | None = Field(default=None, max_length=100)
+
+
 class BillingDetailsBody(BaseModel):
     # All optional — PATCH semantics via exclude_unset: omitted fields keep
     # their stored value; an explicit null clears the field.
-    legal_name: str | None = None
-    gstin: str | None = None
-    billing_address: dict[str, str] | None = None
+    legal_name: Name | None = None
+    # Indian GSTIN. Format AND mod-36 checksum are verified in the handler by
+    # ``is_valid_gstin`` (which also has to distinguish "" — clear the field —
+    # from an invalid value), so this only bounds the length: 15 characters
+    # plus room for the spacing people paste in.
+    gstin: str | None = Field(default=None, max_length=32)
+    # Printed on the invoice. Allow-listed keys, each a bounded string — it
+    # used to be ``dict[str, str]``, which accepted any number of keys of any
+    # length.
+    billing_address: BillingAddress | None = None
     # ISO-2 country code; length-capped so a free-text value ("India") is a
     # clean 422 rather than a varchar(2) overflow → 500 at commit.
     billing_country: str | None = Field(default=None, max_length=2)
-    billing_state_code: str | None = None
-    billing_email: str | None = None
+    # ISO 3166-2 subdivision suffix — decides intra- vs inter-state GST.
+    billing_state_code: str | None = Field(default=None, max_length=8)
+    billing_email: EmailAddress | None = None
 
 
 def _billing_details_dict(client: Client) -> dict:
@@ -1180,13 +1229,14 @@ class BillingFunnelEventBody(BaseModel):
 
     event: Literal["checkout_abandoned", "payment_failed"]
     surface: Literal["plan", "topup", "seat", "resume"]
-    meta: dict | None = None
+    # Telemetry, not a dumping ground. ``SmallJsonObject`` bounds serialized
+    # size, nesting depth and key count; the check below keeps this route's
+    # own tighter 2 KB ceiling on top of it.
+    meta: SmallJsonObject | None = None
 
     @field_validator("meta")
     @classmethod
     def _bound_meta(cls, v: dict | None) -> dict | None:
-        # Telemetry, not a dumping ground: bound the payload so a buggy (or
-        # hostile) client can't grow the table with megabyte blobs.
         if v is not None and len(json.dumps(v)) > 2048:
             raise ValueError("meta too large")
         return v
@@ -1220,13 +1270,13 @@ def record_billing_funnel_event(body: BillingFunnelEventBody, client: Client = D
 
 
 class CheckoutRequest(BaseModel):
-    plan_id: int
-    billing_cycle: str = "monthly"  # monthly|annual
-    coupon_code: str | None = None
+    plan_id: RowId
+    billing_cycle: BillingCycle = "monthly"
+    coupon_code: CouponCode | None = None
     # Confirmed at checkout (country-confirmation step). None → fall back to the
     # client's stored country, else domestic (IN). Optional for backward compat:
     # legacy callers that omit it stay on the existing INR path.
-    billing_country: str | None = None
+    billing_country: str | None = Field(default=None, max_length=2)
 
 
 # ── Checkout quote (currency + payment-method preview) ────────────────────────
@@ -1932,9 +1982,9 @@ def create_checkout(
 
 
 class ChangePlanRequest(BaseModel):
-    plan_id: int
-    billing_cycle: str | None = None  # None = keep current cycle
-    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
+    plan_id: RowId
+    billing_cycle: BillingCycle | None = None  # None = keep current cycle
+    bot_id: RowId | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/change-plan", dependencies=[Depends(money_route_limit("change-plan", "10/minute", "50/day"))])
@@ -2470,8 +2520,9 @@ def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client
 
 
 class CancelSubscriptionRequest(BaseModel):
-    reason: str | None = None
-    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
+    # Free-text churn reason, stored and surfaced in ops reporting.
+    reason: MediumText | None = None
+    bot_id: RowId | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/cancel")
@@ -2573,7 +2624,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
 
 
 class ResumeSubscriptionRequest(BaseModel):
-    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
+    bot_id: RowId | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/resume", dependencies=[Depends(money_route_limit("resume", "10/minute", "50/day"))])
@@ -2824,8 +2875,12 @@ def resume_subscription(
 
 
 class SeatChangeRequest(BaseModel):
-    delta: int  # +1 to add a seat, -1 to remove. Must keep total >= included floor.
-    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
+    # +1 to add a seat, -1 to remove. Must keep the total at or above the
+    # plan's included floor (checked against the subscription below). Bounded
+    # here because each unit is a real charge on the customer's mandate — an
+    # unbounded delta is an unbounded invoice.
+    delta: int = Field(..., ge=-_MAX_SEAT_DELTA, le=_MAX_SEAT_DELTA)
+    bot_id: RowId | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/seats", dependencies=[Depends(money_route_limit("seats", "10/minute", "50/day"))])

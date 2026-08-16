@@ -1,9 +1,14 @@
 import asyncio
 import logging
+import re
 from pathlib import Path
 
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
+
+# ``pathlib.Path`` is imported above and used throughout this module; alias
+# FastAPI's path-parameter marker so the two never shadow each other.
+from fastapi import Path as PathParam
 
 from app.api.auth import (
     get_current_client_or_operator,
@@ -23,6 +28,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
+from app.schemas.validators import MAX_URL, Identifier, RowId
 from app.services.crawler_service import (
     acquire_crawl_lock,
     clear_cancellation,
@@ -76,6 +82,64 @@ router = APIRouter(tags=["documents"])
 # Upload limits (bytes)
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
 _MAX_TOTAL_UPLOAD = 60 * 1024 * 1024  # 60 MB per request
+
+# Cap on parts in one multipart body. The byte ceilings above bound total
+# volume but not part COUNT, and every part costs a filename check, a temp
+# path and (in the preview endpoint) an extraction attempt — so 50,000 empty
+# parts inside a small body used to be a free per-part loop.
+_MAX_FILES_PER_REQUEST = 50
+
+# Supported upload extensions, shared by /ingest and /ingest/preview-cost so
+# the preview can never disagree with what the real upload accepts.
+_SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".txt", ".md")
+
+# A safe stored file name: no separators, no traversal, no control bytes, and
+# short enough for any filesystem. The upload path also resolves the final
+# path and re-checks containment — this is the cheap first gate.
+_SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._\-()]{0,200}$")
+
+
+def _safe_upload_filename(raw: str | None) -> str | None:
+    """Return *raw* if it is a usable, contained file name, else ``None``.
+
+    Rejects rather than rewrites. A name mangled into something "safe" is
+    stored under a name the customer never chose and cannot find again, and
+    two different rejects can collide onto one accepted name — so a bad name
+    is skipped and reported, not repaired.
+    """
+    if not raw:
+        return None
+    if raw != raw.strip() or "\x00" in raw:
+        return None
+    if not _SAFE_FILENAME_RE.match(raw):
+        return None
+    # ``.`` / ``..`` match the charset but are not file names.
+    if raw.strip(".") == "":
+        return None
+    return raw
+
+
+def _read_upload_bounded(upload: UploadFile, max_bytes: int) -> bytes:
+    """Read at most ``max_bytes + 1`` bytes from a multipart part.
+
+    ``UploadFile.file.read()`` with no argument materialises the whole part
+    before anything can object to its size, which is the exact ordering
+    ``core.upload_guard`` was written to avoid. This is that helper's
+    synchronous twin — these two endpoints are sync ``def`` routes, so they
+    cannot await the async one. Returning one byte past the limit is enough
+    for the caller to detect the breach without buffering the rest.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = upload.file.read(64 * 1024)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            break
+    return b"".join(chunks)
 
 
 def _check_memory():
@@ -137,7 +201,7 @@ def _tenant_documents_dir(client_id: int, bot_id: int | None) -> Path:
 
 
 @router.get("/documents")
-def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_operator)):
+def get_documents_endpoint(bot_id: RowId | None = Query(None), auth: dict = Depends(get_current_client_or_operator)):
     """Retrieve a list of all ingested documents for the authenticated client."""
     _verify_bot_ownership(bot_id, auth["client_id"])
     try:
@@ -151,7 +215,7 @@ def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depend
 
 @router.get("/documents/knowledge-state")
 def get_knowledge_state_endpoint(
-    bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_operator)
+    bot_id: RowId | None = Query(None), auth: dict = Depends(get_current_client_or_operator)
 ):
     """Whether this bot's knowledge was deactivated by a plan lapse to Free.
 
@@ -176,8 +240,14 @@ def get_knowledge_state_endpoint(
 
 @router.get("/documents/pages", response_model=DocumentPagesResponse)
 def get_document_pages_endpoint(
-    source: str = Query(..., description="Normalized root domain (e.g. fynix.digital)"),
-    bot_id: int | None = Query(None),
+    source: str = Query(
+        ...,
+        min_length=1,
+        max_length=253,
+        pattern=r"^[A-Za-z0-9._\-]+$",
+        description="Normalized root domain (e.g. fynix.digital)",
+    ),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Return all crawled page URLs for a website source, with per-page chunk counts and titles."""
@@ -193,8 +263,12 @@ def get_document_pages_endpoint(
 
 @router.delete("/documents/{document_name:path}")
 def delete_document_endpoint(
-    document_name: str,
-    bot_id: int | None = Query(None),
+    # A stored source name: either a crawled URL or an uploaded file name.
+    # Every query built from it below binds it as a parameter, so this bound
+    # is about keeping an unbounded string out of the planner and the logs,
+    # not about injection.
+    document_name: str = PathParam(..., min_length=1, max_length=MAX_URL),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Delete all documents associated with a document name for the authenticated client."""
@@ -383,7 +457,7 @@ def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | 
 def preview_ingest_cost(
     request: Request,
     files: list[UploadFile] = File(...),
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Return the credit cost the customer will pay if they upload ``files``.
@@ -409,13 +483,16 @@ def preview_ingest_cost(
 
     if not files:
         raise HTTPException(status_code=400, detail="No files supplied.")
+    if len(files) > _MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files in one request (max {_MAX_FILES_PER_REQUEST}).",
+        )
 
     import tempfile
 
     from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
     from app.services import credit_service
-
-    supported = [".pdf", ".docx", ".txt", ".md"]
 
     per_file: list[dict] = []
     total_credits = 0
@@ -424,14 +501,24 @@ def preview_ingest_cost(
     with tempfile.TemporaryDirectory(prefix="oyechats-preview-") as tmp:
         tmp_dir = Path(tmp)
         for f in files:
-            fname = f.filename or "unnamed"
+            # Reject the name before it is used to build a path. The preview
+            # writes each part to a scratch file so the path-based extractors
+            # can run, and the previous ``fname.replace("/", "_")`` left ``..``
+            # and control bytes intact.
+            fname = _safe_upload_filename(f.filename)
+            if fname is None:
+                per_file.append(
+                    {"filename": (f.filename or "unnamed")[:200], "words": 0, "credits": 0, "reason": "invalid_name"}
+                )
+                continue
             ext = Path(fname).suffix.lower()
 
-            if ext not in supported:
+            if ext not in _SUPPORTED_EXTENSIONS:
                 per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "unsupported_type"})
                 continue
 
-            content = f.file.read()
+            # Bounded read: one byte past the ceiling is enough to reject.
+            content = _read_upload_bounded(f, _MAX_FILE_SIZE)
             fsize = len(content)
             total_bytes += fsize
 
@@ -459,8 +546,13 @@ def preview_ingest_cost(
 
             # Write to a scratch temp path so the existing extractors (which
             # take file paths) can run. The whole tempdir is cleaned up when
-            # the ``with`` block exits — nothing persists to disk.
-            tmp_path = tmp_dir / fname.replace("/", "_")
+            # the ``with`` block exits — nothing persists to disk. ``fname``
+            # passed ``_safe_upload_filename`` above, and the containment
+            # check below is the belt to that braces.
+            tmp_path = (tmp_dir / fname).resolve()
+            if not tmp_path.is_relative_to(tmp_dir.resolve()):
+                per_file.append({"filename": fname, "words": 0, "credits": 0, "reason": "invalid_name"})
+                continue
             try:
                 tmp_path.write_bytes(content)
                 if ext == ".pdf":
@@ -516,7 +608,7 @@ def preview_ingest_cost(
 def ingest_documents(
     request: Request,
     files: list[UploadFile] = File(...),
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     _sub=Depends(require_active_subscription_for_workspace),
@@ -541,6 +633,11 @@ def ingest_documents(
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
+    if len(files) > _MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files in one request (max {_MAX_FILES_PER_REQUEST}).",
+        )
 
     # ── Plan enforcement: cap on total documents per workspace ──
     # The credit gate further down stops a Free user from spending more
@@ -620,25 +717,34 @@ def ingest_documents(
                     },
                 )
 
-    supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     saved_paths: list[str] = []  # Track written paths for cleanup on failure
     saved_files: list[str] = []
     total_bytes = 0
 
-    # ── Phase 1: Validate ALL file sizes before writing anything to disk ──
+    # ── Phase 1: Validate ALL file names and sizes before writing to disk ──
     file_buffers: list[tuple[str, bytes]] = []
     for file in files:
-        if not any(file.filename.lower().endswith(ext) for ext in supported_extensions):
-            logger.warning(f"Skipping unsupported file: {file.filename}")
+        # ``UploadFile.filename`` is Optional, and the old
+        # ``file.filename.lower()`` raised ``AttributeError`` — a 500 — on a
+        # part without one. It is also the string this endpoint builds a
+        # destination path from, so it is validated, not merely read.
+        filename = _safe_upload_filename(file.filename)
+        if filename is None:
+            logger.warning("Skipping upload with an unusable file name: %r", file.filename)
+            continue
+        if not filename.lower().endswith(_SUPPORTED_EXTENSIONS):
+            logger.warning(f"Skipping unsupported file: {filename}")
             continue
 
-        content = file.file.read()
+        # Bounded read — the previous unbounded ``.read()`` buffered the whole
+        # part in memory and only then compared it against the ceiling.
+        content = _read_upload_bounded(file, _MAX_FILE_SIZE)
         file_size = len(content)
 
         if file_size > _MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"File '{file.filename}' exceeds 10 MB limit ({file_size / (1024 * 1024):.1f} MB).",
+                detail=f"File '{filename}' exceeds 10 MB limit.",
             )
         total_bytes += file_size
         if total_bytes > _MAX_TOTAL_UPLOAD:
@@ -646,7 +752,7 @@ def ingest_documents(
                 status_code=413,
                 detail=f"Total upload exceeds 60 MB limit ({total_bytes / (1024 * 1024):.1f} MB).",
             )
-        file_buffers.append((file.filename, content))
+        file_buffers.append((filename, content))
 
     if not file_buffers:
         raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) supplied.")
@@ -820,7 +926,8 @@ def ingest_documents(
 
 @router.get("/ingest/status/{job_id}")
 async def ingest_status_endpoint(
-    job_id: str,
+    # Looked up verbatim as an ARQ/Redis job key.
+    job_id: Identifier,
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Poll the status of a background ingestion job.
@@ -873,7 +980,7 @@ def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)
 @limiter.limit("30/minute", key_func=key_from_api_key)
 def crawl_cancel_endpoint(
     request: Request,
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Request cancellation of the caller's in-flight crawl.
@@ -922,7 +1029,7 @@ def crawl_cancel_endpoint(
 async def crawl_discover_endpoint(
     discover_request: CrawlDiscoverRequest,
     request: Request,
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
     _verified=Depends(require_verified_email_for_workspace),
 ):
@@ -1015,7 +1122,7 @@ async def crawl_discover_endpoint(
 async def crawl_diff_endpoint(
     diff_request: CrawlDiffRequest,
     request: Request,
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Diff a recrawl against the existing knowledge base for the given source.
@@ -1250,7 +1357,7 @@ async def crawl_endpoint(
     crawl_request: CrawlRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
     _sub=Depends(require_active_subscription_for_workspace),
     _verified=Depends(require_verified_email_for_workspace),

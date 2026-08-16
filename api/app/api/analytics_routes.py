@@ -4,6 +4,7 @@ import logging
 import re
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -24,6 +25,7 @@ from app.db.repository import (
     get_visitor_data,
 )
 from app.db.session import get_session
+from app.schemas.validators import RowId, YearMonth
 from app.services.plan_entitlements_service import UNLIMITED, get_chat_history_retention_days
 from app.services.reporting_service import get_per_bot_rollup
 
@@ -44,8 +46,8 @@ def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
 
 @router.get("/qualification-funnel")
 def get_qualification_funnel(
-    bot_id: int = Query(...),
-    period: str = Query("30d", description="7d|30d|90d|all"),
+    bot_id: RowId = Query(...),
+    period: Literal["7d", "30d", "90d", "all"] = Query("30d"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     try:
@@ -134,7 +136,7 @@ def get_qualification_funnel(
 
 @router.get("/dashboard")
 def get_dashboard_analytics_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     days: int | None = Query(None, ge=1, le=365, description="Restrict stats to the last N days"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
@@ -153,7 +155,7 @@ def get_dashboard_analytics_endpoint(
 
 @router.get("/activity")
 def get_activity_analytics_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve message activity over time for charts."""
@@ -171,7 +173,7 @@ def get_activity_analytics_endpoint(
 
 @router.get("/top-questions")
 def get_top_questions_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve the most common user queries."""
@@ -189,7 +191,7 @@ def get_top_questions_endpoint(
 
 @router.get("/unanswered-questions")
 def get_unanswered_questions_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     days: int | None = Query(None, ge=1, le=365, description="Restrict to a trailing window of N days."),
     auth: dict = Depends(get_current_client_or_operator),
@@ -213,7 +215,7 @@ def get_unanswered_questions_endpoint(
 
 @router.get("/visitors")
 def get_visitors_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     limit: int = Query(500, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     auth: dict = Depends(get_current_client_or_operator),
@@ -288,7 +290,7 @@ def get_visitors_endpoint(
 
 @router.get("/ratings-summary")
 def get_ratings_summary_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve post-chat visitor rating summary (avg, total, distribution)."""
@@ -305,7 +307,7 @@ def get_ratings_summary_endpoint(
 
 @router.get("/resolution-summary")
 def get_resolution_summary_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve post-chat visitor resolution summary (resolved, unresolved, rate)."""
@@ -322,7 +324,7 @@ def get_resolution_summary_endpoint(
 
 @router.get("/feedback")
 def get_feedback_endpoint(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve all feedback for the admin dashboard."""
@@ -526,8 +528,8 @@ def _guard_journey_access(bot_id: int, client_id: int) -> None:
 
 @router.get("/journey/summary")
 def get_journey_summary(
-    bot_id: int = Query(...),
-    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    bot_id: RowId = Query(...),
+    period: YearMonth = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Header-row totals: sessions with journey + per-conversion counts + leads."""
@@ -547,9 +549,9 @@ def get_journey_summary(
 
 @router.get("/journey/top-pages")
 def get_journey_top_pages(
-    bot_id: int = Query(...),
-    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
-    phase: str | None = Query(None, description="pre|chat|post; omit for all"),
+    bot_id: RowId = Query(...),
+    period: YearMonth = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    phase: Literal["pre", "chat", "post"] | None = Query(None, description="omit for all"),
     limit: int = Query(20, ge=1, le=100),
     auth: dict = Depends(get_current_client_or_operator),
 ):
@@ -573,9 +575,9 @@ def get_journey_top_pages(
 
 @router.get("/journey/conversion-paths")
 def get_journey_conversion_paths(
-    bot_id: int = Query(...),
-    conversion_type: str = Query(..., description="meeting_booked|handoff_requested|offline_message_sent"),
-    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    bot_id: RowId = Query(...),
+    conversion_type: Literal["meeting_booked", "handoff_requested", "offline_message_sent"] = Query(...),
+    period: YearMonth = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
     limit: int = Query(10, ge=1, le=50),
     auth: dict = Depends(get_current_client_or_operator),
 ):
@@ -612,8 +614,8 @@ def get_journey_conversion_paths(
 
 @router.get("/journey/post-chat")
 def get_journey_post_chat(
-    bot_id: int = Query(...),
-    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    bot_id: RowId = Query(...),
+    period: YearMonth = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
     limit: int = Query(10, ge=1, le=50),
     auth: dict = Depends(get_current_client_or_operator),
 ):
@@ -635,8 +637,8 @@ def get_journey_post_chat(
 
 @router.get("/journey/pre-chat-sequences")
 def get_journey_pre_chat_sequences(
-    bot_id: int = Query(...),
-    period: str = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
+    bot_id: RowId = Query(...),
+    period: YearMonth = Query(..., description="Calendar month as YYYY-MM (e.g. 2026-08)"),
     limit: int = Query(5, ge=1, le=50),
     auth: dict = Depends(get_current_client_or_operator),
 ):

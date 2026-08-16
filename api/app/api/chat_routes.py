@@ -1,4 +1,3 @@
-import contextlib
 import hashlib
 import html as html_lib
 import ipaddress
@@ -8,11 +7,13 @@ import re
 import time
 import urllib.request
 import uuid
+from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field, field_validator
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -38,6 +39,20 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
+from app.schemas.validators import (
+    MAX_EMAIL,
+    CountValue,
+    DurationSeconds,
+    EmailAddress,
+    HttpUrlStr,
+    Identifier,
+    Name,
+    Phone,
+    RowId,
+    SessionId,
+    UtmParams,
+    bounded_list,
+)
 from app.services.ip_intel_service import fetch_ip_intel
 from app.services.plan_entitlements_service import (
     is_email_validation_enabled_for_bot,
@@ -212,48 +227,64 @@ def _resolve_session_id(provided: str | None, bot_id: int) -> str:
 
 
 class LeadCaptureRequest(PydanticBaseModel):
-    session_id: str
-    name: str | None = Field(None, max_length=255)
-    email: str | None = Field(None, max_length=255)
-    phone: str | None = Field(None, max_length=50)
-    company: str | None = Field(None, max_length=255)
-
-    @field_validator("email")
-    @classmethod
-    def validate_email(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        v = v.strip().lower()
-        if not _EMAIL_RE.match(v):
-            raise ValueError("Please enter a valid email address.")
-        return v
+    session_id: SessionId
+    name: Name | None = None
+    email: EmailAddress | None = None
+    phone: Phone | None = None
+    company: Name | None = None
 
 
 class ValidateEmailRequest(PydanticBaseModel):
-    email: str
+    # Bounded, but deliberately NOT format-validated at the schema layer.
+    #
+    # This endpoint's entire contract is "is this address usable?", and the
+    # widget treats any non-2xx as *pass* (``if (!response.ok) return {valid:
+    # true}`` — it fails open so a vendor outage never blocks a real visitor).
+    # Answering 422 for a syntactically invalid address would therefore make
+    # the widget accept exactly the addresses this endpoint exists to catch.
+    # The handler's ``_EMAIL_RE`` check returns the correct
+    # ``200 {"valid": false}`` instead. The length bound is what matters for
+    # safety here: the value is hashed into a Redis key and may be forwarded
+    # to a third-party verification vendor.
+    email: str = Field(..., min_length=1, max_length=MAX_EMAIL)
 
 
 class BehavioralSignalsRequest(PydanticBaseModel):
-    session_id: str
-    page_url: str | None = None
-    referrer: str | None = None
-    utm_params: dict | None = None
-    time_on_page: float | None = None  # seconds
-    pages_viewed: int | None = None
+    session_id: SessionId
+    # ``_sanitize_url`` still runs on these in the handler (it drops non-http
+    # schemes before storage); the constraint here bounds length so the
+    # 2 KB-truncating sanitiser is never handed a 10 MB string in the first
+    # place, and rejects a non-URL outright instead of silently storing None.
+    page_url: HttpUrlStr | None = None
+    referrer: HttpUrlStr | None = None
+    utm_params: UtmParams | None = None
+    # Seconds. Finite and day-bounded: the raw value is persisted to a
+    # ``double precision`` column and fed into behavioural scoring, and JSON
+    # permits ``NaN`` / ``Infinity`` literals that both would happily accept.
+    time_on_page: DurationSeconds | None = None
+    pages_viewed: CountValue | None = None
     is_return_visit: bool = False
     # Ordered list of ``{"path": "/services", "ts": "2026-07-09T12:00:15Z"}``
     # entries recorded by the widget as the visitor navigated between
     # pages on the host site before opening chat. Optional — omitted for
-    # legacy widget builds. Capped server-side to _MAX_JOURNEY_ENTRIES
-    # per session to bound row size on high-navigation sites.
-    journey: list[dict] | None = None
+    # legacy widget builds. ``_sanitize_journey`` normalises each entry and
+    # keeps at most ``_MAX_JOURNEY_ENTRIES``; the bound here refuses an
+    # oversized array up front rather than parsing and discarding it, so the
+    # cost of a 100k-entry payload is a 422 and not a 100k-iteration loop.
+    journey: Annotated[list[dict], bounded_list(_MAX_JOURNEY_ENTRIES)] | None = None
 
 
 class MeetingBookedRequest(PydanticBaseModel):
-    session_id: str
-    booking_url: str | None = None
-    meeting_time: str | None = None
-    attendee_email: str | None = None
+    session_id: SessionId
+    # Rendered as an anchor href in the admin Leads UI and in notification
+    # email — scheme allow-listing is what keeps a ``javascript:`` payload out
+    # of the customer's dashboard.
+    booking_url: HttpUrlStr | None = None
+    # ISO-8601. Previously parsed with ``contextlib.suppress``, so an
+    # unparseable value silently became a booking with no time on it; the
+    # annotation makes the caller's malformed timestamp their 422.
+    meeting_time: datetime | None = None
+    attendee_email: EmailAddress | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -1646,17 +1677,15 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
 @limiter.limit("10/minute", key_func=key_from_bot_key)
 def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     try:
-        from datetime import datetime
-
         from app.db.models import MeetingBooking
         from app.services.webhook_service import fire_webhook
 
         with get_session() as session:
             ensure_chat_session(session, body.session_id, bot_id=bot.id)
-            meeting_time = None
-            if body.meeting_time:
-                with contextlib.suppress(Exception):
-                    meeting_time = datetime.fromisoformat(body.meeting_time)
+            # Already parsed and validated by the schema — an unparseable
+            # timestamp is a 422 rather than a booking silently stored with
+            # no time on it.
+            meeting_time = body.meeting_time
 
             session.add(
                 MeetingBooking(
@@ -1677,7 +1706,7 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
                     {
                         "session_id": body.session_id,
                         "booking_url": body.booking_url,
-                        "meeting_time": body.meeting_time,
+                        "meeting_time": meeting_time.isoformat() if meeting_time else None,
                         "attendee_email": body.attendee_email,
                     },
                 )
@@ -1693,7 +1722,7 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
 
 
 @router.get("/chat/lead-info/{session_id}")
-def get_lead_info_endpoint(session_id: str, bot: Bot = Depends(get_current_bot)):
+def get_lead_info_endpoint(session_id: SessionId, bot: Bot = Depends(get_current_bot)):
     """
     Fetch existing lead info for a widget session. Auth: X-Bot-Key.
     Always returns HTTP 200 — non-critical endpoint that must never block widget load.
@@ -1767,9 +1796,9 @@ def submit_feedback_endpoint(
 @router.get("/chat/history/{session_id}")
 def get_history_endpoint(
     request: Request,
-    session_id: str,
-    bot_id: int | None = Query(None),
-    before: int | None = Query(None, description="Cursor — return messages with id < this value (for pagination)"),
+    session_id: SessionId,
+    bot_id: RowId | None = Query(None),
+    before: int | None = Query(None, ge=1, description="Cursor — return messages with id < this value"),
     limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
 ):
     """Retrieve chat history for a given session.
@@ -1916,10 +1945,21 @@ _MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class UploadUrlRequest(PydanticBaseModel):
-    filename: str
-    content_type: str
-    size: int  # bytes — validated before issuing the URL
-    session_id: str  # must belong to the authenticated bot
+    # The stored object key is built from this, so it is bounded here as well
+    # as stripped of separators in the handler.
+    filename: str = Field(..., min_length=1, max_length=255)
+    # Checked against ``_ALLOWED_CONTENT_TYPES`` in the handler and embedded in
+    # the presigned POST policy; bounded so an oversized string never reaches
+    # the signing call.
+    content_type: str = Field(..., min_length=1, max_length=128)
+    # bytes — the caller's declared size. ``ge=1`` closes the negative-size
+    # case: the handler's only guard was ``> _MAX_SIZE_BYTES``, which -1
+    # passes. The upper bound stays in the handler so an oversized request
+    # keeps its established ``400`` contract rather than becoming a 422, and
+    # R2's content-length-range policy remains the authoritative ceiling
+    # regardless of what the caller declares here.
+    size: int = Field(..., ge=1)
+    session_id: SessionId  # must belong to the authenticated bot
 
 
 @router.post("/chat/upload-url")
@@ -1954,11 +1994,12 @@ async def get_visitor_upload_url(
     if not owned_session:
         raise HTTPException(status_code=404, detail="Chat session not found.")
 
-    safe_name = body.filename.replace("/", "").replace("\\", "")[:100]
-    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else "bin"
-    key = f"chat-files/{uuid.uuid4()}.{ext}"
+    from app.services.r2_service import _build_public_url, generate_presigned_post, safe_object_extension
 
-    from app.services.r2_service import _build_public_url, generate_presigned_post
+    # The stored key never contains the caller's name — only a fresh UUID and
+    # an allow-listed extension. Sharing the helper with ``upload_chat_file``
+    # keeps the two upload paths from drifting apart on what an extension is.
+    key = f"chat-files/{uuid.uuid4()}.{safe_object_extension(body.filename)}"
 
     # Presigned POST (not PUT) so R2 enforces the 10 MB ceiling via the policy's
     # content-length-range — the request-body ``size`` is otherwise only
@@ -1973,18 +2014,8 @@ async def get_visitor_upload_url(
 
 
 class TranscriptEmailRequest(PydanticBaseModel):
-    session_id: str
-    recipient_email: str
-
-    @field_validator("recipient_email")
-    @classmethod
-    def validate_email(cls, v: str) -> str:
-        import re
-
-        v = v.strip().lower()
-        if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", v):
-            raise ValueError("Please enter a valid email address.")
-        return v
+    session_id: SessionId
+    recipient_email: EmailAddress
 
 
 @router.post("/chat/transcript")
@@ -2071,11 +2102,11 @@ def send_chat_transcript(
 
 class ConnectRequestResponseBody(PydanticBaseModel):
     accepted: bool
-    request_id: str | None = None  # optional — extra guard against stale popups
+    request_id: Identifier | None = None  # optional — extra guard against stale popups
 
 
 @router.get("/chat/connect-request/{session_id}")
-def get_pending_connect_request(session_id: str, bot: Bot = Depends(get_current_bot)):
+def get_pending_connect_request(session_id: SessionId, bot: Bot = Depends(get_current_bot)):
     """Widget polls this while in bot mode to discover operator-initiated
     connect invitations. Returns ``{ pending: false }`` when none.
 
@@ -2108,7 +2139,7 @@ def get_pending_connect_request(session_id: str, bot: Bot = Depends(get_current_
 
 @router.post("/chat/connect-request/{session_id}/respond")
 async def respond_to_connect_request(
-    session_id: str,
+    session_id: SessionId,
     body: ConnectRequestResponseBody,
     bot: Bot = Depends(get_current_bot),
 ):

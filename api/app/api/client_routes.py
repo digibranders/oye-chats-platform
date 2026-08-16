@@ -4,9 +4,10 @@ import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_client, get_current_client_strict
@@ -16,11 +17,32 @@ from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, Client
 from app.db.session import get_session
 from app.schemas.client import ClientSettingsUpdate
+from app.schemas.validators import (
+    HttpUrlStr,
+    Name,
+    Password,
+    RequiredLongText,
+    RowId,
+    SmallJsonObject,
+    bounded_list,
+    validate_http_url,
+)
 from app.services.email_service import send_email_change_otp, send_email_change_requested_notice
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 logger = logging.getLogger(__name__)
+
+# Attachments per feedback submission. The row is a JSONB column rendered as a
+# list of links in super-admin triage.
+_MAX_FEEDBACK_ATTACHMENTS = 10
+
+# Declared content types accepted for a feedback screenshot / log file. Wider
+# than the logo allow-list (a bug report legitimately carries a PDF or a text
+# log) but still an allow-list, not "anything".
+FEEDBACK_ATTACHMENT_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "application/pdf", "text/plain"}
+)
 
 router = APIRouter(prefix="/client", tags=["client"])
 
@@ -28,7 +50,7 @@ router = APIRouter(prefix="/client", tags=["client"])
 @router.get("/settings")
 def get_client_settings(
     request: Request,
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve chatbot customization settings."""
@@ -80,7 +102,7 @@ def get_client_settings(
 @router.patch("/settings")
 def update_client_settings(
     request: ClientSettingsUpdate,
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     client: Client = Depends(get_current_client_strict),
 ):
     """Update chatbot customization settings."""
@@ -127,24 +149,16 @@ def update_client_settings(
 
 
 class PlatformFeedbackCreate(BaseModel):
-    message: str
-    attachment_url: str | None = None
-    category: str | None = None  # deprecated; kept for back-compat with old clients
+    message: RequiredLongText
+    attachment_url: HttpUrlStr | None = None
+    category: str | None = Field(default=None, max_length=64)  # deprecated; kept for old clients
     type: str = "other"
     area: str | None = None
     severity: str | None = None
-    context: dict | None = None
-    attachments: list | None = None
-
-    @field_validator("message")
-    @classmethod
-    def message_not_empty(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("message must not be empty")
-        if len(v) > 5000:
-            raise ValueError("message must be 5000 characters or fewer")
-        return v
+    # Whitelisted below to the known metadata keys, so the incoming object only
+    # needs a size bound before that filter runs.
+    context: SmallJsonObject | None = None
+    attachments: Annotated[list, bounded_list(_MAX_FEEDBACK_ATTACHMENTS)] | None = None
 
     @field_validator("type")
     @classmethod
@@ -179,20 +193,30 @@ class PlatformFeedbackCreate(BaseModel):
     @field_validator("attachments")
     @classmethod
     def attachments_normalize(cls, v: list | None) -> list | None:
+        """Normalize to ``[{url, name?, content_type?}]``, rejecting bad rows.
+
+        The URL is rendered as a link in the super-admin feedback triage view,
+        so it is scheme-checked here rather than merely stringified — the old
+        ``str(item["url"])`` accepted ``javascript:`` and any length.
+        """
         if not v:
             return None
         out: list[dict] = []
-        for item in v[:10]:  # hard cap to keep the row bounded
+        for item in v:
             if isinstance(item, str):
-                out.append({"url": item})
+                out.append({"url": validate_http_url(item)})
             elif isinstance(item, dict) and item.get("url"):
-                out.append(
-                    {
-                        "url": str(item["url"]),
-                        **({"name": str(item["name"])} if item.get("name") else {}),
-                        **({"content_type": str(item["content_type"])} if item.get("content_type") else {}),
-                    }
-                )
+                url = item["url"]
+                if not isinstance(url, str):
+                    raise ValueError("attachment url must be a string")
+                entry: dict = {"url": validate_http_url(url)}
+                if item.get("name"):
+                    entry["name"] = str(item["name"])[:200]
+                if item.get("content_type"):
+                    entry["content_type"] = str(item["content_type"])[:100]
+                out.append(entry)
+            else:
+                raise ValueError("attachment must be a URL string or an object with a url")
         return out or None
 
 
@@ -248,12 +272,17 @@ async def upload_feedback_attachment(
     client: Client = Depends(get_current_client),
 ):
     """Upload a feedback attachment (max 10MB) to R2 and return the URL."""
-    from app.core.upload_guard import read_bounded
+    from app.core.upload_guard import ensure_allowed_type, read_bounded
 
     # Bounded read, not read-then-measure: the previous order pulled the whole
     # body into memory and only then objected to its size.
     MAX_SIZE = 10 * 1024 * 1024
     try:
+        # Cheap declared-type reject, matching the two sibling upload routes in
+        # this module. The header is forgeable, so it is not the boundary —
+        # ``upload_chat_file`` still neutralizes the stored content type — but
+        # there is no reason to accept a declared ``text/html`` at all.
+        ensure_allowed_type(file, FEEDBACK_ATTACHMENT_TYPES)
         content = await read_bounded(file, MAX_SIZE)
 
         from app.services.r2_service import upload_chat_file
@@ -273,7 +302,7 @@ async def upload_feedback_attachment(
 async def upload_logo_endpoint(
     request: Request,
     file: UploadFile = File(...),
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     client: Client = Depends(get_current_client_strict),
 ):
     """Upload a logo image to R2 and return its URL.
@@ -311,9 +340,9 @@ async def upload_logo_endpoint(
 
 
 class ClientProfilePatch(BaseModel):
-    name: str | None = None
-    company_name: str | None = None
-    website: str | None = None
+    name: Name | None = None
+    company_name: Name | None = None
+    website: str | None = Field(default=None, max_length=253 + 16)
 
     @field_validator("name")
     @classmethod
@@ -372,8 +401,8 @@ def update_client_profile(
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: Password
+    new_password: Password
 
     @field_validator("new_password")
     @classmethod

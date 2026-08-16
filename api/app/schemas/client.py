@@ -4,15 +4,24 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.validators import MAX_URL, HexColor, Name
+
 
 class ClientSettingsUpdate(BaseModel):
-    bot_name: str | None = None
-    bot_logo: str | None = None
-    launcher_name: str | None = None
-    launcher_logo: str | None = None
-    primary_color: str | None = None
-    background_color: str | None = None
-    header_color: str | None = None
+    """Legacy client-scoped widget settings (``PATCH /client/settings``).
+
+    Superseded by the bot-scoped ``PATCH /bots/{id}`` for workspaces that have
+    a bot, but still reachable, so it is held to the same constraints —
+    otherwise it is simply the unvalidated way in to the same columns.
+    """
+
+    bot_name: Name | None = None
+    bot_logo: str | None = Field(default=None, max_length=MAX_URL)
+    launcher_name: Name | None = None
+    launcher_logo: str | None = Field(default=None, max_length=MAX_URL)
+    primary_color: HexColor | None = None
+    background_color: HexColor | None = None
+    header_color: HexColor | None = None
 
 
 def _is_public_hostname(hostname: str) -> bool:

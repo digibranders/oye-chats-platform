@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
@@ -16,6 +17,7 @@ from app.core.csv_safety import csv_safe_row
 from app.core.visitor_privacy import redact_visitor_ip
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, EmailSuppression, LeadInfo
 from app.db.session import get_session
+from app.schemas.validators import RowId, SessionId
 from app.services.email_design import esc, h1, p, shell
 from app.services.email_service import send_email_async
 from app.services.lead_service import build_lead_response
@@ -57,6 +59,11 @@ def _require_leads_dashboard(auth: dict = Depends(get_current_client_or_operator
             )
 
 
+# The four qualification tiers ``lead_service`` computes. Previously a bare
+# ``str`` on the filter params: an unknown value matched no lead and returned
+# an empty page, which reads identically to "you have no qualified leads".
+LeadTier = Literal["unqualified", "mql", "sal", "sql"]
+
 router = APIRouter(
     prefix="/leads",
     tags=["leads"],
@@ -83,9 +90,9 @@ def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int
 
 @router.get("")
 def list_leads(
-    bot_id: int | None = Query(None),
-    tier: str | None = Query(None, description="unqualified|mql|sal|sql"),
-    status: str | None = Query(None, description="backward-compat alias for tier"),
+    bot_id: RowId | None = Query(None),
+    tier: LeadTier | None = Query(None, description="unqualified|mql|sal|sql"),
+    status: LeadTier | None = Query(None, description="backward-compat alias for tier"),
     min_score: int | None = Query(None, ge=0, le=100),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
@@ -182,7 +189,7 @@ def list_leads(
 
 @router.get("/stats")
 def lead_stats(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Aggregate lead stats: total, unqualified, MQL, SAL, and SQL counts."""
@@ -262,7 +269,7 @@ def lead_stats(
 
 @router.post("/mark-all-viewed", status_code=204)
 def mark_all_leads_viewed(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Bulk-clear the unread flag on every lead for the caller's bot(s).
@@ -339,7 +346,7 @@ def _qualification_value(lead: dict, dimension: str) -> str:
 
 @router.get("/export")
 def export_leads_csv(
-    bot_id: int | None = Query(None),
+    bot_id: RowId | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Export leads as a CSV file download. Paid plans only.
@@ -611,7 +618,7 @@ class SendFollowUpRequest(BaseModel):
 
 @router.post("/{session_id}/follow-up")
 def send_manual_follow_up(
-    session_id: str,
+    session_id: SessionId,
     body: SendFollowUpRequest | None = None,
     auth: dict = Depends(get_current_client_or_operator),
 ):
