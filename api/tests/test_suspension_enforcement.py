@@ -192,6 +192,25 @@ class TestGetCurrentClient:
         )
         assert result is admin
 
+    def test_invalid_api_key_rejected_with_401(self, monkeypatch):
+        """An X-API-Key that matches no Client row must raise 401 ``Invalid API
+        Key.`` — it must never resolve to ``None`` (which would drop an
+        unauthenticated caller into the endpoint) nor silently fall through to
+        the operator path. Pins the auth contract the whole suite otherwise
+        only asserted for the ``/auth/login`` route, not this dependency
+        (mutation AUTH2)."""
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(None)  # no client matches the key
+        _patch_session(monkeypatch, session)
+
+        with pytest.raises(HTTPException) as exc:
+            auth.get_current_client(
+                _request(), api_key="bogus-key", operator_key=None, legacy_agent_key=None, impersonation_token=None
+            )
+
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "Invalid API Key."
+
     def test_suspended_client_via_operator_key_rejected(self, monkeypatch):
         operator = SimpleNamespace(id=9, client_id=1, operator_api_key="op-key")
         suspended_owner = _client(suspended=True)

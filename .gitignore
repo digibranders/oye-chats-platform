@@ -67,3 +67,6 @@ api/uv.toml
 
 # /graphify knowledge-graph output — generated, ~29MB, stale the moment code changes
 graphify-out/
+
+# Redis persistence dump — runtime artifact written by a local redis-server
+dump.rdb
