@@ -167,3 +167,30 @@ def test_repeated_deductions_after_boundary_keep_working(db):
         db.commit()
 
     assert credit_service.get_balance(db, client.id) == 100 - 30 - 15
+
+
+def test_kill_switch_halts_deduction(db):
+    """When the super-admin credit kill switch is on, ``check_and_deduct`` must
+    refuse to charge — raising ``KillSwitchActive`` and leaving the ledger
+    untouched — rather than silently draining credits during an incident.
+
+    No test previously drove the kill switch through the deduction path, so the
+    guard could be removed without any failure (mutation CR2). This pins it.
+    """
+    from app.db.models import PricingConfig
+
+    client = _mk_client(db)
+    _grant(db, client.id, 1000)
+    db.commit()
+
+    # Flip the global kill switch (a super-admin pricing_config row) and force
+    # the 60s pricing cache to reload so the deduction path sees it.
+    db.add(PricingConfig(key="kill_switch", value=True))
+    db.commit()
+    credit_service.invalidate_pricing_cache()
+
+    with pytest.raises(credit_service.KillSwitchActive):
+        credit_service.check_and_deduct(db, client.id, 10, reason="ai_chat")
+
+    # Nothing was charged — the balance is exactly the grant.
+    assert credit_service.get_balance(db, client.id) == 1000

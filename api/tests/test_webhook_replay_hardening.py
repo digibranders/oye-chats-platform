@@ -40,6 +40,16 @@ def test_legacy_null_digests_do_not_collide(db):
     assert _record_or_skip_event(db, "evt_replay_4b", None) is True
 
 
+@pytest.mark.parametrize("missing_id", [None, ""])
+def test_missing_event_id_is_rejected(db, missing_id):
+    """A webhook with no ``x-razorpay-event-id`` must be treated as NOT
+    processable (return False) — the event id is the primary dedup key, so
+    accepting an id-less delivery would let a signed body be replayed and
+    double-processed under a fresh (absent) id. Every existing test passed a
+    concrete id; nothing pinned the id-less branch (mutation WHS2)."""
+    assert _record_or_skip_event(db, missing_id, "digest-missing") is False
+
+
 def test_pruning_cron_deletes_only_old_rows(db, monkeypatch):
     import asyncio
 
