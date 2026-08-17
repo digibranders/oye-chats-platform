@@ -99,11 +99,29 @@ mid-chat. Do not conflate the two when planning capacity.
    "workers = vCPU count" assumption was wrong.
 2. **🔴 The next wall is Postgres connections, not CPU or RAM.** At 8 workers / 3 000 users,
    `pg_total` reached **90 of `max_connections=100`**. Per-worker pools multiply
-   (1 worker ≈ 7 conns → 8 workers ≈ 90). **You cannot add workers or instances beyond this
-   without changing pooling first.** Divide the global budget rather than multiplying it:
-   e.g. 8 workers × (`pool_size=3`, `max_overflow=2`) = 40, plus ARQ, instead of 8 × 15.
-   Only once per-worker pools would be unworkably small (~8+ workers *per instance*) does
-   PgBouncer earn its place.
+   (1 worker ≈ 7 conns → 8 workers ≈ 90).
+
+### 1g. ⭐ Dividing the pool budget is free performance (measured)
+
+Keeping 8 workers but shrinking each pool — `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`
+(5 per worker, 40 total) instead of the default 15 per worker:
+
+| 3 000 active users | 8 × pool 15 (default) | 8 × pool 5 (divided) |
+|---|---|---|
+| http p95 | 782 ms | **172 ms** (4.5× better) |
+| chat TTFB p95 | 507 ms | **184 ms** (2.8× better) |
+| throughput | 148 rps | 148 rps (unchanged) |
+| **pg connections** | **90 / 100** ⚠️ | **39 / 100** ✅ |
+
+At 5 000 users: 1 959 ms → **1 077 ms** http p95, connections 93 → **41**, failure rate
+essentially unchanged (12.6 % → 13.1 %, i.e. still the CPU ceiling, not the DB).
+
+**Smaller pools were faster _and_ used 57 % fewer connections.** An oversized pool lets many
+requests contend inside Postgres at once; a smaller pool applies backpressure earlier and
+queues cheaply at the app layer. This removes the connection wall as a scaling blocker —
+**divide the global budget, never multiply it.** Two env vars, no code change, no downside
+measured. Only once per-worker pools would have to shrink to unworkable sizes (roughly 8+
+workers *per instance*, multiple instances) does PgBouncer earn its place.
 
 ---
 
