@@ -9,6 +9,7 @@ from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, Webhook, WebhookDelivery
 from app.db.session import get_session
 from app.schemas.client import _is_public_hostname
+from app.schemas.validators import RowId
 from app.services.webhook_service import SUPPORTED_EVENTS, generate_webhook_secret, queue_webhook_delivery
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -24,6 +25,27 @@ class UpdateWebhookRequest(BaseModel):
     url: HttpUrl | None = None
     events: list[str] | None = None
     is_active: bool | None = None
+
+
+def _require_webhook_management_access(auth: dict) -> None:
+    """Only workspace owners, admins, and direct client logins can manage webhooks.
+
+    An outbound webhook is a standing data-export channel: whoever owns one
+    receives every ``lead.captured`` / ``tier_transition`` payload for the bot,
+    at a URL they choose. Without this guard the lowest-privileged role
+    (``operator`` — the role handed out by the invite flow to support staff)
+    could point a workspace's lead stream at their own server, or silently
+    re-point an existing webhook by PATCHing its URL.
+
+    Mirrors ``bot_routes._require_bot_management_access`` and
+    ``document_routes._require_knowledge_management_access`` so the three
+    workspace-configuration surfaces enforce one rule. Reads stay open to
+    operators — listing a masked webhook config leaks nothing.
+    """
+    if auth["type"] == "client":
+        return
+    if getattr(auth["entity"], "role", "operator") not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage webhooks.")
 
 
 def _get_owned_bot(session, bot_id: int, client_id: int) -> Bot:
@@ -77,7 +99,7 @@ def _validate_events(events: list[str]) -> None:
 
 @router.get("")
 def list_webhooks(
-    bot_id: int = Query(...),
+    bot_id: RowId = Query(...),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     with get_session() as session:
@@ -104,9 +126,11 @@ def list_webhooks(
 @router.post("")
 def create_webhook(
     body: CreateWebhookRequest,
-    bot_id: int = Query(...),
+    bot_id: RowId = Query(...),
     auth: dict = Depends(get_current_client_or_operator),
 ):
+    _require_webhook_management_access(auth)
+
     # ── Plan enforcement: check webhooks feature ──
     from app.services.plan_service import enforce_feature
 
@@ -144,6 +168,7 @@ def update_webhook(
     body: UpdateWebhookRequest,
     auth: dict = Depends(get_current_client_or_operator),
 ):
+    _require_webhook_management_access(auth)
     with get_session() as session:
         webhook = _get_owned_webhook(session, webhook_id, auth["client_id"])
 
@@ -162,6 +187,7 @@ def update_webhook(
 
 @router.delete("/{webhook_id}")
 def delete_webhook(webhook_id: int, auth: dict = Depends(get_current_client_or_operator)):
+    _require_webhook_management_access(auth)
     with get_session() as session:
         webhook = _get_owned_webhook(session, webhook_id, auth["client_id"])
         session.delete(webhook)
@@ -217,6 +243,7 @@ def get_webhook_deliveries(
 
 @router.post("/{webhook_id}/test")
 def test_webhook(webhook_id: int, auth: dict = Depends(get_current_client_or_operator)):
+    _require_webhook_management_access(auth)
     with get_session() as session:
         webhook = _get_owned_webhook(session, webhook_id, auth["client_id"])
         queue_webhook_delivery(

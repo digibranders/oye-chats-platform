@@ -26,11 +26,12 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.config import (
@@ -42,6 +43,7 @@ from app.core.geo import resolve_country
 from app.core.rate_limit import limiter
 from app.db.models import Client, OAuthAccount
 from app.db.session import get_session
+from app.schemas.validators import MAX_TOKEN, MAX_URL
 from app.services.oauth_service import (
     GoogleProfile,
     OAuthError,
@@ -135,11 +137,11 @@ def _safe_next_path(raw: str | None) -> str:
 @limiter.limit("20/minute")
 def google_login(
     request: Request,
-    next: str | None = None,
-    mode: str = "login",
-    promo_code: str | None = None,
-    referral_code: str | None = None,
-    client: str = "web",
+    next: str | None = Query(default=None, max_length=MAX_URL),
+    mode: Literal["login", "register"] = "login",
+    promo_code: str | None = Query(default=None, max_length=64),
+    referral_code: str | None = Query(default=None, max_length=64),
+    client: Literal["web", "mobile"] = "web",
 ):
     """Kick off the Google OAuth flow.
 
@@ -158,9 +160,10 @@ def google_login(
         )
 
     next_path = _safe_next_path(next)
-    if mode not in ("login", "register"):
-        mode = "login"
-    client_target = "mobile" if client == "mobile" else "web"
+    # ``mode`` and ``client`` are allow-listed by the signature — anything
+    # else is a 422 rather than being silently coerced to the default, so a
+    # caller never gets a flow different from the one they asked for.
+    client_target = client
 
     # Campaign/affiliate codes from the register page ride the SIGNED state —
     # the full-page Google round trip would otherwise lose them, which is
@@ -203,9 +206,14 @@ def google_login(
 @limiter.limit("30/minute")
 def google_callback(
     request: Request,
-    code: str | None = None,
-    state: str | None = None,
-    error: str | None = None,
+    # All three are provider-supplied but reach us through the user's browser,
+    # so they are attacker-controllable in the general case. ``code`` and
+    # ``state`` are opaque secrets bounded before any compare or exchange;
+    # ``error`` is a short provider slug that ends up in a log line, so it is
+    # held to a charset that cannot carry a CRLF log-injection payload.
+    code: str | None = Query(default=None, max_length=MAX_TOKEN),
+    state: str | None = Query(default=None, max_length=MAX_TOKEN),
+    error: str | None = Query(default=None, max_length=64, pattern=r"^[A-Za-z0-9_.\-]*$"),
 ):
     """Handle Google's redirect back into the app.
 
@@ -304,7 +312,10 @@ def google_callback(
 
 
 class IdTokenRequest(BaseModel):
-    id_token: str
+    # A Google-issued JWT. Bounded before signature verification so an
+    # unauthenticated caller cannot hand the crypto path an arbitrary-size
+    # string; 4 KB is comfortably above any real id_token.
+    id_token: str = Field(..., min_length=1, max_length=4096)
 
 
 @router.post("/id-token")

@@ -6,6 +6,7 @@ bare ``email`` query param can't be used to suppress an arbitrary address
 for any bot.
 """
 
+import html
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -14,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.models import EmailSuppression
 from app.db.session import get_session
+from app.schemas.validators import MAX_TOKEN
 from app.services.unsubscribe_token import verify_unsubscribe_token
 
 logger = logging.getLogger(__name__)
@@ -40,7 +42,9 @@ def _do_unsubscribe(bot_id: int, email: str, reason: str = "unsubscribe") -> Non
 
 
 @router.get("/unsubscribe")
-def unsubscribe_get(token: str = Query(..., description="Signed unsubscribe token from the email link")):
+def unsubscribe_get(
+    token: str = Query(..., max_length=MAX_TOKEN, description="Signed unsubscribe token from the email link"),
+):
     """Handles direct clicks from email footers."""
     decoded = verify_unsubscribe_token(token)
     if decoded is None:
@@ -49,6 +53,11 @@ def unsubscribe_get(token: str = Query(..., description="Signed unsubscribe toke
     bot_id, email = decoded
     _do_unsubscribe(bot_id, email)
 
+    # The address arrives inside an HMAC-signed token, so it is ours — but it
+    # originated as visitor-supplied lead data, and this is the one place the
+    # platform renders it straight back into a document. Escaping costs
+    # nothing and removes the question.
+    escaped_email = html.escape(email)
     html_content = f"""
     <html>
         <head>
@@ -60,7 +69,7 @@ def unsubscribe_get(token: str = Query(..., description="Signed unsubscribe toke
         </head>
         <body>
             <h1>Unsubscribed</h1>
-            <p>{email} has been unsubscribed from future follow-ups.</p>
+            <p>{escaped_email} has been unsubscribed from future follow-ups.</p>
         </body>
     </html>
     """
@@ -68,7 +77,9 @@ def unsubscribe_get(token: str = Query(..., description="Signed unsubscribe toke
 
 
 @router.post("/unsubscribe")
-def unsubscribe_post(token: str = Query(..., description="Signed unsubscribe token from the email link")):
+def unsubscribe_post(
+    token: str = Query(..., max_length=MAX_TOKEN, description="Signed unsubscribe token from the email link"),
+):
     """API endpoint for a JS-driven unsubscribe confirmation button."""
     decoded = verify_unsubscribe_token(token)
     if decoded is None:

@@ -30,3 +30,6 @@ dist-ssr
 
 # Claude
 .claude/
+
+# Test coverage output
+coverage/

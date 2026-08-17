@@ -1,12 +1,20 @@
 import asyncio
 import logging
 import os
+import time
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
+
+from app.core.error_sanitizer import (
+    loggable_validation_errors,
+    new_error_id,
+    public_error_body,
+    public_validation_errors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +41,48 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         try:
             return await asyncio.wait_for(call_next(request), timeout=_REQUEST_TIMEOUT_SECONDS)
         except TimeoutError:
-            logger.warning(f"Request timed out after {_REQUEST_TIMEOUT_SECONDS}s: {request.method} {path}")
+            error_id = new_error_id()
+            logger.warning(
+                "Request timed out after %ss: %s %s | error_id=%s",
+                _REQUEST_TIMEOUT_SECONDS,
+                request.method,
+                path,
+                error_id,
+            )
             return JSONResponse(
                 status_code=504,
-                content={"detail": "Request timed out. Please try again."},
+                content=public_error_body("Request timed out. Please try again.", error_id=error_id),
             )
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Global handler for Pydantic validation errors."""
-    logger.error(f"Validation Error: {exc.errors()}")
+    """Return a 422 that names the bad fields without echoing what was sent.
+
+    Two things changed here, and both were disclosures rather than bugs:
+
+    1. The response body was ``exc.errors()`` verbatim, which in Pydantic v2
+       carries ``url`` (the exact framework minor version) and ``input`` (the
+       submitted value, credentials included). ``app.core.error_sanitizer``
+       explains the shape in full; the client now gets ``type``/``loc``/``msg``,
+       which is all the dashboard ever read.
+
+    2. The log line was ``logger.error`` over those same raw values — so a
+       mistyped login body wrote the password's neighbourhood into journalctl
+       and, via the Sentry log integration, off the box entirely. It is now
+       WARNING (a 422 is the caller's mistake, not an incident, and paging on it
+       buried real 500s) over the redacted rendering, with the route attached so
+       the line is still actionable.
+    """
+    logger.warning(
+        "Validation rejected on %s %s: %s",
+        request.method,
+        request.url.path,
+        loggable_validation_errors(exc.errors()),
+    )
     return JSONResponse(
         status_code=422,
         content={
-            "detail": exc.errors(),
+            "detail": public_validation_errors(exc.errors()),
             "message": "Invalid request body. Check types and required fields.",
         },
     )
@@ -155,8 +191,30 @@ async def subscription_activation_conflict_handler(request: Request, exc):
 
 
 async def generic_exception_handler(request: Request, exc: Exception):
-    """Catch-all handler for unhandled exceptions. Tags Sentry events with request context."""
-    logger.error(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}", exc_info=True)
+    """Catch-all for unhandled exceptions: generic body out, full traceback in the log.
+
+    The body carries an ``error_id`` — an opaque per-occurrence token, also set
+    as the ``X-Error-Id`` response header — that appears verbatim on the log
+    line and on the Sentry event. That handle is the reason this response can
+    afford to say nothing else: support can resolve "it broke, here's the code"
+    to an exact traceback without the traceback ever leaving the box, which is
+    the pressure that talks teams into re-enabling verbose errors.
+
+    Outside production the body additionally carries ``debug`` (exception type
+    and message). ``error_sanitizer.debug_hint`` fails closed on an unset or
+    unrecognised ``APP_ENV``, so this is the one deliberate prod/dev divergence
+    and it defaults to the production side.
+    """
+    error_id = new_error_id()
+    logger.error(
+        "Unhandled error on %s %s | error_id=%s | %s: %s",
+        request.method,
+        request.url.path,
+        error_id,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
 
     # Enrich Sentry event with request context
     try:
@@ -167,13 +225,79 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
             sentry_sdk.set_tag("endpoint", request.url.path)
             sentry_sdk.set_tag("method", request.method)
+            # The same token the caller was handed, so a support ticket quoting
+            # it lands on the Sentry issue without a timestamp-and-hope search.
+            sentry_sdk.set_tag("error_id", error_id)
     except Exception:
         pass  # Never let Sentry tagging break the error response
 
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content=public_error_body("Internal server error", error_id=error_id, exc=exc),
+        headers={"X-Error-Id": error_id},
     )
+
+
+def _retry_after_seconds(request: Request) -> int | None:
+    """Seconds until the caller's window resets, or ``None`` if unknowable.
+
+    Read straight from the limiter's storage rather than by calling SlowAPI's
+    ``_inject_headers``, which is gated behind ``Limiter(headers_enabled=True)``
+    — and turning that on would add a storage round-trip to *every* response on
+    a chat API, to serve a header that only matters on the rare 429. This runs
+    on the 429 path alone.
+    """
+    view_limit = getattr(request.state, "view_rate_limit", None)
+    limiter = getattr(request.app.state, "limiter", None)
+    if not view_limit or limiter is None:
+        return None
+    try:
+        reset_at, _remaining = limiter.limiter.get_window_stats(view_limit[0], *view_limit[1])
+        return max(1, int(reset_at - time.time()))
+    except Exception:  # noqa: BLE001 - a dead storage backend must not turn a 429 into a 500
+        logger.debug("Could not compute Retry-After for rate-limited request", exc_info=True)
+        return None
+
+
+def rate_limit_exceeded_handler(request: Request, exc):
+    """429 handler that speaks the same JSON dialect as every other error here.
+
+    SlowAPI's stock handler answers ``{"error": "Rate limit exceeded: 5 per 1
+    minute"}``. Two problems, one cosmetic and one substantive:
+
+    - It is the only error in the app with no ``detail`` key, which is why
+      ``app/src/services/api.js`` carries a special case for it. ``detail`` is
+      added; ``error`` is kept verbatim so nothing reading it today breaks.
+
+    - It publishes the exact configured ceiling and window, which is the one
+      number a credential-stuffing or credit-drain run wants — it says precisely
+      how slowly to grind to stay under the limit. The body no longer states it.
+
+    Withholding it costs a legitimate client nothing, because the timing they
+    actually need now arrives as ``Retry-After`` — which SlowAPI was not sending
+    at all (``headers_enabled`` defaults off), leaving every 429 on this service
+    with no machine-readable backoff signal. A 429 without ``Retry-After`` is an
+    incomplete answer under RFC 6585 §4, and the widget had nothing to pace
+    itself with.
+    """
+    retry_after = _retry_after_seconds(request)
+    logger.warning(
+        "Rate limit hit on %s %s (limit=%s, retry_after=%s)",
+        request.method,
+        request.url.path,
+        getattr(exc, "detail", "unknown"),
+        retry_after,
+    )
+
+    body: dict = {
+        "detail": "Too many requests. Please slow down and try again shortly.",
+        "error": "Rate limit exceeded",
+    }
+    headers: dict[str, str] = {}
+    if retry_after is not None:
+        body["retry_after_seconds"] = retry_after
+        headers["Retry-After"] = str(retry_after)
+    return JSONResponse(status_code=429, content=body, headers=headers)
 
 
 def get_cors_origins() -> list[str]:

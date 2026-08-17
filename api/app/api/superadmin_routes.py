@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
@@ -29,6 +29,7 @@ from app.db.models import (
     Subscription,
 )
 from app.db.session import get_session
+from app.schemas.validators import EmailAddress, OptionalName, Password, RequiredName
 from app.services.audit_service import record_audit
 
 logger = logging.getLogger(__name__)
@@ -37,10 +38,13 @@ router = APIRouter(prefix="/superadmin", tags=["superadmin"])
 
 
 class CreateClientRequest(BaseModel):
-    name: str
-    email: str
-    password: str
-    website: str | None = None
+    # Held to the same contract as ``/auth/register``. This path had no
+    # validation at all, which made it the way to create an account whose
+    # stored email cannot pass the login schema.
+    name: RequiredName
+    email: EmailAddress
+    password: Password
+    website: OptionalName = None
 
 
 @router.post("/clients")
@@ -336,10 +340,10 @@ def _validate_feedback_filter(value: str | None, allowed: tuple[str, ...], field
 
 @router.get("/platform-feedback")
 def get_platform_feedback(
-    status_filter: str | None = Query(None, alias="status"),
-    type_filter: str | None = Query(None, alias="type"),
-    area_filter: str | None = Query(None, alias="area"),
-    severity_filter: str | None = Query(None, alias="severity"),
+    status_filter: str | None = Query(None, alias="status", max_length=64),
+    type_filter: str | None = Query(None, alias="type", max_length=64),
+    area_filter: str | None = Query(None, alias="area", max_length=64),
+    severity_filter: str | None = Query(None, alias="severity", max_length=64),
     superadmin: Client = Depends(get_superadmin),
 ):
     """
@@ -367,12 +371,17 @@ def get_platform_feedback(
 
 
 class PlatformFeedbackUpdate(BaseModel):
-    status: str | None = None
+    # Allow-listed in the handler against ``FEEDBACK_STATUSES``, which answers 400 with the
+    # permitted set. Bounded here rather than re-declared as a ``Literal``:
+    # two copies of one allow-list drift, and moving the rejection into the
+    # schema would silently change this endpoint's status code.
+    status: str | None = Field(default=None, max_length=64)
     admin_response: str | None = None
-    # Optional re-classification during triage.
-    type: str | None = None
-    area: str | None = None
-    severity: str | None = None
+    # Optional re-classification during triage. Each is checked against the
+    # same allow-list the create path uses (``app.core.feedback``).
+    type: str | None = Field(default=None, max_length=64)
+    area: str | None = Field(default=None, max_length=64)
+    severity: str | None = Field(default=None, max_length=64)
 
     @field_validator("admin_response")
     @classmethod

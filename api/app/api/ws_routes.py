@@ -14,6 +14,7 @@ from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
+from app.schemas.ws import OPERATOR_FRAMES, VISITOR_FRAMES, parse_frame
 from app.services.live_chat_service import is_client_gone, manager
 from app.services.plan_service import get_client_subscription
 from app.services.session_state_machine import InvalidTransitionError, transition_session
@@ -333,8 +334,15 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
     try:
         while True:
-            data = await ws.receive_json()
-            msg_type = data.get("type")
+            raw = await ws.receive_json()
+            # One schema check for the whole frame, before any branch reaches
+            # into it. A rejected frame costs the sender that frame, not the
+            # conversation — so we answer and keep the socket open.
+            frame, reject_reason = parse_frame(raw, VISITOR_FRAMES)
+            if frame is None:
+                await ws.send_json({"type": "error", "message": reject_reason})
+                continue
+            msg_type = frame.type
 
             if msg_type == "ping":
                 await ws.send_json({"type": "pong"})
@@ -343,15 +351,15 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 if not rate_limiter.allow():
                     await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
                     continue
-                content = data.get("content", "").strip()
-                if not content or len(content) > 10000:
+                content = frame.content.strip()
+                if not content:
                     continue
 
                 # Echoed back to the visitor in ``message_ack`` so the widget
                 # can map its optimistic UI entry to the persisted ``db_id``
                 # and drive the per-message tick state (sending → sent →
                 # delivered → read).
-                client_msg_id = data.get("client_msg_id")
+                client_msg_id = frame.client_msg_id
 
                 cs_status: str | None = None
                 cs_bot_id: int | None = None
@@ -412,13 +420,13 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 if not rate_limiter.allow():
                     await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
                     continue
-                file_url = data.get("file_url", "").strip()
-                filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
-                content_type = data.get("content_type", "")
+                file_url = frame.file_url.strip()
+                filename = frame.filename.replace("/", "").replace("\\", "")[:100]
+                content_type = frame.content_type
                 if not file_url or not _is_safe_file_url(file_url):
                     continue
 
-                client_msg_id = data.get("client_msg_id")
+                client_msg_id = frame.client_msg_id
 
                 # Save as a message with file metadata
                 file_content = f"[File: {filename}]({file_url})"
@@ -447,10 +455,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 await manager.send_stopped_typing_to_operator(session_id)
 
             elif msg_type == "read_receipt":
-                # Visitor confirms they've read messages up to this ID
-                last_read_id = data.get("last_read_id")
-                if last_read_id is not None:
-                    await manager.send_read_receipt_to_operator(session_id, last_read_id)
+                # Visitor confirms they've read messages up to this ID. The
+                # schema guarantees a positive int, so the peer can no longer
+                # be handed an arbitrary JSON value here.
+                await manager.send_read_receipt_to_operator(session_id, frame.last_read_id)
 
             elif msg_type == "status_check":
                 # Widget polls for current status — recovers from lost WS messages
@@ -466,33 +474,17 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 #   { type, name, email, phone, message, reason, transcript }
                 # Field validation matches the existing /operator/offline-message
                 # HTTP endpoint contract.
-                name = (data.get("name") or "").strip()[:200]
-                email = (data.get("email") or "").strip()[:300]
-                phone = (data.get("phone") or "").strip()[:50] or None
-                message = (data.get("message") or "").strip()[:5000]
-                reason = (data.get("reason") or "manual").strip()[:50]
-                transcript_in = data.get("transcript")
-
-                if not name or not email or not message:
-                    await ws.send_json(
-                        {"type": "offline_form_error", "message": "Name, email, and message are required."}
-                    )
-                    continue
-
-                # Sanitize transcript shape — accept list of dicts only,
-                # drop anything weird. Caps at 200 turns to prevent abuse.
-                if isinstance(transcript_in, list):
-                    transcript = [
-                        {
-                            "role": str(m.get("role", "user"))[:20],
-                            "content": str(m.get("content", ""))[:5000],
-                            "ts": str(m.get("ts", ""))[:40],
-                        }
-                        for m in transcript_in[:200]
-                        if isinstance(m, dict)
-                    ]
-                else:
-                    transcript = None
+                # Required fields, the email syntax check, the per-field
+                # ceilings and the transcript shape are all enforced by
+                # ``SubmitOfflineFormFrame`` — the same contract as
+                # ``POST /offline-messages``, which this path claimed to match
+                # but previously only truncated.
+                name = frame.name
+                email = frame.email
+                phone = frame.phone or None
+                message = frame.message
+                reason = frame.reason
+                transcript = [turn.model_dump() for turn in frame.transcript] if frame.transcript else None
 
                 with get_session() as session:
                     from app.db.models import OfflineMessage
@@ -581,24 +573,25 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 _leave_queue_transition(session_id)
                 await ws.send_json({"type": "queue_left"})
 
-            elif msg_type == "visitor_end_chat":
-                # Visitor deliberately ended the chat (clicked "End chat and return to AI").
-                # Close the session immediately in DB and notify the operator — do NOT
-                # start the 120s grace period, as this is an intentional user action.
-                # CAS from "live" (F31): side effects only fire when this write
-                # actually won — a concurrent transfer/close skips them.
-                if _visitor_end_transition(session_id):
-                    with get_session() as session:
-                        bot = session.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
-                        bot_name = bot.name if bot else "AI Assistant"
-                        add_chat_message(
-                            session, session_id, role="system", content="Visitor ended the live chat.", bot_id=bot_id
-                        )
-                        session.commit()
-                    await manager.close_chat(session_id, bot_name)
+            # Visitor deliberately ended the chat (clicked "End chat and return
+            # to AI"). Close the session immediately in DB and notify the
+            # operator — do NOT start the 120s grace period, as this is an
+            # intentional user action. CAS from "live" (F31): the side effects
+            # below only fire when this write actually won; a concurrent
+            # transfer/close skips them.
+            elif msg_type == "visitor_end_chat" and _visitor_end_transition(session_id):
+                with get_session() as session:
+                    bot = session.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
+                    bot_name = bot.name if bot else "AI Assistant"
+                    add_chat_message(
+                        session, session_id, role="system", content="Visitor ended the live chat.", bot_id=bot_id
+                    )
+                    session.commit()
+                await manager.close_chat(session_id, bot_name)
 
-            elif msg_type and msg_type != "pong":
-                logger.warning(f"Unknown visitor WS message type: {msg_type} from {session_id}")
+            # No trailing unknown-type branch: ``parse_frame`` rejects any
+            # type not in ``VISITOR_FRAMES`` before the chain is entered, so
+            # everything reaching here is a declared type.
 
     except WebSocketDisconnect:
         heartbeat_task.cancel()
@@ -772,8 +765,12 @@ async def operator_websocket(
         # Queue snapshot is already sent by connect_operator() via _notify_operator_queue.
         # No additional send needed here — the manager is the single source of truth.
         while True:
-            data = await ws.receive_json()
-            msg_type = data.get("type")
+            raw = await ws.receive_json()
+            frame, reject_reason = parse_frame(raw, OPERATOR_FRAMES)
+            if frame is None:
+                await ws.send_json({"type": "error", "message": reject_reason})
+                continue
+            msg_type = frame.type
 
             if msg_type == "ping":
                 await ws.send_json({"type": "pong"})
@@ -791,7 +788,7 @@ async def operator_websocket(
                 # Manual DND toggle. accepting=False means "stay online but
                 # stop receiving new chat assignments" — active chats keep
                 # running. accepting=True puts the operator back in the pool.
-                accepting = bool(data.get("accepting", True))
+                accepting = frame.accepting
                 with get_session() as session:
                     from app.services import operator_presence_service as presence
 
@@ -805,8 +802,8 @@ async def operator_websocket(
                 if not rate_limiter.allow():
                     await ws.send_json({"type": "error", "message": "Rate limit exceeded."})
                     continue
-                target_session = data.get("session_id")
-                content = data.get("content", "").strip()
+                target_session = frame.session_id
+                content = frame.content.strip()
                 if not target_session or not content:
                     continue
 
@@ -837,10 +834,10 @@ async def operator_websocket(
                 if not rate_limiter.allow():
                     await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
                     continue
-                target_session = data.get("session_id")
-                file_url = data.get("file_url", "").strip()
-                filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
-                content_type_val = data.get("content_type", "")
+                target_session = frame.session_id
+                file_url = frame.file_url.strip()
+                filename = frame.filename.replace("/", "").replace("\\", "")[:100]
+                content_type_val = frame.content_type
                 if not target_session or not file_url or not _is_safe_file_url(file_url):
                     continue
 
@@ -861,19 +858,18 @@ async def operator_websocket(
                 await manager.route_operator_file(target_session, file_url, filename, content_type_val, operator_name)
 
             elif msg_type == "typing":
-                target_session = data.get("session_id")
+                target_session = frame.session_id
                 if target_session:
                     await manager.send_typing_to_visitor(target_session)
 
             elif msg_type == "read_receipt":
                 # Operator confirms they've read messages up to this ID
-                target_session = data.get("session_id")
-                last_read_id = data.get("last_read_id")
-                if target_session and last_read_id is not None:
-                    await manager.send_read_receipt_to_visitor(target_session, last_read_id)
+                target_session = frame.session_id
+                if target_session:
+                    await manager.send_read_receipt_to_visitor(target_session, frame.last_read_id)
 
             elif msg_type == "close_chat":
-                target_session = data.get("session_id")
+                target_session = frame.session_id
                 if target_session:
                     bot_name = None
                     with get_session() as session:

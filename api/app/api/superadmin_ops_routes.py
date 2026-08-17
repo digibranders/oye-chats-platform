@@ -20,15 +20,16 @@ import logging
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
 from app.api.superadmin_plan_routes import _to_usd_cents
 from app.api.superadmin_routes_v2 import _require_write
+from app.core.error_sanitizer import new_error_id
 from app.db.models import (
     Affiliate,
     BANTSignal,
@@ -472,7 +473,10 @@ _TIMESERIES_METRICS = ("revenue", "messages", "signups")
 
 @router.get("/stats/timeseries")
 def stats_timeseries(
-    metric: str = Query(default="revenue"),
+    # Allow-listed in the handler against ``_TIMESERIES_METRICS`` (400 with the
+    # permitted set). Bounded here so an unknown value is short — not rejected
+    # twice, under two different status codes.
+    metric: str = Query(default="revenue", max_length=32),
     days: int = Query(default=30, ge=1, le=365),
     _admin: Client = Depends(get_superadmin),
 ):
@@ -1069,7 +1073,11 @@ def list_offline_messages(
 
 
 class OfflineMessagePatch(BaseModel):
-    status: str
+    # Allow-listed in the handler against ``_OFFLINE_STATUSES``, which answers 400 with the
+    # permitted set. Bounded here rather than re-declared as a ``Literal``:
+    # two copies of one allow-list drift, and moving the rejection into the
+    # schema would silently change this endpoint's status code.
+    status: str = Field(..., max_length=32)
 
 
 @router.patch("/offline-messages/{message_id}")
@@ -1609,7 +1617,7 @@ def unlink_oauth_account(
 
 @router.get("/failed-webhooks")
 def list_failed_webhooks(
-    status_filter: str | None = Query(default=None, alias="status"),
+    status_filter: str | None = Query(default=None, alias="status", max_length=64),
     _admin: Client = Depends(get_superadmin),
 ):
     """Dead-lettered billing webhooks whose processing failed.
@@ -1697,14 +1705,25 @@ def replay_failed_webhook(
                 _replay_payload_digest(row.raw_payload),
             )
         except Exception as exc:
+            # The raw exception is almost always a SQLAlchemy error whose str()
+            # carries the failing statement, its bound parameters, and the
+            # constraint name — schema disclosure that does not become
+            # acceptable just because the caller is a super-admin (this reaches
+            # a browser, and from there any log or screenshot). The operator
+            # gets a token to search journalctl with instead.
+            error_id = new_error_id()
             logger.error(
-                "Failed-webhook replay error for id=%s event_id=%s: %s",
+                "Failed-webhook replay error for id=%s event_id=%s | error_id=%s: %s",
                 failed_webhook_id,
                 row.event_id,
+                error_id,
                 exc,
                 exc_info=True,
             )
-            raise HTTPException(status_code=502, detail=f"Replay failed: {exc}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Replay failed. See server logs for error_id={error_id}.",
+            ) from exc
 
         row.status = "replayed"
         row.replayed_at = datetime.now(UTC)
@@ -1816,7 +1835,7 @@ def list_referral_conversions(
 
 @router.get("/notifications")
 def list_notifications(
-    type_filter: str | None = Query(default=None, alias="type"),
+    type_filter: str | None = Query(default=None, alias="type", max_length=64),
     _admin: Client = Depends(get_superadmin),
 ):
     """In-app dashboard notifications across workspaces.
@@ -1972,7 +1991,10 @@ _LLM_BREAKDOWN_DIMENSIONS = ("model", "client")
 @router.get("/llm/cost-breakdown")
 def llm_cost_breakdown(
     days: int = Query(default=30, ge=1, le=365),
-    by: str = Query(default="model"),
+    # The two groupings the aggregation below implements — it branches on
+    # ``by == "model"`` / ``by == "client"`` and had no rejection for
+    # anything else, so an unknown value silently grouped by client.
+    by: Literal["model", "client"] = Query(default="model"),
     _admin: Client = Depends(get_superadmin),
 ):
     """Aggregate LLM call metering over a trailing window, grouped by model or client.
