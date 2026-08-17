@@ -66,6 +66,45 @@ Two conclusions:
 
 **Cost:** pg connections climb 7 → 23 as workers go 1 → 4. Per-worker pools multiply — this is why the DB split and pooling matter before scaling workers hard.
 
+### 1e. The two capacity numbers (they are NOT the same number)
+
+Measured with the P0 fix applied, at each box's optimum worker count.
+
+**Concurrent AI streams** — simultaneous in-flight generations (`chat-concurrency.js`):
+
+| box | workers | at 50 concurrent | at 100 concurrent |
+|---|---:|---|---|
+| 2 vCPU / 4 GB | 1 | 4.9 rps, **38 % shed** | — |
+| 2 vCPU / 4 GB | 4 | 9.9 rps, **0 % shed** | — |
+| 4 vCPU / 8 GB | 8 | 11.8 rps, 0 % shed | 22.4 rps, 618 ms p95, **0 % shed** |
+
+**Concurrent open widgets** — active users on the `active-users.js` persona mix
+(70 % idle / 20 % API / 5 % dashboard / 5 % mid-chat, so only ~5 % generate at any moment):
+
+| active users | 2 vCPU/4 GB (4 workers) | 4 vCPU/8 GB (8 workers) |
+|---:|---|---|
+| 2 000 | 182 ms http / 443 ms chat · 0 % · pg 24 | **90 ms / 68 ms · 0 % · pg 41** |
+| 3 000 | 2 462 ms / 6 386 ms · 0 % · pg 51 | **782 ms / 507 ms · 0 % · pg 90** |
+| 5 000 | 13 330 ms / 19 688 ms · 2.1 % | 1 959 ms / 2 233 ms · 12.6 % · pg 93 |
+| 8 000 | — | 60 s / 66 s · 67 % |
+
+**Comfortable ceiling: ~2 000 widgets on 2 vCPU, ~3 000 on 4 vCPU.**
+That is roughly **40× the concurrent-stream number** — consistent with ~5 % of users being
+mid-chat. Do not conflate the two when planning capacity.
+
+### 1f. Two rules that fell out of the measurements
+
+1. **Workers ≈ 2 × vCPU.** 2 vCPU peaked at 4 workers; 4 vCPU peaked at 8. The workload is
+   I/O-bound (waiting on the LLM), so more workers than cores is correct — the earlier
+   "workers = vCPU count" assumption was wrong.
+2. **🔴 The next wall is Postgres connections, not CPU or RAM.** At 8 workers / 3 000 users,
+   `pg_total` reached **90 of `max_connections=100`**. Per-worker pools multiply
+   (1 worker ≈ 7 conns → 8 workers ≈ 90). **You cannot add workers or instances beyond this
+   without changing pooling first.** Divide the global budget rather than multiplying it:
+   e.g. 8 workers × (`pool_size=3`, `max_overflow=2`) = 40, plus ARQ, instead of 8 × 15.
+   Only once per-worker pools would be unworkably small (~8+ workers *per instance*) does
+   PgBouncer earn its place.
+
 ---
 
 ## 2. Why we're stuck on one worker (and the cheap way out)
