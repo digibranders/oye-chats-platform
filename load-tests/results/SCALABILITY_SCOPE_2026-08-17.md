@@ -94,7 +94,30 @@ This buys the measured multi-worker win **now**, and defers the full distributed
 
 ---
 
-## 2b. 🔴 P0 — REPRODUCED: the HNSW index silently returns ZERO rows for tenant-scoped queries
+## 2b. 🔴 P0 — REPRODUCED **and FIXED** (migration `c2e8b41f07d9`)
+
+> **Status: fixed.** `c2e8b41f07d9` drops the global HNSW index and adds
+> `ix_documents_bot_id_is_active`. Acceptance test on the reproduction corpus
+> (45 370 rows / 203 tenants) — all tenant sizes now return rows:
+> 20 chunks → 5 rows in 0.15 ms · 300 → 5 rows in 1.0 ms · 5 000 → 5 rows in 7.8 ms.
+> Full API suite: 4 856 passed, 2 skipped. ruff check + format clean.
+>
+> **Correction to the original framing below:** this breaks **small** tenants, not
+> large ones. A 300-chunk tenant in a 45 k corpus is 0.66 % of the graph, so almost
+> none of the ~40 HNSW candidates belong to it; a 5 000-chunk tenant (11 %) survived.
+> The trigger is therefore **the total corpus growing as customers are added**, not a
+> single tenant growing — which is exactly what a multi-tenant SaaS does. Measured:
+>
+> | tenant size | baseline | + composite index only | + composite, HNSW dropped |
+> |---|---|---|---|
+> | 300 chunks | **0 rows** ❌ | **0 rows** ❌ | **5 rows** ✅ |
+> | 5 000 chunks | 5 rows | 5 rows | 5 rows ✅ |
+>
+> Note the middle column: **adding the composite index alone does NOT fix it** — the
+> planner still prefers HNSW for `ORDER BY … LIMIT`. Dropping the global index is
+> required.
+
+### Original finding (retained for the record)
 
 **This is a live correctness bug, reproduced on this VM against the real schema and the real query shape.**
 

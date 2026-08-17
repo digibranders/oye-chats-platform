@@ -617,16 +617,23 @@ class Document(Base):
 
     __table_args__ = (
         Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),
-        # HNSW ANN index for vector retrieval. cosine ops match the ``<=>``
-        # operator used by the search query in repository.py (see migration
-        # b7d1c3e5f9a2). bot_id/client_id b-tree indexes are declared via
-        # ``index=True`` on their columns above.
-        Index(
-            "documents_embedding_hnsw_idx",
-            "embedding",
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-        ),
+        # Composite btree matching the filter EVERY vector search applies
+        # (repository.py ``search_similar_documents``: bot_id + client_id +
+        # is_active, then ORDER BY ``embedding <=>``). Retrieval runs as an exact
+        # bitmap scan over one tenant's rows — 100% recall, and faster than ANN
+        # at these tenant sizes.
+        #
+        # There is deliberately NO global HNSW index (dropped in migration
+        # c2e8b41f07d9). A global approximate index filters AFTER the graph walk,
+        # so a small tenant inside a large shared graph got ZERO rows back with
+        # no error — measured: a 300-chunk tenant in a 45k-row corpus returned
+        # nothing, at every ``hnsw.ef_search`` value up to the maximum.
+        #
+        # Reintroduce ANN only per-tenant (partition by bot_id, one HNSW index
+        # per partition, pgvector >= 0.8.0 with hnsw.iterative_scan) once a
+        # single bot's exact scan actually becomes the bottleneck (~5k chunks).
+        # bot_id/client_id b-tree indexes are declared via ``index=True`` above.
+        Index("ix_documents_bot_id_is_active", "bot_id", "is_active"),
     )
 
 
