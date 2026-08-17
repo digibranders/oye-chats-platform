@@ -24,3 +24,7 @@ npm-debug.log*
 
 # Claude
 .claude/
+
+# Playwright output
+test-results/
+playwright-report/
