@@ -28,7 +28,7 @@ OyeChats is a multi-tenant SaaS platform that ingests a business's website and d
 | LLM (primary) | OpenAI `gpt-5.4-mini` | Routed via LiteLLM |
 | LLM (fallback) | Google `gemini-2.5-flash` | Automatic fallback inside LiteLLM's router |
 | Gate/enrichment LLM | `gemini-2.5-flash` | Relevance gate + optional chunk contextual enrichment |
-| Embeddings | Google `gemini-embedding-001` | 768-dim, Matryoshka-truncated, client-side L2-normalized; 1 text/request (no batch API) |
+| Embeddings | Google `gemini-embedding-001` | 768-dim, Matryoshka-truncated, client-side L2-normalized; batched **100 texts/call** via `batchEmbedContents`, 8-way concurrent. Quota is counted **per content item, not per HTTP call**, so batching saves round-trips, not quota; sustained throughput is capped by `EMBED_RPM_LIMIT` (default 2850). Model is now marked **Legacy** by Google; `gemini-embedding-2` is current (8192 input tokens vs 2048, auto-normalizes truncated dims) but its embedding space is **incompatible** — adopting it means re-embedding the whole corpus. |
 | Vector DB | PostgreSQL 16 + pgvector | Hybrid: `Vector(768)` column + `TSVECTOR` column, same table |
 | Backend framework | FastAPI, SQLAlchemy 2.0, Alembic | Python 3.11, `uv` for dependency management |
 | Background queue | ARQ on Redis | Runs as `oyechats-worker.service` |
