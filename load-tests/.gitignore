@@ -3,5 +3,8 @@
 results/knee_*/
 results/saturation_*/
 results/dbscale_*.txt
+results/run[A-Z]*/
+results/workersweep_*/
+results/activeusers_*/
 __pycache__/
 *.pyc
