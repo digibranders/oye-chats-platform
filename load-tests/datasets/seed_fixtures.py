@@ -31,6 +31,13 @@ BOT_KEY = os.getenv("SEED_BOT_KEY", "bot-loadtest-000000")
 API_KEY = os.getenv("SEED_API_KEY", "lt_admin_key_deterministic_0001")
 OPERATOR_KEY = os.getenv("SEED_OPERATOR_KEY", "lt_operator_key_deterministic_0001")
 CLIENT_EMAIL = os.getenv("SEED_CLIENT_EMAIL", "loadtest@example.invalid")
+# Deterministic, NON-SECRET password for the seeded admin so scenarios can
+# exercise POST /auth/login (the api_key alone cannot: login runs bcrypt against
+# ``hashed_password``, which was previously never set, so every login attempt
+# against a seeded fixture failed on a missing credential rather than on load).
+# Same rationale as the deterministic api_key above — this value only ever
+# exists in an isolated ``*loadtest*`` database, never in dev or production.
+CLIENT_PASSWORD = os.getenv("SEED_CLIENT_PASSWORD", "LoadTest!Deterministic1")
 
 
 def _guard_db_url() -> str:
@@ -72,7 +79,7 @@ def main() -> int:
     _guard_db_url()
 
     # Import AFTER the guard so app.config binds to the test DB_URL.
-    from app.db.session import SessionLocal
+    from app.core.security import get_password_hash
     from app.db.models import (
         Bot,
         ChatSession,
@@ -84,6 +91,7 @@ def main() -> int:
         PricingConfig,
         Subscription,
     )
+    from app.db.session import SessionLocal
 
     if SessionLocal is None:
         sys.exit("SessionLocal is None — DB_URL not usable.")
@@ -95,6 +103,11 @@ def main() -> int:
             client = Client(name="LoadTest Admin", email=CLIENT_EMAIL, api_key=API_KEY, is_verified=True)
             db.add(client)
             db.flush()
+        # Set on every run, not just on create, so databases seeded before this
+        # existed also become login-capable without a re-seed from scratch.
+        # Hashed via the app's own get_password_hash so the cost factor under test is
+        # whatever production actually uses (bcrypt default rounds today).
+        client.hashed_password = get_password_hash(CLIENT_PASSWORD)
 
         # Bot
         bot = db.query(Bot).filter(Bot.bot_key == BOT_KEY).one_or_none()
@@ -156,10 +169,7 @@ def main() -> int:
         # resolve_visitor_name() returns a name -> the bot SKIPS the first-turn
         # name-ask and runs the full RAG + streaming LLM generation on every turn.
         # The knee scenario assigns one warm session per VU.
-        existing_warm = {
-            r[0]
-            for r in db.query(ChatSession.id).filter(ChatSession.id.like("session_warm_%")).all()
-        }
+        existing_warm = {r[0] for r in db.query(ChatSession.id).filter(ChatSession.id.like("session_warm_%")).all()}
         for i in range(args.warm):
             sid = f"session_warm_{i}"
             if sid not in existing_warm:
@@ -172,6 +182,8 @@ def main() -> int:
         print(f"BOT_KEY={BOT_KEY}")
         print(f"API_KEY={API_KEY}")
         print(f"OPERATOR_KEY={OPERATOR_KEY}")
+        print(f"CLIENT_EMAIL={CLIENT_EMAIL}")
+        print(f"CLIENT_PASSWORD={CLIENT_PASSWORD}")
         print(f"client_id={client.id} bot_id={bot.id} plan_id={plan.id} docs={args.docs} warm_sessions={args.warm}")
     return 0
 
