@@ -10,3 +10,5 @@ results/widgets_*/
 results/ws_*/
 __pycache__/
 *.pyc
+results/matrix_*/
+results/ratio_*/

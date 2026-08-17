@@ -118,8 +118,20 @@ def main() -> int:
         bot.indexed_chunk_count = args.docs  # >20 so CAG-lite doesn't skip retrieval
         bot.credits_balance = 10_000_000
 
-        # Plan + active Subscription (chat subscription-gate must see active/trialing)
-        plan = db.query(Plan).order_by(Plan.id.asc()).first()
+        # Plan + active Subscription (chat subscription-gate must see active/trialing).
+        #
+        # Prefer an ENTITLED plan rather than simply the lowest id. Several
+        # dashboard/analytics surfaces are plan-gated — the Journeys analytics
+        # routes return 402 ("require a Standard or Professional plan") unless the
+        # funding plan's slug is in ``JOURNEY_ANALYTICS_SLUGS``
+        # (standard/professional/enterprise). Seeding the lowest-id plan meant
+        # "free", so journey-analytics load runs measured a 402 rejection rather
+        # than the analytics queries. ``standard`` is the cheapest entitled tier,
+        # so it exercises the gated surfaces without over-provisioning.
+        plan = (
+            db.query(Plan).filter(Plan.slug == os.getenv("SEED_PLAN_SLUG", "standard")).one_or_none()
+            or db.query(Plan).order_by(Plan.id.asc()).first()
+        )
         if plan is None:
             sys.exit("No Plan rows found. Run scripts/seed_plans.py --apply against the test DB first.")
         sub = db.query(Subscription).filter(Subscription.client_id == client.id).one_or_none()
@@ -129,6 +141,9 @@ def main() -> int:
             db.flush()
         else:
             sub.status = "active"
+            # Move an existing fixture subscription onto the entitled plan too, so
+            # re-seeding an older test DB fixes the gate without a rebuild.
+            sub.plan_id = plan.id
 
         # Free chat: set the ai_chat credit cost to 0 so no credit grants needed.
         pc = db.get(PricingConfig, "credit_cost.ai_chat")
