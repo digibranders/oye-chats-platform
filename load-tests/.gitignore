@@ -7,5 +7,6 @@ results/run[A-Z]*/
 results/workersweep_*/
 results/activeusers_*/
 results/widgets_*/
+results/ws_*/
 __pycache__/
 *.pyc
