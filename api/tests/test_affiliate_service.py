@@ -268,6 +268,40 @@ class TestAttributeSignup:
         # And the non-owner attaches fine — the guard is owner-only.
         assert svc.attribute_signup(db, prospect.id, "OWNCODE1") is True
 
+    def test_redemption_cap_is_enforced_at_the_boundary(self, db):
+        """A code with ``max_redemptions=N`` must refuse the (N+1)th signup.
+
+        Pins the ``redeemed_count < max_redemptions`` boundary in BOTH the
+        atomic claim ``UPDATE`` inside ``attribute_signup`` and in
+        ``validate_code``. An off-by-one there (``<=``) would let exactly one
+        signup redeem an already-exhausted code — a real over-redemption of a
+        capped referral offer. Nothing else in the suite exercised this cap,
+        so the guard could be silently weakened. (mutation AFF3)
+        """
+        affiliate = make_affiliate(db)
+        code = ReferralCode(affiliate_id=affiliate.id, code="CAP1", active=True, max_redemptions=1)
+        db.add(code)
+        db.commit()
+
+        first = make_client(db)
+        assert svc.attribute_signup(db, first.id, "CAP1") is True
+        db.commit()
+        db.refresh(code)
+        assert code.redeemed_count == 1
+
+        # Cap is now reached — a second, different prospect must be refused and
+        # the redeemed_count must NOT advance past the ceiling.
+        second = make_client(db)
+        assert svc.attribute_signup(db, second.id, "CAP1") is False
+        db.commit()
+        db.refresh(code)
+        assert code.redeemed_count == 1
+        db.refresh(second)
+        assert second.referral_code_id is None
+
+        # validate_code must also report a fully-consumed code as unusable.
+        assert svc.validate_code(db, "CAP1") is None
+
 
 # ── create_code ──────────────────────────────────────────────────────────────
 

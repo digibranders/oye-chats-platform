@@ -11,10 +11,17 @@ system — a future caller passing an attacker-influenced bot_id with a fixed
 client_id would have had no second gate.
 """
 
+import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.models import Bot, Client, Document
-from app.db.repository import search_similar_documents
+from app.db.repository import (
+    _owner_filter,
+    get_ingested_documents,
+    search_keyword_documents,
+    search_similar_documents,
+)
 
 _seq = iter(range(1, 10_000))
 
@@ -102,3 +109,53 @@ class TestSearchSimilarDocumentsClientIdAndFilter:
 
         results = search_similar_documents(db, client_id=client.id, query_embedding=_unit_vector(1))
         assert len(results) == 1
+
+
+class TestOwnerFilterClientIdAndScope:
+    """`_owner_filter` is the shared scope clause behind keyword search and every
+    document-listing query. The AR-21 test above locks the same bot_id-AND-client_id
+    defense-in-depth for the raw-SQL vector path only; these lock it for the
+    ORM `_owner_filter` path, which no test previously exercised cross-tenant
+    (mutations TI1/TI2 survived the original suite)."""
+
+    def test_missing_scope_raises_loudly(self, db):
+        """Neither bot_id nor client_id must fail loudly — falling through would
+        emit ``client_id IS NULL`` and match legacy null-tenant rows (TI2)."""
+        with pytest.raises(ValueError):
+            _owner_filter(Document)
+
+    def test_get_ingested_documents_requires_matching_client(self, db):
+        """bot_id AND client_id: a mismatched client_id must scope the listing
+        to empty even though the bot_id matches (TI1)."""
+        client_a = _make_client(db)
+        client_b = _make_client(db)
+        bot_a = _make_bot(db, client_a)
+        _make_document(db, client_a, bot_a, "Client A confidential onboarding doc")
+
+        # Correct tenant sees its own source.
+        own = get_ingested_documents(db, bot_id=bot_a.id, client_id=client_a.id)
+        assert len(own) == 1
+
+        # bot_a's id with the WRONG client_id must return nothing — proving the
+        # client_id AND-clause is real, not bot_id silently sufficient on its own.
+        cross = get_ingested_documents(db, bot_id=bot_a.id, client_id=client_b.id)
+        assert cross == []
+
+    def test_keyword_search_requires_matching_client(self, db):
+        """The keyword (full-text) retrieval path must also enforce both ids."""
+        client_a = _make_client(db)
+        client_b = _make_client(db)
+        bot_a = _make_bot(db, client_a)
+        doc = _make_document(db, client_a, bot_a, "quarterly revenue pricing secret")
+        # search_vector is not a generated column; populate it like ingestion does.
+        db.execute(
+            text("UPDATE documents SET search_vector = to_tsvector('english', content) WHERE id = :id"),
+            {"id": doc.id},
+        )
+        db.commit()
+
+        own = search_keyword_documents(db, bot_id=bot_a.id, client_id=client_a.id, query="pricing")
+        assert len(own) == 1
+
+        cross = search_keyword_documents(db, bot_id=bot_a.id, client_id=client_b.id, query="pricing")
+        assert cross == []
