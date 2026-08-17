@@ -1,0 +1,90 @@
+# OyeChats WebSocket process — systemd service (Gunicorn, ALWAYS one worker)
+#
+# WHY THIS EXISTS
+#   ConnectionManager (app/services/live_chat_service.py) holds visitor and
+#   operator sockets in per-process dictionaries. A socket is a TCP connection
+#   owned by exactly one process and cannot be shared, so for years the whole
+#   API was pinned to WEB_CONCURRENCY=1 to keep live chat correct — HTTP paid
+#   for a constraint that only WebSockets imposed.
+#
+#   Measured cost of that pin on a 2 vCPU / 4 GB box: one worker shed 36.5% of
+#   requests at 50 concurrent chats and answered at 8,027 ms p95 at 30; four
+#   workers shed nothing and answered at 434 ms.
+#
+#   This unit serves /ws/* only, on a single worker where the sockets stay
+#   correct, so oyechats-api.service can run several workers. Cross-process
+#   frames reach the right socket via the Redis backplane
+#   (app/services/ws_backplane.py, WS_BACKPLANE_ENABLED).
+#
+# WEB_CONCURRENCY IS PINNED TO 1 HERE AND MUST STAY THAT WAY.
+#   Raising it re-creates the original bug inside this unit: a visitor and their
+#   operator can land on different workers and silently stop seeing each other.
+#   The backplane routes BETWEEN processes; it does not make a single
+#   ConnectionManager span them.
+#
+# Install:
+#   sudo cp oyechats-ws.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oyechats-ws
+#
+#   Then point nginx's `location /ws/` at this upstream (see
+#   nginx/oyechats-locations.conf) and only then raise WEB_CONCURRENCY on
+#   oyechats-api.service. In that order: workers first would break live chat.
+#
+# Logs:
+#   journalctl -u oyechats-ws -f
+
+[Unit]
+Description=OyeChats WebSocket process (Gunicorn, single worker)
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+
+# Same non-root service account as the API — see oyechats-api.service for the
+# migrate-to-nonroot.sh prerequisite. This unit adds no new setup of its own.
+User=oyechats
+Group=oyechats
+SupplementaryGroups=systemd-journal
+
+WorkingDirectory=/opt/oyechats/platform/api
+EnvironmentFile=/opt/oyechats/platform/api/.env
+
+# NOT tunable. See the note above: more than one worker here reintroduces the
+# split-brain this unit exists to avoid.
+Environment=WEB_CONCURRENCY=1
+
+# Distinct port so nginx can route /ws/* here while everything else continues to
+# the API upstream on 8000.
+Environment=GUNICORN_BIND=127.0.0.1:8001
+
+# The backplane must be on for this process to receive frames produced by the
+# API workers. Without it this unit still serves sockets, but anything published
+# elsewhere never arrives — which is the failure mode the split is meant to fix.
+Environment=WS_BACKPLANE_ENABLED=true
+
+# This process holds long-lived sockets and does little query work, so it needs
+# a much smaller pool than an API worker. Leaving the API default here would
+# reserve 15 connections that sit idle.
+Environment=DB_POOL_SIZE=2
+Environment=DB_MAX_OVERFLOW=3
+
+ExecStart=/opt/oyechats/platform/api/.venv/bin/gunicorn app.main:app -c gunicorn.conf.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+CacheDirectory=oyechats
+Environment=HOME=/var/cache/oyechats
+Environment=XDG_CACHE_HOME=/var/cache/oyechats
+
+Restart=always
+RestartSec=5
+
+# Every live-chat socket is a file descriptor. Measured: ~2,000 concurrent
+# sockets used ~2,105 descriptors and about 54 KB each. The distribution default
+# soft limit of 1,024 would cap this near a thousand connections and look like a
+# capacity ceiling rather than a configuration one.
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
