@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview --port 4173",
     "size": "size-limit",
-    "test": "node --test --test-reporter=spec src/services/*.test.js",
+    "test": "node --test --test-reporter=spec src/services/*.test.js src/lib/*.test.js",
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium"
   },
