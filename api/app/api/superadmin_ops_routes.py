@@ -29,6 +29,7 @@ from sqlalchemy import case, desc, func, select
 from app.api.auth import get_superadmin
 from app.api.superadmin_plan_routes import _to_usd_cents
 from app.api.superadmin_routes_v2 import _require_write
+from app.core.error_sanitizer import new_error_id
 from app.db.models import (
     Affiliate,
     BANTSignal,
@@ -1704,14 +1705,25 @@ def replay_failed_webhook(
                 _replay_payload_digest(row.raw_payload),
             )
         except Exception as exc:
+            # The raw exception is almost always a SQLAlchemy error whose str()
+            # carries the failing statement, its bound parameters, and the
+            # constraint name — schema disclosure that does not become
+            # acceptable just because the caller is a super-admin (this reaches
+            # a browser, and from there any log or screenshot). The operator
+            # gets a token to search journalctl with instead.
+            error_id = new_error_id()
             logger.error(
-                "Failed-webhook replay error for id=%s event_id=%s: %s",
+                "Failed-webhook replay error for id=%s event_id=%s | error_id=%s: %s",
                 failed_webhook_id,
                 row.event_id,
+                error_id,
                 exc,
                 exc_info=True,
             )
-            raise HTTPException(status_code=502, detail=f"Replay failed: {exc}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Replay failed. See server logs for error_id={error_id}.",
+            ) from exc
 
         row.status = "replayed"
         row.replayed_at = datetime.now(UTC)

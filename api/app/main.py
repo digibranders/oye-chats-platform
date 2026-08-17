@@ -17,7 +17,6 @@ if sys.platform.startswith("win"):
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import inspect, select, text
 
@@ -59,6 +58,7 @@ from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR
 from app.core.body_limit import BodySizeLimitMiddleware
 from app.core.chat_concurrency import chat_gate
+from app.core.error_sanitizer import new_error_id
 from app.core.exceptions import SessionOwnershipError
 from app.core.middleware import (
     TimeoutMiddleware,
@@ -67,6 +67,7 @@ from app.core.middleware import (
     get_cors_origins,
     intl_payments_disabled_handler,
     plan_not_checkoutable_handler,
+    rate_limit_exceeded_handler,
     session_ownership_exception_handler,
     subscription_activation_conflict_handler,
     validation_exception_handler,
@@ -173,7 +174,7 @@ app = FastAPI(title="RAG Backend API", version="1.0.0", **_docs_urls(APP_ENV))
 
 # --- Rate Limiting ---
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # --- Routers ---
 app.include_router(auth_router)
@@ -274,7 +275,10 @@ app.add_middleware(
     # (the per-agent report CSV) name themselves server-side, including the
     # reporting window; without this the browser reads no filename at all and
     # the download lands as an opaque blob.
-    expose_headers=["Content-Disposition"],
+    # ``X-Error-Id`` joins it for the same reason: the correlation token on a
+    # 500 is useless if the dashboard's JavaScript cannot read it off the
+    # response to show the user something to quote at support.
+    expose_headers=["Content-Disposition", "X-Error-Id"],
 )
 
 # --- Request Timeout (60s for non-streaming endpoints) ---
@@ -721,7 +725,19 @@ def backfill_session_client_ids():
 
 @app.get("/")
 def read_root():
-    return {"message": "RAG Backend is running", "docs_url": "/docs"}
+    """Liveness banner for the API root.
+
+    ``docs_url`` is reported only where the docs are actually mounted.
+    ``_docs_urls`` switches them off in production specifically so the schema
+    is not free recon (F22); pointing at ``/docs`` anyway told a prober the
+    route exists and was merely withheld, which is the half of that decision
+    worth keeping quiet.
+    """
+    body = {"message": "RAG Backend is running"}
+    docs_url = _docs_urls(APP_ENV)["docs_url"]
+    if docs_url:
+        body["docs_url"] = docs_url
+    return body
 
 
 _ALLOWED_FILE_PREFIXES = ("logos/", "chat-files/")
@@ -763,12 +779,20 @@ def serve_b2_file(file_path: str):
     except ClientError as e:
         error_code = e.response["Error"]["Code"]
         if error_code in ("NoSuchKey", "404", "NotFound"):
-            raise HTTPException(status_code=404, detail=f"File not found: {file_path}") from e
-        logger.error(f"B2 error fetching {file_path}: {e}")
-        raise HTTPException(status_code=502, detail="Storage backend error") from e
+            # The requested key is deliberately NOT echoed back. This path is
+            # unauthenticated and the key is fully caller-controlled, so
+            # reflecting it turns the 404 into a free oracle for probing the
+            # bucket's namespace one guess at a time (and reflects arbitrary
+            # attacker text into a response body). The key is logged instead.
+            logger.info("File not found in storage: %r", file_path)
+            raise HTTPException(status_code=404, detail="File not found.") from e
+        error_id = new_error_id()
+        logger.error("Storage error fetching %r | error_id=%s | code=%s: %s", file_path, error_id, error_code, e)
+        raise HTTPException(status_code=502, detail=f"Storage backend error (ref: {error_id})") from e
     except Exception as e:
-        logger.error(f"Unexpected error serving {file_path}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        error_id = new_error_id()
+        logger.exception("Unexpected error serving %r | error_id=%s", file_path, error_id)
+        raise HTTPException(status_code=500, detail=f"Internal server error (ref: {error_id})") from e
 
     # Force download for non-image/non-PDF types to prevent stored XSS.
     # A text/plain file with HTML content could be MIME-sniffed and executed
