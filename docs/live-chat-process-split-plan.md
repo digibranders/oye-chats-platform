@@ -131,16 +131,32 @@ socket table, and a wrong answer here means either a missed notification or a du
 one to a visitor. **Route these through `operator_presence_service` (already Redis) rather
 than the socket dict.**
 
-### Category E — process-local by nature (leave alone, but review)
+### Category E — process-local by nature (leave alone)
 `_timeout_tasks`, `_disconnect_tasks`, `_operator_disconnect_tasks`, `_cleanup_task`,
-`_operator_message_queue`, and `_accept_locks`.
+`_operator_message_queue`, `_accept_locks`.
 
-`_accept_locks` is the exception and it is a **genuine correctness bug waiting at N>1**: it
-is an in-process `asyncio.Lock` guarding "accept this waiting chat". Two operators on two
-processes can both pass it and both accept the same conversation. Today's single worker
-hides this entirely. It must become a Redis lock — or, better, an atomic conditional
-`UPDATE ... WHERE assigned_operator_id IS NULL` in Postgres, which needs no new
-infrastructure and cannot be lost to a Redis blip.
+**Correction to an earlier draft of this plan.** A previous version claimed `_accept_locks`
+hid a double-accept race that would fire at N>1. **That is wrong, and the code is already
+correct here.** Both accept paths — `POST /operators/accept/{session_id}`
+(`operator_routes.py:1013`) and the takeover path around line 2390 — already claim the
+session with an atomic conditional update:
+
+```sql
+UPDATE chat_sessions SET status='live', assigned_operator_id = :op
+ WHERE id = :sid AND status = 'waiting' RETURNING id
+```
+
+A loser gets `None` back and is rejected with **409**, and the `ChatAuditLog` row is written
+in the same transaction. So exactly one operator wins regardless of how many processes race,
+and exactly one audit row is produced. The in-process `asyncio.Lock` is redundant
+belt-and-braces, and the route comments already say so plainly: *"DB is authoritative."*
+
+**The real N>1 hazard in this category is not double-assignment — it is stale routing.**
+`self.assignments` is read to decide *which operator to deliver to*
+(`live_chat_service.py:263, 956`, with pops at 313 and 853). If a chat was accepted on
+process A, process B's dictionary has no entry, so a message that lands on B has no
+destination and is silently dropped. That is a delivery bug, not an integrity bug — and it
+is the same problem as Category A/D, solved by the same publish-and-shared-state work.
 
 ---
 
@@ -151,11 +167,11 @@ stays at 1 until Phase 5 — nothing before it changes production behaviour.
 
 | Phase | Scope | Est. | Risk |
 |---|---|---|---|
-| **0** | **Guardrails.** A two-process live-chat integration test: visitor on process A, operator on process B, asserting bidirectional delivery, transfer, and no double-accept. It must **fail** on today's code — that is the proof it tests the right thing. Plus the atomic-accept race test. | 3–4 d | none (test only) |
+| **0** | **Guardrails.** A two-process live-chat integration test: visitor on process A, operator on process B, asserting bidirectional delivery and correct transfer. These must **fail** on today's code — that is the proof they test the right thing. Plus a *characterisation* test asserting the atomic accept guard **holds** across processes (exactly one winner, one audit row, loser gets 409) — that one passes today and exists to keep it that way. | 3–4 d | none (test only) |
 | **1** | **One-way publish path.** Redis channels `ws:session:{id}` and `ws:operator:{id}`. WS process runs one subscriber task and fans out to local sockets. Convert Category A. Behind `WS_BACKPLANE_ENABLED`, default off. | 3–4 d | low |
 | **2** | **Connect-request state → Redis.** Category B, all 12 sites. | 2–3 d | low |
 | **3** | **Presence and queue reads → Redis.** Category D. Point `worker/tasks.py` and `offline_message_routes.py` at `operator_presence_service`. | 3–4 d | medium |
-| **4** | **Atomic accept + transitions.** Category C, and replace `_accept_locks` with a conditional `UPDATE`. | 4–5 d | **medium-high** — audit-log correctness |
+| **4** | **Assignment state + transitions.** Category C: move `assignments` (the routing lookup) to Redis and convert the transition notifications to publishes. The DB claim already handles integrity, so this is about delivery and audit-log consistency, not the accept race. | 4–5 d | **medium** |
 | **5** | **Split the process.** New systemd unit for a single-worker uvicorn serving `/ws/*`; nginx `location /ws/` → new upstream; raise `WEB_CONCURRENCY` to 4 **and re-tune the pool in the same change** (see §6.1). | 2–3 d | medium |
 | **6** | **Soak and roll out.** 24 h staging soak with real WebSocket traffic, then production behind the flag. | 2–3 d | low |
 
@@ -212,8 +228,10 @@ chat is **correct**. Phase 0 exists precisely because our measurement tooling is
 
 1. **Cross-process delivery** — visitor on A, operator on B: message, typing indicator and
    read receipt land both ways.
-2. **No double-accept** — two operators race the same waiting chat; exactly one wins, and
-   `ChatAuditLog` contains exactly one transition.
+2. **The accept guard still holds across processes** — two operators on two processes race
+   the same waiting chat; exactly one wins, the loser gets 409, and `ChatAuditLog` contains
+   exactly one transition. This passes today (the claim is an atomic conditional `UPDATE`);
+   the test exists so a refactor cannot quietly remove it.
 3. **Transfer across processes** — operator on A transfers to operator on B; the visitor
    socket, held on A, follows correctly.
 4. **Presence truthfulness** — the ARQ worker's "is an operator connected?" answer matches
@@ -256,8 +274,11 @@ chat is **correct**. Phase 0 exists precisely because our measurement tooling is
    this is worth scheduling but not prioritising. Pure product call.
 2. **Gate sizing: per-process at `10/N`, or a Redis counter?** Recommendation: per-process,
    with a boot-time assertion that it sits below the pool ceiling.
-3. **Accept race: Redis lock or atomic Postgres `UPDATE`?** Recommendation: Postgres — no
-   new infrastructure, and it cannot be lost to a Redis blip.
-4. **Do we take Phase 0 even if we defer the rest?** Recommendation: yes. The double-accept
-   race is a latent bug today; a test that documents it costs three days and stops someone
-   raising `WEB_CONCURRENCY` casually and shipping a silent live-chat outage.
+3. **Do we keep `_accept_locks` at all?** The atomic Postgres claim already guarantees a
+   single winner, so the in-process lock adds nothing across processes and only narrows a
+   same-process window. Recommendation: keep it (it is harmless and cheap), but delete the
+   comment implying it provides the guarantee — the `UPDATE ... WHERE status='waiting'` does.
+4. **Do we take Phase 0 even if we defer the rest?** Recommendation: yes. Cross-process
+   message delivery is genuinely broken today and nothing in the test suite would notice —
+   every load scenario drives SSE and opens no sockets at all. Three days buys a gate that
+   stops someone raising `WEB_CONCURRENCY` casually and shipping a silent live-chat outage.
