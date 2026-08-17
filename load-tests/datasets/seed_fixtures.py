@@ -31,6 +31,13 @@ BOT_KEY = os.getenv("SEED_BOT_KEY", "bot-loadtest-000000")
 API_KEY = os.getenv("SEED_API_KEY", "lt_admin_key_deterministic_0001")
 OPERATOR_KEY = os.getenv("SEED_OPERATOR_KEY", "lt_operator_key_deterministic_0001")
 CLIENT_EMAIL = os.getenv("SEED_CLIENT_EMAIL", "loadtest@example.invalid")
+# Deterministic, NON-SECRET password for the seeded admin so scenarios can
+# exercise POST /auth/login (the api_key alone cannot: login runs bcrypt against
+# ``hashed_password``, which was previously never set, so every login attempt
+# against a seeded fixture failed on a missing credential rather than on load).
+# Same rationale as the deterministic api_key above — this value only ever
+# exists in an isolated ``*loadtest*`` database, never in dev or production.
+CLIENT_PASSWORD = os.getenv("SEED_CLIENT_PASSWORD", "LoadTest!Deterministic1")
 
 
 def _guard_db_url() -> str:
@@ -72,7 +79,7 @@ def main() -> int:
     _guard_db_url()
 
     # Import AFTER the guard so app.config binds to the test DB_URL.
-    from app.db.session import SessionLocal
+    from app.core.security import get_password_hash
     from app.db.models import (
         Bot,
         ChatSession,
@@ -84,6 +91,7 @@ def main() -> int:
         PricingConfig,
         Subscription,
     )
+    from app.db.session import SessionLocal
 
     if SessionLocal is None:
         sys.exit("SessionLocal is None — DB_URL not usable.")
@@ -95,6 +103,11 @@ def main() -> int:
             client = Client(name="LoadTest Admin", email=CLIENT_EMAIL, api_key=API_KEY, is_verified=True)
             db.add(client)
             db.flush()
+        # Set on every run, not just on create, so databases seeded before this
+        # existed also become login-capable without a re-seed from scratch.
+        # Hashed via the app's own get_password_hash so the cost factor under test is
+        # whatever production actually uses (bcrypt default rounds today).
+        client.hashed_password = get_password_hash(CLIENT_PASSWORD)
 
         # Bot
         bot = db.query(Bot).filter(Bot.bot_key == BOT_KEY).one_or_none()
@@ -105,8 +118,20 @@ def main() -> int:
         bot.indexed_chunk_count = args.docs  # >20 so CAG-lite doesn't skip retrieval
         bot.credits_balance = 10_000_000
 
-        # Plan + active Subscription (chat subscription-gate must see active/trialing)
-        plan = db.query(Plan).order_by(Plan.id.asc()).first()
+        # Plan + active Subscription (chat subscription-gate must see active/trialing).
+        #
+        # Prefer an ENTITLED plan rather than simply the lowest id. Several
+        # dashboard/analytics surfaces are plan-gated — the Journeys analytics
+        # routes return 402 ("require a Standard or Professional plan") unless the
+        # funding plan's slug is in ``JOURNEY_ANALYTICS_SLUGS``
+        # (standard/professional/enterprise). Seeding the lowest-id plan meant
+        # "free", so journey-analytics load runs measured a 402 rejection rather
+        # than the analytics queries. ``standard`` is the cheapest entitled tier,
+        # so it exercises the gated surfaces without over-provisioning.
+        plan = (
+            db.query(Plan).filter(Plan.slug == os.getenv("SEED_PLAN_SLUG", "standard")).one_or_none()
+            or db.query(Plan).order_by(Plan.id.asc()).first()
+        )
         if plan is None:
             sys.exit("No Plan rows found. Run scripts/seed_plans.py --apply against the test DB first.")
         sub = db.query(Subscription).filter(Subscription.client_id == client.id).one_or_none()
@@ -116,6 +141,9 @@ def main() -> int:
             db.flush()
         else:
             sub.status = "active"
+            # Move an existing fixture subscription onto the entitled plan too, so
+            # re-seeding an older test DB fixes the gate without a rebuild.
+            sub.plan_id = plan.id
 
         # Free chat: set the ai_chat credit cost to 0 so no credit grants needed.
         pc = db.get(PricingConfig, "credit_cost.ai_chat")
@@ -156,10 +184,7 @@ def main() -> int:
         # resolve_visitor_name() returns a name -> the bot SKIPS the first-turn
         # name-ask and runs the full RAG + streaming LLM generation on every turn.
         # The knee scenario assigns one warm session per VU.
-        existing_warm = {
-            r[0]
-            for r in db.query(ChatSession.id).filter(ChatSession.id.like("session_warm_%")).all()
-        }
+        existing_warm = {r[0] for r in db.query(ChatSession.id).filter(ChatSession.id.like("session_warm_%")).all()}
         for i in range(args.warm):
             sid = f"session_warm_{i}"
             if sid not in existing_warm:
@@ -172,6 +197,8 @@ def main() -> int:
         print(f"BOT_KEY={BOT_KEY}")
         print(f"API_KEY={API_KEY}")
         print(f"OPERATOR_KEY={OPERATOR_KEY}")
+        print(f"CLIENT_EMAIL={CLIENT_EMAIL}")
+        print(f"CLIENT_PASSWORD={CLIENT_PASSWORD}")
         print(f"client_id={client.id} bot_id={bot.id} plan_id={plan.id} docs={args.docs} warm_sessions={args.warm}")
     return 0
 

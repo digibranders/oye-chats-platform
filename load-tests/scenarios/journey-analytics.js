@@ -13,6 +13,20 @@ import { adminHeaders, url } from '../helpers/http.js';
 import { requireApiKey } from '../helpers/auth.js';
 
 const TABS = parseInt(__ENV.TABS || '50', 10);
+// REQUIRED query params. Every /analytics/journey/* route declares
+// ``bot_id: RowId = Query(...)`` and ``period: YearMonth = Query(...)``
+// (api/app/api/analytics_routes.py), so omitting them returns 422 before any
+// query runs. This scenario previously sent neither, which meant it measured
+// FastAPI's validation-rejection path — fast, cheap, and nothing to do with
+// analytics load. Any capacity number produced before this fix is invalid.
+const BOT_ID = __ENV.BOT_ID || '1';
+// Calendar month as YYYY-MM. Defaults to the current month so a fresh run
+// targets data the seed actually created.
+const PERIOD = __ENV.PERIOD || (() => {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+})();
+const Q = `bot_id=${BOT_ID}&period=${PERIOD}`;
 
 export const options = {
   scenarios: {
@@ -24,17 +38,19 @@ export const options = {
 // The 11 calls the UI issues per tick (align paths with
 // app/src/features/analytics/useJourneyAnalytics.ts if they drift).
 const JOURNEY_CALLS = [
-  '/analytics/journey/summary',
-  '/analytics/journey/top-pages?scope=all',
-  '/analytics/journey/top-pages?scope=pre',
-  '/analytics/journey/top-pages?scope=chat',
-  '/analytics/journey/top-pages?scope=post',
-  '/analytics/journey/conversion-paths?scope=all',
-  '/analytics/journey/conversion-paths?scope=pre',
-  '/analytics/journey/conversion-paths?scope=post',
-  '/analytics/journey/post-chat',
-  '/analytics/journey/pre-chat-sequences',
-  '/analytics/journey/summary?window=7d',
+  `/analytics/journey/summary?${Q}`,
+  `/analytics/journey/top-pages?${Q}&scope=all`,
+  `/analytics/journey/top-pages?${Q}&scope=pre`,
+  `/analytics/journey/top-pages?${Q}&scope=chat`,
+  `/analytics/journey/top-pages?${Q}&scope=post`,
+  // conversion-paths takes ``conversion_type`` (a Literal over the three real
+  // conversion events), NOT a ``scope`` — sending scope returned 422.
+  `/analytics/journey/conversion-paths?${Q}&conversion_type=meeting_booked`,
+  `/analytics/journey/conversion-paths?${Q}&conversion_type=handoff_requested`,
+  `/analytics/journey/conversion-paths?${Q}&conversion_type=offline_message_sent`,
+  `/analytics/journey/post-chat?${Q}`,
+  `/analytics/journey/pre-chat-sequences?${Q}`,
+  `/analytics/journey/summary?${Q}`,
 ];
 
 export function setup() {

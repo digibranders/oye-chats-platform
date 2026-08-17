@@ -1,0 +1,132 @@
+# HORIZONTAL-SCALE staging stack (Phase 5): an nginx load balancer round-robining
+# across N API replicas that share ONE PostgreSQL + Redis + mock-LLM. Lets you
+# measure 1 vs 2 vs 4 API instances with the existing k6 workload.
+#
+#   docker compose -f load-tests/staging/docker-compose.scale.yml up -d --build --scale api=1
+#   docker compose -f load-tests/staging/docker-compose.scale.yml up -d --scale api=2
+#   docker compose -f load-tests/staging/docker-compose.scale.yml up -d --scale api=4
+#   docker compose -f load-tests/staging/docker-compose.scale.yml down -v
+#
+# Point k6 at the LB:  BASE_URL=http://localhost:8090
+#
+# ⚠️ WHAT SCALES TODAY vs WHAT DOESN'T (measured/confirmed in-code):
+#   ✔ Stateless HTTP + SSE chat scale horizontally — each request only touches the
+#     shared DB/Redis, so more replicas = more capacity until the DB saturates.
+#   ✘ CHAT_MAX_CONCURRENCY is PER-PROCESS (app/core/chat_concurrency.py, module
+#     asyncio.Semaphore): N replicas => N×limit total, NOT a global cap (Phase 13).
+#   ✘ Live-chat WebSockets are in-memory (ConnectionManager): a visitor and their
+#     operator on different replicas cannot see each other (Phase 14). Do NOT route
+#     /ws/* through this LB expecting correctness until the Redis backplane lands.
+#   ✘ Uploads write local disk (document_routes.py): not shared across replicas
+#     (Phase 15). Use only for stateless HTTP/chat load — not upload flows.
+# These are the three prerequisites for TRUE production horizontal scaling.
+name: oyechats-scale
+
+x-api-env: &api-env
+  APP_ENV: development
+  DB_URL: postgresql://oyechats:oyechats@db:5432/oyechats
+  REDIS_URL: redis://redis:6379/0
+  LLM_MODEL: openai/gpt-4o-mini
+  FALLBACK_MODEL: openai/gpt-4o-mini
+  OPENAI_API_KEY: sk-mock-staging
+  OPENAI_API_BASE: http://mock-llm:9099/v1
+  OPENAI_BASE_URL: http://mock-llm:9099/v1
+  GOOGLE_API_KEY: mock-staging
+  GEMINI_EMBED_URL: http://mock-llm:9099/v1beta
+  RELEVANCE_GATE_ENABLED: "false"
+  RERANK_ENABLED: "false"
+  WEB_CONCURRENCY: "1"
+  # PER-INSTANCE pool. Total connections = replicas × (DB_POOL_SIZE+DB_MAX_OVERFLOW).
+  # Keep replicas × 15 comfortably under PostgreSQL max_connections (default 100):
+  # 4 replicas × 15 = 60 (+ worker 10) = 70 < 100. See README §DB protection.
+  DB_POOL_SIZE: "5"
+  DB_MAX_OVERFLOW: "10"
+  # PER-INSTANCE chat cap (see warning above — not global yet).
+  CHAT_MAX_CONCURRENCY: "30"
+  CHAT_ACQUIRE_TIMEOUT_S: "8"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: oyechats
+      POSTGRES_PASSWORD: oyechats
+      POSTGRES_DB: oyechats
+    command: ["postgres", "-c", "max_connections=200"]  # headroom for N replicas
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oyechats"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "55432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "56379:6379"
+
+  mock-llm:
+    build:
+      context: ../../api
+    working_dir: /mock
+    command: ["uv", "run", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "9099"]
+    environment:
+      MOCK_LLM_LATENCY_MS: "1200"
+      MOCK_LLM_TTFT_MS: "300"
+    volumes:
+      - ../mock-llm:/mock:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:9099/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ../../api
+    environment: *api-env
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Scale this: --scale api=N. No host port (nginx fronts it); no container_name
+  # so replicas get distinct names/IPs that nginx's docker-DNS round-robin uses.
+  api:
+    build:
+      context: ../../api
+    environment: *api-env
+    command: ["uv", "run", "gunicorn", "app.main:app", "-c", "gunicorn.conf.py", "-b", "0.0.0.0:8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mock-llm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  lb:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx-lb.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    ports:
+      - "8090:80"
+
+volumes:
+  pgdata:
