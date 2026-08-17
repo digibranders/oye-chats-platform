@@ -1523,6 +1523,27 @@ class ConnectionManager:
             logger.warning(f"Failed to restore visitor state for {session_id}: {e}")
 
     async def _send_to_visitor(self, session_id: str, data: dict):
+        """Deliver to a visitor, wherever their socket lives.
+
+        Local socket first; otherwise hand the frame to the backplane so the
+        process holding it can write. Every existing caller keeps working and
+        gains cross-process delivery without changing, which is why the routing
+        lives behind this name rather than at each of the ~15 call sites.
+
+        The write itself is ``_send_to_visitor_local``. That separation is
+        load-bearing: the backplane's subscriber calls the local variant, so a
+        frame that arrives over Redis is written to the socket instead of being
+        published again — which would loop forever.
+        """
+        if self.visitor_connections.get(session_id) is not None:
+            await self._send_to_visitor_local(session_id, data)
+            return
+
+        from app.services.ws_backplane import publish_to_session
+
+        await publish_to_session(session_id, data)
+
+    async def _send_to_visitor_local(self, session_id: str, data: dict):
         ws = self.visitor_connections.get(session_id)
         if ws:
             try:
@@ -1543,6 +1564,20 @@ class ConnectionManager:
             logger.info(f"No WS for visitor {session_id}, message dropped: {data.get('type', 'unknown')}")
 
     async def _send_to_operator(self, operator_id: int, data: dict):
+        """Deliver to an operator, wherever their socket lives.
+
+        Mirror of ``_send_to_visitor`` — see that docstring for why the routing
+        sits behind the existing name and why the local write is separate.
+        """
+        if self.operator_connections.get(operator_id) is not None:
+            await self._send_to_operator_local(operator_id, data)
+            return
+
+        from app.services.ws_backplane import publish_to_operator
+
+        await publish_to_operator(operator_id, data)
+
+    async def _send_to_operator_local(self, operator_id: int, data: dict):
         ws = self.operator_connections.get(operator_id)
         if ws:
             try:

@@ -91,6 +91,20 @@ async def _publish(channel: str, payload: dict) -> bool:
         return False
 
 
+async def publish_to_operator(operator_id: int, payload: dict) -> bool:
+    """Publish a frame for an operator socket held by another process.
+
+    Called by ``ConnectionManager._send_to_operator`` once it has established the
+    socket is not local, so it does NOT re-check locality here.
+    """
+    return await _publish(_OPERATOR_CHANNEL.format(operator_id), payload)
+
+
+async def publish_to_session(session_id: str, payload: dict) -> bool:
+    """Publish a frame for a visitor socket held by another process."""
+    return await _publish(_SESSION_CHANNEL.format(session_id), payload)
+
+
 async def deliver_to_operator(manager, operator_id: int, payload: dict) -> bool:
     """Deliver ``payload`` to an operator, wherever their socket lives.
 
@@ -98,7 +112,7 @@ async def deliver_to_operator(manager, operator_id: int, payload: dict) -> bool:
     process holding it can write the frame.
     """
     if manager.operator_connections.get(operator_id) is not None:
-        await manager._send_to_operator(operator_id, payload)
+        await manager._send_to_operator_local(operator_id, payload)
         return True
     return await _publish(_OPERATOR_CHANNEL.format(operator_id), payload)
 
@@ -106,7 +120,7 @@ async def deliver_to_operator(manager, operator_id: int, payload: dict) -> bool:
 async def deliver_to_session(manager, session_id: str, payload: dict) -> bool:
     """Deliver ``payload`` to a visitor session, wherever its socket lives."""
     if manager.visitor_connections.get(session_id) is not None:
-        await manager._send_to_visitor(session_id, payload)
+        await manager._send_to_visitor_local(session_id, payload)
         return True
     return await _publish(_SESSION_CHANNEL.format(session_id), payload)
 
@@ -136,14 +150,16 @@ async def _listen(manager) -> None:
                 continue
 
             try:
+                # LOCAL write only. Routing here would re-publish a frame that
+                # just arrived over Redis, and it would never stop.
                 if channel.startswith("ws:operator:"):
                     operator_id = int(channel.rsplit(":", 1)[1])
                     if manager.operator_connections.get(operator_id) is not None:
-                        await manager._send_to_operator(operator_id, payload)
+                        await manager._send_to_operator_local(operator_id, payload)
                 elif channel.startswith("ws:session:"):
                     session_id = channel.rsplit(":", 1)[1]
                     if manager.visitor_connections.get(session_id) is not None:
-                        await manager._send_to_visitor(session_id, payload)
+                        await manager._send_to_visitor_local(session_id, payload)
             except Exception:
                 # One bad frame must not kill the subscriber for every socket.
                 logger.warning("ws_backplane failed to deliver on %s", channel, exc_info=True)
