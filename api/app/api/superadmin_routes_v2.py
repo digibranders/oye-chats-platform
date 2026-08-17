@@ -14,10 +14,10 @@ import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
@@ -42,6 +42,7 @@ from app.db.models import (
     Subscription,
 )
 from app.db.session import get_session
+from app.schemas.validators import EmailAddress, RequiredName, RowId, bounded_list
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
@@ -116,9 +117,31 @@ def _client_summary(c: Client) -> dict[str, Any]:
 # ── Clients ─────────────────────────────────────────────────────────────────
 
 
+# Ceiling on a single super-admin credit adjustment, in credits.
+_MAX_MANUAL_CREDIT_DELTA = 10_000_000
+
+# Plans one coupon may be scoped to.
+_MAX_COUPON_PLANS = 50
+
+# A coupon code as typed at checkout.
+CouponCodeStr = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\-]+$"),
+]
+
+# A LiteLLM model identifier, e.g. "openai/gpt-5.4-mini".
+ModelId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_./\-]+$"),
+]
+
+
 class ClientPatch(BaseModel):
-    name: str | None = None
-    email: str | None = None
+    name: RequiredName | None = None
+    # A super-admin can retarget an account's login address; it must still be
+    # a well-formed address, since it is the account's identity and the
+    # destination for every notification it receives.
+    email: EmailAddress | None = None
     is_superadmin: bool | None = None
     superadmin_role: str | None = Field(default=None, pattern="^(owner|admin|readonly)$")
     suspended: bool | None = None
@@ -250,7 +273,10 @@ def patch_client(
 
 
 class CreditsGrant(BaseModel):
-    delta: int
+    # A manual ledger adjustment. Bounded in both directions: the ledger is
+    # append-only and event-sourced, so an unbounded grant cannot be undone by
+    # editing a row — it takes a compensating entry.
+    delta: int = Field(..., ge=-_MAX_MANUAL_CREDIT_DELTA, le=_MAX_MANUAL_CREDIT_DELTA)
     reason: str = Field(min_length=3, max_length=500)
 
 
@@ -663,7 +689,7 @@ def list_documents(_admin: Client = Depends(get_superadmin)):
 
 @router.get("/sessions")
 def list_sessions(
-    status_filter: str | None = Query(default=None, alias="status"),
+    status_filter: str | None = Query(default=None, alias="status", max_length=64),
     client_id: int | None = None,
     _admin: Client = Depends(get_superadmin),
 ):
@@ -934,21 +960,23 @@ def list_audit(
 
 
 class CouponCreate(BaseModel):
-    code: str
-    percent_off: int | None = None
-    amount_off_cents: int | None = None
-    max_redemptions: int | None = None
+    code: CouponCodeStr
+    # A discount, so both bounds matter: ``percent_off`` above 100 or a
+    # negative ``amount_off_cents`` would each turn a coupon into a credit.
+    percent_off: int | None = Field(default=None, ge=0, le=100)
+    amount_off_cents: int | None = Field(default=None, ge=0, le=100_000_000)
+    max_redemptions: int | None = Field(default=None, ge=1, le=1_000_000)
     expires_at: datetime | None = None
-    applies_to_plan_ids: list[int] | None = None
+    applies_to_plan_ids: Annotated[list[RowId], bounded_list(_MAX_COUPON_PLANS)] | None = None
 
 
 class CouponPatch(BaseModel):
-    code: str | None = None
-    percent_off: int | None = None
-    amount_off_cents: int | None = None
-    max_redemptions: int | None = None
+    code: CouponCodeStr | None = None
+    percent_off: int | None = Field(default=None, ge=0, le=100)
+    amount_off_cents: int | None = Field(default=None, ge=0, le=100_000_000)
+    max_redemptions: int | None = Field(default=None, ge=1, le=1_000_000)
     expires_at: datetime | None = None
-    applies_to_plan_ids: list[int] | None = None
+    applies_to_plan_ids: Annotated[list[RowId], bounded_list(_MAX_COUPON_PLANS)] | None = None
     is_active: bool | None = None
 
 
@@ -1231,9 +1259,13 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
 
 
 class ModelConfigPatch(BaseModel):
-    primary_model: str | None = None
-    fallback_model: str | None = None
-    gate_model: str | None = None
+    # LiteLLM model identifiers ("openai/gpt-5.4-mini"). Free-form because the
+    # catalog is a vendor's, not ours — but bounded and charset-pinned, since
+    # the value is persisted to runtime config and passed to the router on
+    # every completion.
+    primary_model: ModelId | None = None
+    fallback_model: ModelId | None = None
+    gate_model: ModelId | None = None
     chunk_size: int | None = Field(default=None, ge=200, le=8000)
     chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
     rerank_top_n: int | None = Field(default=None, ge=1, le=20)
@@ -1385,7 +1417,7 @@ _SAFETY_NET_METRIC_NAMES = [
 @router.get("/safety-net-metrics")
 def safety_net_metrics(
     hours: int = Query(default=24, ge=1, le=168),
-    bot_id: int | None = Query(default=None),
+    bot_id: RowId | None = Query(default=None),
     _admin: Client = Depends(get_superadmin),
 ):
     """Rolling hourly counts for every safety-net metric (AR-13) — the
@@ -1510,10 +1542,14 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
 
 @router.get("/logs")
 def server_logs(
-    service: str = Query(default="oyechats-api"),
+    # Allow-listed in ``logs_service.fetch_logs`` against ``ALLOWED_SERVICES``
+    # (mapped to a 400 naming the permitted units). That check is what keeps
+    # this value out of a subprocess argument, so it stays the single source
+    # of truth; this only bounds the string.
+    service: str = Query(default="oyechats-api", max_length=64),
     lines: int = Query(default=500, ge=10, le=5_000),
-    level: str | None = Query(default=None),
-    grep: str | None = Query(default=None),
+    level: Literal["debug", "info", "warning", "error", "critical"] | None = Query(default=None),
+    grep: str | None = Query(default=None, max_length=200),
     _admin: Client = Depends(get_superadmin),
 ):
     """Tail journalctl for the API or worker systemd unit.
@@ -1807,8 +1843,8 @@ def list_all_invoices(
     _admin: Client = Depends(get_superadmin),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    invoice_type: str | None = Query(None),
-    client_id: int | None = Query(None),
+    invoice_type: Literal["tax_invoice", "credit_note", "receipt", "legacy"] | None = Query(None),
+    client_id: RowId | None = Query(None),
     search: str | None = Query(None, max_length=120),
     include_legacy: bool = Query(False),
 ):

@@ -14,30 +14,27 @@ from __future__ import annotations
 from statistics import median
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_client, get_superadmin
 from app.db.models import ActivationEvent, Bot, Client
 from app.db.session import get_session
+from app.schemas.validators import RowId, SmallJsonObject
 
 router = APIRouter(prefix="/activation", tags=["activation"])
 
 
 class ActivationEventCreate(BaseModel):
-    event_type: str
-    bot_id: int | None = None
-    event_data: dict | None = None
-
-    @field_validator("event_type")
-    @classmethod
-    def _validate_event_type(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("event_type must not be empty")
-        if len(v) > 100:
-            raise ValueError("event_type too long")
-        return v
+    # Free-form by design so a new milestone needs no migration — but the
+    # value is a grouping key in the super-admin funnel aggregation, so it is
+    # held to an identifier shape rather than accepting arbitrary text.
+    event_type: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.\-]+$")
+    bot_id: RowId | None = None
+    # Instrumentation metadata, not a document store: bounded so the
+    # append-only events table cannot be grown with megabyte blobs by any
+    # authenticated client.
+    event_data: SmallJsonObject | None = None
 
 
 @router.post("/events", status_code=status.HTTP_201_CREATED)

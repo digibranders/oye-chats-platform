@@ -6,10 +6,10 @@ and can be modified at runtime without code changes.
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
@@ -18,6 +18,14 @@ from app.config import DISPLAY_USD_TO_INR, EXTRA_SEAT_PRICE_USD_CENTS, RAZORPAY_
 from app.core.pricing import annual_saving_percent, display_price, emandate_warning
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
+from app.schemas.validators import (
+    BoundedJsonObject,
+    GatewayRef,
+    MediumText,
+    RequiredName,
+    RowId,
+    bounded_list,
+)
 from app.services import plan_entitlements_service
 from app.services.plan_entitlements_service import UNLIMITED
 from app.services.plan_service import get_pricing_content, plan_checkout_is_wired, set_pricing_content
@@ -85,13 +93,28 @@ def _plan_monthly_usd_cents(plan: Plan, billing_cycle: str) -> int:
 
 # ── Request Models ──
 
+# Rows in one pricing-content list.
+_MAX_PRICING_ITEMS = 200
+
+# The public plan identifier: appears in URLs, entitlement lookups and the
+# gateway plan mapping, so it is a slug rather than free text.
+PlanSlug = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_\-]*$"),
+]
+
 
 class CreatePlanRequest(BaseModel):
-    name: str
-    slug: str
-    description: str | None = None
-    pricing_model: str = "per_operator"
-    currency: str = "INR"
+    name: RequiredName
+    # The public plan identifier used in URLs, entitlement lookups and the
+    # gateway plan mapping.
+    slug: PlanSlug
+    description: MediumText | None = None
+    pricing_model: Literal["per_operator", "flat", "usage"] = "per_operator"
+    # Handler-enforced: ``create_plan``/``update_plan`` reject anything but
+    # INR with a 400 explaining the INR-primary model. Bounded here so the
+    # two do not become competing allow-lists.
+    currency: str = Field(default="INR", max_length=8)
     monthly_price_cents: int = Field(0, ge=0)
     annual_price_cents: int = Field(0, ge=0)
     monthly_price_usd_cents: int | None = Field(None, ge=0)
@@ -104,29 +127,32 @@ class CreatePlanRequest(BaseModel):
     # (:func:`_resolve_annual_discount`).
     annual_discount_percent: int | None = Field(None, ge=0, le=100)
     trial_days: int = Field(7, ge=0)
-    limits: dict | None = None
-    features: dict | None = None
-    marketing: dict | None = None
+    # Plan config, stored as JSONB. The key sets are product-defined rather
+    # than API contract, so they stay open-ended — but bounded, so the plan
+    # table cannot be grown without limit.
+    limits: BoundedJsonObject | None = None
+    features: BoundedJsonObject | None = None
+    marketing: BoundedJsonObject | None = None
     overage_rate_cents: int = Field(0, ge=0)
     credits_per_month: int = Field(0, ge=0)
     included_operator_seats: IncludedOperatorSeats = 1
     # Defaults to the canonical charged seat price so a plan created without an
     # explicit value stays consistent with what the seat add-on actually bills.
     extra_seat_price_cents: int = Field(RAZORPAY_SEAT_PLAN_PRICE_CENTS, ge=0)
-    razorpay_plan_id_monthly: str | None = None
-    razorpay_plan_id_annual: str | None = None
-    razorpay_plan_id_monthly_usd: str | None = None
-    razorpay_plan_id_annual_usd: str | None = None
+    razorpay_plan_id_monthly: GatewayRef | None = None
+    razorpay_plan_id_annual: GatewayRef | None = None
+    razorpay_plan_id_monthly_usd: GatewayRef | None = None
+    razorpay_plan_id_annual_usd: GatewayRef | None = None
     is_active: bool = True
     is_default: bool = False
     sort_order: int = 0
 
 
 class UpdatePlanRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    pricing_model: str | None = None
-    currency: str | None = None
+    name: RequiredName | None = None
+    description: MediumText | None = None
+    pricing_model: Literal["per_operator", "flat", "usage"] | None = None
+    currency: str | None = Field(default=None, max_length=8)
     monthly_price_cents: int | None = Field(None, ge=0)
     annual_price_cents: int | None = Field(None, ge=0)
     monthly_price_usd_cents: int | None = Field(None, ge=0)
@@ -134,9 +160,12 @@ class UpdatePlanRequest(BaseModel):
     extra_seat_price_usd_cents: int | None = Field(None, ge=0)
     annual_discount_percent: int | None = Field(None, ge=0, le=100)
     trial_days: int | None = Field(None, ge=0)
-    limits: dict | None = None
-    features: dict | None = None
-    marketing: dict | None = None
+    # Plan config, stored as JSONB. The key sets are product-defined rather
+    # than API contract, so they stay open-ended — but bounded, so the plan
+    # table cannot be grown without limit.
+    limits: BoundedJsonObject | None = None
+    features: BoundedJsonObject | None = None
+    marketing: BoundedJsonObject | None = None
     overage_rate_cents: int | None = Field(None, ge=0)
     credits_per_month: int | None = Field(None, ge=0)
     included_operator_seats: IncludedOperatorSeats | None = None
@@ -144,27 +173,34 @@ class UpdatePlanRequest(BaseModel):
     is_active: bool | None = None
     is_default: bool | None = None
     sort_order: int | None = None
-    razorpay_plan_id_monthly: str | None = None
-    razorpay_plan_id_annual: str | None = None
-    razorpay_plan_id_monthly_usd: str | None = None
-    razorpay_plan_id_annual_usd: str | None = None
+    razorpay_plan_id_monthly: GatewayRef | None = None
+    razorpay_plan_id_annual: GatewayRef | None = None
+    razorpay_plan_id_monthly_usd: GatewayRef | None = None
+    razorpay_plan_id_annual_usd: GatewayRef | None = None
 
 
 class UpdateSubscriptionRequest(BaseModel):
-    plan_id: int | None = None
-    status: str | None = None
+    plan_id: RowId | None = None
+    # Allow-listed in the handler against ``valid_statuses``, which answers 400 with the
+    # permitted set. Bounded here rather than re-declared as a ``Literal``:
+    # two copies of one allow-list drift, and moving the rejection into the
+    # schema would silently change this endpoint's status code.
+    status: str | None = Field(default=None, max_length=32)
     # Bounds (M8): a negative quantity yields negative MRR; a negative
     # extend_trial_days silently back-dates/shortens the trial.
     operator_quantity: int | None = Field(default=None, ge=0, le=1000)
-    billing_cycle: str | None = None
+    billing_cycle: Literal["monthly", "annual"] | None = None
     extend_trial_days: int | None = Field(default=None, ge=0, le=365)
 
 
 class PricingContentRequest(BaseModel):
-    faq: list | None = None
-    feature_matrix: list | None = None
-    topup_packs: list | None = None
-    credit_costs: list | None = None
+    # Marketing copy rendered on the public pricing page. Item shape is
+    # content, not contract, so the lists stay untyped — but each is capped so
+    # the public page cannot be handed an unbounded payload to render.
+    faq: Annotated[list, bounded_list(_MAX_PRICING_ITEMS)] | None = None
+    feature_matrix: Annotated[list, bounded_list(_MAX_PRICING_ITEMS)] | None = None
+    topup_packs: Annotated[list, bounded_list(_MAX_PRICING_ITEMS)] | None = None
+    credit_costs: Annotated[list, bounded_list(_MAX_PRICING_ITEMS)] | None = None
 
 
 # ── Plan CRUD ──

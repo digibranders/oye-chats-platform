@@ -17,12 +17,11 @@ strictly transport (HTTP → service call → JSON) with error translation.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, StringConstraints
 from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 
@@ -36,6 +35,7 @@ from app.config import APP_ENV, EMAIL_ENABLED, FRONTEND_URL
 from app.core.rate_limit import limiter
 from app.db.models import Bot, Client, Operator, OperatorInvite
 from app.db.session import get_session
+from app.schemas.validators import EmailAddress, RowId
 from app.services import invite_service, plan_entitlements_service
 from app.services.email_service import send_operator_invite_email
 from app.services.invite_service import InviteError
@@ -49,25 +49,21 @@ me_router = APIRouter(prefix="/me", tags=["me"])
 # Matches the same simple pattern used in ``offline_message_routes.py`` — the
 # ``EmailStr`` pydantic type would require the ``email-validator`` dep which
 # isn't installed in this project, so we hand-roll a lightweight equivalent.
-_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+# Plaintext invite token as it appears in the emailed URL: 256 bits of
+# ``secrets.token_urlsafe`` entropy, so a fixed charset and a tight ceiling.
+# Both endpoints that take it are unauthenticated, and the bound applies
+# before the database lookup runs.
+InviteToken = Annotated[str, StringConstraints(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_\-]+$")]
 
 
 # ── Request / response models ──────────────────────────────────────────────
 
 
 class CreateInviteRequest(BaseModel):
-    email: str
-    bot_id: int
+    email: EmailAddress
+    bot_id: RowId
     role: Literal["operator", "admin"] = "operator"
-    department_id: int | None = None
-
-    @field_validator("email")
-    @classmethod
-    def _valid_email(cls, v: str) -> str:
-        v = v.strip().lower()
-        if not _EMAIL_RE.match(v):
-            raise ValueError("Please enter a valid email address.")
-        return v
+    department_id: RowId | None = None
 
 
 class InviteView(BaseModel):
@@ -129,7 +125,7 @@ class SelfOperatorRequest(BaseModel):
     self-op row with a different ``bot_id`` reassigns it.
     """
 
-    bot_id: int
+    bot_id: RowId
 
 
 class SelfOperatorResponse(BaseModel):
@@ -165,7 +161,7 @@ def _dispatch_invite_email(
     accept_url: str,
     workspace_name: str,
     inviter_name: str | None,
-    invite_id: int,
+    invite_id: RowId,
 ) -> None:
     """Fire the invite email through Brevo. Fire-and-forget.
 
@@ -336,7 +332,7 @@ def list_invites(
 @limiter.limit("10/hour")
 def resend_invite(
     request: Request,  # noqa: ARG001
-    invite_id: int,
+    invite_id: RowId,
     auth: dict = Depends(get_current_client_or_operator),
     _verified: None = Depends(require_verified_email_for_workspace),
 ):
@@ -376,7 +372,7 @@ def resend_invite(
 
 @router.delete("/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_invite(
-    invite_id: int,
+    invite_id: RowId,
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Revoke a pending invite."""
@@ -401,7 +397,7 @@ def revoke_invite(
 
 @router.get("/by-token/{token}", response_model=PublicInviteView)
 @limiter.limit("60/minute", key_func=get_remote_address)
-def get_invite_public(request: Request, token: str):  # noqa: ARG001
+def get_invite_public(request: Request, token: InviteToken):  # noqa: ARG001
     """Look up an invite by plaintext token.
 
     Unauthenticated — the airlock page uses this before login to render the
@@ -450,7 +446,7 @@ class AcceptInviteResponse(BaseModel):
 @limiter.limit("30/hour", key_func=get_remote_address)
 def accept_invite_public(
     request: Request,  # noqa: ARG001
-    token: str,
+    token: InviteToken,
     client: Client = Depends(get_current_client_strict),
 ):
     """Accept the invite as the currently-authenticated Client.

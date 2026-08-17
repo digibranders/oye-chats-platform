@@ -40,13 +40,57 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
             )
 
 
+# Longest rejected value echoed back in a 422. The caller sent it, so it is
+# not a disclosure — but reflecting a megabyte of input turns every rejected
+# oversized request into an amplified response.
+_MAX_ECHOED_INPUT_CHARS = 200
+
+
+def _serializable_error(error: dict) -> dict:
+    """Make one Pydantic error entry safe to place in a JSON response.
+
+    Two problems with returning ``exc.errors()`` verbatim, both reachable from
+    any client:
+
+    * ``input`` holds the value that failed. If that value is ``NaN`` or
+      ``±Infinity`` — which ``json.loads`` accepts, so a client really can
+      send one — ``json.dumps`` raises ``ValueError: Out of range float values
+      are not JSON compliant`` while rendering the 422. The exception escapes
+      the handler and the caller gets a 500, which reports a *server* fault
+      for what is squarely a bad request.
+    * ``input`` is echoed at full length, so rejecting a 10 MB string meant
+      writing that string back out again.
+
+    ``ctx`` has the same exposure: it can carry the original ``ValueError``
+    instance for a custom validator, which is not JSON-serializable either.
+    """
+    safe = {k: v for k, v in error.items() if k not in ("input", "ctx", "url")}
+    if "input" in error:
+        rendered = repr(error["input"])
+        if len(rendered) > _MAX_ECHOED_INPUT_CHARS:
+            rendered = rendered[:_MAX_ECHOED_INPUT_CHARS] + "…"
+        safe["input"] = rendered
+    ctx = error.get("ctx")
+    if isinstance(ctx, dict):
+        # Keep the constraint metadata (``max_length``, ``ge`` …) that tells
+        # the caller what the limit actually is; stringify anything else.
+        safe["ctx"] = {k: (v if isinstance(v, int | float | str | bool | None) else str(v)) for k, v in ctx.items()}
+    return safe
+
+
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Global handler for Pydantic validation errors."""
-    logger.error(f"Validation Error: {exc.errors()}")
+    """Global handler for Pydantic validation errors.
+
+    Logged at WARNING, not ERROR: a rejected request is the validation layer
+    working. At ERROR every scanner probe and every mistyped field paged
+    whoever watches the error stream, which is how real errors get tuned out.
+    """
+    errors = [_serializable_error(e) for e in exc.errors()]
+    logger.warning("Validation error on %s %s: %s", request.method, request.url.path, errors)
     return JSONResponse(
         status_code=422,
         content={
-            "detail": exc.errors(),
+            "detail": errors,
             "message": "Invalid request body. Check types and required fields.",
         },
     )

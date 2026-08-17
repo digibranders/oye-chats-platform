@@ -57,6 +57,7 @@ from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR
+from app.core.body_limit import BodySizeLimitMiddleware
 from app.core.chat_concurrency import chat_gate
 from app.core.exceptions import SessionOwnershipError
 from app.core.middleware import (
@@ -278,6 +279,14 @@ app.add_middleware(
 
 # --- Request Timeout (60s for non-streaming endpoints) ---
 app.add_middleware(TimeoutMiddleware)
+
+# --- Request body ceiling ---
+# Registered LAST so it runs FIRST: Starlette applies middleware in reverse
+# registration order, and an oversized body has to be refused before CORS,
+# the timeout wrapper, or any route handler allocates against it. In
+# particular this has to sit in front of /webhooks/razorpay, which reads the
+# raw body before it can verify the HMAC.
+app.add_middleware(BodySizeLimitMiddleware)
 
 # Ensure directories exist
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)

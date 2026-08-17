@@ -3,12 +3,14 @@
 import asyncio
 import logging
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator, impersonation_writable
+from app.api.bot_routes import BusinessHours
 from app.core.security import get_password_hash
 from app.core.visitor_privacy import redact_visitor_ip, redact_visitor_metadata
 from app.db.models import (
@@ -23,6 +25,17 @@ from app.db.models import (
 )
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
+from app.schemas.validators import (
+    BoundedJsonObject,
+    EmailAddress,
+    HttpUrlStr,
+    MediumText,
+    Password,
+    RequiredName,
+    RowId,
+    SessionId,
+    ShortText,
+)
 from app.services.live_chat_service import manager
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -34,6 +47,9 @@ from app.services.qualification_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/operators", tags=["operators"])
+
+# The three roles ``_require_manager_role`` and the RBAC checks branch on.
+OperatorRole = Literal["owner", "admin", "operator"]
 
 
 def _require_team_management_access(auth: dict) -> None:
@@ -72,36 +88,24 @@ def _prevent_role_escalation(auth: dict, target_role: str) -> None:
 
 
 class HandoffRequest(BaseModel):
-    session_id: str
-    reason: str | None = None
-    department_id: int | None = None
+    session_id: SessionId
+    reason: ShortText | None = None
+    department_id: RowId | None = None
 
 
 class CreateOperatorRequest(BaseModel):
-    name: str
-    email: str
-    password: str
-    bot_id: int
-    role: str = "operator"
-    department_id: int | None = None
+    name: RequiredName
+    email: EmailAddress
+    password: Password
+    bot_id: RowId
+    role: OperatorRole = "operator"
+    department_id: RowId | None = None
 
     @field_validator("name")
     @classmethod
     def name_not_empty(cls, v):
-        v = v.strip()
         if len(v) < 2:
             raise ValueError("Name must be at least 2 characters.")
-        return v
-
-    @field_validator("email")
-    @classmethod
-    def valid_email(cls, v):
-        import re
-
-        v = v.strip().lower()
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if not re.match(pattern, v):
-            raise ValueError("Please enter a valid email address.")
         return v
 
     @field_validator("password")
@@ -117,62 +121,41 @@ class CreateOperatorRequest(BaseModel):
             raise ValueError("Password must contain at least one number.")
         return v
 
-    @field_validator("role")
-    @classmethod
-    def valid_role(cls, v):
-        if v not in ("owner", "admin", "operator"):
-            raise ValueError("Role must be owner, admin, or operator.")
-        return v
-
 
 class UpdateOperatorRequest(BaseModel):
-    name: str | None = None
-    email: str | None = None
-    role: str | None = None
-    bot_id: int | None = None
-    department_id: int | None = None
-    avatar_url: str | None = None
-    max_concurrent_chats: int | None = None
-    notification_preferences: dict | None = None
-
-    @field_validator("role")
-    @classmethod
-    def valid_role(cls, v):
-        if v is None:
-            return v
-        if v not in ("owner", "admin", "operator"):
-            raise ValueError("Role must be owner, admin, or operator.")
-        return v
-
-    @field_validator("email")
-    @classmethod
-    def valid_email(cls, v):
-        if v is None:
-            return v
-        import re
-
-        v = v.strip().lower()
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        if not re.match(pattern, v):
-            raise ValueError("Please enter a valid email address.")
-        return v
+    name: RequiredName | None = None
+    email: EmailAddress | None = None
+    role: OperatorRole | None = None
+    bot_id: RowId | None = None
+    department_id: RowId | None = None
+    # Rendered as an ``<img src>`` in the operator console and beside operator
+    # messages in the visitor's widget.
+    avatar_url: HttpUrlStr | None = None
+    # Routing capacity. An unbounded value here decides how many live
+    # conversations one operator is handed.
+    max_concurrent_chats: int | None = Field(None, ge=1, le=100)
+    # Structurally validated by ``PushPreferencesModel`` on its own endpoint;
+    # this legacy path only ever stores the blob, so bound it.
+    notification_preferences: BoundedJsonObject | None = None
 
 
 class CreateDepartmentRequest(BaseModel):
-    name: str
-    description: str | None = None
+    name: RequiredName
+    description: MediumText | None = None
 
 
 class UpdateDepartmentRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    # Per-department business hours — same JSONB shape as bot.business_hours.
-    # Sentinel ``{}`` (empty dict) clears the schedule (always open).
-    business_hours: dict | None = None
+    name: RequiredName | None = None
+    description: MediumText | None = None
+    # Per-department business hours — the same shape, and now the same model,
+    # as ``bot.business_hours``. Sentinel ``{}`` (all days unset) clears the
+    # schedule; ``live_chat_availability_service`` reads both columns through
+    # one evaluator, so one schema for both is the point.
+    business_hours: BusinessHours | None = None
 
 
 class AcceptChatRequest(BaseModel):
-    operator_id: int | None = None
+    operator_id: RowId | None = None
 
 
 # ── Department Endpoints ──
@@ -277,7 +260,7 @@ def update_department(
 
 
 @router.delete("/departments/{department_id}")
-def delete_department(department_id: int, auth=Depends(get_current_client_or_operator)):
+def delete_department(department_id: RowId, auth=Depends(get_current_client_or_operator)):
     """Delete a department. Operators in this department are moved to no department."""
     _require_team_management_access(auth)
     with get_session() as session:
@@ -588,7 +571,7 @@ async def update_operator(
 
 
 @router.delete("/{operator_id}")
-def delete_operator(operator_id: int, auth=Depends(get_current_client_or_operator)):
+def delete_operator(operator_id: RowId, auth=Depends(get_current_client_or_operator)):
     """Delete an operator (owner/admin only)."""
     _require_team_management_access(auth)
     # Prevent operators from deleting their own account
@@ -921,7 +904,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
 
 @router.post("/cancel-handoff/{session_id}")
-async def cancel_handoff(session_id: str, bot: Bot = Depends(get_current_bot)):
+async def cancel_handoff(session_id: SessionId, bot: Bot = Depends(get_current_bot)):
     """Visitor cancels a waiting handoff request, returning session to bot mode.
 
     Called by the widget when the visitor clicks "Cancel and return to AI chat"
@@ -957,7 +940,7 @@ async def cancel_handoff(session_id: str, bot: Bot = Depends(get_current_bot)):
 
 
 @router.get("/session-status/{session_id}")
-def get_session_live_status(session_id: str, bot: Bot = Depends(get_current_bot)):
+def get_session_live_status(session_id: SessionId, bot: Bot = Depends(get_current_bot)):
     """Get the current live chat status for a session.
 
     Called by the widget on mount to restore chatMode across page navigations.
@@ -1030,7 +1013,7 @@ def get_queue(auth=Depends(get_current_client_or_operator)):
 @router.post("/accept/{session_id}")
 @impersonation_writable
 async def accept_chat(
-    session_id: str,
+    session_id: SessionId,
     request: AcceptChatRequest | None = None,
     auth=Depends(get_current_client_or_operator),
 ):
@@ -1144,7 +1127,7 @@ async def accept_chat(
 
 @router.post("/close/{session_id}")
 @impersonation_writable
-async def close_chat(session_id: str, auth=Depends(get_current_client_or_operator)):
+async def close_chat(session_id: SessionId, auth=Depends(get_current_client_or_operator)):
     """Operator closes a live chat.
 
     Writable under a super-admin impersonation session (design §6.1,
@@ -1195,7 +1178,7 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
 
 @router.post("/resolve/{session_id}")
 @impersonation_writable
-async def resolve_chat(session_id: str, auth=Depends(get_current_client_or_operator)):
+async def resolve_chat(session_id: SessionId, auth=Depends(get_current_client_or_operator)):
     """Operator resolves and hard-closes a live chat.
 
     Writable under a super-admin impersonation session (design §6.1,
@@ -1249,13 +1232,13 @@ async def resolve_chat(session_id: str, auth=Depends(get_current_client_or_opera
 
 
 class TransferRequest(BaseModel):
-    target_operator_id: int | None = None
-    target_department_id: int | None = None
+    target_operator_id: RowId | None = None
+    target_department_id: RowId | None = None
 
 
 @router.post("/transfer/{session_id}")
 @impersonation_writable
-async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_operator)):
+async def transfer_chat(session_id: SessionId, request: TransferRequest, auth=Depends(get_current_client_or_operator)):
     """Transfer a live chat to another operator or department.
 
     Writable under a super-admin impersonation session (design §6.1,
@@ -1656,7 +1639,7 @@ async def set_operator_status(
 
 
 @router.get("/session/{session_id}/details")
-def get_session_details(session_id: str, auth=Depends(get_current_client_or_operator)):
+def get_session_details(session_id: SessionId, auth=Depends(get_current_client_or_operator)):
     """Get full visitor/session details for the operator sidebar."""
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
@@ -1732,8 +1715,15 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_oper
 
 
 class QualificationOverrideRequest(BaseModel):
-    dimension: str
-    score: int = Field(..., ge=0)
+    # A rubric dimension key ("budget", "authority", "metrics", …). The set is
+    # bot-configurable, so it cannot be a ``Literal`` here — the handler checks
+    # membership against that bot's own config. This bounds the shape so a
+    # non-identifier never reaches the lookup or the audit row.
+    dimension: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    # Scores are a 0-100 rubric value and feed the composite tier calculation;
+    # ``ge=0`` alone let an operator write an arbitrarily large score and pin
+    # every session to the top tier.
+    score: int = Field(..., ge=0, le=100)
 
 
 _LEGACY_DIMENSION_TEXT_ATTR = {
@@ -1752,7 +1742,7 @@ _LEGACY_DIMENSION_SCORE_ATTR = {
 
 @router.patch("/session/{session_id}/qualification")
 def override_qualification_dimension(
-    session_id: str, request: QualificationOverrideRequest, auth=Depends(get_current_client_or_operator)
+    session_id: SessionId, request: QualificationOverrideRequest, auth=Depends(get_current_client_or_operator)
 ):
     """Manually correct or reset one qualification dimension's score (BR-03).
 
@@ -1863,7 +1853,7 @@ def list_departments_public(bot: Bot = Depends(get_current_bot)):
 
 @router.post("/upload-chat-file")
 async def upload_chat_file_route(
-    session_id: str = Query(...),
+    session_id: SessionId = Query(...),
     file: UploadFile = File(...),
     auth: dict = Depends(get_current_client_or_operator),
 ):
@@ -1901,20 +1891,13 @@ async def upload_chat_file_route(
 
 
 class VisitorRatingRequest(BaseModel):
-    rating: int | None = None
+    rating: int | None = Field(None, ge=1, le=5)
     resolved: bool | None = None
-
-    @field_validator("rating")
-    @classmethod
-    def validate_rating(cls, v: int | None) -> int | None:
-        if v is not None and (v < 1 or v > 5):
-            raise ValueError("Rating must be between 1 and 5")
-        return v
 
 
 @router.post("/sessions/{session_id}/rating")
 async def submit_visitor_rating(
-    session_id: str,
+    session_id: SessionId,
     body: VisitorRatingRequest,
     bot: Bot = Depends(get_current_bot),
 ):
@@ -2209,7 +2192,7 @@ def get_qualified_bot_sessions(
 
 @router.post("/connect-request/{session_id}")
 async def operator_connect_request(
-    session_id: str,
+    session_id: SessionId,
     request: AcceptChatRequest | None = None,
     auth=Depends(get_current_client_or_operator),
 ):
@@ -2276,7 +2259,7 @@ async def operator_connect_request(
 
 @router.post("/connect-request/{session_id}/cancel")
 async def operator_cancel_connect_request(
-    session_id: str,
+    session_id: SessionId,
     auth=Depends(get_current_client_or_operator),
 ):
     """Operator cancels a pending connect-request before the visitor responds."""
@@ -2297,7 +2280,7 @@ async def operator_cancel_connect_request(
 
 @router.post("/takeover/{session_id}")
 async def takeover_bot_session(
-    session_id: str,
+    session_id: SessionId,
     request: AcceptChatRequest | None = None,
     auth=Depends(get_current_client_or_operator),
 ):

@@ -18,9 +18,10 @@ workers, tests, and scripts.
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from app.api.auth import (
     get_current_affiliate,
@@ -33,6 +34,15 @@ from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
 from app.db.models import Affiliate, Client, ReferralCode
 from app.db.session import get_session
+from app.schemas.validators import (
+    EmailAddress,
+    HttpUrlStr,
+    OptionalName,
+    Password,
+    RequiredName,
+    RowId,
+    Token,
+)
 from app.services import affiliate_service
 from app.services.affiliate_service import (
     INVITE_TTL_DAYS,
@@ -82,18 +92,31 @@ superadmin_router = APIRouter(
 # ─── Pydantic schemas ───────────────────────────────────────────────────
 
 
+# The affiliate's referral code as it appears in a ``?ref=`` URL. It is looked
+# up verbatim, echoed into signup audit rows, and rendered in the affiliate
+# dashboard — so it is an allow-listed slug, not free text.
+AffiliateCode = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=3, max_length=20, pattern=r"^[A-Za-z0-9_\-]+$"),
+]
+
+
 class ValidateCodeResponse(BaseModel):
     valid: bool
     label: str | None = None
 
 
 class ClickRequest(BaseModel):
-    code: str
-    referrer: str | None = None
+    """Unauthenticated click beacon fired from the marketing site."""
+
+    code: AffiliateCode
+    # Stored on the click row and shown in affiliate analytics. Bounded and
+    # scheme-checked; an absent or non-http referrer is simply omitted.
+    referrer: HttpUrlStr | None = None
 
 
 class CreateCodeRequest(BaseModel):
-    code: str = Field(..., min_length=3, max_length=20)
+    code: AffiliateCode
     label: str | None = Field(default=None, max_length=120)
     # Per-code split — what the affiliate keeps + what the referred customer
     # gets. Both whole-percent (0–100). Their sum must not exceed the
@@ -111,7 +134,7 @@ class UpdateCodeRequest(BaseModel):
     # ``code`` (rename) is optional. When present it goes through the same
     # format + uniqueness checks as create_code. Renaming breaks the old
     # ?ref= URL — frontend must warn before sending.
-    code: str | None = Field(default=None, min_length=3, max_length=20)
+    code: AffiliateCode | None = None
     label: str | None = Field(default=None, max_length=120)
     active: bool | None = None
     affiliate_commission_pct: float | None = Field(default=None, ge=0, le=100)
@@ -161,16 +184,11 @@ class MeResponse(BaseModel):
 
 
 class InviteAffiliateRequest(BaseModel):
-    email: str
+    email: EmailAddress
     max_active_codes: int | None = Field(default=None, gt=0, le=100)
     # Whole-percent input (0–100). Backend stores as basis points internally.
     # 0 = no commission (the default for v1's money-free path).
     commission_pct: float | None = Field(default=None, ge=0, le=100)
-
-    @field_validator("email")
-    @classmethod
-    def lower_email(cls, v: str) -> str:
-        return (v or "").strip().lower()
 
 
 class UpdateAffiliateRequest(BaseModel):
@@ -228,16 +246,18 @@ class AcceptInviteLookupResponse(BaseModel):
 
 
 class AcceptInviteRequest(BaseModel):
-    token: str
-    name: str
-    password: str
-    company_name: str | None = None
-    website: str | None = None
+    # Unauthenticated: the token IS the credential, so it is bounded before
+    # the lookup. Not ``min_length``-constrained — a malformed token must get
+    # the same rejection as a wrong one.
+    token: Token
+    name: RequiredName
+    password: Password
+    company_name: OptionalName = None
+    website: OptionalName = None
 
     @field_validator("name")
     @classmethod
     def name_not_empty(cls, v: str) -> str:
-        v = (v or "").strip()
         if len(v) < 2:
             raise ValueError("Name must be at least 2 characters.")
         return v
@@ -308,7 +328,7 @@ def _client_ip(request: Request) -> str | None:
 
 @router.get("/affiliates/validate", response_model=ValidateCodeResponse)
 @limiter.limit("60/minute")
-def validate_code(request: Request, code: str):
+def validate_code(request: Request, code: AffiliateCode = Query(...)):
     """Check whether ``code`` is a valid + active referral code.
 
     Aggressively rate-limited (60/min/IP) so the endpoint cannot be used
@@ -565,7 +585,7 @@ class CodeReferralsResponse(BaseModel):
 
 @router.get("/affiliate/codes/{code_id}/referrals", response_model=CodeReferralsResponse)
 def list_my_code_referrals(
-    code_id: int,
+    code_id: RowId,
     affiliate: Affiliate = Depends(get_current_affiliate),
 ):
     """List the customers who signed up via one of this affiliate's codes.
@@ -640,7 +660,7 @@ def create_my_code(
 @router.patch("/affiliate/codes/{code_id}", response_model=CodeRow)
 def update_my_code(
     request: Request,
-    code_id: int,
+    code_id: RowId,
     body: UpdateCodeRequest,
     affiliate: Affiliate = Depends(get_current_affiliate),
 ):
