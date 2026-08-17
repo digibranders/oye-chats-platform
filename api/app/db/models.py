@@ -1101,6 +1101,20 @@ class OperatorInvite(Base):
         index=True,
     )
 
+    # Bot the invitee will operate. Operators are strictly bot-scoped
+    # (``Operator.bot_id`` is NOT NULL), so acceptance MUST know which bot to
+    # bind the new Operator to — the invite carries that binding end to end.
+    # Seat limits are enforced per-bot; the invite modal, create/accept service
+    # paths, and the invite list (filtered by bot in the UI) all key off this.
+    # ``ON DELETE CASCADE`` mirrors ``operators.bot_id``: deleting a bot voids
+    # any invite that would only have provisioned an operator for it.
+    bot_id = Column(
+        Integer,
+        ForeignKey("bots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     # Target email — always stored lowercased. Uniqueness of pending invites is
     # enforced by the partial index below.
     email = Column(String, nullable=False, index=True)

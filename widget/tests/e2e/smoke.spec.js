@@ -43,7 +43,15 @@ test.describe('OyeChats widget — smoke', () => {
 
   test('identify() persists visitor and survives close/open', async ({ page }) => {
     await page.goto('/')
-    await page.waitForFunction(() => !!window.OyeChats)
+    // `window.OyeChats` exists synchronously as the loader STUB, whose
+    // diagnose() returns undefined and whose calls are merely queued. Wait for
+    // the real implementation to replace it (the app chunk has loaded and
+    // registered) before driving the API — otherwise diagnose() returns
+    // undefined on a cold load and this read races the bootstrap. The real
+    // diagnose() returns a report object; the stub returns undefined.
+    await page.waitForFunction(
+      () => !!window.OyeChats && typeof window.OyeChats.diagnose === 'function' && window.OyeChats.diagnose() != null,
+    )
 
     await page.evaluate(() => {
       window.OyeChats.identify({ name: 'QA', email: 'qa@example.com' })
