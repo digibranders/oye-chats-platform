@@ -177,16 +177,49 @@ async def submit_offline_message(request: Request, body: SubmitOfflineMessageReq
         # is the join key to the stored row; the domain is all the log needs.
         logger.info(f"Offline message saved: {msg.id} from {redact_email(body.email)} for bot {bot.id}")
 
+        # Capture the workspace id while the row is still session-attached; the
+        # operator fan-out below runs after this block closes, where ``bot`` is
+        # detached and attribute access would raise DetachedInstanceError.
+        notify_client_id = bot.client_id
+
     # Notify connected operators about new offline message (live-chat console).
+    #
+    # "Who is connected" MUST come from Redis presence, not from this process's
+    # ``manager.operator_connections``. A fresh ``manager`` in another process has
+    # an always-empty socket table, so iterating it here notified nobody whenever
+    # the submission landed on a process that happened to hold no operator
+    # sockets — and the Web Push fan-out below does not cover the gap, because it
+    # deliberately skips operators "currently on WS" using that same Redis
+    # presence, which correctly reports them online. Both channels stayed silent
+    # and the notification was lost outright.
+    #
+    # ``worker/tasks.py`` hit this exact bug and fixed it the same way; this call
+    # site was simply missed. Delivery goes through the backplane so the frame
+    # reaches the operator wherever their socket actually lives.
     from app.services.live_chat_service import manager
+    from app.services.operator_presence_service import get_online_operator_ids
+    from app.services.ws_backplane import deliver_to_operator
 
     notification = {
         "type": "offline_message_received",
         "visitor_name": body.name.strip(),
         "message_preview": body.message.strip()[:100],
     }
-    for operator_id in list(manager.operator_connections.keys()):
-        await manager._send_to_operator(operator_id, notification)
+    # UNION of Redis presence and this process's own sockets, never just one of
+    # them. Presence alone would be a regression: it lags a socket by up to one
+    # heartbeat, so an operator who has just connected here would be skipped
+    # where the old local-only loop reached them. Local sockets alone is the bug
+    # being fixed. The union is strictly a superset of the old behaviour, which
+    # is what makes this safe to ship with the backplane flag still off.
+    targets: set[int] = set(manager.operator_connections.keys())
+    try:
+        targets |= set(get_online_operator_ids(notify_client_id))
+    except Exception:
+        # Presence is best-effort; degrade to local-only rather than dropping.
+        logger.warning("offline_message: presence lookup failed, using local sockets", exc_info=True)
+
+    for operator_id in targets:
+        await deliver_to_operator(manager, operator_id, notification)
 
     # Fan out a Web Push to off-WS operators + workspace owner so out-of-hours
     # submissions surface as OS notifications, not just emails. The task skips
