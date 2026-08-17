@@ -1551,30 +1551,107 @@ class ConnectionManager:
                 logger.warning(f"Failed to send to operator {operator_id}: {e}")
                 self.disconnect_operator(operator_id)
 
-    async def _notify_operator_queue(self, operator_id: int):
-        """Send current queue to a specific operator (filtered by department), with visitor metadata."""
-        operator_dept = self._operator_departments.get(operator_id)
-        operator_client_id = self._operator_client_ids.get(operator_id)
+    def _visible_queue_for_operator(self, operator_id: int) -> list[dict]:
+        """Build this operator's visible queue from the DATABASE.
 
-        visible_queue = []
-        for sid in self.waiting_queue:
-            # Tenant scoping first: never surface another workspace's queued
-            # visitor (name/reason/bot) to this operator (audit F03).
-            session_client_id = self._session_client_ids.get(sid)
-            if session_client_id is not None and session_client_id != operator_client_id:
-                continue
-            session_dept = self._session_departments.get(sid)
-            if session_dept is None or operator_dept is None or session_dept == operator_dept:
-                meta = self._session_metadata.get(sid, {})
-                visible_queue.append(
+        Derived from ``ChatSession.status == 'waiting'`` rather than the
+        in-process ``waiting_queue`` list and its three sidecar dicts.
+
+        WHY THE DATABASE, AND NOT REDIS. Above one process the in-memory queue
+        diverges immediately: a handoff served by one worker appends only to that
+        worker's list, so operators connected elsewhere never see the visitor,
+        and a cancellation prunes only the process that handled it. Mirroring
+        four structures into Redis would fix the symptom while keeping two
+        sources of truth. Postgres already maintains ``status`` on every
+        handoff / accept / timeout / leave-queue path — ``live_chat_availability_service``
+        derives queue size the same way for the same reason (audit F33, which
+        found the ``live_chat_queue`` table has no write path at all and is
+        permanently empty). Deriving here removes state rather than relocating it.
+
+        Runs sync SQLAlchemy, so callers must invoke it off the event loop.
+        """
+        with get_session() as db:
+            operator_client_id, operator_dept = self._resolve_operator_scope(operator_id, db)
+            if operator_client_id is None:
+                # Fail closed. An operator whose workspace cannot be established
+                # is never shown a queue — the same stance ``_should_notify_operator``
+                # takes for an unknown operator (audit F03).
+                return []
+
+            rows = db.execute(
+                select(ChatSession, Bot)
+                .outerjoin(Bot, Bot.id == ChatSession.bot_id)
+                .where(ChatSession.status == "waiting")
+            ).all()
+
+            visible: list[dict] = []
+            for chat_session, bot in rows:
+                if not self._queue_row_is_visible(
+                    session_client_id=chat_session.client_id,
+                    session_dept=chat_session.department_id,
+                    operator_client_id=operator_client_id,
+                    operator_dept=operator_dept,
+                ):
+                    continue
+
+                lead = get_lead_info_by_session(db, chat_session.id)
+                visible.append(
                     {
-                        "session_id": sid,
-                        "name": meta.get("name", "Anonymous"),
-                        "reason": meta.get("reason"),
-                        "bot_id": meta.get("bot_id"),
-                        "bot_name": meta.get("bot_name"),
+                        "session_id": chat_session.id,
+                        "name": (lead.name if lead and lead.name else "Anonymous"),
+                        "reason": chat_session.handoff_reason,
+                        "bot_id": chat_session.bot_id,
+                        "bot_name": bot.name if bot else None,
                     }
                 )
+            return visible
+
+    def _resolve_operator_scope(self, operator_id: int, db) -> tuple[int | None, int | None]:
+        """Return ``(client_id, department_id)`` for an operator.
+
+        Local maps first: they are populated when the operator connects to THIS
+        process, so for the common case this costs nothing and needs no query.
+        Falls back to the database for an operator connected elsewhere, which is
+        exactly the case that did not exist before the process split.
+        """
+        client_id = self._operator_client_ids.get(operator_id)
+        dept = self._operator_departments.get(operator_id)
+        if client_id is not None:
+            return client_id, dept
+
+        operator = db.get(Operator, operator_id)
+        if operator is None:
+            return None, None
+        return operator.client_id, operator.department_id
+
+    @staticmethod
+    def _queue_row_is_visible(
+        *,
+        session_client_id: int | None,
+        session_dept: int | None,
+        operator_client_id: int | None,
+        operator_dept: int | None,
+    ) -> bool:
+        """Whether one queued session may be shown to one operator.
+
+        Pure, so the tenant-isolation rules stay unit-testable without a database
+        — these are the checks audit F03 added, and they should be assertable in
+        isolation rather than only through a full query.
+
+        Tenant scoping: a session with no ``client_id`` stays visible, matching
+        the original in-memory check which only skipped on a positive mismatch.
+        Department: either side unset means no filtering.
+        """
+        if session_client_id is not None and session_client_id != operator_client_id:
+            return False
+        return session_dept is None or operator_dept is None or session_dept == operator_dept
+
+    async def _notify_operator_queue(self, operator_id: int):
+        """Send current queue to a specific operator (filtered by department), with visitor metadata."""
+        # Off the event loop: this file had no to_thread usage, so its DB work ran
+        # inline and every queue broadcast stalled the loop for all other sockets.
+        # Same reasoning as the chat-path offload in f0c0ef8.
+        visible_queue = await asyncio.to_thread(self._visible_queue_for_operator, operator_id)
 
         await self._send_to_operator(
             operator_id,

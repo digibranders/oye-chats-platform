@@ -924,17 +924,48 @@ async def cancel_handoff(session_id: SessionId, bot: Bot = Depends(get_current_b
         chat_session.assigned_operator_id = None
         session.add(ChatAuditLog(session_id=session_id, action="visitor_cancelled"))
         session.commit()
+        # Capture the workspace while the row is attached — the fan-out below
+        # runs after this block closes, where ``bot`` is detached.
+        notify_client_id = bot.client_id
 
-    # Also clean up in-memory state
+    # Also clean up in-memory state. The DB write above is what actually removes
+    # this visitor from the queue now that the queue is derived from
+    # ``ChatSession.status``; these pops just drop this process's stale copies.
     if session_id in manager.waiting_queue:
         manager.waiting_queue.remove(session_id)
     manager._cancel_timeout(session_id)
     manager._session_departments.pop(session_id, None)
     manager._session_metadata.pop(session_id, None)
 
-    # Notify operators of updated queue
-    for oid in list(manager.operator_connections.keys()):
-        await manager._notify_operator_queue(oid)
+    # Notify operators of updated queue.
+    #
+    # Union of Redis presence and this process's sockets, not the local socket
+    # table alone: an operator connected to another process would otherwise keep
+    # showing a cancelled visitor in their queue indefinitely, since nothing else
+    # pushes a correction. Same pattern and rationale as the offline-message
+    # fan-out. The queue itself is now derived from the database, so every
+    # operator that receives this recomputes the same answer.
+    from app.services.operator_presence_service import get_online_operator_ids
+    from app.services.ws_backplane import deliver_to_operator
+
+    targets: set[int] = set(manager.operator_connections.keys())
+    try:
+        targets |= set(get_online_operator_ids(notify_client_id))
+    except Exception:
+        logger.warning("queue notify: presence lookup failed, using local sockets", exc_info=True)
+
+    for oid in targets:
+        if manager.operator_connections.get(oid) is not None:
+            await manager._notify_operator_queue(oid)
+        else:
+            # Remote operator: recompute their view and publish it, since
+            # _notify_operator_queue writes to a local socket.
+            payload = {
+                "type": "queue_update",
+                "waiting": await asyncio.to_thread(manager._visible_queue_for_operator, oid),
+            }
+            payload["count"] = len(payload["waiting"])
+            await deliver_to_operator(manager, oid, payload)
 
     return {"success": True, "status": "bot"}
 

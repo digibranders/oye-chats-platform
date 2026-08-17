@@ -86,9 +86,21 @@ designed, and the work is to replace it with a Redis publish rather than invent 
 own Redis-down degradation. Any "is this operator online?" question already has a
 process-independent answer.
 
-**3.4 The waiting queue already treats Postgres as the source of truth.**
-`live_chat_queue_service.py` uses Redis only as an index. Queue state does not need
-inventing either.
+**3.4 The queue can be derived from state Postgres already maintains.**
+
+CORRECTION — an earlier draft of this plan said "the waiting queue already treats
+Postgres as the source of truth" via `live_chat_queue_service`. **That is wrong.** That
+service has **no write path**: `enqueue`, `dequeue_next` and `mark_timeout` have zero call
+sites, the `live_chat_queue` table held 0 rows on a cluster that had processed many
+handoffs, and only `abandon()` is ever called — deleting from a table nothing writes to.
+The codebase already documents this as **audit F33** ("reading the always-empty table made
+QUEUE_FULL protection permanently dead and queue positions always 1").
+
+What *is* true, and is the seam worth using: `ChatSession.status` is maintained on every
+handoff / accept / timeout / leave-queue path, and `live_chat_availability_service` already
+derives queue size from it for exactly this reason. So the queue can be derived from
+existing durable state rather than mirrored into Redis — removing state instead of
+relocating it.
 
 ---
 
@@ -170,7 +182,7 @@ stays at 1 until Phase 5 — nothing before it changes production behaviour.
 | **0** | **Guardrails.** A two-process live-chat integration test: visitor on process A, operator on process B, asserting bidirectional delivery and correct transfer. These must **fail** on today's code — that is the proof they test the right thing. Plus a *characterisation* test asserting the atomic accept guard **holds** across processes (exactly one winner, one audit row, loser gets 409) — that one passes today and exists to keep it that way. | 3–4 d | none (test only) |
 | **1** | **One-way publish path.** Redis channels `ws:session:{id}` and `ws:operator:{id}`. WS process runs one subscriber task and fans out to local sockets. Convert Category A. Behind `WS_BACKPLANE_ENABLED`, default off. | 3–4 d | low |
 | **2** | **Connect-request state → Redis.** Category B, all 12 sites. | 2–3 d | low |
-| **3** | **Presence and queue reads → Redis.** Category D. Point `worker/tasks.py` and `offline_message_routes.py` at `operator_presence_service`. | 3–4 d | medium |
+| **3** | **Queue derived from `ChatSession.status`; presence reads via Redis.** Category D. Smaller than first scoped: `worker/tasks.py` was already fixed before this plan was written (its `manager.operator_connections` reference is a *comment* documenting the same bug), and `offline_message_routes.py` was converted in Phase 1. Only the cancel-handoff cleanup and `get_present_bot_session_ids` remained. | 2–3 d | medium |
 | **4** | **Assignment state + transitions.** Category C: move `assignments` (the routing lookup) to Redis and convert the transition notifications to publishes. The DB claim already handles integrity, so this is about delivery and audit-log consistency, not the accept race. | 4–5 d | **medium** |
 | **5** | **Split the process.** New systemd unit for a single-worker uvicorn serving `/ws/*`; nginx `location /ws/` → new upstream; raise `WEB_CONCURRENCY` to 4 **and re-tune the pool in the same change** (see §6.1). | 2–3 d | medium |
 | **6** | **Soak and roll out.** 24 h staging soak with real WebSocket traffic, then production behind the flag. | 2–3 d | low |
