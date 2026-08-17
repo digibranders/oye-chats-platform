@@ -148,6 +148,13 @@ class TestOverrideQualificationDimension:
         assert exc_info.value.status_code == 400
 
     def test_score_above_dimension_max_rejected(self):
+        """The handler still enforces the PER-DIMENSION ceiling.
+
+        ``score=60`` is a legal rubric value (the schema allows 0-100) but sits
+        above this dimension's configured max, so only the handler can catch
+        it — which is the check this test exists for. The absolute 0-100 bound
+        is exercised separately below.
+        """
         chat_session = _meddic_chat_session()
         bot = _meddic_bot()
         session = _fake_db_session(chat_session, bot)
@@ -158,10 +165,19 @@ class TestOverrideQualificationDimension:
         ):
             override_qualification_dimension(
                 "session-1",
-                QualificationOverrideRequest(dimension="economic_buyer", score=999),
+                QualificationOverrideRequest(dimension="economic_buyer", score=60),
                 auth=_client_auth(),
             )
         assert exc_info.value.status_code == 400
+
+    def test_score_outside_the_rubric_range_is_refused_by_the_schema(self):
+        """Scores are a 0-100 rubric value, and the composite tier maths
+        assumes it. An out-of-range score never reaches the handler."""
+        from pydantic import ValidationError
+
+        for bad in (999, -1, 101):
+            with pytest.raises(ValidationError):
+                QualificationOverrideRequest(dimension="economic_buyer", score=bad)
 
     def test_cross_client_access_denied(self):
         chat_session = _meddic_chat_session()

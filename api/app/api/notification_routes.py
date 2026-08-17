@@ -32,6 +32,7 @@ from app.core.middleware import get_cors_origins
 from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Client, Operator
 from app.db.session import get_session
+from app.schemas.validators import RowId
 from app.services import notification_service
 from app.services.notification_broadcaster import broadcaster
 
@@ -91,7 +92,7 @@ def mark_all_read(auth=Depends(get_current_client_or_operator)):
 
 
 @router.patch("/{notification_id}/read")
-def mark_read(notification_id: int, auth=Depends(get_current_client_or_operator)):
+def mark_read(notification_id: RowId, auth=Depends(get_current_client_or_operator)):
     with get_session() as session:
         ok = notification_service.mark_read(session, auth["client_id"], notification_id)
         if not ok:
@@ -104,7 +105,7 @@ def mark_read(notification_id: int, auth=Depends(get_current_client_or_operator)
 
 
 @router.delete("/{notification_id}")
-def delete_one(notification_id: int, auth=Depends(get_current_client_or_operator)):
+def delete_one(notification_id: RowId, auth=Depends(get_current_client_or_operator)):
     with get_session() as session:
         ok = notification_service.delete_notification(session, auth["client_id"], notification_id)
         if not ok:

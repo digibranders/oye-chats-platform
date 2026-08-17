@@ -65,6 +65,23 @@ def _safe_chat_file_content_type(content_type: str | None) -> str:
     return _DEFAULT_CHAT_FILE_CONTENT_TYPE
 
 
+# Object-key extension taken from a caller-supplied file name. The name is
+# never used as a path — the key is ``<prefix>/<uuid4>.<ext>`` — but the
+# extension was previously spliced in verbatim, so a name like
+# ``report.tar.gz/../../x`` produced a key containing separators and traversal
+# segments, and an extension could be arbitrarily long.
+_SAFE_EXTENSION_RE = re.compile(r"^[a-z0-9]{1,12}$")
+_DEFAULT_EXTENSION = "bin"
+
+
+def safe_object_extension(original_filename: str | None) -> str:
+    """Lower-cased, allow-listed extension for an object key, or ``bin``."""
+    if not original_filename or "." not in original_filename:
+        return _DEFAULT_EXTENSION
+    ext = original_filename.rsplit(".", 1)[-1].strip().lower()
+    return ext if _SAFE_EXTENSION_RE.match(ext) else _DEFAULT_EXTENSION
+
+
 class UnsupportedImage(ValueError):
     """The uploaded bytes are not an image we will process.
 
@@ -304,8 +321,7 @@ def upload_chat_file(file_data: bytes, original_filename: str, content_type: str
     Unlike upload_to_r2 (which crops/resizes logos), this preserves files as-is.
     Returns the R2 object key (e.g. 'chat-files/uuid.pdf').
     """
-    ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
-    unique_key = f"chat-files/{uuid.uuid4()}.{ext}"
+    unique_key = f"chat-files/{uuid.uuid4()}.{safe_object_extension(original_filename)}"
 
     # Never store a caller-supplied scriptable content type verbatim: an SVG or
     # HTML payload stored as its declared type could be served inline and

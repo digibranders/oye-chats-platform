@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.api.auth import get_current_client_or_operator, impersonation_writable
 from app.db.models import CannedResponse
 from app.db.session import get_session
+from app.schemas.validators import OptionalName, RequiredLongText, RequiredName, RowId, Shortcut
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +20,20 @@ router = APIRouter(prefix="/canned-responses", tags=["canned-responses"])
 
 
 class CreateCannedResponseRequest(BaseModel):
-    title: str
-    content: str
-    shortcut: str | None = None
-    category: str | None = None
+    title: RequiredName
+    # The body an operator sends verbatim into a live visitor conversation.
+    content: RequiredLongText
+    # A ``/slash`` trigger typed in the composer. Constrained to a slug so it
+    # is actually typeable and cannot collide with composer syntax.
+    shortcut: Shortcut | None = None
+    category: OptionalName = None
 
 
 class UpdateCannedResponseRequest(BaseModel):
-    title: str | None = None
-    content: str | None = None
-    shortcut: str | None = None
-    category: str | None = None
+    title: RequiredName | None = None
+    content: RequiredLongText | None = None
+    shortcut: Shortcut | None = None
+    category: OptionalName = None
 
 
 # ── Endpoints ──
@@ -37,7 +41,7 @@ class UpdateCannedResponseRequest(BaseModel):
 
 @router.get("")
 def list_canned_responses(
-    category: str | None = Query(None),
+    category: OptionalName = Query(None),
     auth=Depends(get_current_client_or_operator),
 ):
     """List canned responses for the client."""
@@ -110,7 +114,7 @@ def create_canned_response(
 @router.patch("/{response_id}")
 @impersonation_writable
 def update_canned_response(
-    response_id: int,
+    response_id: RowId,
     request: UpdateCannedResponseRequest,
     auth=Depends(get_current_client_or_operator),
 ):
@@ -146,7 +150,7 @@ def update_canned_response(
 @router.delete("/{response_id}")
 @impersonation_writable
 def delete_canned_response(
-    response_id: int,
+    response_id: RowId,
     auth=Depends(get_current_client_or_operator),
 ):
     """Delete a canned response.

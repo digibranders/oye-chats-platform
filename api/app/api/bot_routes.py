@@ -1,14 +1,17 @@
 import html
 import ipaddress
 import logging
+import re
 import socket
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated, Literal
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from sqlalchemy import func, select, update
 
 from app.api.auth import (
@@ -27,12 +30,90 @@ from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import Bot, BotGrowthEvent
 from app.db.repository import stamp_manual_avatar
 from app.db.session import get_session
+from app.schemas.validators import (
+    MAX_URL,
+    BotKey,
+    BoundedJsonObject,
+    EmailAddress,
+    GatewayRef,
+    GatewaySignature,
+    HexColor,
+    HttpUrlStr,
+    MediumText,
+    Name,
+    RequiredName,
+    ShortText,
+    bounded_json_object,
+    bounded_list,
+)
 from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
 # (apex + wildcard + a handful of staging/sandbox subdomains) while preventing
 # an accidental or malicious unbounded write.
 _MAX_ALLOWED_DOMAINS = 50
+
+# Recipients per notification bucket. Generous for a support inbox list, small
+# enough that a save can never fan a single event out to a mailing campaign.
+_MAX_NOTIFICATION_RECIPIENTS = 20
+
+# 24-hour ``HH:MM``. Anchored so "09:00 OR 1=1" is not a valid start time.
+_HHMM_PATTERN = r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+
+# Ceilings for the list-valued agent config. Each is well above what the
+# admin UI can produce and well below what would bloat the system prompt.
+_MAX_SERVICES = 50
+_MAX_ANSWER_LINKS = 50
+_MAX_LEAD_FORM_FIELDS = 10
+
+# ``bant_config`` holds a full qualification rubric (four-plus dimensions,
+# each with prompts and scored options), so it gets a larger budget than the
+# generic object ceiling — but a budget nonetheless. Its strings are
+# interpolated into the LLM system prompt on every turn.
+_MAX_BANT_CONFIG_BYTES = 128 * 1024
+
+# The customer's own website. Free-form on purpose — ``normalize_domain_input``
+# accepts a bare apex ("acme.com") as readily as a full URL, and the signup
+# form has always let people type either — so this bounds length and bans
+# control characters without imposing a scheme the UI never asked for.
+WebsiteRef = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=253 + 16, pattern=r"^[\x20-\x7E]+$"),
+]
+
+# An avatar reference is EITHER an absolute http(s) URL (R2/CDN object, or a
+# favicon derived during a crawl) OR a stored object key served back through
+# ``/files/{key}`` — ``client_routes`` branches on ``startswith("http")`` to
+# tell them apart. Both forms are accepted; anything carrying another scheme
+# is not, because the value is rendered as an ``<img src>`` in the widget on
+# the customer's page and in the admin dashboard.
+#
+# Stored keys carry a prefix ("logos/abc.png"), so the key form is a bounded
+# sequence of safe segments — relative, no traversal, no empty segments.
+_LOGO_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$")
+_MAX_LOGO_KEY_SEGMENTS = 6
+
+
+def _validate_logo_ref(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("Logo reference must not be empty.")
+    if len(value) > MAX_URL:
+        raise ValueError(f"Logo reference must be {MAX_URL} characters or fewer.")
+    if value.lower().startswith(("http://", "https://")):
+        parsed = urlparse(value)
+        if not parsed.hostname:
+            raise ValueError("Logo URL must contain a valid hostname.")
+        return value
+    segments = value.split("/")
+    if 1 <= len(segments) <= _MAX_LOGO_KEY_SEGMENTS and all(_LOGO_SEGMENT_RE.match(seg) for seg in segments):
+        # ``..`` cannot match the segment pattern (it must start alphanumeric),
+        # and a leading/trailing slash yields an empty segment that also fails.
+        return value
+    raise ValueError("Logo must be an http(s) URL or a stored object key.")
+
+
+LogoRef = Annotated[str, AfterValidator(_validate_logo_ref)]
 
 
 def _normalize_allowed_domains(raw: list[str] | None) -> list[str]:
@@ -224,14 +305,129 @@ def _record_growth_event(session, bot_id: int, event_type: str) -> None:
 # ── Request / Response Models ──
 
 
+class NotificationEmailRouting(BaseModel):
+    """Per-event notification recipients (``bot.notification_emails``).
+
+    Previously a bare ``dict``: whatever the caller sent was written to JSONB
+    and later handed to the transactional email provider as a recipient list.
+    An unvalidated address there is not a cosmetic problem — it is who the
+    customer's lead notifications get delivered to. Each bucket is now an
+    allow-listed key holding validated, de-duplicated addresses.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Keys are the ``event_type`` values ``email_service.get_notification_recipients``
+    # is called with, and nothing else. ``extra="forbid"`` is what makes that
+    # true: a bucket named for an event that is never looked up would save
+    # cleanly and route no mail, which reads to the customer as lost alerts.
+    default: Annotated[list[EmailAddress], bounded_list(_MAX_NOTIFICATION_RECIPIENTS)] = []
+    qualified_lead: Annotated[list[EmailAddress], bounded_list(_MAX_NOTIFICATION_RECIPIENTS)] = []
+    handoff_request: Annotated[list[EmailAddress], bounded_list(_MAX_NOTIFICATION_RECIPIENTS)] = []
+    offline_message: Annotated[list[EmailAddress], bounded_list(_MAX_NOTIFICATION_RECIPIENTS)] = []
+
+
+class DayHours(BaseModel):
+    """One day's open window, ``{"start": "09:00", "end": "17:00"}``.
+
+    A day is marked closed by setting the whole day to ``null``, which is what
+    ``live_chat_availability_service._within_business_hours`` reads. No
+    ``closed`` flag is accepted here on purpose: a field the evaluator does
+    not consult would store fine and change nothing, which is worse than
+    rejecting it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    start: str = Field(..., pattern=_HHMM_PATTERN)
+    end: str = Field(..., pattern=_HHMM_PATTERN)
+
+
+class BusinessHours(BaseModel):
+    """Weekly schedule keyed by three-letter day, plus an optional IANA zone.
+
+    ``extra="forbid"`` matters here specifically: the availability service
+    looks days up by these exact keys, so a payload with ``"monday"`` instead
+    of ``"mon"`` used to be stored intact and then silently ignored at
+    runtime — the customer's agent stayed offline all Monday with a schedule
+    on screen that said otherwise. Now it is a 422 at save time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mon: DayHours | None = None
+    tue: DayHours | None = None
+    wed: DayHours | None = None
+    thu: DayHours | None = None
+    fri: DayHours | None = None
+    sat: DayHours | None = None
+    sun: DayHours | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, v: str | None) -> str | None:
+        """Reject a zone ``zoneinfo`` cannot load.
+
+        The evaluator catches the lookup failure and fails OPEN — the agent
+        reports itself available around the clock. A typo in this field is
+        therefore a silent availability change, so it is caught at write time
+        instead.
+        """
+        if v is None:
+            return None
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"'{v}' is not a known IANA timezone.") from exc
+        return v
+
+
+class LeadFormField(BaseModel):
+    """One row of the configurable pre-chat lead form.
+
+    Exactly the shape both clients produce and consume — the admin app writes
+    ``{field, required}`` and the widget's ``LeadCaptureForm`` renders those
+    four field names. Anything else was previously stored and then dropped on
+    read, so it is rejected here instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: Literal["name", "email", "phone", "company"]
+    required: bool = False
+
+
+class ServiceEntry(BaseModel):
+    """``{"name": ..., "url": ...}`` — a service the agent can talk about."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=200)
+    url: HttpUrlStr | None = None
+
+
+class AnswerLink(BaseModel):
+    """A smart link: keyword trigger → destination."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    keyword: str = Field(..., min_length=1, max_length=80)
+    url: HttpUrlStr
+
+
 class CreateBotRequest(BaseModel):
-    name: str = "AI Assistant"
-    website: str | None = None
-    system_prompt: str | None = None
+    name: RequiredName = "AI Assistant"
+    website: WebsiteRef | None = None
+    # Same ceiling ``UpdateBotRequest`` uses — and the same one
+    # ``rag_service._MAX_CUSTOM_PROMPT_CHARS`` enforces at generation time. It
+    # was absent here, so a prompt could be created larger than it could ever
+    # be edited to.
+    system_prompt: str | None = Field(None, max_length=2000)
     bant_enabled: bool = True
     # Optional override of the auto-derived domain list. When omitted the route
     # derives ``[apex, *.apex]`` from ``website`` and turns the check on.
-    allowed_domains: list[str] | None = None
+    allowed_domains: Annotated[list[str], bounded_list(_MAX_ALLOWED_DOMAINS)] | None = None
     domain_check_enabled: bool | None = None
 
     @field_validator("allowed_domains")
@@ -243,39 +439,52 @@ class CreateBotRequest(BaseModel):
 
 
 class UpdateBotRequest(BaseModel):
-    name: str | None = None
+    name: RequiredName | None = None
     # max_length matches _MAX_CUSTOM_PROMPT_CHARS in rag_service — enforced at API boundary
     system_prompt: str | None = Field(None, max_length=2000)
     brand_tone: str | None = Field(None, max_length=500)
     # A preset key, "custom", or None — the active chip in the AI & Personality tab.
-    brand_tone_preset: str | None = None
+    brand_tone_preset: str | None = Field(None, max_length=64)
     company_name: str | None = Field(None, max_length=100)
     company_description: str | None = Field(None, max_length=1000)
-    website: str | None = None
-    bot_logo: str | None = None
-    launcher_name: str | None = None
-    launcher_logo: str | None = None
-    primary_color: str | None = None
-    background_color: str | None = None
-    header_color: str | None = None
-    user_bubble_color: str | None = None
+    website: WebsiteRef | None = None
+    bot_logo: LogoRef | None = None
+    launcher_name: Name | None = None
+    launcher_logo: LogoRef | None = None
+    # Written straight into the widget's inline styles on the customer's own
+    # site. Constrained to hex so the value is a colour and nothing else —
+    # every default this platform ships and every value its colour picker
+    # emits is already in this form.
+    primary_color: HexColor | None = None
+    background_color: HexColor | None = None
+    header_color: HexColor | None = None
+    user_bubble_color: HexColor | None = None
     bant_enabled: bool | None = None
-    bant_config: dict | None = None
-    qualification_framework: str | None = None
+    # A full qualification rubric. Stored wholesale (see the handler) and its
+    # strings are interpolated into the LLM system prompt every turn, so it is
+    # size- and depth-bounded even though its inner keys are product-defined.
+    bant_config: Annotated[dict, bounded_json_object(max_bytes=_MAX_BANT_CONFIG_BYTES, max_depth=8)] | None = None
+    qualification_framework: Literal["bant", "meddic"] | None = None
     # CRAG relevance gate threshold override. None = use env default (0.55).
     # 0.0 = always pass (effectively disable), 1.0 = always fail (refuse everything).
     # Reasonable range 0.40 (lenient) – 0.70 (strict). Out-of-range writes are
     # rejected at the API; runtime ALSO clamps in case a bad value slipped past.
     relevance_threshold: float | None = Field(None, ge=0.0, le=1.0)
-    avatar_type: str | None = None
-    orb_color: str | None = None
+    # The three styles the admin preview and ``BotAvatar`` actually render.
+    # A fourth value would store fine and fall through to the "upload" branch
+    # everywhere, so it is refused rather than silently reinterpreted.
+    avatar_type: Literal["upload", "orb", "mascot"] | None = None
+    orb_color: HexColor | None = None
     # Lead form settings
     lead_form_enabled: bool | None = None
-    lead_form_fields: list[dict] | None = None
-    # Email notification settings
-    notification_email: str | None = None
-    notification_emails: dict | None = None
-    reply_to_email: str | None = None
+    lead_form_fields: Annotated[list[LeadFormField], bounded_list(_MAX_LEAD_FORM_FIELDS)] | None = None
+    # Email notification settings. Both are recipient addresses for the
+    # customer's own lead notifications — validated, not merely bounded,
+    # because an unparseable address here means a lead alert silently goes
+    # nowhere.
+    notification_email: EmailAddress | None = None
+    notification_emails: NotificationEmailRouting | None = None
+    reply_to_email: EmailAddress | None = None
     email_on_qualified: bool | None = None
     email_on_handoff: bool | None = None
     email_on_offline: bool | None = None
@@ -287,26 +496,28 @@ class UpdateBotRequest(BaseModel):
     company_lookup_enabled: bool | None = None
     # Live chat settings
     live_chat_enabled: bool | None = None
-    operator_timeout_seconds: int | None = None
+    operator_timeout_seconds: int | None = Field(None, ge=5, le=3600)
     live_chat_queue_timeout_seconds: int | None = Field(None, ge=5, le=600)
     live_chat_max_queue_size: int | None = Field(None, ge=1, le=100)
     # Business hours
-    business_hours: dict | None = None
-    # Feature flags — partial merge applied on PATCH (existing flags are preserved)
-    feature_flags: dict | None = None
-    # Widget messages — all customizable user-facing strings
-    widget_messages: dict | None = None
-    # Widget configuration — timing, thresholds, advanced settings
-    widget_config: dict | None = None
+    business_hours: BusinessHours | None = None
+    # Feature flags / widget copy / widget tuning. These three are genuinely
+    # open-ended maps — their keys are product config, not API contract, and
+    # the PATCH handler shallow-merges each into what is stored. Open-ended is
+    # not unbounded: each is held to the default object budget (64 KB, 6
+    # levels, 200 keys) so a JSONB column cannot be used as free storage.
+    feature_flags: BoundedJsonObject | None = None
+    widget_messages: BoundedJsonObject | None = None
+    widget_config: BoundedJsonObject | None = None
     # Branding customization
-    branding_text: str | None = None
-    branding_url: str | None = None
+    branding_text: Name | None = None
+    branding_url: HttpUrlStr | None = None
     # Configurable visitor-facing messages
-    welcome_title: str | None = None
-    welcome_subtitle: str | None = None
-    waiting_message: str | None = None
-    offline_message: str | None = None
-    handoff_delay_seconds: int | None = None
+    welcome_title: Name | None = None
+    welcome_subtitle: ShortText | None = None
+    waiting_message: ShortText | None = None
+    offline_message: MediumText | None = None
+    handoff_delay_seconds: int | None = Field(None, ge=0, le=3600)
     calendly_url: str | None = None
     meeting_booking_enabled: bool | None = None
     meeting_provider: str | None = Field(None, pattern="^(calendly|zcal|calcom)$")
@@ -315,17 +526,19 @@ class UpdateBotRequest(BaseModel):
     # Each service is ``{name: str, url: str | None}``. Strings are accepted
     # for backward compat with the v1 list[str] shape and normalized to
     # ``{"name": str, "url": None}`` in the route handler.
-    services: list[dict | str] | None = None
-    services_url: str | None = None  # Legacy global URL — kept for compat, no longer used by prompt.
-    # Smart links — each entry is ``{keyword: str, url: str}``. Normalized in the
-    # route handler (drops blank keywords / non-http URLs, de-dupes, caps count).
-    answer_links: list[dict] | None = None
+    services: Annotated[list[ServiceEntry | str], bounded_list(_MAX_SERVICES)] | None = None
+    services_url: str | None = Field(None, max_length=MAX_URL)  # Legacy global URL — no longer used by prompt.
+    # Smart links — each entry is ``{keyword, url}``. ``_normalize_answer_links``
+    # in the handler still de-dupes and drops blanks; the model now rejects a
+    # malformed entry outright rather than letting the normalizer discard it,
+    # so a typo'd URL is a visible 422 instead of a link that never appears.
+    answer_links: Annotated[list[AnswerLink], bounded_list(_MAX_ANSWER_LINKS)] | None = None
     # Widget embed origin restriction.
-    allowed_domains: list[str] | None = None
+    allowed_domains: Annotated[list[str], bounded_list(_MAX_ALLOWED_DOMAINS)] | None = None
     domain_check_enabled: bool | None = None
     # Cross-subdomain session continuity. Empty string clears it (disables
     # sharing); a bare/registrable domain enables it.
-    session_share_domain: str | None = None
+    session_share_domain: str | None = Field(None, max_length=253)
 
     @field_validator("allowed_domains")
     @classmethod
@@ -1325,8 +1538,12 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
 @limiter.limit("20/minute")
 def get_bot_demo_page(
     request: Request,
-    bot_key: str,
-    url: str | None = Query(default=None),
+    # Unauthenticated route. ``bot_key`` is the public embed key
+    # (``bot-<hex>``) used verbatim in a DB lookup; ``url`` is fed to
+    # ``_validate_preview_url``, which performs DNS resolution — so both are
+    # bounded before either does any work.
+    bot_key: BotKey,
+    url: str | None = Query(default=None, max_length=MAX_URL),
     edit: int = Query(default=0, ge=0, le=1),
 ):
     """Render a shareable demo page, or an iframe-based preview when *url* is supplied.
@@ -1701,8 +1918,8 @@ class BotCheckoutRequest(BaseModel):
     """
 
     name: str = Field(..., min_length=1, max_length=120)
-    website: str | None = None
-    plan_slug: str = Field(..., min_length=1, max_length=64)
+    website: WebsiteRef | None = None
+    plan_slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_\-]+$")
     billing_cycle: str = Field(default="monthly", pattern="^(monthly|annual)$")
     allowed_domains: list[str] | None = None
     domain_check_enabled: bool | None = None
@@ -1725,9 +1942,13 @@ class BotCheckoutVerifyRequest(BaseModel):
     circuits when the local row already exists).
     """
 
-    razorpay_payment_id: str
-    razorpay_subscription_id: str
-    razorpay_signature: str
+    # Gateway-issued opaque handles, echoed back by the browser after
+    # checkout. Bounded before they reach the signature comparison and the
+    # gateway lookup; ``pay_``/``sub_`` ids are ~20 chars and the HMAC is 64
+    # hex characters.
+    razorpay_payment_id: GatewayRef
+    razorpay_subscription_id: GatewayRef
+    razorpay_signature: GatewaySignature
 
 
 @router.post("/checkout")

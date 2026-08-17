@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Affiliate, Bot, Client, ImpersonationToken, Operator, Subscription
 from app.db.session import get_session
+from app.schemas.validators import RowId
 from app.services import plan_service
 from app.services.audit_service import record_audit
 from app.services.runtime_config import is_impersonation_enabled
@@ -57,6 +59,54 @@ impersonation_token_header = APIKeyHeader(name=IMPERSONATION_TOKEN_NAME, auto_er
 # already holds the token, so distinguishing the failure modes would only help
 # someone probing with tokens they never had.
 IMPERSONATION_REJECTED_DETAIL = "Impersonation session expired or revoked."
+
+# ── Credential shape ─────────────────────────────────────────────────────────
+#
+# Every credential above is a header, and headers get none of the schema
+# validation a request body does — ``APIKeyHeader`` hands the value through
+# verbatim. Each one is then used as an equality filter in a DB query and, for
+# the bot key, as a Redis cache-key fragment. A megabyte-long header is
+# therefore a megabyte-long cache key and a megabyte-long query parameter, and
+# a header carrying control characters lands in log lines unaltered.
+#
+# The two properties worth enforcing are LENGTH and the absence of control
+# characters. Those are what actually cause harm here: length because the
+# value becomes a cache key and a query parameter, control characters because
+# they reach log lines verbatim.
+#
+# Deliberately NOT a charset allow-list. Every credential this platform mints
+# today is a ``uuid4().hex``, so a hex-only rule would fit — but seeded and
+# legacy accounts carry other shapes, and narrowing the charset would lock
+# those accounts out to prevent nothing: a key that does not match a stored
+# credential already fails the lookup. Guessing at a format the platform never
+# promised trades real availability for no security.
+#
+# A rejected header is treated as an ABSENT one, so the caller falls through to
+# its normal "missing credential" path. An oversized header is therefore
+# indistinguishable from no header at all, and nothing about this check is
+# observable to someone probing.
+_MAX_CREDENTIAL_LEN = 256
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _usable_credential(raw: object) -> str | None:
+    """Return *raw* if it could be one of our credentials, else ``None``.
+
+    Typed ``object``, not ``str | None``, on purpose. These resolvers are also
+    invoked DIRECTLY rather than through ``Depends`` (see the call in
+    ``chat_routes.get_history_endpoint``), and an argument the caller leaves
+    unfilled arrives as a ``fastapi.params.Security`` sentinel — an object that
+    is truthy and has no string methods. Treating a non-string as "no
+    credential" is both the safe reading and the one that matches how those
+    call sites already expect unfilled parameters to behave.
+    """
+    if not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    if not raw or len(raw) > _MAX_CREDENTIAL_LEN or _CONTROL_CHARS_RE.search(raw):
+        return None
+    return raw
+
 
 # Methods an impersonated session may always use — they cannot mutate the
 # customer's Account.
@@ -456,6 +506,13 @@ def get_current_client(
     ``get_current_bot`` instead; admin-only endpoints requiring strict client
     auth should use ``get_current_client_strict``.
     """
+    # Header credentials get no schema validation — normalise every one to a
+    # usable shape (or None) before it reaches a query, a cache key or a log
+    # line. See ``_usable_credential``.
+    api_key = _usable_credential(api_key)
+    operator_key = _usable_credential(operator_key)
+    legacy_agent_key = _usable_credential(legacy_agent_key)
+    impersonation_token = _usable_credential(impersonation_token)
     if impersonation_token:
         return _resolve_impersonated_client(request, impersonation_token)
 
@@ -529,6 +586,11 @@ def get_current_operator(
     Dependency: Authenticate an Operator via X-Operator-Key header.
     Returns the Operator object with client_id accessible for scoping queries.
     """
+    # Header credentials get no schema validation — normalise every one to a
+    # usable shape (or None) before it reaches a query, a cache key or a log
+    # line. See ``_usable_credential``.
+    operator_key = _usable_credential(operator_key)
+    legacy_agent_key = _usable_credential(legacy_agent_key)
     effective_key = _resolve_operator_key(operator_key, legacy_agent_key)
     if not effective_key:
         raise HTTPException(
@@ -598,6 +660,13 @@ def get_current_client_or_operator(
     implicitly scoped to their one workspace). ``X-API-Key`` sessions without
     an ``X-Workspace-Id`` header default to the caller's own workspace.
     """
+    # Header credentials get no schema validation — normalise every one to a
+    # usable shape (or None) before it reaches a query, a cache key or a log
+    # line. See ``_usable_credential``.
+    api_key = _usable_credential(api_key)
+    operator_key = _usable_credential(operator_key)
+    legacy_agent_key = _usable_credential(legacy_agent_key)
+    impersonation_token = _usable_credential(impersonation_token)
     if impersonation_token:
         client = _resolve_impersonated_client(request, impersonation_token)
         return {
@@ -771,6 +840,11 @@ def get_current_client_strict(
     the sensitive mutations these routes carry stay denied unless explicitly
     marked with :func:`impersonation_writable`.
     """
+    # Header credentials get no schema validation — normalise every one to a
+    # usable shape (or None) before it reaches a query, a cache key or a log
+    # line. See ``_usable_credential``.
+    api_key = _usable_credential(api_key)
+    impersonation_token = _usable_credential(impersonation_token)
     if impersonation_token:
         return _resolve_impersonated_client(request, impersonation_token)
 
@@ -1069,6 +1143,11 @@ def get_current_bot(
     returned on mismatch. The X-API-Key fallback path is intentionally exempt
     (the admin dashboard manages its own bot from inside the dashboard).
     """
+    # Header credentials get no schema validation — normalise every one to a
+    # usable shape (or None) before it reaches a query, a cache key or a log
+    # line. See ``_usable_credential``.
+    bot_key = _usable_credential(bot_key)
+    api_key = _usable_credential(api_key)
     # Fast path: check Redis cache for bot_key lookups
     if bot_key:
         cached = cache_get(bot_config_key(bot_key))
@@ -1233,7 +1312,7 @@ def _resolve_preview_client(
 def get_bot_for_chat(
     request: Request,
     preview: bool = Query(False, description="Owner-preview mode (Build Studio)"),
-    bot_id: int | None = Query(None, description="Bot ID (owner-preview only)"),
+    bot_id: RowId | None = Query(None, description="Bot ID (owner-preview only)"),
     bot_key: str = Security(bot_key_header),
     api_key: str = Security(api_key_header),
     impersonation_token: str = Security(impersonation_token_header),
@@ -1255,6 +1334,12 @@ def get_bot_for_chat(
     deduction). Every other request falls through to ``get_current_bot``
     unchanged, so existing (non-preview) widget traffic is unaffected.
     """
+    # Header credentials get no schema validation — normalise every one to a
+    # usable shape (or None) before it reaches a query, a cache key or a log
+    # line. See ``_usable_credential``.
+    bot_key = _usable_credential(bot_key)
+    api_key = _usable_credential(api_key)
+    impersonation_token = _usable_credential(impersonation_token)
     if preview and bot_id is not None and (api_key or impersonation_token):
         with get_session() as session:
             client = _resolve_preview_client(session, api_key, impersonation_token)
@@ -1292,7 +1377,7 @@ def get_bot_for_chat(
 
 
 def get_client_bot(
-    bot_id: int = Query(..., description="Bot ID"),
+    bot_id: RowId = Query(..., description="Bot ID"),
     client: Client = Depends(get_current_client),
 ):
     """
