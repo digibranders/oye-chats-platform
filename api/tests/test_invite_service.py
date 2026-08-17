@@ -7,16 +7,13 @@ rows, seat checks count real ``Operator`` rows, partial-unique indexes enforce
 "one pending invite per email"), so these run against the shared throwaway
 Postgres ``db`` fixture from ``conftest.py`` rather than mocks.
 
-KNOWN BUG (see the module report): ``invite_service.create_invite`` constructs
-``OperatorInvite(bot_id=...)`` and ``accept_invite`` reads ``invite.bot_id``,
-but ``OperatorInvite`` has no ``bot_id`` column in either the ORM model or the
-baseline schema. Every code path that reaches the ``OperatorInvite`` constructor
-or ``_require_seat_available(..., invite.bot_id)`` therefore raises at runtime.
-These tests exercise every branch that is reachable BEFORE that point — all the
-guardrails (which raise first), the token helpers, ``get_invite_by_token``,
-``revoke_invite``, ``resend_invite``, and the accept branches that never touch
-``bot_id``. The success paths of create/accept are intentionally NOT asserted as
-working, because they cannot be until the missing column is added.
+Invites are BOT-SCOPED: ``operators.bot_id`` is NOT NULL, so acceptance builds
+an ``Operator`` bound to a specific bot, and the invite carries that binding
+(``operator_invites.bot_id``) end to end — the create path validates the bot
+belongs to the workspace, seat limits count per-bot, and acceptance provisions
+the operator on ``invite.bot_id``. These tests cover the full lifecycle
+including the create/accept SUCCESS paths and cross-bot / cross-workspace
+isolation.
 """
 
 import hashlib
@@ -111,17 +108,27 @@ def make_operator(db, owner, bot, *, email=None, linked_client=None, role="opera
 
 
 def make_invite(
-    db, ws, *, email, status="pending", role="operator", expires_in_days=7, resend_count=0, token_plaintext=None
+    db,
+    ws,
+    *,
+    email,
+    status="pending",
+    role="operator",
+    expires_in_days=7,
+    resend_count=0,
+    token_plaintext=None,
+    bot=None,
 ):
-    """Insert an OperatorInvite directly (bypassing the broken create_invite).
+    """Insert an OperatorInvite directly, mirroring the persisted shape.
 
-    OperatorInvite has no bot_id column, so we never pass one — this mirrors the
-    actual persisted shape and lets us test the invite lifecycle functions that
-    don't depend on the missing column.
+    Invites are bot-scoped, so ``bot_id`` is always set — defaulting to the
+    workspace's own bot (``ws.bot``) and overridable via ``bot`` for the
+    cross-bot isolation tests.
     """
     plaintext = token_plaintext or secrets.token_urlsafe(32)
     inv = OperatorInvite(
         client_id=ws.workspace_id,
+        bot_id=(bot or ws.bot).id,
         email=email.lower(),
         role=role,
         token_hash=hashlib.sha256(plaintext.encode()).hexdigest(),
@@ -418,6 +425,119 @@ class TestAcceptInviteGuards:
         assert invite.status == "accepted"
         assert invite.accepted_by_client_id == invitee.id
         assert invite.accepted_at is not None
+
+
+# ── create / accept SUCCESS paths (bot-scoped, end to end) ───────────────────
+
+
+class TestCreateAcceptSuccess:
+    """Happy paths reachable now that ``operator_invites`` has a ``bot_id``
+    column — the binding the whole flow depends on. Each asserts the bot scope
+    is carried through, not merely that the call didn't raise."""
+
+    def test_create_persists_bot_scoped_pending_invite(self, db):
+        ws = setup_workspace(db)
+        invite, plaintext = svc.create_invite(
+            db,
+            workspace_id=ws.workspace_id,
+            email="New.Op@Example.com",
+            role="admin",
+            bot_id=ws.bot.id,
+            department_id=None,
+            invited_by=ws.owner,
+        )
+        db.commit()
+
+        assert invite.id is not None
+        assert invite.bot_id == ws.bot.id  # the load-bearing binding is persisted
+        assert invite.client_id == ws.workspace_id
+        assert invite.email == "new.op@example.com"  # normalized (lowercased/trimmed)
+        assert invite.role == "admin"
+        assert invite.status == "pending"
+        # Only the hash is stored; the plaintext resolves back to this exact row.
+        assert invite.token_hash == hashlib.sha256(plaintext.encode()).hexdigest()
+        assert svc.get_invite_by_token(db, plaintext).id == invite.id
+
+    def test_accept_provisions_operator_on_the_invite_bot(self, db):
+        ws = setup_workspace(db)
+        invite, _ = svc.create_invite(
+            db,
+            workspace_id=ws.workspace_id,
+            email="join@example.com",
+            role="operator",
+            bot_id=ws.bot.id,
+            department_id=None,
+            invited_by=ws.owner,
+        )
+        db.commit()
+        invitee = make_client(db, email="join@example.com")
+
+        operator = svc.accept_invite(db, invite, invitee)
+        db.commit()
+
+        # A real Operator row, bound to the invite's bot and the accepting identity.
+        assert operator.id is not None
+        assert operator.bot_id == ws.bot.id
+        assert operator.client_id == ws.workspace_id
+        assert operator.linked_client_id == invitee.id
+        assert operator.role == "operator"
+        assert operator.is_active is True
+        # Invite is consumed exactly once and attributed to the accepter.
+        assert invite.status == "accepted"
+        assert invite.accepted_by_client_id == invitee.id
+        assert invite.accepted_at is not None
+        assert _active_op_count(db, ws.owner.id, ws.bot.id) == 1
+
+    def test_reactivation_reassigns_to_the_new_invite_bot(self, db):
+        # Invitee operated bot A, was revoked (soft-deleted), and is re-invited
+        # to bot B. Accepting reactivates the SAME row and moves it to bot B —
+        # the re-invite's binding wins, and no duplicate operator is created.
+        ws = setup_workspace(db, operators_ceiling=5)
+        bot_b = make_bot(db, ws.owner)
+        invitee = make_client(db, email="return@example.com")
+        stale = make_operator(db, ws.owner, ws.bot, email="return@example.com", linked_client=invitee, is_active=False)
+        invite, _ = make_invite(db, ws, email="return@example.com", bot=bot_b)
+
+        result = svc.accept_invite(db, invite, invitee)
+        db.commit()
+
+        assert result.id == stale.id  # same row reactivated, not a second operator
+        assert result.is_active is True
+        assert result.bot_id == bot_b.id  # reassigned to the new invite's bot
+        assert invite.status == "accepted"
+
+    def test_seat_limit_is_enforced_per_bot(self, db):
+        # Bot A is full (ceiling 1, one operator); bot B has room. Inviting to A
+        # is refused while inviting to B succeeds — seats are counted per-bot,
+        # so the binding is not cosmetic.
+        ws = setup_workspace(db, operators_ceiling=1, included_seats=1, operator_quantity=1)
+        bot_b = make_bot(db, ws.owner)
+        make_operator(db, ws.owner, ws.bot, email="full@example.com")  # fills bot A
+
+        with pytest.raises(svc.InviteError) as exc:
+            svc.create_invite(
+                db,
+                workspace_id=ws.workspace_id,
+                email="blocked@example.com",
+                role="operator",
+                bot_id=ws.bot.id,
+                department_id=None,
+                invited_by=ws.owner,
+            )
+        assert exc.value.code == "seat_limit_reached"
+
+        # Same workspace, same plan, different bot → allowed.
+        invite, _ = svc.create_invite(
+            db,
+            workspace_id=ws.workspace_id,
+            email="allowed@example.com",
+            role="operator",
+            bot_id=bot_b.id,
+            department_id=None,
+            invited_by=ws.owner,
+        )
+        db.commit()
+        assert invite.bot_id == bot_b.id
 
 
 # ── revoke_invite ────────────────────────────────────────────────────────────
