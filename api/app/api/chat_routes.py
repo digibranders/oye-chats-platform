@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import hashlib
 import html as html_lib
@@ -1013,6 +1014,52 @@ def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
         logger.exception("Failed to refund ai_chat credit for bot %s", getattr(bot, "id", "?"))
 
 
+def _deduct_ai_chat_credit_sync(bot: Bot) -> int:
+    """Deduct one ``ai_chat`` credit and return the cost charged.
+
+    Extracted verbatim from the streaming endpoint so the blocking synchronous
+    DB work (get_session + check_and_deduct + commit) can run in a threadpool via
+    ``asyncio.to_thread`` instead of on the async event loop, where it stalled
+    every concurrent chat. Semantics are unchanged: on an empty balance it raises
+    HTTP 402, on the billing kill switch HTTP 503 — both propagate out of
+    ``to_thread`` to the caller exactly as an inline raise would. Callers must
+    skip this for preview replies (they are free).
+    """
+    from app.services import credit_service
+
+    with get_session() as db:
+        cost = credit_service.get_credit_cost(db, "ai_chat")
+        try:
+            credit_service.check_and_deduct(
+                db,
+                bot.client_id,
+                cost,
+                reason="ai_chat",
+                reference_id=bot.id,
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
+                attributed_bot_id=bot.id,  # attribution — always the real bot
+            )
+            db.commit()
+        except credit_service.InsufficientCredits as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_credits",
+                    "required": exc.required,
+                    "available": exc.available,
+                    "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
+                },
+            ) from exc
+        except credit_service.KillSwitchActive as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
+            ) from exc
+    return cost
+
+
 def _final_metadata_failure_flag(chunk: str) -> bool | None:
     """If ``chunk`` IS a terminal ``FINAL_METADATA`` frame, return its
     ``generation_failed`` flag (bool); otherwise return None.
@@ -1217,7 +1264,13 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     # stream the offline message rather than running the RAG pipeline. No
     # credits are deducted; the SSE shape stays the same so the widget
     # renders the message exactly like a normal short reply.
-    owner_status = bot_subscription_status(bot.client_id, subscription_id=getattr(bot, "subscription_id", None))
+    #
+    # These pre-stream checks are synchronous SQLAlchemy work; run them in a
+    # threadpool (asyncio.to_thread) so they never block the single event loop
+    # that is concurrently streaming other visitors' chats. Semantics unchanged.
+    owner_status = await asyncio.to_thread(
+        bot_subscription_status, bot.client_id, subscription_id=getattr(bot, "subscription_id", None)
+    )
     if owner_status not in ("trialing", "active", "past_due"):
         logger.info(
             "chat_stream_blocked_inactive_subscription bot_id=%s client_id=%s status=%s",
@@ -1241,47 +1294,19 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     if is_preview:
         from app.services.preview_quota import check_and_increment_preview
 
-        if not check_and_increment_preview(bot.id):
+        if not await asyncio.to_thread(check_and_increment_preview, bot.id):
             logger.info("chat_stream_preview_quota_exceeded bot_id=%s", bot.id)
             raise HTTPException(status_code=429, detail="preview_daily_limit_reached")
     else:
-        from app.services import credit_service
-
-        with get_session() as db:
-            cost = credit_service.get_credit_cost(db, "ai_chat")
-            try:
-                credit_service.check_and_deduct(
-                    db,
-                    bot.client_id,
-                    cost,
-                    reason="ai_chat",
-                    reference_id=bot.id,
-                    bot_id=credit_service.resolve_bot_ledger_bot_id(bot),  # scope — None when pooled
-                    attributed_bot_id=bot.id,  # attribution — always the real bot
-                )
-                db.commit()
-            except credit_service.InsufficientCredits as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=402,
-                    detail={
-                        "error": "insufficient_credits",
-                        "required": exc.required,
-                        "available": exc.available,
-                        "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
-                    },
-                ) from exc
-            except credit_service.KillSwitchActive as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=503,
-                    detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
-                ) from exc
+        # Offloaded credit deduction (see _deduct_ai_chat_credit_sync): identical
+        # transaction/refund semantics, off the event loop. HTTP 402/503 raised in
+        # the thread propagate here unchanged.
+        cost = await asyncio.to_thread(_deduct_ai_chat_credit_sync, bot)
 
     ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
     visitor_country = _visitor_country_from_request(request)
-    session_id = _resolve_session_id(body.session_id, bot.id)
+    session_id = await asyncio.to_thread(_resolve_session_id, body.session_id, bot.id)
 
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address, bot.id)

@@ -7,6 +7,7 @@ import os
 import random
 import re
 from datetime import date, datetime
+from types import SimpleNamespace
 
 import litellm
 from pydantic import BaseModel, ConfigDict, Field
@@ -6571,7 +6572,16 @@ async def rag_pipeline_stream(
                 _cs_filters_stream.append(ChatSession.client_id == cid)
             chat_session = session.query(ChatSession).filter(*_cs_filters_stream).first()
             current_bant = _build_bant_state(chat_session)
-            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            # Materialize history to detached role/content objects RIGHT HERE, so
+            # the connection-release commit below can free the pooled connection
+            # during retrieval without any later access (notably rewrite_query,
+            # which runs on a worker thread) triggering a cross-thread lazy reload
+            # on the request-scoped session. Every consumer reads only .role /
+            # .content, so SimpleNamespace is a faithful, session-free stand-in.
+            history = [
+                SimpleNamespace(role=m.role, content=m.content)
+                for m in get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            ]
             # ``question`` may have been rebound above to the visitor's DEFERRED
             # original question (they declined the name ask, or changed topic).
             # Never extract a name from that deferred text: a short topic query
@@ -6584,6 +6594,23 @@ async def rag_pipeline_stream(
                 visitor_name = _flow_name
             else:
                 visitor_name = _flow_name or resolve_visitor_name(session, session_id, bid, cid, question, history)
+
+            # ── Release the pooled DB connection for the duration of RETRIEVAL ──
+            # Retrieval below — the LLM query-rewrite + embedding + vector/keyword
+            # search — takes ~1s and touches the DB ONLY through isolated sessions
+            # (the _*_isolated helpers) and primitive (cid/bid/session_id) args, not
+            # this outer session (verified: no outer-session use between here and
+            # prompt-building). Committing now returns the connection to the pool
+            # for that whole window (persisting the visitor-name capture above);
+            # `bot`/`chat_session` are expired and transparently reload on the event
+            # loop when prompt-building touches them. Together with the existing
+            # pre-generation release, the connection is now held only during the
+            # short DB bursts, not across retrieval OR generation — the change that
+            # lifts the concurrency ceiling off the pool.
+            try:
+                session.commit()
+            except Exception:  # noqa: BLE001 — best-effort connection release
+                session.rollback()
 
             # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
             # The two DB helpers below run inside ``asyncio.to_thread`` so they MUST
