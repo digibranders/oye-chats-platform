@@ -48,6 +48,72 @@ def is_client_gone(exc: BaseException) -> bool:
     return False
 
 
+class _ConnectRequestStore:
+    """Shared storage for pending operator-to-visitor connect requests.
+
+    A connect request is coordination state, not a socket: an operator asks to
+    join a visitor's chat, the widget polls REST until the visitor accepts or
+    declines, and the record expires after ``CONNECT_REQUEST_TTL_SECONDS``.
+
+    It lived in a per-process dict, which quietly breaks above one worker: the
+    operator's request is registered on whichever process served that call, and
+    the visitor's poll — a separate HTTP request that can land anywhere — asks a
+    different process, sees nothing, and the popup never appears. Nothing errors;
+    the request simply evaporates.
+
+    Redis is the natural home. The record is small, has a natural TTL that Redis
+    enforces without the lazy pruning the dict needed, and the widget's poll is
+    already a round-trip. Writes go to both stores and reads prefer the shared
+    one, so behaviour is unchanged when Redis is absent and no deployment has to
+    flip anything to stay correct.
+
+    Deliberately NOT gated on ``WS_BACKPLANE_ENABLED``: unlike socket delivery
+    this needs no subscriber, degrades to exactly today's behaviour when Redis is
+    down, and a single-worker deployment cannot tell the difference.
+    """
+
+    _PREFIX = "ws:connect_request:"
+
+    def _key(self, session_id: str) -> str:
+        return f"{self._PREFIX}{session_id}"
+
+    def put(self, session_id: str, payload: dict, ttl: int) -> None:
+        try:
+            from app.core.cache import cache_set
+
+            cache_set(self._key(session_id), payload, ttl)
+        except Exception:
+            # Best-effort: the caller has already written the in-process copy, so
+            # a Redis problem degrades to single-process behaviour rather than
+            # losing the request.
+            logger.debug("connect-request shared write failed", exc_info=True)
+
+    def get(self, session_id: str) -> dict | None:
+        try:
+            from app.core.cache import cache_get
+
+            value = cache_get(self._key(session_id))
+            return value if isinstance(value, dict) else None
+        except Exception:
+            logger.debug("connect-request shared read failed", exc_info=True)
+            return None
+
+    def drop(self, session_id: str) -> dict | None:
+        """Remove and return the record, so callers keep pop() semantics."""
+        try:
+            from app.core.cache import cache_delete
+
+            existing = self.get(session_id)
+            cache_delete(self._key(session_id))
+            return existing
+        except Exception:
+            logger.debug("connect-request shared delete failed", exc_info=True)
+            return None
+
+
+_connect_request_store = _ConnectRequestStore()
+
+
 class ConnectionManager:
     """Manages WebSocket connections for live chat between visitors and operators."""
 
@@ -1118,27 +1184,35 @@ class ConnectionManager:
             "created_at": datetime.now(UTC).isoformat(),
         }
         self._connect_requests[session_id] = payload
+        _connect_request_store.put(session_id, payload, self.CONNECT_REQUEST_TTL_SECONDS)
         return payload
 
     def get_connect_request(self, session_id: str) -> dict | None:
         """Return the active connect-request for ``session_id`` or ``None``.
 
         Expired requests are pruned lazily on read so the widget polls always
-        see fresh state without us having to schedule a per-request timer.
+        see fresh state without us having to schedule a per-request timer. When
+        the shared store is active, Redis's own TTL does that pruning for us and
+        the lazy check below is belt-and-braces for the in-process fallback.
         """
         import time
 
-        req = self._connect_requests.get(session_id)
+        req = _connect_request_store.get(session_id)
+        if req is None:
+            req = self._connect_requests.get(session_id)
         if not req:
             return None
         if req["expires_at"] < time.time():
             self._connect_requests.pop(session_id, None)
+            _connect_request_store.drop(session_id)
             return None
         return req
 
     def clear_connect_request(self, session_id: str) -> dict | None:
         """Remove the pending request (used on accept/decline/expire)."""
-        return self._connect_requests.pop(session_id, None)
+        shared = _connect_request_store.drop(session_id)
+        local = self._connect_requests.pop(session_id, None)
+        return shared or local
 
     async def notify_connect_request_resolved(
         self,

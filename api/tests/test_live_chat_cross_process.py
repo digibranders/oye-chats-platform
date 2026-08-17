@@ -351,6 +351,45 @@ async def test_offline_message_reaches_operator_on_other_process():
 
 
 @pytest.mark.asyncio
+async def test_connect_request_is_visible_from_another_process():
+    """A visitor's poll must see a connect-request raised on another process.
+
+    An operator asks to join a chat; the widget then polls REST until the visitor
+    accepts or declines. The operator's POST and the visitor's GET are separate
+    HTTP requests that can land on different processes, so while the record lived
+    in a per-process dict the poll asked a process that had never heard of it,
+    got ``{"pending": false}``, and the popup simply never appeared. Nothing
+    errored — the request evaporated.
+
+    Fails before the record moved to shared storage; passes after.
+    """
+    sid = await _new_session(NODE_A)
+
+    async with httpx.AsyncClient(timeout=30) as http:
+        created = await http.post(
+            f"{NODE_A}/operators/connect-request/{sid}",
+            headers=_operator_headers(),
+        )
+        if created.status_code not in (200, 201):
+            pytest.skip(f"could not raise a connect-request (-> {created.status_code}): {created.text[:160]}")
+
+        # The visitor polls the OTHER process.
+        polled = await http.get(
+            f"{NODE_B}/chat/connect-request/{sid}",
+            headers={"X-Bot-Key": BOT_KEY, "X-Forwarded-For": _client_ip()},
+        )
+
+    assert polled.status_code == 200, f"poll failed: {polled.status_code} {polled.text[:200]}"
+    body = polled.json()
+    assert body.get("pending") is True, (
+        "The visitor's poll on node B did not see the connect-request raised on node A.\n"
+        "While this record lived in a per-process dict the popup never appeared for any "
+        "deployment with more than one process, and nothing logged an error.\n"
+        f"Node B returned: {json.dumps(body)[:300]}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_accept_claim_is_atomic_across_processes():
     """Exactly one claim may win, even when two processes race.
 
