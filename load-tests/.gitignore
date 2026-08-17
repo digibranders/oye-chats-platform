@@ -6,5 +6,6 @@ results/dbscale_*.txt
 results/run[A-Z]*/
 results/workersweep_*/
 results/activeusers_*/
+results/widgets_*/
 __pycache__/
 *.pyc
