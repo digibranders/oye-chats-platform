@@ -805,6 +805,15 @@ class ChatSession(Base):
     bant_last_updated = Column(DateTime(timezone=True), nullable=True)
     dimension_scores = Column(JSONB, nullable=True)
     qualification_framework = Column(String, default="bant", server_default="bant", nullable=False)
+    # The qualification dimension the bot probed on its most recent turn (e.g.
+    # "timeline"), or NULL when the last turn asked nothing. Drives two things
+    # the score columns alone cannot: (1) probe de-duplication — the next turn
+    # skips this dimension so the bot never re-asks a question it just asked,
+    # even while the async score for that answer is still catching up; (2)
+    # answer-binding — this value is fed to the background extractor as the
+    # frame for the visitor's reply, so a terse answer ("2 months") binds to
+    # the dimension actually asked instead of being dropped as ambiguous.
+    last_probed_dimension = Column(String, nullable=True)
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed

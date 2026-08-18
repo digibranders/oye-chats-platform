@@ -46,6 +46,7 @@ from app.services.qualification_service import (
     get_framework_config,
     get_tier,
     pick_probe_variant,
+    select_next_probe_dimension,
 )
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
@@ -1069,6 +1070,42 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
     chat_session.inline_cards_shown = shown
 
 
+def _media_card_key(card: dict | None) -> str | None:
+    """Stable per-session identity for a media card, keyed by its file URL or
+    video id. Used with ``inline_cards_shown`` to suppress re-attaching the
+    SAME document/video on a later turn — the visitor already has it, and a
+    repeated identical card reads as a duplicate (bug report: same PDF shown
+    on two consecutive replies). Returns None when the card has no stable id,
+    in which case dedupe is skipped (fail-open — never hide a real card by
+    mistake)."""
+    if not card:
+        return None
+    sig = card.get("url") or card.get("video_id") or card.get("id")
+    return f"media:{sig}" if sig else None
+
+
+# Generic media-request terms, in addition to the specific file/video ask
+# keywords, that mark a turn where the visitor is EXPLICITLY asking for the
+# document/video. Such a request must always surface the card, even if the same
+# card was auto-shown earlier — dedupe only ever suppresses UNPROMPTED repeats.
+_EXPLICIT_MEDIA_REQUEST_TERMS = ("document", "file", "download", "attachment", "link", "share", "send")
+
+
+def _is_explicit_media_request(question: str | None) -> bool:
+    """True when the visitor's message explicitly asks for a document/video —
+    e.g. "do you have a pdf?", "send me the file", "share the walkthrough". Used
+    to exempt such turns from the per-session media-card dedupe so an explicit
+    ask never returns dangling "here it is" text with the card stripped."""
+    q = (question or "").lower()
+    if not q:
+        return False
+    return (
+        any(k in q for k in _FILE_ASK_KEYWORDS)
+        or any(k in q for k in _VIDEO_ASK_KEYWORDS)
+        or any(k in q for k in _EXPLICIT_MEDIA_REQUEST_TERMS)
+    )
+
+
 def _count_marked_bant_dimensions(bant_state: dict | None) -> int:
     """Count BANT dimensions with any signal (score > 0 OR text value present).
 
@@ -1278,6 +1315,27 @@ def _no_info_pivot(company_name: str | None) -> str:
         f"I don't have that specific detail on hand for {cn}. Want me to "
         f"connect you with the team so they can help directly?"
     )
+
+
+def _browsing_ack(company_name: str | None) -> str:
+    """Warm, low-key reply for a visitor who's just browsing / killing time.
+
+    A "just looking around" message isn't off-topic — refusing it with "that's
+    outside my lane" reads as hostile to someone with zero pressure. Acknowledge
+    it, stay available, and leave the door open without pushing.
+    """
+    cn = f"**{company_name}**" if company_name else "us"
+    return f"No rush at all. I'm right here whenever you want to dig into {cn} or have a question."
+
+
+def _refusal_or_browsing_ack(question: str, company_name: str | None, recent_bot: list) -> str:
+    """Pick the right off-topic reply: a warm acknowledgement for a browsing /
+    time-pass visitor, the standard off-topic refusal otherwise. Fires only on
+    the refusal path (the gate already judged the turn non-groundable), so a
+    low-intent message that DID retrieve real content still gets a real answer."""
+    if _is_low_intent_message(question):
+        return _browsing_ack(company_name)
+    return _off_topic_refusal(company_name, recent_bot)
 
 
 _TRAILING_QUESTION_RE = re.compile(
@@ -2104,18 +2162,30 @@ _HANDOFF_INTENT_PATTERNS = re.compile(
 )
 
 
-def _should_skip_bant_extraction(question: str, current_bant: dict, framework_config: dict | None = None) -> bool:
+def _should_skip_bant_extraction(
+    question: str,
+    current_bant: dict,
+    framework_config: dict | None = None,
+    is_probe_reply: bool = False,
+) -> bool:
     """Return True if BANT extraction should be skipped to save LLM cost.
 
     Skip conditions, in priority order:
-    1. Message is too short to plausibly contain a signal (< 10 chars).
+    1. Message is too short to plausibly contain a signal. The floor is 10
+       chars for volunteered messages, but only 2 when ``is_probe_reply`` is
+       set — i.e. the bot's previous turn asked a qualification question, so a
+       terse reply ("2 months", "5k", "just me") is a real, answerable signal
+       and must not be dropped on length. Pure fillers ("ok", "no") still reach
+       the strict extractor, which returns no signal for them, so the only cost
+       of the lower floor is an occasional wasted call on a probe-reply turn.
     2. Message is a clear routing request to talk to a human (see
        ``_HANDOFF_INTENT_PATTERNS``). These previously produced false-positive
        Need signals and corrupted lead scores via the never-downgrade rule.
     3. All dimensions are already saturated (≥ 20/25); further extraction is
        pointless because the post-process rejects equal-or-lower scores.
     """
-    if len(question.strip()) < 10:
+    min_len = 2 if is_probe_reply else 10
+    if len(question.strip()) < min_len:
         return True
     if _HANDOFF_INTENT_PATTERNS.search(question):
         return True
@@ -2220,10 +2290,41 @@ def _bant_model() -> str:
     return runtime_config.get_gate_model()
 
 
+def _parse_qualification_signals(resp_text: str) -> list[dict]:
+    """Parse the extractor's structured output into signal dicts.
+
+    Tolerates a known gemini structured-output malformation where the model
+    returns a bare JSON array (``[{...}]``) instead of the
+    ``{"signals": [...]}`` object the schema requires — it wraps the array and
+    re-validates. Raises on genuinely unparseable / schema-violating output so
+    the caller can retry on a more reliable model."""
+    try:
+        return [s.model_dump() for s in QualificationExtractionResult.model_validate_json(resp_text).signals]
+    except Exception:
+        data = json.loads(resp_text)  # raises → caller retries / gives up
+        if isinstance(data, list):
+            data = {"signals": data}
+        return [s.model_dump() for s in QualificationExtractionResult.model_validate(data).signals]
+
+
 def extract_qualification_signals(
-    history_context: str, question: str, bot_answer: str, current_bant: dict, bant_config: dict | None = None
+    history_context: str,
+    question: str,
+    bot_answer: str,
+    current_bant: dict,
+    bant_config: dict | None = None,
+    last_probed_dimension: str | None = None,
 ) -> list[dict]:
-    """Extract BANT signals using structured LLM output. Returns list of signal dicts."""
+    """Extract BANT signals using structured LLM output. Returns list of signal dicts.
+
+    ``last_probed_dimension`` is the dimension the bot asked about on the turn
+    the visitor is now replying to. It is the frame that lets a terse answer
+    bind correctly: on its own "2 months" is ambiguous (budget horizon? trial
+    length?), but if the bot just asked about TIMELINE, it is unambiguously a
+    timeline answer. Without this hint the STRICT extractor drops such replies
+    as un-quotable, the score never lands, and the bot re-asks the same
+    dimension forever. See ``select_next_probe_dimension`` for the read side.
+    """
     try:
         config = bant_config or get_framework_config(None)
         dimensions = _framework_dimensions(config)
@@ -2246,6 +2347,29 @@ def extract_qualification_signals(
 
         rubric_text = "\n".join(rubric_lines)
 
+        # Answer-binding frame. When the bot's previous turn probed a specific
+        # dimension, a terse reply is an answer to THAT dimension and the
+        # question supplies the frame Principle 4 would otherwise reject. This
+        # is a scoped, deliberate exception to "NEVER INFER" — the inference is
+        # licensed by an explicit question, not guessed from thin air.
+        _probed = (last_probed_dimension or "").strip().lower()
+        if _probed:
+            frame_hint = f"""
+QUESTION FRAME (READ FIRST — this is what the user is answering):
+The bot's PREVIOUS turn explicitly asked the visitor about their **{_probed.upper()}**.
+So the user's latest message is, in context, most likely their {_probed.upper()} answer.
+- A short or fragmentary reply here ("2 months", "just me", "around 5k", "next week")
+  IS a valid, quotable {_probed.upper()} signal — the bot's question is the frame that
+  makes it explicit. Score it against the {_probed.upper()} rubric. Do NOT discard it as
+  ambiguous just because the sentence is short; the preceding question resolves the ambiguity.
+- This is the ONE sanctioned exception to Principle 4 below, and it applies ONLY to
+  {_probed.upper()} and ONLY when the reply plausibly answers it. If the user instead
+  changed the subject or asked their own question, ignore this frame and fall back to the
+  strict rules — do NOT force a {_probed.upper()} signal onto an unrelated message.
+"""
+        else:
+            frame_hint = ""
+
         extraction_prompt = f"""You are a STRICT signal extractor. Your job is to decide whether the user's latest message contains NEW, EXPLICITLY-STATED qualification signals. Default to NO SIGNAL.
 
 CONVERSATION HISTORY:
@@ -2254,7 +2378,7 @@ CONVERSATION HISTORY:
 LATEST EXCHANGE:
 User: {question}
 Bot: {bot_answer}
-
+{frame_hint}
 CURRENT QUALIFICATION STATE AND SCORING RUBRIC:
 {rubric_text}
 
@@ -2345,36 +2469,73 @@ SCORING DISCIPLINE
 - Greetings, acknowledgments, fillers ("hi", "thanks", "okay", "interesting", "let me think") → return an empty signals list.
 - When in doubt, return NO signal. False positives are more harmful than false negatives, a missed signal is fixable on the next turn; a false signal corrupts the lead's score permanently because of the never-downgrade rule downstream."""
 
-        bant_model = _bant_model()
-        with langfuse_generation("bant-extraction-v2", model=bant_model, prompt=extraction_prompt) as gen:
-            response = litellm.completion(
-                model=bant_model,
-                # Bounded timeout so a stalled upstream can't hang the BANT
-                # extraction background job indefinitely (audit F09).
-                timeout=45,
-                messages=[
-                    {"role": "system", "content": "You are a qualification signal extractor. Return structured JSON."},
-                    {"role": "user", "content": extraction_prompt},
-                ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "QualificationExtractionResult",
-                        "strict": True,
-                        "schema": QualificationExtractionResult.model_json_schema(),
-                    },
-                },
-                metadata={"generation_name": "bant-extraction-v2"},
-            )
-            resp_text = response.choices[0].message.content
-            gen.record_litellm(response, output=resp_text)
+        # Try the cheap gate model first, then fall back to the reliable primary
+        # model. The gate model (gemini-2.5-flash) intermittently returns
+        # malformed structured output — a bare JSON array, or garbage items —
+        # under load, which silently dropped strong buying signals and left hot
+        # leads unscored. A single retry on the primary model recovers those.
+        _models: list[str] = [_bant_model()]
+        _primary = runtime_config.get_primary_model()
+        if _primary and _primary != _models[0]:
+            _models.append(_primary)
 
-        if not resp_text:
-            logger.debug("[bant] extraction returned empty response for question=%r", question[:80])
+        signals: list[dict] | None = None
+        _last_err: Exception | None = None
+        for _attempt, _model in enumerate(_models):
+            try:
+                with langfuse_generation("bant-extraction-v2", model=_model, prompt=extraction_prompt) as gen:
+                    response = litellm.completion(
+                        model=_model,
+                        # Bounded timeout so a stalled upstream can't hang the BANT
+                        # extraction background job indefinitely (audit F09).
+                        timeout=45,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a qualification signal extractor. Return structured JSON.",
+                            },
+                            {"role": "user", "content": extraction_prompt},
+                        ],
+                        response_format={
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "QualificationExtractionResult",
+                                "strict": True,
+                                "schema": QualificationExtractionResult.model_json_schema(),
+                            },
+                        },
+                        metadata={"generation_name": "bant-extraction-v2"},
+                    )
+                    resp_text = response.choices[0].message.content
+                    gen.record_litellm(response, output=resp_text)
+
+                if not resp_text:
+                    logger.debug("[bant] extraction empty response (model=%s) question=%r", _model, question[:80])
+                    signals = []  # a clean empty response is a real "no signal", not a failure
+                    break
+
+                signals = _parse_qualification_signals(resp_text)
+                break
+            except Exception as _err:  # noqa: BLE001 — try the next model before giving up
+                _last_err = _err
+                logger.warning(
+                    "[bant] extraction attempt %d failed (model=%s): %s | question=%r",
+                    _attempt + 1,
+                    _model,
+                    _err,
+                    question[:80],
+                )
+                continue
+
+        if signals is None:
+            # Every model attempt failed to parse/return — observable, non-breaking.
+            _safety_net_metric(
+                "bant_extraction_failed",
+                question=question[:80],
+                error=type(_last_err).__name__ if _last_err else "unknown",
+            )
             return []
 
-        result = QualificationExtractionResult.model_validate_json(resp_text)
-        signals = [s.model_dump() for s in result.signals]
         logger.info(
             "[bant] extraction question=%r signals=%s",
             question[:80],
@@ -2396,10 +2557,22 @@ SCORING DISCIPLINE
 
 
 def extract_bant_from_conversation(
-    history_context: str, question: str, bot_answer: str, current_bant: dict, bant_config: dict | None = None
+    history_context: str,
+    question: str,
+    bot_answer: str,
+    current_bant: dict,
+    bant_config: dict | None = None,
+    last_probed_dimension: str | None = None,
 ) -> list[dict]:
     """Backward-compatible alias."""
-    return extract_qualification_signals(history_context, question, bot_answer, current_bant, bant_config)
+    return extract_qualification_signals(
+        history_context,
+        question,
+        bot_answer,
+        current_bant,
+        bant_config,
+        last_probed_dimension=last_probed_dimension,
+    )
 
 
 def _background_groundedness_check(
@@ -2436,6 +2609,7 @@ def _background_bant_extraction(
     bant_config,
     message_id,
     cta_signal: dict | None = None,
+    last_probed_dimension: str | None = None,
 ):
     """Fire-and-forget BANT extraction with evidence trail. Opens its own DB session.
 
@@ -2453,7 +2627,14 @@ def _background_bant_extraction(
         if cta_signal is not None:
             signals = [cta_signal]
         else:
-            signals = extract_qualification_signals(history_context, question, answer, current_bant, bant_config)
+            signals = extract_qualification_signals(
+                history_context,
+                question,
+                answer,
+                current_bant,
+                bant_config,
+                last_probed_dimension=last_probed_dimension,
+            )
         if not signals:
             return
 
@@ -2814,6 +2995,113 @@ _NON_NAME_ROLE_WORDS = frozenset(
     }
 )
 
+# Common non-name words a visitor blurts when they IGNORE the name ask — a
+# sentiment, a status, a topic, a time word. Without this guard the bare-reply
+# capture stores them as the visitor's name, so the leads list fills with
+# "Urgent", "Good", "Monthly" instead of real names (bug report). Policy per
+# product: only capture an ACTUAL name; when the reply isn't one, leave the name
+# blank and let the lead-capture form collect it. A real given name paired with
+# one of these ("John Good") still survives because "john" isn't in the set.
+_NON_NAME_COMMON_WORDS = frozenset(
+    {
+        # sentiment / quality
+        "good",
+        "great",
+        "bad",
+        "fine",
+        "nice",
+        "cool",
+        "awesome",
+        "amazing",
+        "terrible",
+        "poor",
+        "excellent",
+        "perfect",
+        "wonderful",
+        "fantastic",
+        "meh",
+        # status / urgency
+        "urgent",
+        "critical",
+        "important",
+        "asap",
+        "busy",
+        "free",
+        "ready",
+        "done",
+        "pending",
+        "active",
+        "live",
+        "soon",
+        "now",
+        "later",
+        "today",
+        "tomorrow",
+        # topics a visitor might type instead of a name
+        "pricing",
+        "price",
+        "cost",
+        "costs",
+        "budget",
+        "demo",
+        "info",
+        "information",
+        "help",
+        "support",
+        "sales",
+        "service",
+        "services",
+        "product",
+        "products",
+        "feature",
+        "features",
+        "trial",
+        "plan",
+        "plans",
+        "quote",
+        # time words
+        "month",
+        "months",
+        "week",
+        "weeks",
+        "day",
+        "days",
+        "year",
+        "years",
+        "monthly",
+        "weekly",
+        "daily",
+        "yearly",
+        # generic fillers / adverbs
+        "maybe",
+        "definitely",
+        "absolutely",
+        "whatever",
+        "anything",
+        "everything",
+        "something",
+        "nothing",
+        "someone",
+        "anyone",
+        "everyone",
+        "nobody",
+        "thanks",
+        "thank",
+        "please",
+        "sorry",
+        "test",
+        "testing",
+        "asdf",
+        "really",
+        "very",
+        "just",
+        "only",
+        "okay",
+        "yep",
+        "yup",
+    }
+)
+
 # Determiners that can lead a captured phrase ("the manager", "a customer").
 # Stripped before the role-word check; a candidate that is ONLY an article is
 # itself not a name.
@@ -2850,10 +3138,15 @@ def _clean_visitor_name(raw: str) -> str | None:
     # Drop a single leading article so "the manager" / "a customer" reduce to
     # the role word for the check below.
     core = lowered[1:] if len(lowered) == 2 and lowered[0] in _LEADING_ARTICLES else lowered
-    # Reject self-described roles ("manager", "the owner") and bare articles:
-    # they state the visitor's role, not their name. "John Manager" survives
-    # because "john" is neither a role word nor an article.
-    if not core or all(t in _NON_NAME_ROLE_WORDS or t in _LEADING_ARTICLES for t in core):
+    # Reject self-described roles ("manager", "the owner"), common non-name
+    # words ("urgent", "good", "monthly"), and bare articles: they aren't the
+    # visitor's name. When every meaningful token is one of these, leave the
+    # name blank rather than storing a garbage lead name — the form collects the
+    # real name later. "John Manager" / "John Good" survive because "john" is in
+    # none of the sets.
+    if not core or all(
+        t in _NON_NAME_ROLE_WORDS or t in _NON_NAME_COMMON_WORDS or t in _LEADING_ARTICLES for t in core
+    ):
         return None
     # Title-case only tokens the visitor left lowercase; preserve intentional
     # inner capitals (e.g. "McCarthy", "O'Brien").
@@ -3161,6 +3454,106 @@ def _is_answer_to_bot_question(question: str, history: list) -> bool:
     return _recent_bot_question(history) is not None and _looks_like_answer(question)
 
 
+# Browsing / time-pass / disengagement phrasing. A visitor saying any of these
+# is explicitly NOT in buying mode — qualifying them reads as pushy and
+# tone-deaf ("what timeline are you working toward?" to someone killing time).
+_LOW_INTENT_RE = re.compile(
+    r"(?i)\b(?:"
+    r"just (?:looking|browsing|checking|curious|exploring|seeing)|"
+    r"looking around|having a look|window[- ]shopping|killing time|"
+    r"just (?:came|stopping|passing) by|nothing (?:specific|really|much|in particular)|"
+    r"no (?:particular )?reason|just wondering|just here to look|just browsing"
+    r")\b"
+)
+
+
+def _is_low_intent_message(question: str) -> bool:
+    """True when the message signals browsing / time-passing, not buying intent."""
+    return bool(_LOW_INTENT_RE.search(question or ""))
+
+
+def _engaged_before_this_turn(history: list) -> int:
+    """Count the visitor's PRIOR substantive turns — excludes the current
+    message (the last user turn in ``history``) and skips greetings, bare
+    names/affirmations, and low-intent 'just browsing' remarks. Used to hold the
+    first qualifying question back until the bot has led with value: the probe
+    should build up out of a real exchange, not open the conversation."""
+    user_turns = [m for m in (history or []) if _msg_role(m) == "user"]
+    n = 0
+    for m in user_turns[:-1]:  # drop the current message
+        t = (_msg_content(m) or "").strip()
+        if not t or _is_low_intent_message(t) or _AFFIRMATIVE_RE.match(t):
+            continue
+        if len(t.split()) < 2 and "?" not in t:  # bare name / single token
+            continue
+        n += 1
+    return n
+
+
+def _should_probe_this_turn(question: str, history: list) -> bool:
+    """Whether to weave a qualifying question into THIS reply.
+
+    Two build-up guards so BANT never feels like an interrogation:
+    - Never probe a browsing / time-pass visitor (low intent).
+    - Never lead with a probe: hold it until the visitor has had at least one
+      real content exchange, so the qualifying question grows out of the
+      conversation instead of being fired on the opening turn.
+    """
+    if _is_low_intent_message(question):
+        return False
+    return _engaged_before_this_turn(history) >= 1
+
+
+def _content_bigrams(text: str) -> set[str]:
+    """Adjacent two-word content phrases (stopwords + short tokens removed).
+    Used to detect topical continuity between turns via shared phrases like
+    "clean libraries" while ignoring incidental single-word overlap."""
+    toks = [t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) > 2 and t not in _TITLE_STOPWORDS]
+    return {f"{toks[i]} {toks[i + 1]}" for i in range(len(toks) - 1)}
+
+
+def _continues_prior_bot_topic(question: str, history: list) -> bool:
+    """True when the visitor's question reuses a two-word content phrase the bot
+    itself used in its most recent turn — i.e. a follow-up on a topic the bot
+    just raised (bot introduces "Clean Libraries" + a doc, visitor asks "how
+    would you implement clean libraries"). Such a question is on-scope by
+    construction and must never be refused as off-topic just because the CRAG
+    relevance gate scored the phrasing low.
+
+    Requiring a shared BIGRAM (not a single common word) keeps this from firing
+    on incidental overlap like "system", "help", or "work"."""
+    last_bot = _last_bot_message(history)
+    if not last_bot or not question:
+        return False
+    q_bigrams = _content_bigrams(question)
+    return bool(q_bigrams and (q_bigrams & _content_bigrams(last_bot)))
+
+
+def _probe_question_for(
+    dimension: str | None,
+    bant_config: dict | None,
+    *,
+    seed_text: str = "",
+    avoid_text: str = "",
+) -> str | None:
+    """Human-phrased qualification question for ``dimension`` (rotated wording),
+    or None when there is no dimension / no configured prompt.
+
+    Used to deterministically append the follow-up on media-card turns: the
+    media template pressures the model so hard toward a one-sentence intro + card
+    that it reliably DROPS the qualification question, so we add it ourselves
+    rather than hope the model complies. Same rotation the prompt uses
+    (``pick_probe_variant``) so the wording still varies turn to turn."""
+    if not dimension or not bant_config:
+        return None
+    dim_cfg = bant_config.get(dimension) if isinstance(bant_config.get(dimension), dict) else {}
+    base = (dim_cfg or {}).get("cta_prompt") or ""
+    if not base:
+        return None
+    seed = int(hashlib.sha256(((seed_text or "") + "||" + (avoid_text or "")).encode()).hexdigest()[:8], 16)
+    return pick_probe_variant(bant_config.get("framework") or "bant", dimension, base, seed=seed, avoid_text=avoid_text)
+
+
 def _is_affirmative_reply(question: str) -> bool:
     """True if the whole message is a short affirmation ("yes", "sure", "ok")."""
     return bool(_AFFIRMATIVE_RE.match((question or "").strip()))
@@ -3214,6 +3607,18 @@ def resolve_name_flow(session, session_id, bot_id, client_id, question, company_
             renamed = _extract_name_change(question)
             if renamed and renamed != known:
                 create_or_update_lead_info(session, session_id=session_id, bot_id=bot_id, name=renamed)
+                # First name capture phrased as "I'm Alex" / "call me Alex" /
+                # "my name is Alex" lands here (known is None). The visitor's
+                # ORIGINAL question is still deferred behind the name prompt, so
+                # recover and replay it — otherwise the opening message (often a
+                # pain statement) is answered from history but never reaches BANT
+                # extraction, so its Need/etc. signal is silently lost. A genuine
+                # mid-chat rename (known already set) has nothing deferred and
+                # falls through to the plain rename return.
+                if known is None:
+                    deferred = _recover_deferred_question(history)
+                    if deferred and route_intent(deferred, company_name) is None:
+                        return (None, deferred, renamed, True)
                 return (None, None, renamed, True)
 
         if known:
@@ -3285,6 +3690,15 @@ def build_hybrid_prompt(
     answer_links: list[dict] | None = None,
     team_connect_offer: bool = False,
     suppress_probe: bool = False,
+    # Dimensions the bot probed on recent turns (typically just the previous
+    # turn's ``last_probed_dimension``). The probe selector skips these so it
+    # never re-asks a question it just asked while the async score is still
+    # catching up. See ``select_next_probe_dimension``.
+    recently_probed: list[str] | tuple[str, ...] = (),
+    # Build-up gate: when False, the bot answers helpfully but asks NO
+    # qualifying question this turn (browsing visitor, or too early to probe).
+    # See ``_should_probe_this_turn``.
+    probe_ok: bool = True,
     visitor_name: str | None = None,
     visitor_just_named: bool = False,
     # Cloudflare CF-IPCountry for the visitor's request ("IN", "US", ...) or
@@ -3306,22 +3720,30 @@ def build_hybrid_prompt(
 
     qualification_section = ""
     if bant_enabled:
-        # Build score-aware qualification state
+        # Build score-aware qualification state for the prompt's status block.
         state_lines = []
-        missing_dims = []
         for dim in conversation_order:
             dim_cfg = config.get(dim, {}) if isinstance(config.get(dim), dict) else {}
             options = dim_cfg.get("options") or []
             max_score = max((int(opt.get("score", 0)) for opt in options), default=25)
-            assess_threshold = max(1, int(round(max_score * 0.6)))
             score = int(bs.get(f"{dim}_score", 0) or 0)
             value = bs.get(dim) or "Not yet identified"
             label = dim_cfg.get("label") or dim.replace("_", " ").title()
             state_lines.append(f"- {label}: {value} (score: {score}/{max_score})")
-            if score < assess_threshold:
-                missing_dims.append(dim)
 
         state_text = "\n".join(state_lines)
+
+        # Pick the next dimension to probe via the shared selector so this path
+        # and the caller (which persists ``last_probed_dimension``) always agree.
+        # ``recently_probed`` makes it skip the dimension asked last turn — the
+        # fix for the "asked timeline three times in a row" loop.
+        next_dim_to_probe, missing_dims = select_next_probe_dimension(bs, config, recently_probed=recently_probed)
+        # Build-up gate: hold the qualifying question when the visitor is just
+        # browsing or it's too early to probe (see ``_should_probe_this_turn``).
+        # ``missing_dims`` still drives the CTA-chip eligibility list below; only
+        # the woven follow-up question is suppressed.
+        if not probe_ok:
+            next_dim_to_probe = None
 
         # Build CTA instruction if any dimension has CTA enabled
         cta_dims = []
@@ -3432,17 +3854,17 @@ Eligible dimensions (use the exact dimension key, lowercase):
 {cta_lines}
 """
 
-        # Determine probing posture based on conversation depth and unassessed dimensions.
-        # missing_dims = dimensions that haven't cleared 60% of their max score yet.
+        # Determine probing posture based on conversation depth and unassessed
+        # dimensions. ``next_dim_to_probe`` was chosen above by
+        # ``select_next_probe_dimension`` (which already skipped anything in
+        # ``recently_probed``), so it is never the dimension we asked last turn.
         has_prior_turns = bool(history_context and history_context.strip())
-        next_dim_to_probe = missing_dims[0] if missing_dims else None
         next_dim_cfg = config.get(next_dim_to_probe, {}) if next_dim_to_probe else {}
         next_dim_cta = (next_dim_cfg.get("cta_prompt") or "") if next_dim_cfg else ""
-        # Rotate the suggested probe wording so the LLM doesn't echo the same
-        # sentence ("What best describes your situation?") on every re-ask. Seeded
-        # by the current message so it varies per turn; the prior conversation is
-        # the avoid-set so it never repeats the wording just shown. Custom per-bot
-        # prompts are left untouched (see ``pick_probe_variant``).
+        # A suggested ANGLE for the question, not a script to recite. Rotated per
+        # turn so the fallback wording varies; the model is told to phrase the
+        # ask in its own words (see below), so this is only a hint. Custom
+        # per-bot prompts are respected untouched (see ``pick_probe_variant``).
         if next_dim_to_probe and next_dim_cta:
             next_dim_cta = pick_probe_variant(
                 config.get("framework") or "bant",
@@ -3462,39 +3884,34 @@ Eligible dimensions (use the exact dimension key, lowercase):
 
         if not next_dim_to_probe:
             probing_instruction = (
-                "All qualification dimensions are well-assessed. "
-                "Suggest a clear next step (book a demo, see pricing, talk to our team) "
-                "rather than asking more qualifying questions."
+                "Do NOT ask a qualifying question this turn — either everything "
+                "you need is already known, or you just asked about the one thing "
+                "still open and re-asking it would sound robotic. Answer the "
+                "visitor helpfully and, if the moment fits, suggest a natural next "
+                "step (book a demo, see pricing, talk to the team). You can "
+                "revisit any open dimension later once the conversation moves on."
             )
         elif has_prior_turns:
-            probing_instruction = f"""The conversation is underway. After fully answering the visitor's question, naturally weave in ONE question targeting **{next_dim_to_probe.upper()}**, the next unassessed dimension.
+            probing_instruction = f"""The conversation is underway. Answer the visitor's question FIRST, then close with ONE natural follow-up aimed at learning about their **{next_dim_to_probe.upper()}**.
 
-EMBEDDING RULES:
-- Answer the question FIRST. The qualifying question always comes at the end.
-- Make it feel like genuine curiosity, not a sales script. One short sentence is enough.
-- End your reply with EXACTLY this question, word for word. Do NOT rephrase it, do NOT reword it to "sound more contextual", do NOT swap in synonyms, do NOT merge it with your answer: "{next_dim_cta}"
-- This exact wording is picked fresh every turn ON PURPOSE. Using it verbatim is the whole mechanism that keeps your follow-ups from repeating. Inventing your own phrasing (e.g. asking "What are you evaluating this for?" every single turn) is exactly the failure to avoid.
-- You may add a short, natural lead-in BEFORE it (e.g. "By the way," "Quick question:") but the question itself must stay word-for-word as given.
-- FORMAT: Put the follow-up question on its OWN line, separated from your answer by a BLANK LINE (two newlines). Never run it inline at the end of your last sentence or glued to the end of a bullet point.
-- MARKDOWN CRITICAL: When your answer ends with a bulleted or numbered list, you MUST emit two newlines (a blank line) between the last list item and the follow-up question. Without the blank line, markdown renderers glue the question into the last bullet (e.g. `- 24x7 supportWhich of these…`). Always end the list, hit Enter twice, then start the question as a new paragraph.
-- GOOD example (bulleted answer + follow-up):
-  Here are the options we offer:
-  - Standard onboarding
-  - Custom integration
-  - 24x7 support
-  ⏎
-  Which of these are you evaluating for your environment?
-  (Note the BLANK LINE (that's two newlines `\\n\\n`) between the last bullet and the question. This is non-negotiable.)
-- BANNED PHRASE: Do NOT begin the question with "Out of curiosity". That phrase has become the chatbot equivalent of "Per my last email"; visitors recognise it instantly as a script. Vary your bridges: just ask the question directly, or use "Quick question:", "By the way,", "If you don't mind me asking,", or no preamble at all.
-- BAD: "Can I ask a few quick questions to understand your needs?" (survey framing)
-- BAD: Opening with the qualifying question before answering.
-- BAD: "Out of curiosity, when..." (banned opener; rephrase)."""
+TALK LIKE A CURIOUS HUMAN, NOT A FORM:
+- Open your reply by briefly reflecting back something CONCRETE the visitor just said — a fact, number, tool, goal, or pain they mentioned (e.g. "Two months is a comfortable runway for this," or "Anonymous traffic is exactly what trips most teams up"). One short, genuine sentence. Mirror FACTS they stated, never invented feelings ("I understand how frustrating that must be" is banned — it reads as fake empathy).
+- If the visitor's latest message already answered or updated the thing you were tracking, ACKNOWLEDGE that instead of ignoring it (e.g. they said "2 months" then "one week" → "Even sooner, a week works great"). Never re-ask something they already answered.
+- Then ask about their {next_dim_to_probe.upper()} in YOUR OWN WORDS, phrased for THIS specific conversation. Make it feel like real curiosity following from what you just discussed. One short sentence.
+- Angle to aim at (rephrase freely, this is NOT a script to recite verbatim): "{next_dim_cta}"
+- HARD LIMIT — TWO LINES MAX: the reflection + follow-up together must be AT MOST two lines — line 1 the short reflection, line 2 the question (each ONE short sentence). If you can't fit the reflection in one line, drop it and just ask the question on a single line. Never let this block run past two lines.
+- FORMAT: Put the follow-up question on its OWN line, separated from your answer by a BLANK LINE (two newlines). Never glue it to the end of a sentence or a bullet.
+- MARKDOWN CRITICAL: If your answer ends in a bulleted or numbered list, emit a blank line (two newlines) between the last list item and the question, or the renderer glues them together (e.g. `- 24x7 supportWhen are you…`).
+- BANNED OPENERS: never start the question with "Out of curiosity" or "Just curious" — visitors read those as a script instantly. Ask directly, or bridge with "By the way," / "One thing I'm wondering," / no preamble at all.
+- BAD: reciting the same stock question every turn. BAD: survey framing ("Can I ask you a few quick questions?"). BAD: asking the qualifying question before answering. BAD: two questions in one bubble."""
         else:
             probing_instruction = f"""This appears to be an early exchange. Answer the visitor helpfully first.
-If their message shows real intent (not just a greeting or one-word opener), close with a single soft question about **{next_dim_to_probe.upper()}**.
-- Suggested angle: "{next_dim_cta}"
+If their message shows real intent (not just a greeting or one-word opener), close with a single soft, natural question that gets at their **{next_dim_to_probe.upper()}** — phrased in your own words for this conversation, not a canned line.
+- Angle to aim at (rephrase freely): "{next_dim_cta}"
+- If they stated a concrete fact worth acknowledging, open with a brief genuine reflection of it before the question.
+- HARD LIMIT — TWO LINES MAX: the reflection + question together stay within two lines (line 1 reflection, line 2 question), each one short sentence. If it won't fit, drop the reflection and just ask the question on one line.
 - FORMAT: Put the follow-up question on its OWN line, separated from your answer by a blank line.
-- Never begin the question with "Out of curiosity"; vary your phrasing or ask directly.
+- Never begin the question with "Out of curiosity"; ask directly or vary your bridge.
 - For greetings or very short openers ("hi", "hello", "hey"): skip the probe; just answer warmly."""
 
         if team_connect_offer:
@@ -3762,8 +4179,8 @@ MEDIA CARDS (inline cards. MANDATORY USAGE RULES):
   │
   │ {SENTINEL on its own line. [YOUTUBE_CARD:ID] or [DOWNLOAD_CARD:URL|FILE]}
   │
-  │ [CTA:dimension]                    ← only if a qualification follow-up applies
-  │ [CTA_Q:{short follow-up question}] ← paired with [CTA:...] above
+  │ {follow-up question on its OWN line — raw text is the norm; use
+  │  [CTA:dim] + [CTA_Q:...] instead only when quick-reply chips apply}
   └─────────────────────────────────────────────────────────────────┘
 
   DO NOT write a bridge sentence. The card renders with its own inline
@@ -3793,9 +4210,15 @@ MEDIA CARDS (inline cards. MANDATORY USAGE RULES):
        "Open the document to learn more") is the framing.
 
     3. The follow-up question (if any) is a SEPARATE block AFTER the
-       sentinel, using the [CTA:...] + [CTA_Q:...] markers. NEVER
-       write the follow-up question as raw text anywhere in the
-       intro. NEVER glue it to the sentinel line.
+       sentinel, on its OWN line, separated from the sentinel by a
+       blank line. Write it as a normal raw-text question — that is the
+       usual case — or, ONLY when quick-reply chips are configured for
+       the dimension, via the [CTA:...] + [CTA_Q:...] markers. Either
+       way it comes AFTER the card. NEVER put the question in the
+       intro. NEVER glue it to the sentinel line. IMPORTANT: a card
+       turn that warrants a qualification follow-up MUST still include
+       that follow-up — do not swallow the question just because the
+       reply carries a card. The card and the follow-up coexist.
 
     4. Every "│" boundary above corresponds to a blank line in the
        actual output. No skipped blank lines. No extra blank lines.
@@ -3806,8 +4229,9 @@ MEDIA CARDS (inline cards. MANDATORY USAGE RULES):
     (i)   Is the intro exactly ONE sentence, ending in a single period?
     (ii)  Is there ZERO prose between the intro's blank line and the
           sentinel line? (No bridge sentence, no lead-in, nothing.)
-    (iii) Is any follow-up question expressed ONLY through [CTA_Q:...]
-          on its own line AFTER the sentinel, never as raw text?
+    (iii) If a follow-up question applies, does it sit on its OWN line
+          AFTER the sentinel (raw text is fine, or [CTA_Q:...] when chips
+          apply) — and never inside the intro or glued to the sentinel?
 
   ═══════════════════════════════════════════════════════════════════════
   ─── #1 MANDATE. TOPICAL MENTION MUST EMIT THE CARD DIRECTLY ───
@@ -5710,10 +6134,39 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
+            # Topical follow-up: the visitor is asking about a phrase the bot
+            # itself just used ("Clean Libraries" → "how would you implement
+            # clean libraries"). The CRAG gate can score such a continuation low
+            # on phrasing alone, which produced a self-contradictory refusal
+            # ("outside my lane") one turn after the bot pitched the topic. When
+            # retrieval DID return chunks, relax the gate so generation answers
+            # from them; with no chunks it falls through to the on-scope pivot
+            # below instead of the harsh off-topic refusal.
+            _topical_followup = (
+                not _is_relevant
+                and not cta_dimension
+                and not _answering_probe
+                and _continues_prior_bot_topic(question, history)
+            )
+            _relax_topical = _topical_followup and bool(final_results)
+            if _relax_topical:
+                _safety_net_metric(
+                    "gate_relaxed_topical_followup",
+                    path="nonstream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders
             # the handoff (B9).
-            if not _is_relevant and not cta_dimension and not _answering_probe and not _affirmed_handoff:
+            if (
+                not _is_relevant
+                and not cta_dimension
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _relax_topical
+            ):
                 # Distinguish "on-scope but no info" from "actually off-topic":
                 # ─ on-scope (e.g. "is the CEO on linkedin?", "what time zone
                 #   are you in?"): use the no-info pivot, which acknowledges
@@ -5725,7 +6178,7 @@ def rag_pipeline(
                 # the rewrite can normalise pronouns out and lose the on-scope
                 # signal ("who is he?" → "who is Siddique Ahmed", both should
                 # trigger the on-scope pivot).
-                _on_scope = _question_looks_on_scope(question, _company_name)
+                _on_scope = _topical_followup or _question_looks_on_scope(question, _company_name)
                 if not _on_scope and search_query != question:
                     _on_scope = _question_looks_on_scope(search_query, _company_name)
 
@@ -5758,7 +6211,7 @@ def rag_pipeline(
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
-                    "answer": _off_topic_refusal(_company_name, _recent_bot),
+                    "answer": _refusal_or_browsing_ack(question, _company_name, _recent_bot),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -5802,7 +6255,7 @@ def rag_pipeline(
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
-                    "answer": _off_topic_refusal(_company_name, _recent_bot),
+                    "answer": _refusal_or_browsing_ack(question, _company_name, _recent_bot),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -5845,6 +6298,28 @@ def rag_pipeline(
             is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
+            # ── Probe continuity (non-streaming) ──────────────────────────────
+            # ``_prev_probed`` is the dimension the bot asked on its LAST turn.
+            # ``_next_probe`` is what we ask THIS turn; it skips ``_prev_probed``
+            # so we never re-ask back-to-back.
+            _prev_probed = getattr(chat_session, "last_probed_dimension", None) if is_bant_enabled else None
+            _recently_probed = [_prev_probed] if _prev_probed else []
+            # Only bind the visitor's message to that probed dimension (and relax
+            # the terse-answer length gate) when it actually reads like an ANSWER.
+            # A fresh question or product inquiry ("how would you implement clean
+            # libraries?") must NOT be force-fit into the dimension — that misfires
+            # as false signals like Need="Just browsing" on pure product questions.
+            _answers_last_probe = bool(_prev_probed) and _looks_like_answer(question)
+            _binding_hint = _prev_probed if _answers_last_probe else None
+            # Build-up gate: no qualifying question for a browsing visitor, and
+            # not until the bot has led with value (see ``_should_probe_this_turn``).
+            _probe_ok = _should_probe_this_turn(question, history)
+            _next_probe = (
+                select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
+                if is_bant_enabled and bant_config and _probe_ok
+                else None
+            )
+
             _team_connect_offer = (
                 is_bant_enabled
                 and _count_marked_bant_dimensions(current_bant) >= 2
@@ -5878,6 +6353,8 @@ def rag_pipeline(
                 answer_links=getattr(bot, "answer_links", None) if bot else None,
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
+                recently_probed=_recently_probed,
+                probe_ok=_probe_ok,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
@@ -6004,6 +6481,20 @@ def rag_pipeline(
             # look for a topically-related asset of the OPPOSITE type to
             # surface as a small secondary chip beneath the primary card.
             _media_secondary = _pick_secondary_media(_media_card, final_results, _bot_media_for_validate)
+            # Per-session dedupe: don't re-attach a document/video card the
+            # visitor was already shown earlier in this conversation. Prevents
+            # the same PDF appearing on consecutive replies.
+            _media_key = _media_card_key(_media_card)
+            if (
+                _media_key
+                and not _is_explicit_media_request(question)
+                and _card_already_shown(chat_session, _media_key)
+            ):
+                logger.info("Media card suppressed (already shown) | session=%s key=%s", session_id, _media_key)
+                _media_card = None
+                _media_secondary = []
+            elif _media_key:
+                _mark_card_shown(chat_session, _media_key)
             if _media_card:
                 logger.info(
                     "Media card token detected | session=%s type=%s",
@@ -6073,6 +6564,24 @@ def rag_pipeline(
             if _should_ask_visitor_name(visitor_name, history) and not _is_name_ask_message(answer):
                 answer = answer.rstrip() + f"\n\n{_NAME_ASK_TEXT}"
 
+            # Deterministic qualification follow-up on media-card turns. The media
+            # template pressures the model into a bare "one sentence + card" reply,
+            # so it reliably omits the probe — leaving the conversation stalled
+            # after a document/video. When a card is present, a probe applies, and
+            # the answer isn't already asking something, append the follow-up so it
+            # always shows (the card renders as a separate attachment below it).
+            if (
+                _media_card
+                and is_bant_enabled
+                and _next_probe
+                and not (_show_qualified_popup or _team_connect_offer)
+                and not _is_name_ask_message(answer)
+                and not answer.rstrip().endswith("?")
+            ):
+                _fu = _probe_question_for(_next_probe, bant_config, seed_text=question, avoid_text=history_context)
+                if _fu:
+                    answer = answer.rstrip() + f"\n\n{_fu}"
+
             bot_msg = add_chat_message(
                 session,
                 session_id,
@@ -6088,11 +6597,22 @@ def rag_pipeline(
                 with contextlib.suppress(Exception):
                     bot_msg.trace_id = lf.get_current_trace_id()
 
+            # Remember which dimension we actually probed this turn so the NEXT
+            # turn skips it (no back-to-back re-asks) and binds the reply to it.
+            # None when we offered a handoff/popup instead of a qualifying probe.
+            if is_bant_enabled and chat_session is not None:
+                chat_session.last_probed_dimension = (
+                    None if (_show_qualified_popup or _team_connect_offer) else _next_probe
+                )
+
             session.commit()
 
             _cta_signal = _score_cta_answer(cta_dimension, question, bant_config)
             if is_bant_enabled and (
-                _cta_signal is not None or not _should_skip_bant_extraction(question, current_bant, bant_config)
+                _cta_signal is not None
+                or not _should_skip_bant_extraction(
+                    question, current_bant, bant_config, is_probe_reply=_answers_last_probe
+                )
             ):
                 # Pass bid (id), not the bot ORM object. The worker reloads
                 # inside its own session. Passing a detached instance raises
@@ -6110,6 +6630,7 @@ def rag_pipeline(
                     bant_config,
                     bot_msg.id,
                     _cta_signal,
+                    _binding_hint,
                 )
 
             if should_sample():
@@ -6726,14 +7247,38 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+            # Topical follow-up on a phrase the bot just used — see non-stream
+            # path for the full rationale. Relaxes the gate (reach generation)
+            # when chunks exist, else counts as on-scope for the graceful pivot.
+            _topical_followup = (
+                not _is_relevant
+                and not cta_dimension
+                and not _answering_probe
+                and _continues_prior_bot_topic(question, history)
+            )
+            _relax_topical = _topical_followup and bool(final_results)
+            if _relax_topical:
+                _safety_net_metric(
+                    "gate_relaxed_topical_followup",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
             # ``_affirmed_handoff`` also bypasses the refusal so a "yes" to the
             # connect offer reaches generation, where ``suggest_handoff`` renders
             # the handoff (B9).
-            if not _is_relevant and not cta_dimension and not _answering_probe and not _affirmed_handoff:
+            if (
+                not _is_relevant
+                and not cta_dimension
+                and not _answering_probe
+                and not _affirmed_handoff
+                and not _relax_topical
+            ):
                 # Mirror of the non-stream path: on-scope questions where the
                 # gate fired (no matching chunks) get the graceful no-info pivot
                 # instead of the off-topic refusal.
-                _on_scope = _question_looks_on_scope(question, _company_name)
+                _on_scope = _topical_followup or _question_looks_on_scope(question, _company_name)
                 if not _on_scope and search_query != question:
                     _on_scope = _question_looks_on_scope(search_query, _company_name)
 
@@ -6768,7 +7313,7 @@ async def rag_pipeline_stream(
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _off_topic_refusal(_company_name, _recent_bot)
+                yield _refusal_or_browsing_ack(question, _company_name, _recent_bot)
                 return
 
             # ── Empty-context short-circuit (streaming path) ─────────────────
@@ -6805,7 +7350,7 @@ async def rag_pipeline_stream(
                 )
                 _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _off_topic_refusal(_company_name, _recent_bot)
+                yield _refusal_or_browsing_ack(question, _company_name, _recent_bot)
                 return
 
             yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
@@ -6836,6 +7381,25 @@ async def rag_pipeline_stream(
             )
             is_bant_enabled = plan_allows_bant and bool(getattr(bot, "bant_enabled", True))
             bant_config = get_framework_config(bot) if is_bant_enabled else None
+
+            # ── Probe continuity (streaming) — mirrors the non-streaming path.
+            # ``_prev_probed`` is last turn's probed dimension; ``_next_probe`` is
+            # this turn's target, skipping it so we never re-ask back-to-back.
+            _prev_probed = getattr(chat_session, "last_probed_dimension", None) if is_bant_enabled else None
+            _recently_probed = [_prev_probed] if _prev_probed else []
+            # Bind to the probed dimension only when the message reads like an
+            # answer — never force a fresh question/product inquiry into it (which
+            # produced false signals like Need="Just browsing"). See non-stream.
+            _answers_last_probe = bool(_prev_probed) and _looks_like_answer(question)
+            _binding_hint = _prev_probed if _answers_last_probe else None
+            # Build-up gate: no qualifying question for a browsing visitor, and
+            # not until the bot has led with value (see ``_should_probe_this_turn``).
+            _probe_ok = _should_probe_this_turn(question, history)
+            _next_probe = (
+                select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
+                if is_bant_enabled and bant_config and _probe_ok
+                else None
+            )
 
             _team_connect_offer = (
                 is_bant_enabled
@@ -6869,6 +7433,8 @@ async def rag_pipeline_stream(
                 answer_links=getattr(bot, "answer_links", None) if bot else None,
                 team_connect_offer=_team_connect_offer and not _show_qualified_popup,
                 suppress_probe=_show_qualified_popup,
+                recently_probed=_recently_probed,
+                probe_ok=_probe_ok,
                 visitor_name=visitor_name,
                 visitor_just_named=_just_named,
                 visitor_country=visitor_country,
@@ -7097,6 +7663,18 @@ async def rag_pipeline_stream(
             _enrich_media_card_from_context(_media_card, final_results)
             # Option E secondary chip. See non-streaming path for detail.
             _media_secondary = _pick_secondary_media(_media_card, final_results, _bot_media_for_validate)
+            # Per-session dedupe — see non-streaming path for rationale.
+            _media_key = _media_card_key(_media_card)
+            if (
+                _media_key
+                and not _is_explicit_media_request(question)
+                and _card_already_shown(chat_session, _media_key)
+            ):
+                logger.info("Media card suppressed (already shown) | session=%s key=%s", session_id, _media_key)
+                _media_card = None
+                _media_secondary = []
+            elif _media_key:
+                _mark_card_shown(chat_session, _media_key)
             if _media_card:
                 logger.info(
                     "Media card token detected | session=%s type=%s",
@@ -7184,6 +7762,24 @@ async def rag_pipeline_stream(
                 full_answer = full_answer.rstrip() + _name_ask_chunk
                 yield _name_ask_chunk
 
+            # Deterministic qualification follow-up on media-card turns — mirrors
+            # the non-streaming path. The media template makes the model drop the
+            # probe after a card, so append it ourselves (streamed live AND folded
+            # into full_answer so the transcript matches what the visitor saw).
+            if (
+                _media_card
+                and is_bant_enabled
+                and _next_probe
+                and not (_show_qualified_popup or _team_connect_offer)
+                and not _is_name_ask_message(full_answer)
+                and not full_answer.rstrip().endswith("?")
+            ):
+                _fu = _probe_question_for(_next_probe, bant_config, seed_text=question, avoid_text=history_context)
+                if _fu:
+                    _fu_chunk = f"\n\n{_fu}"
+                    full_answer = full_answer.rstrip() + _fu_chunk
+                    yield _fu_chunk
+
             try:
                 if not _stream_error or full_answer:
                     bot_msg = add_chat_message(
@@ -7200,6 +7796,14 @@ async def rag_pipeline_stream(
                     if _lf and hasattr(bot_msg, "trace_id"):
                         with contextlib.suppress(Exception):
                             bot_msg.trace_id = _lf.get_current_trace_id()
+
+                    # Remember which dimension we probed this turn (skip on
+                    # handoff/popup turns) so the next turn won't re-ask it and
+                    # can bind the visitor's reply to it. Mirrors non-streaming.
+                    if is_bant_enabled and chat_session is not None:
+                        chat_session.last_probed_dimension = (
+                            None if (_show_qualified_popup or _team_connect_offer) else _next_probe
+                        )
 
                     # Flush first to execute the INSERT and populate bot_msg.id.
                     # This lets us capture the id before commit so FINAL_METADATA
@@ -7230,7 +7834,10 @@ async def rag_pipeline_stream(
 
                     _cta_signal = _score_cta_answer(cta_dimension, question, bant_config)
                     if is_bant_enabled and (
-                        _cta_signal is not None or not _should_skip_bant_extraction(question, current_bant, bant_config)
+                        _cta_signal is not None
+                        or not _should_skip_bant_extraction(
+                            question, current_bant, bant_config, is_probe_reply=_answers_last_probe
+                        )
                     ):
                         # Pass bid (id), not the bot ORM object. See streaming
                         # path's equivalent call above for the rationale.
@@ -7247,6 +7854,7 @@ async def rag_pipeline_stream(
                             bant_config,
                             bot_msg_id,
                             _cta_signal,
+                            _binding_hint,
                         )
 
                     if should_sample():
